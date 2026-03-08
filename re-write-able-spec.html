@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>re-write-able</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:ital,wght@0,400;0,500;1,400&family=Instrument+Serif:ital@0;1&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg:#0e0e0f; --surf:#161618; --b1:#232327; --b2:#2d2d34;
+  --text:#dddde4; --muted:#575766; --muted2:#363642;
+  --accent:#b8ff57; --blue:#57c8ff; --red:#ff5757;
+  --reading:#c4c4d0; --col:680px;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+html{scroll-behavior:smooth;}
+body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);
+  font-size:15px;line-height:1.6;min-height:100dvh;
+  display:grid;grid-template-rows:auto 1fr auto;}
+
+/* HEADER */
+header{display:flex;align-items:center;gap:12px;
+  padding:11px 24px;border-bottom:1px solid var(--b1);
+  position:sticky;top:0;z-index:50;
+  background:color-mix(in srgb,var(--bg) 88%,transparent);
+  backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);}
+.wordmark{font-family:'Instrument Serif',serif;font-style:italic;
+  font-size:18px;letter-spacing:-.3px;white-space:nowrap;}
+.wordmark em{color:var(--muted);font-style:normal;}
+.badge{font-family:'DM Mono',monospace;font-size:10px;
+  padding:2px 7px;border:1px solid var(--b2);border-radius:100px;
+  color:var(--muted);letter-spacing:.5px;}
+.dot{width:6px;height:6px;border-radius:50%;background:var(--accent);
+  box-shadow:0 0 8px var(--accent);}
+.sp{flex:1;}
+.hbtn{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:.6px;
+  text-transform:uppercase;padding:5px 11px;border-radius:5px;
+  border:1px solid var(--b2);background:transparent;color:var(--muted);
+  cursor:pointer;transition:all .15s;}
+.hbtn:hover{color:var(--text);border-color:var(--muted);}
+.hbtn.pri{background:var(--accent);color:#000;border-color:var(--accent);}
+.hbtn.pri:hover{background:#cbff6b;}
+
+/* SETTINGS */
+#settingsBar{overflow:hidden;max-height:0;border-bottom:1px solid transparent;
+  background:var(--surf);transition:max-height .3s,border-color .3s;}
+#settingsBar.open{max-height:60px;border-color:var(--b1);}
+.si{display:flex;align-items:center;gap:12px;padding:10px 24px;}
+.si label{font-family:'DM Mono',monospace;font-size:10px;
+  letter-spacing:1.5px;text-transform:uppercase;color:var(--muted);white-space:nowrap;}
+.si input{background:var(--bg);border:1px solid var(--b2);color:var(--text);
+  font-family:'DM Mono',monospace;font-size:12px;padding:6px 10px;
+  outline:none;border-radius:4px;}
+.si input:focus{border-color:var(--muted);}
+#apiKeyInput{width:260px;}
+#modelInput{width:220px;}
+
+/* LAYOUT */
+.layout{display:grid;grid-template-columns:200px 1fr;min-height:0;}
+
+/* SIDEBAR */
+.sidebar{border-right:1px solid var(--b1);padding:24px 0;
+  position:sticky;top:48px;height:calc(100dvh - 48px);
+  overflow-y:auto;align-self:start;}
+.sb-label{font-family:'DM Mono',monospace;font-size:9px;
+  letter-spacing:2px;text-transform:uppercase;
+  color:var(--muted2);padding:0 18px;margin-bottom:10px;}
+.toc-item{display:flex;align-items:baseline;gap:8px;
+  padding:5px 18px;cursor:pointer;text-decoration:none;
+  border-left:2px solid transparent;transition:border-color .15s,background .1s;}
+.toc-item:hover{background:rgba(255,255,255,.03);}
+.toc-item.active{border-left-color:var(--accent);}
+.toc-num{font-family:'DM Mono',monospace;font-size:10px;
+  color:var(--muted2);flex-shrink:0;width:18px;}
+.toc-title{font-size:12px;color:var(--muted);line-height:1.4;}
+.toc-item:hover .toc-title,.toc-item.active .toc-title{color:var(--text);}
+
+/* CONTENT */
+.content{padding:48px max(24px,calc((100% - var(--col)) / 2));
+  overflow-y:auto;max-height:calc(100dvh - 48px);}
+.doc-header{margin-bottom:52px;}
+.doc-title{font-family:'Instrument Serif',serif;font-style:italic;
+  font-size:clamp(38px,5vw,56px);line-height:1.02;letter-spacing:-.5px;
+  margin-bottom:10px;
+  background:linear-gradient(135deg,var(--text) 50%,var(--muted));
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;}
+.doc-sub{font-size:16px;color:var(--muted);font-weight:300;font-style:italic;}
+
+/* SECTIONS */
+.section{margin-bottom:52px;scroll-margin-top:72px;}
+.sec-head{display:flex;align-items:baseline;gap:12px;
+  margin-bottom:20px;padding-bottom:10px;border-bottom:1px solid var(--b1);}
+.sec-num{font-family:'DM Mono',monospace;font-size:12px;color:var(--muted2);flex-shrink:0;}
+.sec-title{font-family:'Instrument Serif',serif;font-size:22px;letter-spacing:-.2px;flex:1;}
+.sec-spark{opacity:0;transition:opacity .15s;background:var(--surf);
+  border:1px solid var(--b2);border-radius:4px;padding:2px 8px;
+  font-size:11px;cursor:pointer;color:var(--muted);white-space:nowrap;flex-shrink:0;}
+.section:hover .sec-spark{opacity:1;}
+.sec-spark:hover{color:var(--accent);border-color:var(--accent);}
+
+/* BODY CONTENT */
+.sec-body p{font-family:'Instrument Serif',serif;font-size:17px;
+  line-height:1.78;color:var(--reading);margin-bottom:16px;}
+.sec-body h3{font-family:'DM Sans',sans-serif;font-weight:500;font-size:12px;
+  letter-spacing:.6px;text-transform:uppercase;color:var(--muted);
+  margin-top:24px;margin-bottom:10px;}
+.sec-body code{font-family:'DM Mono',monospace;font-size:13px;
+  background:var(--surf);border:1px solid var(--b2);
+  border-radius:3px;padding:1px 5px;color:var(--blue);}
+.sec-body pre{background:var(--surf);border:1px solid var(--b1);
+  border-radius:6px;padding:16px 18px;overflow-x:auto;margin-bottom:16px;}
+.sec-body pre code{background:none;border:none;padding:0;
+  font-size:12px;line-height:1.65;color:#aaa;}
+.sec-body ul,.sec-body ol{padding-left:0;list-style:none;margin-bottom:16px;}
+.sec-body li{font-family:'Instrument Serif',serif;font-size:17px;
+  line-height:1.72;color:var(--reading);padding:3px 0 3px 22px;position:relative;}
+.sec-body li::before{content:"—";position:absolute;left:0;
+  color:var(--muted2);font-family:'DM Mono',monospace;font-size:12px;top:7px;}
+.sec-body ol li::before{content:counter(li)".";counter-increment:li;
+  font-family:'DM Mono',monospace;font-size:11px;}
+.sec-body ol{counter-reset:li;}
+.sec-body strong{color:var(--text);font-weight:500;}
+.sec-body em{font-style:italic;}
+.sec-body blockquote{border-left:2px solid var(--accent);padding:10px 16px;
+  margin-bottom:16px;font-family:'Instrument Serif',serif;
+  font-style:italic;font-size:16px;color:var(--muted);line-height:1.6;}
+.sec-body table{width:100%;border-collapse:collapse;margin-bottom:16px;}
+.sec-body th{font-family:'DM Mono',monospace;font-size:10px;
+  letter-spacing:1.2px;text-transform:uppercase;color:var(--muted);
+  text-align:left;padding:8px 12px;border-bottom:1px solid var(--b1);}
+.sec-body td{padding:10px 12px;border-bottom:1px solid var(--b1);
+  color:var(--reading);font-family:'Instrument Serif',serif;font-size:15px;}
+.sec-body tr:hover td{background:rgba(255,255,255,.015);}
+.sec-body hr{border:none;border-top:1px solid var(--b1);margin:24px 0;}
+
+/* BOTTOM BAR */
+footer{position:sticky;bottom:0;z-index:50;
+  border-top:1px solid var(--b1);
+  background:color-mix(in srgb,var(--bg) 92%,transparent);
+  backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+  padding:7px 24px;display:flex;align-items:center;
+  justify-content:space-between;gap:12px;}
+.log{font-family:'DM Mono',monospace;font-size:11px;color:var(--muted);
+  display:flex;align-items:center;gap:7px;}
+.log .ok{color:var(--accent);}.log .run{color:var(--blue);}
+.log .err{color:var(--red);}
+.kbd-hint{font-family:'DM Mono',monospace;font-size:11px;
+  color:var(--muted);display:flex;align-items:center;gap:6px;flex-shrink:0;}
+.kbd-hint kbd{background:var(--surf);border:1px solid var(--b2);
+  border-radius:3px;padding:2px 6px;font-family:inherit;font-size:10px;}
+
+::-webkit-scrollbar{width:4px;height:4px;}
+::-webkit-scrollbar-track{background:transparent;}
+::-webkit-scrollbar-thumb{background:var(--b2);border-radius:2px;}
+@media(max-width:680px){.layout{grid-template-columns:1fr;}.sidebar{display:none;}}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wordmark">re<em>-</em>write<em>-</em>able</div>
+  <div class="badge">spec v0.1</div>
+  <div class="dot"></div>
+  <div class="sp"></div>
+  <button class="hbtn" id="settingsBtn">⚙ Settings</button>
+  <button class="hbtn pri" id="exportBtn">⌘S Export</button>
+</header>
+
+<div id="settingsBar">
+  <div class="si">
+    <label>OpenRouter Key</label>
+    <input type="password" id="apiKeyInput" placeholder="sk-or-..." autocomplete="off">
+    <label>Model</label>
+    <input type="text" id="modelInput" value="anthropic/claude-sonnet-4" autocomplete="off">
+    <button class="hbtn" id="doneBtn">Done</button>
+  </div>
+</div>
+
+<div class="layout">
+  <nav class="sidebar" id="sidebar"></nav>
+  <main class="content" id="contentArea"></main>
+</div>
+
+<footer>
+  <div class="log" id="logEl"><span class="ok">●</span><span>loaded</span></div>
+  <div class="kbd-hint"><span>modify</span><kbd>⌘K</kbd></div>
+</footer>
+
+<script id="appData" type="application/json">
+{
+  "title": "re-write-able",
+  "subtitle": "A specification for self-modifying HTML applications",
+  "version": "v0.1",
+  "sections": [
+    {
+      "id": "1",
+      "heading": "The Name",
+      "html": "<p><strong>re</strong> — it does it again. The agent loop, self-modification, iteration over time.<br />\n<strong>write</strong> — not read. Not consume. Author. The read/write web, finally delivered.<br />\n<strong>able</strong> — a property of the file itself. Not a permission the OS grants you. Something it <em>is</em>.</p>\n<p><code>re-write-able</code> is both a description and a manifesto. A re-writeable file is one that participates in its own creation.</p>\n<hr />"
+    },
+    {
+      "id": "2",
+      "heading": "The Problem",
+      "html": "<p>The web became read-only for most people.</p>\n<p>You consume apps. Someone else made them, deployed them, owns them. You have no access to the source. You can't change them. You certainly can't ask them to change themselves.</p>\n<p>The tools that do let you modify things — code editors, CLIs, build pipelines — require you to already be a developer. Citizen development tools (no-code, low-code) give you drag-and-drop but hide the source and lock you to a platform.</p>\n<p>There is no middle ground: a tool that is fully sourceful, fully ownable, fully modifiable, but requires no environment, no install, no server, no account.</p>\n<p>A re-writeable file is that middle ground.</p>\n<hr />"
+    },
+    {
+      "id": "3",
+      "heading": "The Concept",
+      "html": "<p>A re-writeable file is a single <code>.html</code> file that:</p>\n<ol>\n<li><strong>Renders itself</strong> — open it in any browser, it runs</li>\n<li><strong>Stores itself</strong> — its live state lives in <code>localStorage</code>, not on a server</li>\n<li><strong>Modifies itself</strong> — an embedded agent rewrites the file's own source code on instruction</li>\n<li><strong>Exports itself</strong> — the current state can be saved as a new <code>.html</code> file at any time</li>\n<li><strong>Requires nothing</strong> — no server, no install, no build step, no account</li>\n</ol>\n<p>The file is simultaneously a document, a tool, an application, and its own source code.</p>\n<hr />"
+    },
+    {
+      "id": "4",
+      "heading": "The Read/Write Web",
+      "html": "<p>Tim Berners-Lee's original vision was a read/write web. The browser was meant to be an editor. The web became predominantly read-only — a distribution medium, not a creation medium.</p>\n<p><code>re-write-able</code> is a correction at the file level:</p>\n<table>\n<thead>\n<tr>\n<th>Web as it is</th>\n<th>re-write-able</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td>You consume apps</td>\n<td>You own the source</td>\n</tr>\n<tr>\n<td>Apps live on servers</td>\n<td>The file is the server</td>\n</tr>\n<tr>\n<td>Changing requires a developer</td>\n<td>Changing requires a sentence</td>\n</tr>\n<tr>\n<td>Deployment is a process</td>\n<td>Deployment is sharing a file</td>\n</tr>\n<tr>\n<td>Open source is a repository</td>\n<td>Open source is the file itself</td>\n</tr>\n</tbody>\n</table>\n<hr />"
+    },
+    {
+      "id": "5",
+      "heading": "Architecture",
+      "html": "<h3>5.1 The Seed File</h3>\n<p>The seed file is the immutable bootstrap. It never changes. It is the equivalent of <code>gate.py</code> in a governed self-modification system — the one thing the agent cannot touch.</p>\n<pre><code>docuapp.html  (seed — you distribute this)\n     │\n     │  on first open: generate app, inject runtime, store in localStorage\n     │  on subsequent opens: load from localStorage → document.write\n     ▼\nlocalStorage['docuapp_src']  (live app — the agent rewrites this)\n</code></pre>\n<p>The seed file contains:\n- A build screen (OpenRouter key + model + description)\n- The agent call to generate the initial app\n- The <code>injectRuntime()</code> function\n- A loader: <code>document.open(); document.write(src); document.close()</code></p>\n<p>It does not contain the app. It does not get rewritten.</p>\n<h3>5.2 The Runtime Block</h3>\n<p>Every re-writeable app contains a single <code>&lt;script id=\"re-write-able-runtime\"&gt;</code> block. This is the self-modification engine. It is injected by the seed after the initial build and preserved verbatim through all subsequent rewrites.</p>\n<p>The runtime provides:\n- <code>⌘K</code> — command palette for modification instructions\n- <code>⌘Z</code> — undo (swap current ↔ previous in localStorage)\n- <code>⌘S</code> — export current state as a standalone <code>.html</code> file\n- Prompt history (last 15 instructions, stored in <code>localStorage['da_hist']</code>)\n- Status indicator</p>\n<p>The agent system prompt includes: <em>\"Preserve the <code>&lt;script id=\"re-write-able-runtime\"&gt;</code> block exactly as-is. Never remove or alter it.\"</em></p>\n<h3>5.3 localStorage as Code Store</h3>\n<pre><code>localStorage\n├── docuapp_src    — current app HTML source (the live running code)\n├── docuapp_prev   — previous app source (one undo level)\n├── da_hist        — prompt history (JSON array, last 15)\n└── [app_data_key] — the app's own data (e.g. tracker_data, recipes_data)\n</code></pre>\n<p>The app's source code and its data coexist in localStorage under different keys. The runtime manages <code>docuapp_src</code> and <code>docuapp_prev</code>. The app manages its own data key.</p>\n<h3>5.4 The Rewrite Loop</h3>\n<pre><code>User: ⌘K → &quot;add a priority column to the tracker&quot;\n          │\n          ▼\nRuntime captures: document.documentElement.outerHTML\n          │        (the entire running app, including runtime block)\n          ▼\nAgent call: system = &quot;modify HTML app, preserve runtime block&quot;\n            user   = current outerHTML + &quot;\\n\\nInstruction: &quot; + prompt\n          │\n          ▼\nAgent returns: complete modified HTML\n          │\n          ▼\nRuntime:  localStorage['docuapp_prev'] = currentSrc\n          localStorage['docuapp_src']  = newSrc\n          document.open(); document.write(newSrc); document.close();\n          │\n          ▼\nBrowser: re-renders the new app\n         the app has modified itself\n</code></pre>\n<h3>5.5 The Null Origin Bus</h3>\n<p>When HTML files are opened locally via <code>file://</code>, all files share the same origin: <code>null</code>. This means all re-writeable files opened in the same browser share the same <code>localStorage</code> namespace.</p>\n<p>This is not a bug. It is a local communication bus:</p>\n<pre><code>budget.html     → writes  localStorage['budget_data']\ntracker.html    → writes  localStorage['tracker_data']\ndashboard.html  → reads   localStorage['budget_data'] + localStorage['tracker_data']\n                → renders a unified view across both files\n</code></pre>\n<p>The <code>storage</code> event fires when localStorage changes in another tab. A re-writeable dashboard can subscribe to sibling documents and re-render reactively — with no server, no WebSockets, no protocol.</p>\n<pre><code class=\"language-javascript\">window.addEventListener('storage', e =&gt; {\n  if (e.key === 'tracker_data') refreshTrackerSection();\n});\n</code></pre>\n<hr />"
+    },
+    {
+      "id": "6",
+      "heading": "The Agent Contract",
+      "html": "<h3>6.1 Build (initial)</h3>\n<p>System prompt tells the agent to produce a polished single-file HTML application with:\n- All CSS and JS inline\n- No React, no build steps\n- Dark theme (specified palette)\n- Seed data included\n- App data stored in localStorage under a descriptive key\n- <strong>No self-modification UI</strong> (the runtime is injected by the seed after)</p>\n<h3>6.2 Modify (subsequent)</h3>\n<p>System prompt tells the agent:\n- Return the complete modified HTML file only, no explanation\n- Preserve <code>&lt;script id=\"re-write-able-runtime\"&gt;</code> exactly as-is\n- Apply the instruction precisely\n- The file must remain fully functional</p>\n<p>The agent receives the <strong>entire running app source</strong> as context. This is the complete truth of the current state — HTML structure, CSS, JS logic, data, runtime — in one payload.</p>\n<h3>6.3 Model choice</h3>\n<p><code>anthropic/claude-sonnet-4</code> via OpenRouter is the default. The full 200k context window can comfortably hold a 50–100kb app source plus instructions. For complex structural modifications, <code>claude-opus-4</code> produces more reliable results.</p>\n<hr />"
+    },
+    {
+      "id": "7",
+      "heading": "Export and Portability",
+      "html": "<p><code>⌘S</code> serializes <code>document.documentElement.outerHTML</code> and downloads it as <code>[title].html</code>.</p>\n<p>The exported file is:\n- Complete and standalone — no dependency on the seed file\n- Self-modifying — the runtime is embedded, so it can keep rewriting itself\n- Portable — open it on any machine with any browser\n- Diffable — it's just text, it lives happily in git</p>\n<p>A re-writeable file can be shared by email, Slack, USB stick, or GitHub. The recipient opens it in a browser and it runs. They can modify it. They own their copy.</p>\n<hr />"
+    },
+    {
+      "id": "8",
+      "heading": "Design Rules for Generated Apps",
+      "html": "<p>Every app generated by re-write-able follows these rules:</p>\n<p><strong>Structure</strong>\n- Single HTML file, all CSS and JS inline\n- No React, no build steps, no npm\n- Libraries from <code>cdnjs.cloudflare.com</code> only if genuinely needed</p>\n<p><strong>Visual</strong>\n- Dark theme: <code>#0e0e0f</code> background, <code>#161618</code> surface, <code>#2d2d34</code> border\n- Text: <code>#dddde4</code> primary, <code>#575766</code> muted, <code>#dddde4</code> on dark\n- Accent: <code>#b8ff57</code> (green), <code>#57c8ff</code> (blue), <code>#ff5757</code> (red)\n- Fonts: DM Sans (UI), DM Mono (labels/code), Instrument Serif (display)</p>\n<p><strong>Data</strong>\n- All persistent state in localStorage under a descriptive key\n- Never use <code>docuapp_src</code>, <code>docuapp_prev</code>, or <code>da_*</code> keys (reserved by runtime)\n- Seed data included so the app is useful on first open</p>\n<p><strong>Quality</strong>\n- Production-quality: polished, usable, complete\n- No placeholder lorem ipsum — real representative data\n- Keyboard shortcuts where appropriate</p>\n<hr />"
+    },
+    {
+      "id": "9",
+      "heading": "Security Model",
+      "html": "<p><strong>API key</strong>: stored in <code>sessionStorage</code> only. Survives reload, cleared on tab close. Never written to the file, never in localStorage, never leaves the browser except in the Authorization header.</p>\n<p><strong>Self-modification</strong>: <code>document.write</code> from localStorage is essentially <code>eval</code> at document scope. For a personal local tool this is the correct tradeoff — maximum capability, user-owned environment. For shared or hosted deployments, the risk surface is: anyone who can write to the user's localStorage can inject code. This is mitigated by the <code>file://</code> origin model (no cross-origin writes) and by the fact that the user controls the key.</p>\n<p><strong>The seed is the anchor</strong>: the seed file cannot be rewritten by the agent (it's never in localStorage). If something goes wrong, reset via the runtime's reset button, or delete <code>docuapp_src</code> from DevTools. The seed is always safe.</p>\n<hr />"
+    },
+    {
+      "id": "10",
+      "heading": "Citizen Development Model",
+      "html": "<p>re-write-able is designed for the person who:\n- Has ideas for tools but cannot (or does not want to) write code\n- Is suspicious of cloud platforms and wants to own their data\n- Understands HTML at a surface level — enough to know it's \"just a file\"\n- Would share a spreadsheet but not deploy an app</p>\n<p>The mental model is: <em>it's like a spreadsheet, but the formula bar can redesign the spreadsheet.</em></p>\n<p>The deployment model is: <em>drag it to your desktop. Done.</em></p>\n<p>The collaboration model is: <em>send the file. They have everything.</em></p>\n<hr />"
+    },
+    {
+      "id": "11",
+      "heading": "Webinar Demo Flow",
+      "html": "<h3>Narrative arc: \"The file that builds itself\"</h3>\n<p><strong>Act 1 — The seed</strong> (2 min)\n- Open <code>re-write-able.html</code> in Chrome\n- Show the build screen — three fields, nothing else\n- Talk about the seed as the immutable anchor</p>\n<p><strong>Act 2 — First build</strong> (3 min)\n- Type: <code>a project tracker with status columns and due dates</code>\n- Hit Build\n- The agent writes ~300 lines of HTML into localStorage\n- The app loads itself\n- Show the running app with seed data</p>\n<p><strong>Act 3 — Self-modification</strong> (5 min)\n- Hit ⌘K, type: <code>add a priority field — high, medium, low</code>\n- The agent receives the entire app source, returns modified HTML\n- Watch the app reload with the new field\n- Hit ⌘K again: <code>add a small chart at the top showing status breakdown</code>\n- Repeat: <code>turn the status columns into a kanban board</code></p>\n<p><strong>Act 4 — Undo</strong> (1 min)\n- Hit ⌘Z — the kanban disappears, the list view returns\n- Hit ⌘Z again — the chart disappears\n- The file has memory</p>\n<p><strong>Act 5 — Export</strong> (1 min)\n- Hit ⌘S — download <code>project-tracker.html</code>\n- Open it in a new tab — it runs, it has the runtime, it can keep evolving\n- This file can be emailed. It requires nothing.</p>\n<p><strong>Act 6 — The bus</strong> (2 min)\n- Open the spec document alongside the tracker\n- Show <code>localStorage</code> in DevTools — both files' keys visible\n- Write a 10-line dashboard that reads both\n- The web was supposed to be read/write. This is read/write.</p>\n<hr />"
+    },
+    {
+      "id": "12",
+      "heading": "What This Is Not",
+      "html": "<ul>\n<li><strong>Not a no-code platform</strong> — there is no platform. The file is the platform.</li>\n<li><strong>Not a cloud app</strong> — nothing is on a server. localStorage is the database.</li>\n<li><strong>Not an AI coding assistant</strong> — the agent doesn't help you write code. It writes the whole thing.</li>\n<li><strong>Not a CMS</strong> — there is no content management layer. The source is the content.</li>\n<li><strong>Not a framework</strong> — there is nothing to install, nothing to configure, nothing to update.</li>\n</ul>\n<p>It is a file that writes itself.</p>\n<hr />"
+    },
+    {
+      "id": "13",
+      "heading": "Prior Art and Influences",
+      "html": "<p><strong>Clive</strong> (ikangai/clive) — the direct intellectual ancestor. Clive gives an LLM a terminal to inhabit; re-write-able gives it a browser tab. The self-modification pipeline (proposer → reviewer → gate → apply) maps to: agent call → runtime injection → localStorage → document.write.</p>\n<p><strong>Simon Willison's HTML tools</strong> — 150+ single-file HTML applications demonstrating that the format is serious, durable, and production-worthy. re-write-able extends the model: the tools can now build and modify themselves.</p>\n<p><strong>The read/write web</strong> (Berners-Lee, 1999) — the browser was meant to be an editor. WikiWiki, early blogging, Geocities — the web was briefly writable. re-write-able is a local, offline, agent-powered version of that original vision.</p>\n<p><strong>HyperCard</strong> (Atkinson, 1987) — a stack was a program you could read and modify. Every HyperCard user was implicitly a developer. re-write-able is HyperCard for the agent era: the card modifies itself.</p>\n<hr />\n<p><em>Spec version 0.1 — written alongside the first working implementation</em></p>"
+    }
+  ]
+}
+</script>
+
+<script>
+'use strict';
+
+// ── SETTINGS ──────────────────────────────────────────────────────
+{
+  const k = sessionStorage.getItem('da_apikey');
+  const m = sessionStorage.getItem('da_model');
+  if (k) document.getElementById('apiKeyInput').value = k;
+  if (m) document.getElementById('modelInput').value = m;
+}
+document.getElementById('apiKeyInput').addEventListener('input',
+  e => sessionStorage.setItem('da_apikey', e.target.value.trim()));
+document.getElementById('modelInput').addEventListener('input',
+  e => sessionStorage.setItem('da_model', e.target.value.trim()));
+document.getElementById('settingsBtn').onclick =
+  () => document.getElementById('settingsBar').classList.toggle('open');
+document.getElementById('doneBtn').onclick =
+  () => document.getElementById('settingsBar').classList.remove('open');
+document.getElementById('exportBtn').onclick = exportHTML;
+
+function exportHTML() {
+  const src = document.documentElement.outerHTML;
+  const a = Object.assign(document.createElement('a'), {
+    href: URL.createObjectURL(new Blob([src], {type:'text/html'})),
+    download: 're-write-able-spec.html'
+  });
+  a.click(); URL.revokeObjectURL(a.href);
+  log('ok', 'exported');
+}
+
+// ── DATA ──────────────────────────────────────────────────────────
+function getData() {
+  return JSON.parse(document.getElementById('appData').textContent);
+}
+
+// ── RENDER ────────────────────────────────────────────────────────
+function render() {
+  const d = getData();
+
+  // Sidebar
+  const sb = document.getElementById('sidebar');
+  sb.innerHTML = '<div class="sb-label">Contents</div>' +
+    d.sections.map(s =>
+      '<a class="toc-item" href="#s' + s.id + '" data-id="' + s.id + '">' +
+      '<span class="toc-num">' + s.id + '</span>' +
+      '<span class="toc-title">' + s.heading + '</span>' +
+      '</a>'
+    ).join('');
+
+  // Content
+  const ca = document.getElementById('contentArea');
+  ca.innerHTML =
+    '<div class="doc-header">' +
+    '<div class="doc-title">' + d.title + '</div>' +
+    '<div class="doc-sub">' + d.subtitle + '</div>' +
+    '</div>' +
+    d.sections.map(s =>
+      '<section class="section" id="s' + s.id + '" data-id="' + s.id + '">' +
+      '<div class="sec-head">' +
+      '<span class="sec-num">' + s.id + '.</span>' +
+      '<span class="sec-title">' + s.heading + '</span>' +
+      '<button class="sec-spark" onclick="openPalette(' + JSON.stringify(s.id) + ')">&#x26A1; Ask agent</button>' +
+      '</div>' +
+      '<div class="sec-body">' + s.html + '</div>' +
+      '</section>'
+    ).join('');
+
+  // TOC intersection observer
+  const observer = new IntersectionObserver(entries => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting) {
+        const id = entry.target.dataset.id;
+        document.querySelectorAll('.toc-item').forEach(a =>
+          a.classList.toggle('active', a.dataset.id === id));
+      }
+    });
+  }, { threshold: 0.2 });
+  document.querySelectorAll('.section').forEach(s => observer.observe(s));
+
+  document.querySelectorAll('.toc-item').forEach(a =>
+    a.addEventListener('click', e => {
+      e.preventDefault();
+      document.getElementById('s' + a.dataset.id)?.scrollIntoView({ behavior: 'smooth' });
+    }));
+}
+
+// ── PALETTE ───────────────────────────────────────────────────────
+let sectionCtx = null;
+
+function openPalette(sid) {
+  sectionCtx = sid || null;
+  // Delegate to runtime palette if available
+  const runtimeOpen = window.__daOpen;
+  if (runtimeOpen) { runtimeOpen(sid); return; }
+  // Fallback: show settings to get key first
+  document.getElementById('settingsBar').classList.add('open');
+  document.getElementById('apiKeyInput').focus();
+  log('warn', 'enter API key in settings, then use ⌘K');
+}
+
+document.addEventListener('keydown', e => {
+  const mod = navigator.platform.includes('Mac') ? e.metaKey : e.ctrlKey;
+  if (mod && e.key === 'k') { e.preventDefault(); openPalette(null); }
+  if (mod && e.key === 's') { e.preventDefault(); exportHTML(); }
+});
+
+function log(type, msg) {
+  document.getElementById('logEl').innerHTML =
+    '<span class="' + type + '">' +
+    ({ok:'●', run:'➿', err:'✗', warn:'⚠'}[type]||'·') +
+    '</span><span>' + msg + '</span>';
+}
+
+render();
+</script>
+
+<script id="re-write-able-runtime">
+(function(){
+  var SRC='docuapp_src',PRV='docuapp_prev',SK='da_apikey',SM='da_model';
+  var css='#da-pal{position:fixed;inset:0;z-index:99999;display:flex;align-items:flex-start;justify-content:center;padding-top:min(13vh,100px);background:rgba(0,0,0,.6);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);opacity:0;pointer-events:none;transition:opacity .15s}#da-pal.open{opacity:1;pointer-events:all}#da-box{width:min(600px,92vw);background:#161618;border:1px solid #2d2d34;border-radius:10px;overflow:hidden;box-shadow:0 28px 90px rgba(0,0,0,.8);translate:0 -10px;transition:translate .15s}#da-pal.open #da-box{translate:0 0}#da-top{display:flex;align-items:center;border-bottom:1px solid #232327}#da-sig{padding:0 14px;font-size:15px;color:#b8ff57;font-family:monospace;flex-shrink:0}#da-inp{flex:1;background:transparent;border:none;outline:none;color:#dddde4;font-family:sans-serif;font-size:15px;padding:16px 0}#da-inp::placeholder{color:#363642}#da-go{flex-shrink:0;margin:7px 10px;background:#b8ff57;color:#000;border:none;border-radius:5px;font-family:monospace;font-size:11px;padding:6px 12px;cursor:pointer;letter-spacing:.5px}#da-go:disabled{opacity:.3;pointer-events:none}#da-hist{max-height:180px;overflow-y:auto}.da-hi{display:flex;align-items:center;gap:10px;padding:9px 16px;cursor:pointer;color:#575766;font-size:13px}.da-hi:hover{background:rgba(255,255,255,.04);color:#dddde4}#da-foot{border-top:1px solid #232327;padding:8px 16px;display:flex;align-items:center;justify-content:space-between}#da-st{font-family:monospace;font-size:10px;color:#575766}#da-st.run{color:#57c8ff}#da-st.ok{color:#b8ff57}#da-st.err{color:#ff5757}#da-acts{display:flex;gap:8px}.da-b{background:transparent;border:1px solid #2d2d34;border-radius:4px;color:#575766;font-family:monospace;font-size:10px;padding:3px 8px;cursor:pointer}.da-b:hover{color:#dddde4;border-color:#575766}';
+  var st=document.createElement('style');st.textContent=css;document.head.appendChild(st);
+  var d=document.createElement('div');d.id='da-pal';
+  d.innerHTML='<div id="da-box"><div id="da-top"><span id="da-sig">\u27bf<\/span><input id="da-inp" placeholder="modify this app..." autocomplete="off" spellcheck="false"><button id="da-go" disabled>Run \u21b5<\/button><\/div><div id="da-hist"><\/div><div id="da-foot"><span id="da-st">\u25cf ready<\/span><div id="da-acts"><button class="da-b" id="da-ub">\u2318Z undo<\/button><button class="da-b" id="da-eb">\u2318S export<\/button><button class="da-b" id="da-rb">reset<\/button><\/div><\/div><\/div>';
+  document.body.appendChild(d);
+  var pal=document.getElementById('da-pal'),inp=document.getElementById('da-inp'),go=document.getElementById('da-go'),hist=document.getElementById('da-hist'),sta=document.getElementById('da-st');
+  function opn(){pal.classList.add('open');requestAnimationFrame(function(){inp.focus();});rh();}
+  function cls(){pal.classList.remove('open');inp.value='';go.disabled=true;}
+  function ss(c,m){sta.className=c;sta.textContent=m;}
+  function gh(){try{return JSON.parse(localStorage.getItem('da_hist')||'[]');}catch(e){return[];}}
+  function ph(x){var h=[x].concat(gh().filter(function(i){return i!==x;})).slice(0,15);localStorage.setItem('da_hist',JSON.stringify(h));}
+  function rh(){var items=gh();hist.innerHTML=items.map(function(h){return'<div class="da-hi" data-p="'+h.replace(/"/g,'&quot;')+'">\u21bb '+h+'<\/div>';}).join('');hist.querySelectorAll('.da-hi').forEach(function(el){el.addEventListener('click',function(){inp.value=el.dataset.p;go.disabled=false;inp.focus();});});}
+  pal.addEventListener('click',function(e){if(e.target===pal)cls();});
+  inp.addEventListener('input',function(){go.disabled=!inp.value.trim();});
+  inp.addEventListener('keydown',function(e){if(e.key==='Enter'&&!e.shiftKey&&inp.value.trim()){e.preventDefault();run(inp.value.trim());}if(e.key==='Escape')cls();});
+  go.addEventListener('click',function(){if(inp.value.trim())run(inp.value.trim());});
+  document.addEventListener('keydown',function(e){var mod=navigator.platform.includes('Mac')?e.metaKey:e.ctrlKey;if(mod&&e.key==='k'){e.preventDefault();pal.classList.contains('open')?cls():opn();}if(mod&&e.key==='s'){e.preventDefault();exp();}if(mod&&e.key==='z'){e.preventDefault();undo();}});
+  document.getElementById('da-ub').onclick=undo;
+  document.getElementById('da-eb').onclick=exp;
+  document.getElementById('da-rb').onclick=function(){if(confirm('Reset to home screen?')){localStorage.removeItem(SRC);localStorage.removeItem(PRV);location.reload();}};
+  function run(instruction){
+    var key=sessionStorage.getItem(SK),model=sessionStorage.getItem(SM)||'anthropic/claude-sonnet-4';
+    if(!key){ss('err','no API key \u2014 reload and enter key');return;}
+    cls();ss('run','\u27bf '+instruction);
+    var cur=document.documentElement.outerHTML;
+    fetch('https://openrouter.ai/api/v1/chat/completions',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+key,'HTTP-Referer':'re-write-able','X-Title':'re-write-able'},
+      body:JSON.stringify({model:model,max_tokens:16000,messages:[
+        {role:'system',content:'You are an expert HTML app modifier. Return ONLY the complete modified HTML file. No explanation, no markdown fences, raw HTML only. CRITICAL: preserve the <script id="re-write-able-runtime"> block exactly as-is. Never remove or alter it. Apply the instruction precisely.'},
+        {role:'user',content:'Current app:\n'+cur+'\n\nInstruction: '+instruction}
+      ]})
+    })
+    .then(function(r){return r.ok?r.json():r.json().then(function(e){throw new Error(e.error&&e.error.message||r.statusText);});})
+    .then(function(result){
+      var text=result.choices[0].message.content||'';
+      text=text.trim();
+      var f=String.fromCharCode(96,96,96);
+      if(text.indexOf(f)===0)text=text.slice(text.indexOf('\n')+1);
+      if(text.slice(-3)===f)text=text.slice(0,text.lastIndexOf(f)).trim();
+      if(text.indexOf('<html')<0)throw new Error('response is not HTML');
+      localStorage.setItem(PRV,cur);localStorage.setItem(SRC,text);
+      ph(instruction);ss('ok','\u2713 done \u2014 reloading');
+      setTimeout(function(){document.open();document.write(text);document.close();},300);
+    })
+    .catch(function(e){ss('err','\u2717 '+e.message);});
+  }
+  function undo(){
+    var prev=localStorage.getItem(PRV);
+    if(!prev){ss('err','nothing to undo');return;}
+    localStorage.setItem(PRV,document.documentElement.outerHTML);
+    localStorage.setItem(SRC,prev);
+    ss('ok','\u21a9 reloading');
+    setTimeout(function(){document.open();document.write(prev);document.close();},300);
+  }
+  function exp(){
+    var src=document.documentElement.outerHTML;
+    var a=document.createElement('a');
+    a.href=URL.createObjectURL(new Blob([src],{type:'text/html'}));
+    a.download=(document.title||'re-write-able')+'.html';
+    a.click();URL.revokeObjectURL(a.href);
+    ss('ok','\u2713 exported');
+  }
+  ss('ok','\u25cf ready \u00b7 \u2318K to modify');
+})();
+</script>
+</body>
+</html>
