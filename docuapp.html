@@ -4,12 +4,12 @@
 <meta charset="utf-8">
 <title>re-write-able · seed</title>
 
-<!-- ============================================================
+<!--
      SYNC LOADER — runs before anything else. If a built app
      already exists in localStorage, the seed hands the page over
      to it via document.write. The build screen below never paints.
      Append ?reset=1 to bypass and rebuild from scratch.
-     ============================================================ -->
+-->
 <script>
 (function () {
   if (window.__rwLoaded) return;
@@ -143,13 +143,13 @@
   </div>
 </div>
 
-<!-- ============================================================
+<!--
      RUNTIME TEMPLATE — preserved verbatim as a <template>, so it
      stays as real code (not an escaped string). The build flow
      reads template.innerHTML and injects it before </body> in the
      freshly-generated app. The agent system prompt forbids touching
      this block on subsequent rewrites.
-     ============================================================ -->
+-->
 <template id="rw-runtime-tpl"><script id="re-write-able-runtime">
 /* re-write-able runtime · ⌘K rewrite · ⌘Z undo · ⌘S export */
 (() => {
@@ -638,9 +638,9 @@
 </script></template>
 
 <script>
-/* ============================================================
+/*
    SEED BUILD FLOW — only runs if no app exists in localStorage
-   ============================================================ */
+*/
 (() => {
   const $ = sel => document.querySelector(sel);
   const SS_KEY = 'or_key', SS_MODEL = 'or_model';
