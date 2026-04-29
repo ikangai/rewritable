@@ -543,49 +543,28 @@
       .replace(/\n?\s*```\s*$/, '');
   }
 
-  const SYSTEM_PROMPT_DIFF =
-'You modify a single-file HTML application by emitting one or more SEARCH/REPLACE diff blocks.\n' +
-'\n' +
-'FORMAT — use these literal seven-character markers:\n' +
-'\n' +
-'<<<<<<< SEARCH\n' +
-'<exact text from the current file>\n' +
-'=======\n' +
-'<the replacement text>\n' +
-'>>>>>>> REPLACE\n' +
-'\n' +
-'Hard rules — violating any of these will cause the runtime to abort the rewrite:\n' +
-'\n' +
-'1. EXACT MATCH. The SEARCH text must match the current file BYTE-FOR-BYTE — same indentation, same whitespace, same line breaks. The runtime uses literal string matching, no regex, no fuzzy match.\n' +
-'\n' +
-'2. UNIQUE MATCH. The SEARCH text must occur EXACTLY ONCE in the file. NEVER emit a single-line SEARCH for a value (e.g. just `--bg: #f7e047;`). Always include enough surrounding context to be unique:\n' +
-'   - For a CSS variable or property change → include the parent selector line, the property line, and the closing brace of the rule. Example:\n' +
-'       :root {\n' +
-'         --bg: #0e0e0f;\n' +
-'         --surface: #161618;\n' +
-'   - For a JS constant or function body → include the function declaration line above and at least one line below.\n' +
-'   - For a short HTML attribute or text node → include the parent element\'s opening tag.\n' +
-'   When in doubt, add MORE context, never less. A 5-line SEARCH is normal, a 1-line SEARCH is almost always wrong.\n' +
-'\n' +
-'3. NEVER touch the runtime. Do not include any part of the <script id="re-write-able-runtime"> block (or its accompanying <style id="re-write-able-runtime-style">) in any SEARCH or REPLACE. The runtime guards this and will refuse the apply.\n' +
-'\n' +
-'4. OUTPUT ONLY BLOCKS. No prose, no explanation, no markdown fences. The first character of your response must be `<`.\n' +
-'\n' +
-'Multiple edits → multiple blocks, applied in order on the working text.\n' +
-'\n' +
-'Fallback: if the change is too sweeping for diff blocks (full restructuring, bulk redesign), output the literal first line:\n' +
-'\n' +
-'MODE: full-rewrite\n' +
-'\n' +
-'followed by a newline and the complete new HTML file from <!doctype html> to </html>.\n' +
-'\n' +
-'Apply the user instruction precisely. Keep the file fully functional. Prefer the smallest possible diff that is also UNAMBIGUOUS.';
+  const SYSTEM_PROMPT_DIFF = `You modify a single-file HTML application by emitting one or more SEARCH/REPLACE diff blocks.\n\nFORMAT — use these literal seven-character markers:\n\n<<<<<<< SEARCH\n<exact text from the current file>\n=======\n<the replacement text>\n>>>>>>> REPLACE\n\nHard rules — violating any of these will cause the runtime to abort the rewrite:\n\n1. EXACT MATCH. The SEARCH text must match the current file BYTE-FOR-BYTE — same indentation, same whitespace, same line breaks. The runtime uses literal string matching, no regex, no fuzzy match.\n\n2. UNIQUE MATCH. The SEARCH text must occur EXACTLY ONCE in the file. NEVER emit a single-line SEARCH for a value (e.g. just \\`--bg: #f7e047;\\`). Always include enough surrounding context to be unique:\n   - For a CSS variable or property change → include the parent selector line, the property line, and the closing brace of the rule. Example:\n       :root {\n         --bg: #0e0e0f;\n         --surface: #161618;\n   - For a JS constant or function body → include the function declaration line above and at least one line below.\n   - For a short HTML attribute or text node → include the parent element\ +
+ +
+ +
+ +
+ +
+ +
+ +
+ +
+ +
+ +
+ +
+ +
+ +
+ +
+ +
+;
 
   function parseEdits(text) {
     text = text.trim();
     if (/^MODE:\s*full-rewrite/i.test(text)) {
-      const rest = text.replace(/^MODE:\s*full-rewrite\s*\n?/i, '').trim();
-      return { mode: 'full', src: rest };
+      const rest = text.replace(/^MODE:\s*full-rewrite\s*\n?/i, ).trim();
+      return { mode: , src: rest };
     }
     const blockRe = /<{7}\s*SEARCH\s*\r?\n([\s\S]*?)\r?\n={7}\s*\r?\n([\s\S]*?)\r?\n>{7}\s*REPLACE/g;
     const blocks = [];
@@ -594,27 +573,27 @@
       blocks.push({ search: m[1], replace: m[2] });
     }
     if (blocks.length === 0) {
-      throw new Error('no SEARCH/REPLACE blocks found and no MODE: full-rewrite header. First 240 chars of response:\n' + text.slice(0, 240));
+      throw new Error( + text.slice(0, 240));
     }
-    return { mode: 'diff', blocks };
+    return { mode: , blocks };
   }
 
   function applyEdits(src, blocks) {
     let working = src;
     for (let i = 0; i < blocks.length; i++) {
       const { search, replace } = blocks[i];
-      if (!search) throw new Error(`block ${i + 1}: empty SEARCH text`);
+      if (!search) throw new Error(\\`block \\${i + 1}: empty SEARCH text\\`);
       // refuse to touch the runtime
-      if (/id=["']re-write-able-runtime["']/.test(search) || /id=["']re-write-able-runtime["']/.test(replace)) {
-        throw new Error(`block ${i + 1}: targets the re-write-able-runtime block — refusing`);
+      if (/id=["]/.test(search) || /id=["]/.test(replace)) {
+        throw new Error(\\`block \\${i + 1}: targets the re-write-able-runtime block — refusing\\`);
       }
       const idx = working.indexOf(search);
       if (idx === -1) {
-        throw new Error(`block ${i + 1}/${blocks.length}: SEARCH not found in current file. First 200 chars of SEARCH:\n${search.slice(0, 200)}`);
+        throw new Error(\\`block \\${i + 1}/\\${blocks.length}: SEARCH not found in current file. First 200 chars of SEARCH:\n\\${search.slice(0, 200)}\\`);
       }
       const lastIdx = working.lastIndexOf(search);
       if (lastIdx !== idx) {
-        throw new Error(`block ${i + 1}/${blocks.length}: SEARCH appears multiple times — needs more surrounding context to be unique. First 200 chars:\n${search.slice(0, 200)}`);
+        throw new Error(\\`block \\${i + 1}/\\${blocks.length}: SEARCH appears multiple times — needs more surrounding context to be unique. First 200 chars:\n\\${search.slice(0, 200)}\\`);
       }
       working = working.slice(0, idx) + replace + working.slice(idx + search.length);
     }
@@ -623,7 +602,7 @@
 
   function undo() {
     const stack = readJSON(KEYS.undo, []);
-    if (!stack.length) { toast('nothing to undo', 'err'); return; }
+    if (!stack.length) { toast(, ); return; }
     const prev = stack.pop();
     try { localStorage.setItem(KEYS.undo, JSON.stringify(stack)); } catch {}
     try { localStorage.setItem(KEYS.src, prev); } catch {}
@@ -646,7 +625,7 @@
     try { localStorage.setItem(KEYS.hist, JSON.stringify(h)); } catch {}
   }
   function readJSON(k, fallback) {
-    try { return JSON.parse(localStorage.getItem(k) || 'null') ?? fallback; } catch { return fallback; }
+    try { return JSON.parse(localStorage.getItem(k) || ) ?? fallback; } catch { return fallback; }
   }
 
   async function ensureKey() {
@@ -660,40 +639,40 @@
   }
   function askKey() {
     return new Promise(resolve => {
-      const panel = overlay.querySelector('.rw-panel');
-      panel.querySelector('.rw-body').style.display = 'none';
-      panel.querySelector('.rw-hist').style.display = 'none';
-      panel.querySelector('.rw-foot').style.display = 'none';
+      const panel = overlay.querySelector();
+      panel.querySelector().style.display = ;
+      panel.querySelector().style.display = ;
+      panel.querySelector().style.display = ;
 
-      const wrap = document.createElement('div');
-      wrap.style.padding = '18px';
-      wrap.innerHTML = `
-        <div style="font-family:'DM Mono',monospace;font-size:11px;color:#575766;letter-spacing:0.18em;text-transform:uppercase;margin-bottom:10px;">FIRST RUN — OPENROUTER KEY</div>
-        <div style="font-size:13px;color:#dddde4;margin-bottom:14px;line-height:1.5;">Paste your OpenRouter API key. It stays in <code style="font-family:'DM Mono';color:#b8ff57;">sessionStorage</code> only — cleared when you close this tab, never written into the file.</div>
-        <input id="rw-keyin" type="password" placeholder="sk-or-v1-…" style="width:100%;background:#161618;border:1px solid #2d2d34;color:#dddde4;font-family:'DM Mono',monospace;font-size:13px;padding:9px 11px;outline:none;margin-bottom:10px;" />
-        <input id="rw-modelin" placeholder="model · default ${DEFAULT_MODEL}" style="width:100%;background:#161618;border:1px solid #2d2d34;color:#dddde4;font-family:'DM Mono',monospace;font-size:12px;padding:9px 11px;outline:none;margin-bottom:14px;" />
+      const wrap = document.createElement();
+      wrap.style.padding = ;
+      wrap.innerHTML = \\`
+        <div style="font-family:,monospace;font-size:11px;color:#575766;letter-spacing:0.18em;text-transform:uppercase;margin-bottom:10px;">FIRST RUN — OPENROUTER KEY</div>
+        <div style="font-size:13px;color:#dddde4;margin-bottom:14px;line-height:1.5;">Paste your OpenRouter API key. It stays in <code style="font-family:;color:#b8ff57;">sessionStorage</code> only — cleared when you close this tab, never written into the file.</div>
+        <input id="rw-keyin" type="password" placeholder="sk-or-v1-…" style="width:100%;background:#161618;border:1px solid #2d2d34;color:#dddde4;font-family:,monospace;font-size:13px;padding:9px 11px;outline:none;margin-bottom:10px;" />
+        <input id="rw-modelin" placeholder="model · default \\${DEFAULT_MODEL}" style="width:100%;background:#161618;border:1px solid #2d2d34;color:#dddde4;font-family:,monospace;font-size:12px;padding:9px 11px;outline:none;margin-bottom:14px;" />
         <div style="display:flex;justify-content:space-between;align-items:center;">
-          <a href="https://openrouter.ai/keys" target="_blank" style="font-family:'DM Mono',monospace;font-size:10px;color:#57c8ff;letter-spacing:0.1em;text-transform:uppercase;text-decoration:none;">openrouter.ai/keys ↗</a>
-          <button id="rw-keyok" style="background:transparent;border:1px solid #b8ff57;color:#b8ff57;font-family:'DM Mono',monospace;font-size:11px;padding:7px 14px;cursor:pointer;letter-spacing:0.12em;">SAVE</button>
+          <a href="https://openrouter.ai/keys" target="_blank" style="font-family:,monospace;font-size:10px;color:#57c8ff;letter-spacing:0.1em;text-transform:uppercase;text-decoration:none;">openrouter.ai/keys ↗</a>
+          <button id="rw-keyok" style="background:transparent;border:1px solid #b8ff57;color:#b8ff57;font-family:,monospace;font-size:11px;padding:7px 14px;cursor:pointer;letter-spacing:0.12em;">SAVE</button>
         </div>
-      `;
+      \\`;
       panel.appendChild(wrap);
-      const keyIn = wrap.querySelector('#rw-keyin');
-      const modelIn = wrap.querySelector('#rw-modelin');
+      const keyIn = wrap.querySelector();
+      const modelIn = wrap.querySelector();
       setTimeout(() => keyIn.focus(), 30);
       const finish = (val) => {
         wrap.remove();
-        panel.querySelector('.rw-body').style.display = '';
-        panel.querySelector('.rw-hist').style.display = '';
-        panel.querySelector('.rw-foot').style.display = '';
+        panel.querySelector().style.display = ;
+        panel.querySelector().style.display = ;
+        panel.querySelector().style.display = ;
         resolve(val);
       };
-      wrap.querySelector('#rw-keyok').addEventListener('click', () => {
+      wrap.querySelector().addEventListener(, () => {
         const k = keyIn.value.trim();
         if (!k) return;
         finish({ key: k, model: modelIn.value.trim() || null });
       });
-      keyIn.addEventListener('keydown', e => { if (e.key === 'Enter') wrap.querySelector('#rw-keyok').click(); });
+      keyIn.addEventListener(, e => { if (e.key === ) wrap.querySelector().click(); });
     });
   }
 
@@ -703,40 +682,40 @@
   function captureCleanOuterHTML() {
     const clone = document.documentElement.cloneNode(true);
     clone.querySelectorAll(
-      '#re-write-able-runtime-style, .rw-pill, .rw-overlay, .rw-toast'
+      
     ).forEach(n => n.remove());
     return clone.outerHTML;
   }
 
   async function exportFile() {
-    let src = '<!doctype html>\n' + captureCleanOuterHTML();
+    let src =  + captureCleanOuterHTML();
     src = await embedSeedData(src);
-    const titleSlug = (document.title || 're-writeable').replace(/[^a-z0-9-]+/gi, '-').toLowerCase().replace(/^-+|-+$/g, '') || 're-writeable';
-    const blob = new Blob([src], { type: 'text/html' });
+    const titleSlug = (document.title || ).replace(/[^a-z0-9-]+/gi, ).toLowerCase().replace(/^-+|-+$/g, ) || ;
+    const blob = new Blob([src], { type:  });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = titleSlug + '.html';
+    const a = document.createElement();
+    a.href = url; a.download = titleSlug + ;
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
     unexported = 0;
-    toast('exported · ' + a.download);
+    toast( + a.download);
   }
 
   async function embedSeedData(src) {
-    if (typeof window.getExportData !== 'function') return src;
+    if (typeof window.getExportData !== ) return src;
     let data;
     try { data = await window.getExportData(); } catch { return src; }
-    const json = JSON.stringify(data).replace(/<\/(script)/gi, '<\\/$1');
-    const tag = '<script type="application/json" id="app-seed-data">' + json + '</' + 'script>';
-    src = src.replace(/<script[^>]*id=["']app-seed-data["'][^>]*>[\s\S]*?<\/script>/i, '');
-    if (/<\/body>/i.test(src)) src = src.replace(/<\/body>/i, tag + '\n</body>');
-    else src += '\n' + tag;
+    const json = JSON.stringify(data).replace(/<\/(script)/gi, );
+    const tag =  + json +  + ;
+    src = src.replace(/<script[^>]*id=["][^>]*>[\s\S]*?<\/script>/i, );
+    if (/<\/body>/i.test(src)) src = src.replace(/<\/body>/i, tag + );
+    else src +=  + tag;
     return src;
   }
 
   function toast(msg, kind) {
-    const t = document.createElement('div');
-    t.className = 'rw-toast' + (kind === 'err' ? ' err' : '');
+    const t = document.createElement();
+    t.className =  + (kind ===  ?  : );
     t.textContent = msg;
     document.body.appendChild(t);
     setTimeout(() => t.remove(), 2400);
@@ -747,15 +726,15 @@
     try {
       const { usage = 0, quota = 1 } = await navigator.storage.estimate();
       if (usage / quota > 0.8 && !sessionStorage.getItem(KEYS.warn)) {
-        sessionStorage.setItem(KEYS.warn, '1');
-        pill.querySelector('.rw-dot').style.background = '#ff5757';
-        toast('storage > 80% · export soon', 'err');
+        sessionStorage.setItem(KEYS.warn, );
+        pill.querySelector().style.background = ;
+        toast(, );
       }
     } catch {}
   }
 
   function escapeHtml(s) {
-    return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    return String(s).replace(/[&<>"&&amp;<&lt;>&gt;"&quot;":`;'}[c]));
   }
 
   storageCheck();
