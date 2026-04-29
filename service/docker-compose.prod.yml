@@ -1,0 +1,20 @@
+services:
+  rewritable:
+    build: .
+    image: ikangai/rewritable-new:latest
+    container_name: rewritable-new
+    restart: always
+    expose:
+      - "80"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.rewritable.rule=Host(`rewritable.ikangai.com`)"
+      - "traefik.http.routers.rewritable.entrypoints=websecure"
+      - "traefik.http.routers.rewritable.tls.certresolver=letsencrypt"
+      - "traefik.http.services.rewritable.loadbalancer.server.port=80"
+    networks:
+      - router_web
+
+networks:
+  router_web:
+    external: true
