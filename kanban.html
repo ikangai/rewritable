@@ -3,14 +3,7 @@
 <head>
 <meta charset="utf-8">
 
-<!--
-     SYNC LOADER (spec §5.1 / §5.4) — runs before anything else.
-     If a rewritten version of this file exists in localStorage,
-     hand the page over to it. Append ?reset=1 to ignore it.
-     The window.__rwLoaded guard prevents infinite recursion: the
-     localStorage src contains this same file (loader and all), so
-     after handoff the new doc's loader script must no-op.
--->
+<!-- SYNC LOADER (spec §5.1 / §5.4) — runs before anything else. If a rewritten version of this file exists in localStorage, hand the page over to it. Append ?reset=1 to ignore it. The window.__rwLoaded guard prevents infinite recursion: the localStorage src contains this same file (loader and all), so after handoff the new doc's loader script must no-op. -->
 <script>
 (function () {
   if (window.__rwLoaded) return;
@@ -211,11 +204,7 @@
 </aside>
 
 <script id="re-write-able-runtime">
-/*
-   re-write-able runtime — embedded in this file.
-   Preserve this <script id="re-write-able-runtime"> block exactly.
-   Hotkeys: ⌘K rewrite · ⌘Z undo · ⌘S export
-*/
+/* re-write-able runtime — embedded in this file. Preserve this <script id="re-write-able-runtime"> block exactly. Hotkeys: ⌘K rewrite · ⌘Z undo · ⌘S export */
 (() => {
   const KEYS = { src: 'docuapp_src', undo: 'docuapp_undo', hist: 'da_hist', warn: 'da_storage_warned' };
   const UNDO_CAP = 10, HIST_CAP = 15, NUDGE_AT = 5;
@@ -776,11 +765,7 @@
 </script>
 
 <script>
-/*
-   kanban — single-file re-writeable app (test case for spec v0.3)
-   storage: IndexedDB `kanban_db` / store `cards`
-   exports: window.getExportData() / window.hydrate(data) per §7.1
-*/
+/* kanban — single-file re-writeable app (test case for spec v0.3) storage: IndexedDB `kanban_db` / store `cards` exports: window.getExportData() / window.hydrate(data) per §7.1 */
 (() => {
   const DB_NAME = 'kanban_db';
   const STORE   = 'cards';
