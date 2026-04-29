@@ -1,0 +1,1472 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+
+<!-- ============================================================
+     SYNC LOADER (spec §5.1 / §5.4) — runs before anything else.
+     If a rewritten version of this file exists in localStorage,
+     hand the page over to it. Append ?reset=1 to ignore it.
+     The window.__rwLoaded guard prevents infinite recursion: the
+     localStorage src contains this same file (loader and all), so
+     after handoff the new doc's loader script must no-op.
+     ============================================================ -->
+<script>
+(function () {
+  if (window.__rwLoaded) return;
+  window.__rwLoaded = true;
+  try {
+    if (location.search.indexOf('reset=1') !== -1) {
+      localStorage.removeItem('docuapp_src');
+      localStorage.removeItem('docuapp_undo');
+      return;
+    }
+    var src = localStorage.getItem('docuapp_src');
+    if (src) { document.open(); document.write(src); document.close(); }
+  } catch (e) {}
+})();
+</script>
+
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>kanban — re-write-able test case</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=DM+Mono:wght@400;500&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0e0e0f;
+    --surface: #161618;
+    --surface-2: #1c1c1f;
+    --border: #2d2d34;
+    --text: #dddde4;
+    --muted: #575766;
+    --green: #b8ff57;
+    --blue: #57c8ff;
+    --red: #ff5757;
+    --ui: 'DM Sans', system-ui, sans-serif;
+    --mono: 'DM Mono', ui-monospace, monospace;
+    --display: 'Instrument Serif', 'Times New Roman', serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--ui);
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    overflow: hidden;
+  }
+  body::before {
+    content: '';
+    position: fixed; inset: 0;
+    pointer-events: none;
+    z-index: 1000;
+    opacity: 0.05;
+    mix-blend-mode: screen;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+
+  .app { display: flex; flex-direction: column; height: 100vh; }
+
+  /* topbar */
+  .topbar {
+    display: flex; align-items: baseline; justify-content: space-between;
+    padding: 22px 28px 18px;
+    border-bottom: 1px solid var(--border);
+  }
+  .brand { display: flex; align-items: baseline; gap: 16px; }
+  .brand-mark {
+    font-family: var(--display); font-style: italic;
+    font-size: 40px; line-height: 1; letter-spacing: -0.015em;
+  }
+  .brand-mark .dot {
+    display: inline-block; width: 9px; height: 9px;
+    background: var(--green); margin-left: 6px;
+    transform: translateY(-4px);
+    border-radius: 50%;
+    animation: pulse 2.4s ease-in-out infinite;
+  }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
+  .brand-meta {
+    font-family: var(--mono); font-size: 11px; color: var(--muted);
+    letter-spacing: 0.06em; text-transform: uppercase;
+  }
+  .meta-right {
+    display: flex; align-items: center; gap: 26px;
+    font-family: var(--mono); font-size: 11px; color: var(--muted);
+    letter-spacing: 0.06em; text-transform: uppercase;
+  }
+  .meta-stat { display: flex; align-items: center; gap: 8px; }
+  .meta-stat strong { color: var(--text); font-weight: 500; }
+  .meta-stat .pip { width: 6px; height: 6px; background: var(--green); display: inline-block; }
+
+  /* filter */
+  .filter {
+    display: flex; align-items: center; gap: 14px;
+    padding: 10px 28px;
+    border-bottom: 1px solid var(--border);
+  }
+  .filter-label {
+    font-family: var(--mono); font-size: 11px;
+    color: var(--muted); letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+  .filter-input {
+    flex: 1;
+    background: transparent;
+    border: none;
+    color: var(--text);
+    font-family: var(--ui);
+    font-size: 14px;
+    outline: none;
+    padding: 4px 0;
+  }
+  .filter-input::placeholder { color: var(--muted); }
+  .filter-key {
+    font-family: var(--mono); font-size: 10px; color: var(--muted);
+    border: 1px solid var(--border); padding: 2px 6px;
+  }
+
+  /* board */
+  .board {
+    flex: 1;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1px;
+    background: var(--border);
+    overflow: hidden;
+  }
+  .col {
+    background: var(--bg);
+    display: flex; flex-direction: column;
+    min-height: 0; overflow: hidden;
+  }
+  .col-head {
+    padding: 16px 18px 12px;
+    display: flex; align-items: center; justify-content: space-between;
+    border-bottom: 1px solid var(--border);
+  }
+  .col-title {
+    font-family: var(--mono); font-size: 11px;
+    text-transform: uppercase; letter-spacing: 0.18em;
+    color: var(--text);
+    display: flex; align-items: center; gap: 10px;
+  }
+  .col-count {
+    font-family: var(--mono); font-size: 10px;
+    color: var(--bg);
+    background: var(--text);
+    padding: 1px 6px; min-width: 18px; text-align: center;
+  }
+  .col[data-id="done"] .col-count { background: var(--green); color: var(--bg); }
+  .col[data-id="doing"] .col-count { background: var(--blue); color: var(--bg); }
+  .col-add {
+    background: transparent; border: 1px solid var(--border);
+    color: var(--muted); font-family: var(--mono); font-size: 11px;
+    padding: 3px 8px; cursor: pointer;
+    letter-spacing: 0.08em;
+    transition: color 0.15s ease, border-color 0.15s ease;
+  }
+  .col-add:hover { color: var(--green); border-color: var(--green); }
+  .col-body {
+    padding: 12px;
+    overflow-y: auto;
+    flex: 1;
+    display: flex; flex-direction: column; gap: 8px;
+    transition: background 0.15s ease;
+  }
+  .col-body::-webkit-scrollbar { width: 8px; }
+  .col-body::-webkit-scrollbar-thumb { background: var(--border); }
+  .col-body::-webkit-scrollbar-track { background: transparent; }
+  .col-body.drag-over { background: rgba(184, 255, 87, 0.04); }
+
+  /* card */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-left-width: 3px;
+    padding: 12px 14px;
+    cursor: grab;
+    position: relative;
+    transition: border-color 0.15s ease, transform 0.15s ease, background 0.15s ease;
+    user-select: none;
+    animation: fadein 0.28s ease both;
+  }
+  @keyframes fadein {
+    from { opacity: 0; transform: translateY(4px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  .card:hover { border-color: #3a3a44; background: var(--surface-2); }
+  .card:active { cursor: grabbing; }
+  .card.dragging { opacity: 0.4; transform: rotate(-0.8deg); }
+  .card[data-pri="high"] { border-left-color: var(--red); }
+  .card[data-pri="med"]  { border-left-color: var(--blue); }
+  .card[data-pri="low"]  { border-left-color: var(--muted); }
+  .card.selected {
+    border-color: var(--green);
+    border-left-color: var(--green);
+    box-shadow: -3px 0 0 var(--green);
+  }
+
+  .card-title {
+    font-size: 14px; font-weight: 500; line-height: 1.35;
+    margin-bottom: 6px;
+  }
+  .card-body {
+    font-size: 12.5px; color: var(--muted);
+    line-height: 1.45; margin-bottom: 10px;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .card-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 10px; }
+  .tag {
+    font-family: var(--mono); font-size: 9px;
+    color: var(--blue);
+    border: 1px solid #1d3744;
+    padding: 2px 5px;
+    text-transform: uppercase; letter-spacing: 0.08em;
+  }
+  .card-foot {
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .avatar {
+    width: 22px; height: 22px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: center;
+    font-family: var(--mono); font-size: 9px; letter-spacing: 0.05em;
+    color: var(--text);
+  }
+  .due {
+    font-family: var(--mono); font-size: 10px; color: var(--muted);
+    letter-spacing: 0.05em;
+  }
+  .due.overdue { color: var(--red); }
+  .due.soon    { color: var(--green); }
+
+  .inline-add {
+    border: 1px dashed var(--border);
+    padding: 9px 12px;
+    color: var(--muted);
+    font-family: var(--mono); font-size: 10px;
+    letter-spacing: 0.12em;
+    cursor: pointer;
+    text-align: center;
+    text-transform: uppercase;
+    transition: color 0.15s ease, border-color 0.15s ease;
+  }
+  .inline-add:hover { border-color: var(--green); color: var(--green); }
+
+  .col-empty {
+    padding: 18px 12px;
+    color: var(--muted);
+    font-family: var(--mono); font-size: 10px;
+    text-align: center; letter-spacing: 0.1em;
+    text-transform: uppercase;
+    opacity: 0.5;
+  }
+
+  /* editor */
+  .editor {
+    position: fixed; top: 0; right: 0; bottom: 0;
+    width: min(480px, 100vw);
+    background: var(--bg);
+    border-left: 1px solid var(--border);
+    transform: translateX(100%);
+    transition: transform 0.28s cubic-bezier(0.32, 0.72, 0.2, 1);
+    z-index: 100;
+    display: flex; flex-direction: column;
+  }
+  .editor.open { transform: translateX(0); }
+  .editor-head {
+    padding: 18px 24px;
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .editor-head .label {
+    font-family: var(--mono); font-size: 11px; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.18em;
+  }
+  .editor-head .label .id {
+    color: var(--text); margin-left: 10px;
+  }
+  .icon-btns { display: flex; gap: 8px; }
+  .icon-btn {
+    background: transparent; border: 1px solid var(--border);
+    color: var(--muted);
+    width: 28px; height: 28px; cursor: pointer;
+    font-family: var(--mono); font-size: 12px; line-height: 1;
+    display: flex; align-items: center; justify-content: center;
+    transition: color 0.15s ease, border-color 0.15s ease;
+  }
+  .icon-btn:hover { color: var(--text); border-color: var(--text); }
+  .icon-btn.danger:hover { color: var(--red); border-color: var(--red); }
+
+  .editor-body {
+    padding: 22px 24px;
+    flex: 1; overflow-y: auto;
+    display: flex; flex-direction: column; gap: 18px;
+  }
+  .field { display: flex; flex-direction: column; gap: 6px; }
+  .field label {
+    font-family: var(--mono); font-size: 10px;
+    color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.18em;
+  }
+  .field input, .field textarea, .field select {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: var(--ui);
+    font-size: 14px;
+    padding: 9px 11px;
+    outline: none;
+    transition: border-color 0.15s ease;
+  }
+  .field input:focus, .field textarea:focus, .field select:focus {
+    border-color: var(--green);
+  }
+  .field textarea { min-height: 110px; resize: vertical; line-height: 1.5; }
+  .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+  .priority-pick { display: flex; gap: 6px; }
+  .priority-pick button {
+    flex: 1;
+    background: transparent; border: 1px solid var(--border);
+    color: var(--muted);
+    font-family: var(--mono); font-size: 10px;
+    text-transform: uppercase; letter-spacing: 0.12em;
+    padding: 8px 6px; cursor: pointer;
+    transition: color 0.15s ease, border-color 0.15s ease;
+  }
+  .priority-pick button:hover { color: var(--text); }
+  .priority-pick button.on[data-v="high"] { border-color: var(--red); color: var(--red); }
+  .priority-pick button.on[data-v="med"]  { border-color: var(--blue); color: var(--blue); }
+  .priority-pick button.on[data-v="low"]  { border-color: var(--text); color: var(--text); }
+
+  .editor-foot {
+    padding: 14px 24px;
+    border-top: 1px solid var(--border);
+    font-family: var(--mono); font-size: 10px;
+    color: var(--muted); letter-spacing: 0.1em;
+    text-transform: uppercase;
+    display: flex; justify-content: space-between;
+  }
+
+  .footer {
+    padding: 8px 28px;
+    border-top: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between;
+    font-family: var(--mono); font-size: 10px; color: var(--muted);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+  .footer .keys { display: flex; gap: 18px; flex-wrap: wrap; }
+  .key-hint kbd {
+    font-family: var(--mono); font-size: 10px;
+    border: 1px solid var(--border);
+    padding: 1px 5px;
+    margin-right: 6px;
+    color: var(--text);
+    background: var(--surface);
+  }
+  #last-saved { transition: color 0.4s ease; }
+
+  @media (max-width: 900px) {
+    body { overflow: auto; }
+    .app { height: auto; min-height: 100vh; }
+    .board { grid-template-columns: 1fr; gap: 1px; }
+    .col { min-height: auto; }
+    .col-body { max-height: 60vh; }
+    .topbar { flex-direction: column; align-items: flex-start; gap: 10px; }
+    .meta-right { flex-wrap: wrap; gap: 16px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="app" id="app">
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark">kanban<span class="dot"></span></div>
+      <div class="brand-meta">re-write-able · v0.3 test case</div>
+    </div>
+    <div class="meta-right">
+      <div class="meta-stat"><span class="pip"></span><span id="stat-active">0 active</span></div>
+      <div class="meta-stat"><strong id="stat-total">0</strong> cards</div>
+      <div class="meta-stat" id="stat-storage">idb · —</div>
+    </div>
+  </header>
+
+  <div class="filter">
+    <span class="filter-label">FILTER</span>
+    <input class="filter-input" id="filter" placeholder="search title, body, tag, assignee…" />
+    <span class="filter-key">/</span>
+  </div>
+
+  <div class="board" id="board"></div>
+
+  <footer class="footer">
+    <div class="keys">
+      <span class="key-hint"><kbd>N</kbd>new</span>
+      <span class="key-hint"><kbd>/</kbd>filter</span>
+      <span class="key-hint"><kbd>↵</kbd>open</span>
+      <span class="key-hint"><kbd>Esc</kbd>close</span>
+    </div>
+    <div id="last-saved">saved · just now</div>
+  </footer>
+</div>
+
+<aside class="editor" id="editor" aria-hidden="true">
+  <div class="editor-head">
+    <div class="label">CARD<span class="id" id="editor-id">—</span></div>
+    <div class="icon-btns">
+      <button class="icon-btn danger" id="del-btn" title="Delete">×</button>
+      <button class="icon-btn" id="close-btn" title="Close">✕</button>
+    </div>
+  </div>
+  <div class="editor-body">
+    <div class="field">
+      <label>Title</label>
+      <input id="f-title" placeholder="What needs doing?" autocomplete="off" />
+    </div>
+    <div class="field">
+      <label>Body</label>
+      <textarea id="f-body" placeholder="Notes, links, anything."></textarea>
+    </div>
+    <div class="field-row">
+      <div class="field">
+        <label>Column</label>
+        <select id="f-col">
+          <option value="backlog">Backlog</option>
+          <option value="doing">In Progress</option>
+          <option value="review">Review</option>
+          <option value="done">Done</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Priority</label>
+        <div class="priority-pick" id="f-pri">
+          <button data-v="low">Low</button>
+          <button data-v="med">Med</button>
+          <button data-v="high">High</button>
+        </div>
+      </div>
+    </div>
+    <div class="field-row">
+      <div class="field">
+        <label>Assignee</label>
+        <input id="f-assignee" maxlength="3" placeholder="MR" autocomplete="off" />
+      </div>
+      <div class="field">
+        <label>Due</label>
+        <input id="f-due" type="date" />
+      </div>
+    </div>
+    <div class="field">
+      <label>Tags · comma separated</label>
+      <input id="f-tags" placeholder="ux, a11y, storage" autocomplete="off" />
+    </div>
+  </div>
+  <div class="editor-foot">
+    <span id="editor-created">—</span>
+    <span>autosaving</span>
+  </div>
+</aside>
+
+<script id="re-write-able-runtime">
+/* ============================================================
+   re-write-able runtime — embedded in this file.
+   Preserve this <script id="re-write-able-runtime"> block exactly.
+   Hotkeys: ⌘K rewrite · ⌘Z undo · ⌘S export
+   ============================================================ */
+(() => {
+  const KEYS = { src: 'docuapp_src', undo: 'docuapp_undo', hist: 'da_hist', warn: 'da_storage_warned' };
+  const UNDO_CAP = 10, HIST_CAP = 15, NUDGE_AT = 5;
+  const SS_KEY = 'or_key', SS_MODEL = 'or_model';
+  const DEFAULT_MODEL = 'anthropic/claude-sonnet-4';
+
+  let unexported = 0;
+  let currentAbort = null;
+
+  // ---- de-bloat: remove any stale runtime artifacts that were baked into
+  // the source by previous rewrites. Without this, every rewrite cycle
+  // accumulates another copy of the runtime style/pill/overlay in the
+  // captured outerHTML, ballooning the file and breaking diff uniqueness.
+  document.querySelectorAll(
+    '#re-write-able-runtime-style, .rw-pill, .rw-overlay, .rw-toast'
+  ).forEach(n => n.remove());
+
+  // ---- styles ----
+  const style = document.createElement('style');
+  style.id = 're-write-able-runtime-style';
+  style.textContent = `
+    .rw-pill {
+      position: fixed; right: 14px; bottom: 14px; z-index: 99998;
+      background: #0e0e0f; border: 1px solid #2d2d34;
+      color: #575766; font-family: 'DM Mono', ui-monospace, monospace;
+      font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase;
+      padding: 6px 10px; cursor: pointer; user-select: none;
+      display: flex; align-items: center; gap: 10px;
+      transition: color 0.15s, border-color 0.15s;
+    }
+    .rw-pill:hover { color: #b8ff57; border-color: #b8ff57; }
+    .rw-pill .rw-dot { width: 6px; height: 6px; background: #b8ff57; display: inline-block; border-radius: 50%; }
+    .rw-pill .rw-warn { color: #ff5757; }
+
+    .rw-overlay {
+      position: fixed; inset: 0; z-index: 99999;
+      background: rgba(0,0,0,0.6);
+      backdrop-filter: blur(6px);
+      display: none; align-items: flex-start; justify-content: center;
+      padding-top: 18vh;
+      animation: rw-fade 0.18s ease both;
+    }
+    .rw-overlay.open { display: flex; }
+    @keyframes rw-fade { from { opacity: 0; } to { opacity: 1; } }
+
+    .rw-panel {
+      width: min(640px, 92vw);
+      background: #0e0e0f;
+      border: 1px solid #2d2d34;
+      box-shadow: 0 24px 80px rgba(0,0,0,0.6);
+      animation: rw-slide 0.22s cubic-bezier(0.32, 0.72, 0.2, 1) both;
+    }
+    @keyframes rw-slide { from { transform: translateY(-12px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+    .rw-head {
+      padding: 14px 18px; border-bottom: 1px solid #2d2d34;
+      font-family: 'DM Mono', ui-monospace, monospace; font-size: 11px;
+      color: #575766; letter-spacing: 0.18em; text-transform: uppercase;
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    .rw-head .rw-title { color: #dddde4; }
+    .rw-head .rw-title em { font-family: 'Instrument Serif', serif; font-style: italic; color: #b8ff57; text-transform: none; letter-spacing: 0; font-size: 14px; }
+    .rw-head .rw-model { font-size: 10px; cursor: pointer; padding: 3px 6px; border: 1px solid transparent; transition: border-color 0.15s, color 0.15s; }
+    .rw-head .rw-model:hover { color: #b8ff57; border-color: #2d2d34; }
+    .rw-head .rw-model-input { font-family: 'DM Mono', monospace; font-size: 10px; background: #161618; border: 1px solid #b8ff57; color: #dddde4; padding: 3px 6px; outline: none; min-width: 280px; letter-spacing: 0.06em; text-transform: none; }
+
+    .rw-body { padding: 18px; }
+    .rw-input {
+      width: 100%; background: transparent; border: none; outline: none;
+      color: #dddde4; font-family: 'DM Sans', system-ui, sans-serif;
+      font-size: 16px; line-height: 1.5; resize: none;
+      min-height: 56px; max-height: 200px;
+    }
+    .rw-input::placeholder { color: #575766; }
+
+    .rw-hist {
+      border-top: 1px solid #1f1f25;
+      max-height: 220px; overflow-y: auto;
+    }
+    .rw-hist-row {
+      padding: 9px 18px; cursor: pointer;
+      font-size: 13px; color: #dddde4;
+      display: flex; gap: 12px; align-items: baseline;
+      border-bottom: 1px solid #1a1a1f;
+    }
+    .rw-hist-row:hover, .rw-hist-row.rw-on { background: #161618; }
+    .rw-hist-row .rw-when { font-family: 'DM Mono', monospace; font-size: 10px; color: #575766; flex: 0 0 auto; }
+    .rw-hist-row .rw-text { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    .rw-foot {
+      padding: 10px 18px; border-top: 1px solid #2d2d34;
+      display: flex; justify-content: space-between; align-items: center;
+      font-family: 'DM Mono', monospace; font-size: 10px; color: #575766;
+      letter-spacing: 0.1em; text-transform: uppercase;
+    }
+    .rw-foot kbd {
+      font-family: 'DM Mono', monospace; font-size: 10px;
+      border: 1px solid #2d2d34; padding: 1px 5px;
+      color: #dddde4; background: #161618; margin-right: 4px;
+    }
+    .rw-foot button {
+      background: transparent; border: 1px solid #2d2d34;
+      color: #b8ff57; font-family: 'DM Mono', monospace; font-size: 11px;
+      padding: 6px 12px; cursor: pointer; letter-spacing: 0.12em;
+    }
+    .rw-foot button:hover { background: #b8ff57; color: #0e0e0f; }
+    .rw-foot button:disabled { opacity: 0.3; cursor: not-allowed; }
+
+    .rw-busy {
+      padding: 18px; display: flex; align-items: center; gap: 14px;
+      font-family: 'DM Mono', monospace; font-size: 11px;
+      color: #b8ff57; letter-spacing: 0.12em; text-transform: uppercase;
+    }
+    .rw-spin {
+      width: 12px; height: 12px; border: 1px solid #2d2d34;
+      border-top-color: #b8ff57; border-radius: 50%;
+      animation: rw-spin 0.8s linear infinite;
+    }
+    @keyframes rw-spin { to { transform: rotate(360deg); } }
+
+    .rw-err {
+      padding: 14px 18px; background: #2a1416; border-top: 1px solid #ff5757;
+      color: #ff9b9b; font-family: 'DM Mono', monospace; font-size: 11px;
+      white-space: pre-wrap; word-break: break-word; max-height: 120px; overflow: auto;
+    }
+
+    .rw-toast {
+      position: fixed; left: 50%; bottom: 60px; transform: translateX(-50%);
+      background: #161618; border: 1px solid #b8ff57; color: #b8ff57;
+      font-family: 'DM Mono', monospace; font-size: 11px;
+      letter-spacing: 0.12em; text-transform: uppercase;
+      padding: 8px 14px; z-index: 100000;
+      animation: rw-toast 2.2s ease both;
+    }
+    .rw-toast.err { border-color: #ff5757; color: #ff5757; }
+    @keyframes rw-toast {
+      0% { opacity: 0; transform: translate(-50%, 8px); }
+      10%, 80% { opacity: 1; transform: translate(-50%, 0); }
+      100% { opacity: 0; transform: translate(-50%, -4px); }
+    }
+  `;
+  document.head.appendChild(style);
+
+  // ---- elements ----
+  const pill = document.createElement('div');
+  pill.className = 'rw-pill';
+  pill.innerHTML = '<span class="rw-dot"></span><span>⌘K REWRITE</span><span style="opacity:0.5">·</span><span>⌘Z</span><span style="opacity:0.5">·</span><span>⌘S</span>';
+  pill.title = 're-write-able runtime — ⌘K to rewrite, ⌘Z undo, ⌘S export';
+  pill.addEventListener('click', () => openPalette());
+  document.body.appendChild(pill);
+
+  const overlay = document.createElement('div');
+  overlay.className = 'rw-overlay';
+  overlay.innerHTML = `
+    <div class="rw-panel" role="dialog" aria-label="Rewrite this file">
+      <div class="rw-head">
+        <div class="rw-title">REWRITE — <em>tell the file what to change</em></div>
+        <div class="rw-model" id="rw-model-label">—</div>
+      </div>
+      <div class="rw-body">
+        <textarea class="rw-input" id="rw-input" rows="2" placeholder="e.g. add a 'priority filter' to the toolbar — three buttons high/med/low that filter visible cards"></textarea>
+      </div>
+      <div class="rw-hist" id="rw-hist"></div>
+      <div class="rw-foot">
+        <div><kbd>↵</kbd>send<span style="margin:0 12px;opacity:0.4">·</span><kbd>↑↓</kbd>history<span style="margin:0 12px;opacity:0.4">·</span><kbd>Esc</kbd>close</div>
+        <button id="rw-send">SEND →</button>
+      </div>
+    </div>
+  `;
+  overlay.addEventListener('click', e => { if (e.target === overlay) closePalette(); });
+  document.body.appendChild(overlay);
+  const input = overlay.querySelector('#rw-input');
+  const sendBtn = overlay.querySelector('#rw-send');
+  const histBox = overlay.querySelector('#rw-hist');
+  const modelLabel = overlay.querySelector('#rw-model-label');
+
+  let histIdx = -1;
+  function renderHist() {
+    const h = readJSON(KEYS.hist, []);
+    histBox.innerHTML = '';
+    h.slice(0, 6).forEach((row, i) => {
+      const el = document.createElement('div');
+      el.className = 'rw-hist-row';
+      const when = relTime(row.t);
+      el.innerHTML = `<span class="rw-when">${escapeHtml(when)}</span><span class="rw-text">${escapeHtml(row.p)}</span>`;
+      el.addEventListener('click', () => { input.value = row.p; input.focus(); });
+      histBox.appendChild(el);
+    });
+  }
+  function relTime(t) {
+    const s = Math.round((Date.now() - t) / 1000);
+    if (s < 60) return s + 's ago';
+    if (s < 3600) return Math.round(s / 60) + 'm ago';
+    if (s < 86400) return Math.round(s / 3600) + 'h ago';
+    return Math.round(s / 86400) + 'd ago';
+  }
+
+  function currentModel() { return sessionStorage.getItem(SS_MODEL) || DEFAULT_MODEL; }
+  function refreshModelLabel() {
+    modelLabel.textContent = currentModel().split('/').pop();
+    modelLabel.title = 'click to change · ' + currentModel();
+  }
+  modelLabel.addEventListener('click', () => {
+    if (modelLabel.querySelector('input')) return;
+    const cur = currentModel();
+    modelLabel.textContent = '';
+    const inp = document.createElement('input');
+    inp.className = 'rw-model-input';
+    inp.value = cur;
+    inp.placeholder = 'provider/model-id';
+    modelLabel.appendChild(inp);
+    inp.focus(); inp.select();
+    const commit = () => {
+      const v = inp.value.trim();
+      if (v) sessionStorage.setItem(SS_MODEL, v);
+      refreshModelLabel();
+    };
+    inp.addEventListener('keydown', e => {
+      if (e.key === 'Enter') { e.preventDefault(); commit(); }
+      else if (e.key === 'Escape') { e.preventDefault(); refreshModelLabel(); }
+      e.stopPropagation();
+    });
+    inp.addEventListener('blur', commit);
+  });
+
+  function openPalette() {
+    refreshModelLabel();
+    overlay.classList.add('open');
+    renderHist();
+    input.value = '';
+    histIdx = -1;
+    setTimeout(() => input.focus(), 30);
+  }
+  function closePalette() {
+    overlay.classList.remove('open');
+    // restore default footer if a busy/err state was injected
+    const panel = overlay.querySelector('.rw-panel');
+    panel.querySelectorAll('.rw-busy, .rw-err').forEach(n => n.remove());
+    panel.querySelector('.rw-body').style.display = '';
+    panel.querySelector('.rw-foot').style.display = '';
+    panel.querySelector('.rw-hist').style.display = '';
+  }
+
+  // ---- hotkeys ----
+  function onKey(e) {
+    const meta = e.metaKey || e.ctrlKey;
+    const k = (e.key || '').toLowerCase();
+    const code = e.code || '';
+    if (meta && (k === 'k' || code === 'KeyK')) {
+      e.preventDefault(); e.stopPropagation();
+      overlay.classList.contains('open') ? closePalette() : openPalette();
+      return;
+    }
+    if (overlay.classList.contains('open')) {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        if (currentAbort) currentAbort.abort(new DOMException('cancelled by user', 'AbortError'));
+        else closePalette();
+        return;
+      }
+      if (document.activeElement === input) {
+        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); return; }
+        if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+          const h = readJSON(KEYS.hist, []);
+          if (!h.length) return;
+          if (e.key === 'ArrowUp') histIdx = Math.min(h.length - 1, histIdx + 1);
+          else histIdx = Math.max(-1, histIdx - 1);
+          input.value = histIdx >= 0 ? h[histIdx].p : '';
+          e.preventDefault();
+        }
+      }
+      return;
+    }
+    if (meta && (k === 'z' || code === 'KeyZ') && !e.shiftKey) {
+      const tag = document.activeElement?.tagName;
+      if (['INPUT','TEXTAREA','SELECT'].includes(tag)) return; // let field undo
+      e.preventDefault(); undo();
+    } else if (meta && (k === 's' || code === 'KeyS')) {
+      e.preventDefault(); exportFile();
+    }
+  }
+  // Listen on window capture phase — fires before document and any app handlers,
+  // and survives if app code replaces document.body.innerHTML on a fatal error.
+  // Window survives document.open(), so a previous runtime's listener (and its
+  // closure over a now-detached DOM) lingers. Detach it before adding our own.
+  if (window.__rwOnKey) {
+    try { window.removeEventListener('keydown', window.__rwOnKey, true); } catch {}
+  }
+  window.__rwOnKey = onKey;
+  window.addEventListener('keydown', onKey, true);
+
+  sendBtn.addEventListener('click', submit);
+
+  // ---- core ----
+  async function submit() {
+    const instruction = input.value.trim();
+    if (!instruction) return;
+    const key = await ensureKey();
+    if (!key) return;
+    const model = sessionStorage.getItem(SS_MODEL) || DEFAULT_MODEL;
+
+    // hide normal palette, show busy
+    const panel = overlay.querySelector('.rw-panel');
+    panel.querySelector('.rw-body').style.display = 'none';
+    panel.querySelector('.rw-hist').style.display = 'none';
+    panel.querySelector('.rw-foot').style.display = 'none';
+    const busy = document.createElement('div');
+    busy.className = 'rw-busy';
+    busy.innerHTML = '<span class="rw-spin"></span><span id="rw-busy-text">rewriting · model is reading the whole file…</span>';
+    panel.appendChild(busy);
+
+    pushHist(instruction);
+
+    let currentSrc;
+    try {
+      currentSrc = '<!doctype html>\n' + captureCleanOuterHTML();
+      currentSrc = await embedSeedData(currentSrc);
+    } catch (err) { showErr(panel, 'snapshot failed: ' + err.message); return; }
+
+    pushUndo(currentSrc);
+
+    const startedAt = Date.now();
+    const ctrl = new AbortController();
+    currentAbort = ctrl;
+    const timeoutId = setTimeout(() => ctrl.abort(new DOMException('timeout 120s', 'AbortError')), 120000);
+    const tick = setInterval(() => {
+      const s = Math.round((Date.now() - startedAt) / 1000);
+      const t = panel.querySelector('.rw-busy .rw-busy-text');
+      if (t) t.textContent = `rewriting · ${Math.round(currentSrc.length / 1024)} kb · ${s}s`;
+    }, 500);
+
+    // turn the busy state into a cancellable one
+    panel.querySelector('.rw-busy').innerHTML =
+      '<span class="rw-spin"></span>' +
+      '<span class="rw-busy-text" style="flex:1">rewriting · model is reading the whole file…</span>' +
+      '<button class="rw-cancel" style="background:transparent;border:1px solid #ff5757;color:#ff5757;font-family:\'DM Mono\',monospace;font-size:10px;padding:4px 10px;cursor:pointer;letter-spacing:0.12em;">CANCEL</button>';
+    panel.querySelector('.rw-cancel').addEventListener('click', () => ctrl.abort(new DOMException('cancelled by user', 'AbortError')));
+
+    try {
+      console.info('[re-write-able] sending', { model, srcKb: Math.round(currentSrc.length / 1024), instruction });
+      const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        signal: ctrl.signal,
+        headers: {
+          'Authorization': 'Bearer ' + key,
+          'Content-Type': 'application/json',
+          'HTTP-Referer': 'https://re-write-able.local',
+          'X-Title': 're-write-able',
+        },
+        body: JSON.stringify({
+          model,
+          max_tokens: 32000,
+          temperature: 0.2,
+          messages: [
+            { role: 'system', content: SYSTEM_PROMPT_DIFF },
+            { role: 'user', content:
+              'CURRENT FILE:\n```html\n' + currentSrc + '\n```\n\nINSTRUCTION: ' + instruction +
+              '\n\nEmit SEARCH/REPLACE blocks for the smallest change that fulfills the instruction. Output blocks only, no prose.' },
+          ],
+        }),
+      });
+      if (!res.ok) {
+        const body = await res.text();
+        throw new Error('HTTP ' + res.status + ' — ' + body.slice(0, 400));
+      }
+      const json = await res.json();
+      console.info('[re-write-able] response', { finish: json.choices?.[0]?.finish_reason, usage: json.usage });
+      let raw = json.choices?.[0]?.message?.content;
+      const finish = json.choices?.[0]?.finish_reason;
+      if (!raw) throw new Error('empty response · finish_reason=' + finish + ' · ' + JSON.stringify(json).slice(0, 400));
+      raw = stripFence(raw).trim();
+
+      const parsed = parseEdits(raw);
+      let newSrc;
+      if (parsed.mode === 'full') {
+        newSrc = parsed.src;
+        if (!/^<!doctype/i.test(newSrc) && !/^<html/i.test(newSrc)) {
+          throw new Error('full-rewrite mode but response is not HTML (finish=' + finish + ') — first 240:\n' + newSrc.slice(0, 240));
+        }
+        if (!/<\/html\s*>\s*$/i.test(newSrc)) {
+          throw new Error('full-rewrite truncated — no </html> (finish=' + finish + ', length=' + newSrc.length + ').');
+        }
+      } else {
+        console.info('[re-write-able] applying', parsed.blocks.length, 'diff block(s)');
+        newSrc = applyEdits(currentSrc, parsed.blocks);
+      }
+
+      if (!/id=["']re-write-able-runtime["']/.test(newSrc)) {
+        throw new Error('result is missing the runtime block — refusing to apply');
+      }
+      newSrc = await embedSeedData(newSrc);
+      try { localStorage.setItem(KEYS.src, newSrc); } catch (err) { /* quota — proceed anyway */ }
+      unexported += 1;
+      // re-render — the new doc's runtime takes over
+      document.open(); document.write(newSrc); document.close();
+    } catch (err) {
+      console.error('[re-write-able] rewrite failed', err);
+      const msg = err.name === 'AbortError' ? (err.message || 'cancelled') : (err.message || String(err));
+      showErr(panel, msg);
+    } finally {
+      clearInterval(tick);
+      clearTimeout(timeoutId);
+      currentAbort = null;
+    }
+  }
+
+  function showErr(panel, msg) {
+    panel.querySelectorAll('.rw-busy').forEach(n => n.remove());
+    panel.querySelector('.rw-body').style.display = '';
+    panel.querySelector('.rw-hist').style.display = '';
+    panel.querySelector('.rw-foot').style.display = '';
+    let err = panel.querySelector('.rw-err');
+    if (!err) {
+      err = document.createElement('div');
+      err.className = 'rw-err';
+      panel.appendChild(err);
+    }
+    err.textContent = msg;
+  }
+
+  function stripFence(s) {
+    return s
+      .replace(/^\s*```(?:html|HTML|diff|text)?\s*\n?/, '')
+      .replace(/\n?\s*```\s*$/, '');
+  }
+
+  // ---- diff protocol (spec §6.2 v0.4) ----
+  const SYSTEM_PROMPT_DIFF =
+'You modify a single-file HTML application by emitting one or more SEARCH/REPLACE diff blocks.\n' +
+'\n' +
+'FORMAT — use these literal seven-character markers:\n' +
+'\n' +
+'<<<<<<< SEARCH\n' +
+'<exact text from the current file>\n' +
+'=======\n' +
+'<the replacement text>\n' +
+'>>>>>>> REPLACE\n' +
+'\n' +
+'Hard rules — violating any of these will cause the runtime to abort the rewrite:\n' +
+'\n' +
+'1. EXACT MATCH. The SEARCH text must match the current file BYTE-FOR-BYTE — same indentation, same whitespace, same line breaks. The runtime uses literal string matching, no regex, no fuzzy match.\n' +
+'\n' +
+'2. UNIQUE MATCH. The SEARCH text must occur EXACTLY ONCE in the file. NEVER emit a single-line SEARCH for a value (e.g. just `--bg: #f7e047;`). Always include enough surrounding context to be unique:\n' +
+'   - For a CSS variable or property change → include the parent selector line, the property line, and the closing brace of the rule. Example:\n' +
+'       :root {\n' +
+'         --bg: #0e0e0f;\n' +
+'         --surface: #161618;\n' +
+'   - For a JS constant or function body → include the function declaration line above and at least one line below.\n' +
+'   - For a short HTML attribute or text node → include the parent element\'s opening tag.\n' +
+'   When in doubt, add MORE context, never less. A 5-line SEARCH is normal, a 1-line SEARCH is almost always wrong.\n' +
+'\n' +
+'3. NEVER touch the runtime. Do not include any part of the <script id="re-write-able-runtime"> block (or its accompanying <style id="re-write-able-runtime-style">) in any SEARCH or REPLACE. The runtime guards this and will refuse the apply.\n' +
+'\n' +
+'4. OUTPUT ONLY BLOCKS. No prose, no explanation, no markdown fences. The first character of your response must be `<`.\n' +
+'\n' +
+'Multiple edits → multiple blocks, applied in order on the working text.\n' +
+'\n' +
+'Fallback: if the change is too sweeping for diff blocks (full restructuring, bulk redesign), output the literal first line:\n' +
+'\n' +
+'MODE: full-rewrite\n' +
+'\n' +
+'followed by a newline and the complete new HTML file from <!doctype html> to </html>.\n' +
+'\n' +
+'Apply the user instruction precisely. Keep the file fully functional. Prefer the smallest possible diff that is also UNAMBIGUOUS.';
+
+  function parseEdits(text) {
+    text = text.trim();
+    if (/^MODE:\s*full-rewrite/i.test(text)) {
+      const rest = text.replace(/^MODE:\s*full-rewrite\s*\n?/i, '').trim();
+      return { mode: 'full', src: rest };
+    }
+    const blockRe = /<{7}\s*SEARCH\s*\r?\n([\s\S]*?)\r?\n={7}\s*\r?\n([\s\S]*?)\r?\n>{7}\s*REPLACE/g;
+    const blocks = [];
+    let m;
+    while ((m = blockRe.exec(text)) !== null) {
+      blocks.push({ search: m[1], replace: m[2] });
+    }
+    if (blocks.length === 0) {
+      throw new Error('no SEARCH/REPLACE blocks found and no MODE: full-rewrite header. First 240 chars of response:\n' + text.slice(0, 240));
+    }
+    return { mode: 'diff', blocks };
+  }
+
+  function applyEdits(src, blocks) {
+    let working = src;
+    for (let i = 0; i < blocks.length; i++) {
+      const { search, replace } = blocks[i];
+      if (!search) throw new Error(`block ${i + 1}: empty SEARCH text`);
+      // refuse to touch the runtime
+      if (/id=["']re-write-able-runtime["']/.test(search) || /id=["']re-write-able-runtime["']/.test(replace)) {
+        throw new Error(`block ${i + 1}: targets the re-write-able-runtime block — refusing`);
+      }
+      const idx = working.indexOf(search);
+      if (idx === -1) {
+        throw new Error(`block ${i + 1}/${blocks.length}: SEARCH not found in current file. First 200 chars of SEARCH:\n${search.slice(0, 200)}`);
+      }
+      const lastIdx = working.lastIndexOf(search);
+      if (lastIdx !== idx) {
+        throw new Error(`block ${i + 1}/${blocks.length}: SEARCH appears multiple times — needs more surrounding context to be unique. First 200 chars:\n${search.slice(0, 200)}`);
+      }
+      working = working.slice(0, idx) + replace + working.slice(idx + search.length);
+    }
+    return working;
+  }
+
+  // ---- undo ----
+  function undo() {
+    const stack = readJSON(KEYS.undo, []);
+    if (!stack.length) { toast('nothing to undo', 'err'); return; }
+    const prev = stack.pop();
+    try { localStorage.setItem(KEYS.undo, JSON.stringify(stack)); } catch {}
+    try { localStorage.setItem(KEYS.src, prev); } catch {}
+    document.open(); document.write(prev); document.close();
+  }
+  function pushUndo(src) {
+    const stack = readJSON(KEYS.undo, []);
+    stack.push(src);
+    while (stack.length > UNDO_CAP) stack.shift();
+    try { localStorage.setItem(KEYS.undo, JSON.stringify(stack)); } catch (err) {
+      // shed half the stack and retry on quota
+      while (stack.length > Math.floor(UNDO_CAP / 2)) stack.shift();
+      try { localStorage.setItem(KEYS.undo, JSON.stringify(stack)); } catch {}
+    }
+  }
+  function pushHist(p) {
+    const h = readJSON(KEYS.hist, []);
+    h.unshift({ p, t: Date.now() });
+    while (h.length > HIST_CAP) h.pop();
+    try { localStorage.setItem(KEYS.hist, JSON.stringify(h)); } catch {}
+  }
+  function readJSON(k, fallback) {
+    try { return JSON.parse(localStorage.getItem(k) || 'null') ?? fallback; } catch { return fallback; }
+  }
+
+  // ---- API key ----
+  async function ensureKey() {
+    let key = sessionStorage.getItem(SS_KEY);
+    if (key) return key;
+    const entered = await askKey();
+    if (!entered) return null;
+    sessionStorage.setItem(SS_KEY, entered.key);
+    if (entered.model) sessionStorage.setItem(SS_MODEL, entered.model);
+    return entered.key;
+  }
+  function askKey() {
+    return new Promise(resolve => {
+      const panel = overlay.querySelector('.rw-panel');
+      panel.querySelector('.rw-body').style.display = 'none';
+      panel.querySelector('.rw-hist').style.display = 'none';
+      panel.querySelector('.rw-foot').style.display = 'none';
+
+      const wrap = document.createElement('div');
+      wrap.style.padding = '18px';
+      wrap.innerHTML = `
+        <div style="font-family:'DM Mono',monospace;font-size:11px;color:#575766;letter-spacing:0.18em;text-transform:uppercase;margin-bottom:10px;">FIRST RUN — OPENROUTER KEY</div>
+        <div style="font-size:13px;color:#dddde4;margin-bottom:14px;line-height:1.5;">Paste your OpenRouter API key. It stays in <code style="font-family:'DM Mono';color:#b8ff57;">sessionStorage</code> only — cleared when you close this tab, never written into the file.</div>
+        <input id="rw-keyin" type="password" placeholder="sk-or-v1-…" style="width:100%;background:#161618;border:1px solid #2d2d34;color:#dddde4;font-family:'DM Mono',monospace;font-size:13px;padding:9px 11px;outline:none;margin-bottom:10px;" />
+        <input id="rw-modelin" placeholder="model · default ${DEFAULT_MODEL}" style="width:100%;background:#161618;border:1px solid #2d2d34;color:#dddde4;font-family:'DM Mono',monospace;font-size:12px;padding:9px 11px;outline:none;margin-bottom:14px;" />
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <a href="https://openrouter.ai/keys" target="_blank" style="font-family:'DM Mono',monospace;font-size:10px;color:#57c8ff;letter-spacing:0.1em;text-transform:uppercase;text-decoration:none;">openrouter.ai/keys ↗</a>
+          <button id="rw-keyok" style="background:transparent;border:1px solid #b8ff57;color:#b8ff57;font-family:'DM Mono',monospace;font-size:11px;padding:7px 14px;cursor:pointer;letter-spacing:0.12em;">SAVE</button>
+        </div>
+      `;
+      panel.appendChild(wrap);
+      const keyIn = wrap.querySelector('#rw-keyin');
+      const modelIn = wrap.querySelector('#rw-modelin');
+      setTimeout(() => keyIn.focus(), 30);
+      const finish = (val) => {
+        wrap.remove();
+        panel.querySelector('.rw-body').style.display = '';
+        panel.querySelector('.rw-hist').style.display = '';
+        panel.querySelector('.rw-foot').style.display = '';
+        resolve(val);
+      };
+      wrap.querySelector('#rw-keyok').addEventListener('click', () => {
+        const k = keyIn.value.trim();
+        if (!k) return;
+        finish({ key: k, model: modelIn.value.trim() || null });
+      });
+      keyIn.addEventListener('keydown', e => { if (e.key === 'Enter') wrap.querySelector('#rw-keyok').click(); });
+    });
+  }
+
+  // Clone the document element, strip runtime-injected ephemera, return outerHTML.
+  // Used both for capture-before-rewrite and export — both want the "as-authored"
+  // source, not the live DOM with runtime overlay/pill/toasts attached.
+  function captureCleanOuterHTML() {
+    const clone = document.documentElement.cloneNode(true);
+    clone.querySelectorAll(
+      '#re-write-able-runtime-style, .rw-pill, .rw-overlay, .rw-toast'
+    ).forEach(n => n.remove());
+    return clone.outerHTML;
+  }
+
+  // ---- export (§7) ----
+  async function exportFile() {
+    let src = '<!doctype html>\n' + captureCleanOuterHTML();
+    src = await embedSeedData(src);
+    const titleSlug = (document.title || 're-writeable').replace(/[^a-z0-9-]+/gi, '-').toLowerCase().replace(/^-+|-+$/g, '') || 're-writeable';
+    const blob = new Blob([src], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = titleSlug + '.html';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    unexported = 0;
+    toast('exported · ' + a.download);
+  }
+
+  // ---- §7.1 IndexedDB serialization ----
+  async function embedSeedData(src) {
+    if (typeof window.getExportData !== 'function') return src;
+    let data;
+    try { data = await window.getExportData(); } catch { return src; }
+    const json = JSON.stringify(data).replace(/<\/(script)/gi, '<\\/$1');
+    const tag = '<script type="application/json" id="app-seed-data">' + json + '</' + 'script>';
+    src = src.replace(/<script[^>]*id=["']app-seed-data["'][^>]*>[\s\S]*?<\/script>/i, '');
+    if (/<\/body>/i.test(src)) src = src.replace(/<\/body>/i, tag + '\n</body>');
+    else src += '\n' + tag;
+    return src;
+  }
+
+  // ---- toast ----
+  function toast(msg, kind) {
+    const t = document.createElement('div');
+    t.className = 'rw-toast' + (kind === 'err' ? ' err' : '');
+    t.textContent = msg;
+    document.body.appendChild(t);
+    setTimeout(() => t.remove(), 2400);
+  }
+
+  // ---- storage health (§5.3) ----
+  async function storageCheck() {
+    if (!navigator.storage?.estimate) return;
+    try {
+      const { usage = 0, quota = 1 } = await navigator.storage.estimate();
+      if (usage / quota > 0.8 && !sessionStorage.getItem(KEYS.warn)) {
+        sessionStorage.setItem(KEYS.warn, '1');
+        pill.querySelector('.rw-dot').style.background = '#ff5757';
+        toast('storage > 80% · export soon', 'err');
+      }
+    } catch {}
+  }
+
+  // ---- helpers ----
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
+  // ---- boot ----
+  storageCheck();
+  if (navigator.storage?.persist) navigator.storage.persist().catch(() => {});
+  console.info('[re-write-able] runtime ready · ⌘K rewrite · ⌘Z undo · ⌘S export · or click the green pill bottom-right');
+})();
+</script>
+
+<script>
+/* ============================================================
+   kanban — single-file re-writeable app (test case for spec v0.3)
+   storage: IndexedDB `kanban_db` / store `cards`
+   exports: window.getExportData() / window.hydrate(data) per §7.1
+   ============================================================ */
+(() => {
+  const DB_NAME = 'kanban_db';
+  const STORE   = 'cards';
+  const COLS = [
+    { id: 'backlog', label: 'Backlog' },
+    { id: 'doing',   label: 'In Progress' },
+    { id: 'review',  label: 'Review' },
+    { id: 'done',    label: 'Done' },
+  ];
+
+  const SEED = [
+    { id:'c1',  col:'backlog', title:'Weekly heatmap view', body:'Add a 7-day grid showing completion rate per habit. Slot under the daily list, collapse on mobile.', priority:'med',  tags:['ux','analytics'],     assignee:'MR', due:'2026-05-12', created:'2026-04-21T10:14:00Z' },
+    { id:'c2',  col:'backlog', title:'CSV export of streak history', body:'Power users want raw data out. JSON-in-the-html is fine for the spec, but ⌘E to drop a CSV would close the loop.', priority:'low', tags:['export'], assignee:'JT', due:null, created:'2026-04-22T08:02:00Z' },
+    { id:'c3',  col:'backlog', title:'Soft 9pm reminder when miss-risk > 0.7', body:'Use the existing model — only nudge if predicted miss probability crosses the threshold. Never before 8pm.', priority:'med', tags:['ml','notifications'], assignee:'AK', due:'2026-05-20', created:'2026-04-20T17:33:00Z' },
+    { id:'c4',  col:'backlog', title:'Keyboard nav for the calendar grid', body:'Arrow keys move focus, space toggles, shift+arrow extends a range select for bulk-mark.', priority:'low', tags:['a11y'], assignee:'MR', due:null, created:'2026-04-19T12:00:00Z' },
+    { id:'c5',  col:'doing',   title:'Migrate to two-tier storage (§5.3)', body:'App source stays in localStorage; habit history moves to IndexedDB. Schema: habits_db / habits / entries.', priority:'high', tags:['storage','spec-0.3'], assignee:'MR', due:'2026-04-30', created:'2026-04-15T09:00:00Z' },
+    { id:'c6',  col:'doing',   title:'Empty-state illustrations', body:'Three states: brand-new, all-done-today, recovering-from-break. Keep them DM-Mono-only — no raster art.', priority:'med', tags:['design'], assignee:'JT', due:'2026-05-02', created:'2026-04-18T14:20:00Z' },
+    { id:'c7',  col:'review',  title:'Onboarding copy rewrite', body:'Shorten the first screen to one sentence + one input. Drop the "what is a habit" page entirely.', priority:'med', tags:['copy'], assignee:'AK', due:'2026-04-28', created:'2026-04-16T11:11:00Z' },
+    { id:'c8',  col:'review',  title:'Tap-target audit on iOS', body:'All interactive elements must hit 44×44. The streak number is currently 28×16. Wrap in a padded button.', priority:'high', tags:['a11y','ios'], assignee:'MR', due:'2026-04-29', created:'2026-04-17T16:45:00Z' },
+    { id:'c9',  col:'done',    title:'Ship quick-add gesture', body:'Two-finger tap on the home grid opens the inline add. ⌘J on desktop. Both call the same handler.', priority:'med', tags:['gesture'], assignee:'JT', due:null, created:'2026-04-10T08:00:00Z', completed:'2026-04-23T18:22:00Z' },
+    { id:'c10', col:'done',    title:'Fix doubled ⌘Z capture', body:'Stop swallowing the runtime undo when an editor input is focused. Use document.activeElement guard.', priority:'high', tags:['runtime','bug'], assignee:'MR', due:null, created:'2026-04-12T13:00:00Z', completed:'2026-04-24T10:00:00Z' },
+  ];
+
+  // ---- IndexedDB ----
+  let db;
+  function openDB() {
+    return new Promise((resolve, reject) => {
+      const req = indexedDB.open(DB_NAME, 1);
+      req.onupgradeneeded = e => {
+        const d = e.target.result;
+        if (!d.objectStoreNames.contains(STORE)) d.createObjectStore(STORE, { keyPath: 'id' });
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror   = () => reject(req.error);
+    });
+  }
+  const tx = (mode='readonly') => db.transaction(STORE, mode).objectStore(STORE);
+  const dbAll  = () => new Promise((r, j) => { const q = tx().getAll(); q.onsuccess = () => r(q.result); q.onerror = () => j(q.error); });
+  const dbPut  = c  => new Promise((r, j) => { const q = tx('readwrite').put(c); q.onsuccess = () => r(); q.onerror = () => j(q.error); });
+  const dbDel  = id => new Promise((r, j) => { const q = tx('readwrite').delete(id); q.onsuccess = () => r(); q.onerror = () => j(q.error); });
+  const dbClear= () => new Promise((r, j) => { const q = tx('readwrite').clear(); q.onsuccess = () => r(); q.onerror = () => j(q.error); });
+
+  // ---- export contract (§7.1) ----
+  window.getExportData = async () => ({ cards: await dbAll(), savedAt: new Date().toISOString() });
+  window.hydrate = async (data) => {
+    if (!data || !Array.isArray(data.cards)) return;
+    await dbClear();
+    for (const c of data.cards) await dbPut(c);
+  };
+
+  // ---- state ----
+  const state = { cards: [], filter: '', selectedId: null, dragId: null };
+  const $  = sel => document.querySelector(sel);
+  const $$ = sel => Array.from(document.querySelectorAll(sel));
+  const uid = () => 'c' + Math.random().toString(36).slice(2, 9);
+  const escapeHtml = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+  function fmtDue(d) {
+    if (!d) return null;
+    const today = new Date(); today.setHours(0,0,0,0);
+    const due = new Date(d + 'T00:00:00');
+    const days = Math.round((due - today) / 86400000);
+    if (days < 0)   return { text: `${-days}d late`, cls: 'overdue' };
+    if (days === 0) return { text: 'today',          cls: 'soon' };
+    if (days === 1) return { text: 'tomorrow',       cls: 'soon' };
+    if (days < 7)   return { text: `${days}d`,       cls: 'soon' };
+    return { text: due.toLocaleDateString('en-US', { month:'short', day:'numeric' }), cls: '' };
+  }
+  function matches(card, q) {
+    if (!q) return true;
+    q = q.toLowerCase();
+    return (card.title || '').toLowerCase().includes(q)
+      || (card.body || '').toLowerCase().includes(q)
+      || (card.tags || []).some(t => t.toLowerCase().includes(q))
+      || (card.assignee || '').toLowerCase().includes(q);
+  }
+
+  // ---- rendering ----
+  function render() {
+    const board = $('#board');
+    board.innerHTML = '';
+    for (const col of COLS) {
+      const sub = state.cards.filter(c => c.col === col.id && matches(c, state.filter));
+      const colEl = document.createElement('div');
+      colEl.className = 'col';
+      colEl.dataset.id = col.id;
+      colEl.innerHTML = `
+        <div class="col-head">
+          <div class="col-title">${col.label}<span class="col-count">${sub.length}</span></div>
+          <button class="col-add" data-col="${col.id}">+ ADD</button>
+        </div>
+        <div class="col-body" data-col="${col.id}"></div>
+      `;
+      board.appendChild(colEl);
+      const body = colEl.querySelector('.col-body');
+      for (const card of sub) body.appendChild(renderCard(card));
+      const inline = document.createElement('div');
+      inline.className = 'inline-add';
+      inline.dataset.col = col.id;
+      inline.textContent = '+ NEW';
+      body.appendChild(inline);
+
+      body.addEventListener('dragover',  e => { e.preventDefault(); body.classList.add('drag-over'); });
+      body.addEventListener('dragleave', () => body.classList.remove('drag-over'));
+      body.addEventListener('drop', async e => {
+        e.preventDefault();
+        body.classList.remove('drag-over');
+        if (!state.dragId) return;
+        const card = state.cards.find(c => c.id === state.dragId);
+        if (!card || card.col === col.id) return;
+        card.col = col.id;
+        if (col.id === 'done') card.completed = new Date().toISOString();
+        else delete card.completed;
+        await dbPut(card);
+        flashSaved();
+        render();
+      });
+    }
+    $$('.col-add, .inline-add').forEach(b => {
+      b.addEventListener('click', () => createCard(b.dataset.col));
+    });
+    updateStats();
+  }
+
+  function renderCard(card) {
+    const el = document.createElement('div');
+    el.className = 'card' + (state.selectedId === card.id ? ' selected' : '');
+    el.draggable = true;
+    el.dataset.id = card.id;
+    el.dataset.pri = card.priority || 'low';
+
+    const due = fmtDue(card.due);
+    const dueHtml = due ? `<span class="due ${due.cls}">${due.text}</span>` : `<span class="due"></span>`;
+    const tagsHtml = (card.tags || []).map(t => `<span class="tag">${escapeHtml(t)}</span>`).join('');
+
+    el.innerHTML = `
+      <div class="card-title">${escapeHtml(card.title || 'Untitled')}</div>
+      ${card.body ? `<div class="card-body">${escapeHtml(card.body)}</div>` : ''}
+      ${tagsHtml ? `<div class="card-tags">${tagsHtml}</div>` : ''}
+      <div class="card-foot">
+        <div class="avatar">${escapeHtml((card.assignee || '··').slice(0, 3).toUpperCase())}</div>
+        ${dueHtml}
+      </div>
+    `;
+
+    el.addEventListener('click', () => openEditor(card.id));
+    el.addEventListener('dragstart', e => {
+      state.dragId = card.id;
+      el.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move';
+      try { e.dataTransfer.setData('text/plain', card.id); } catch {}
+    });
+    el.addEventListener('dragend', () => {
+      state.dragId = null;
+      el.classList.remove('dragging');
+      $$('.col-body').forEach(b => b.classList.remove('drag-over'));
+    });
+    return el;
+  }
+
+  function updateStats() {
+    const total  = state.cards.length;
+    const active = state.cards.filter(c => c.col !== 'done').length;
+    $('#stat-active').textContent = `${active} active`;
+    $('#stat-total').textContent  = total;
+    if (navigator.storage?.estimate) {
+      navigator.storage.estimate().then(({ usage }) => {
+        const kb = Math.round((usage || 0) / 1024);
+        $('#stat-storage').textContent = `idb · ${kb} kb`;
+      });
+    }
+  }
+
+  let saveTimer;
+  function flashSaved() {
+    const el = $('#last-saved');
+    el.textContent = 'saved · just now';
+    el.style.color = 'var(--green)';
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => { el.style.color = ''; }, 700);
+  }
+
+  // ---- create / edit ----
+  async function createCard(colId) {
+    const card = {
+      id: uid(),
+      col: colId || 'backlog',
+      title: '',
+      body: '',
+      priority: 'med',
+      tags: [],
+      assignee: '',
+      due: null,
+      created: new Date().toISOString(),
+    };
+    state.cards.push(card);
+    await dbPut(card);
+    flashSaved();
+    openEditor(card.id, true);
+  }
+
+  function openEditor(id, focusTitle = false) {
+    const card = state.cards.find(c => c.id === id);
+    if (!card) return;
+    state.selectedId = id;
+    const ed = $('#editor');
+    ed.classList.add('open');
+    ed.setAttribute('aria-hidden', 'false');
+    $('#f-title').value = card.title || '';
+    $('#f-body').value  = card.body  || '';
+    $('#f-col').value   = card.col;
+    $('#f-assignee').value = card.assignee || '';
+    $('#f-due').value      = card.due || '';
+    $('#f-tags').value     = (card.tags || []).join(', ');
+    setPri(card.priority || 'med');
+    $('#editor-id').textContent = card.id;
+    $('#editor-created').textContent = card.created
+      ? 'created ' + new Date(card.created).toLocaleString('en-US', { month:'short', day:'numeric', hour:'numeric', minute:'2-digit' })
+      : '—';
+    if (focusTitle) setTimeout(() => $('#f-title').focus(), 220);
+    render();
+  }
+
+  function closeEditor() {
+    const ed = $('#editor');
+    ed.classList.remove('open');
+    ed.setAttribute('aria-hidden', 'true');
+    state.selectedId = null;
+    render();
+  }
+
+  function setPri(v) { $$('#f-pri button').forEach(b => b.classList.toggle('on', b.dataset.v === v)); }
+  function getPri() { return $('#f-pri button.on')?.dataset.v || 'med'; }
+
+  let saveDebounce;
+  function debouncedSave() {
+    clearTimeout(saveDebounce);
+    saveDebounce = setTimeout(saveEditor, 120);
+  }
+  async function saveEditor() {
+    if (!state.selectedId) return;
+    const card = state.cards.find(c => c.id === state.selectedId);
+    if (!card) return;
+    const newCol = $('#f-col').value;
+    if (card.col !== newCol && newCol === 'done') card.completed = new Date().toISOString();
+    if (card.col === 'done' && newCol !== 'done') delete card.completed;
+    card.col       = newCol;
+    card.title     = $('#f-title').value.trim();
+    card.body      = $('#f-body').value.trim();
+    card.priority  = getPri();
+    card.assignee  = $('#f-assignee').value.trim().toUpperCase().slice(0, 3);
+    card.due       = $('#f-due').value || null;
+    card.tags      = $('#f-tags').value.split(',').map(s => s.trim()).filter(Boolean);
+    await dbPut(card);
+    flashSaved();
+    render();
+  }
+
+  async function deleteSelected() {
+    if (!state.selectedId) return;
+    state.cards = state.cards.filter(c => c.id !== state.selectedId);
+    await dbDel(state.selectedId);
+    closeEditor();
+    flashSaved();
+  }
+
+  // ---- bindings ----
+  function bindEditor() {
+    ['#f-title','#f-body','#f-assignee','#f-tags'].forEach(s => $(s).addEventListener('input', debouncedSave));
+    ['#f-col','#f-due'].forEach(s => $(s).addEventListener('change', saveEditor));
+    $$('#f-pri button').forEach(b => b.addEventListener('click', () => { setPri(b.dataset.v); saveEditor(); }));
+    $('#close-btn').addEventListener('click', closeEditor);
+    $('#del-btn').addEventListener('click', () => { if (confirm('Delete this card?')) deleteSelected(); });
+  }
+  function bindFilter() {
+    const f = $('#filter');
+    f.addEventListener('input', () => { state.filter = f.value; render(); });
+  }
+  function bindKeys() {
+    document.addEventListener('keydown', e => {
+      const inField = ['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName);
+      if (e.key === 'Escape') {
+        if ($('#editor').classList.contains('open')) { closeEditor(); e.preventDefault(); }
+        else if (inField) document.activeElement.blur();
+        return;
+      }
+      if (inField) return;
+      if (e.key === '/')                       { e.preventDefault(); $('#filter').focus(); }
+      else if (e.key === 'n' || e.key === 'N') { e.preventDefault(); createCard('backlog'); }
+    });
+  }
+
+  // ---- boot ----
+  async function boot() {
+    db = await openDB();
+
+    // §7.1: hydrate from embedded seed if present
+    const seedTag = document.getElementById('app-seed-data');
+    if (seedTag) {
+      try {
+        const data = JSON.parse(seedTag.textContent);
+        await window.hydrate(data);
+        seedTag.remove();
+      } catch (err) { console.warn('seed parse failed', err); }
+    }
+
+    state.cards = await dbAll();
+    if (state.cards.length === 0) {
+      for (const c of SEED) await dbPut(c);
+      state.cards = SEED.slice();
+    }
+
+    bindFilter();
+    bindEditor();
+    bindKeys();
+    render();
+
+    if (navigator.storage?.persist) navigator.storage.persist().catch(() => {});
+  }
+
+  boot().catch(err => {
+    document.body.innerHTML = `<pre style="color:#ff5757;padding:24px;font-family:DM Mono,monospace;">boot failed:\n${err && err.stack || err}</pre>`;
+  });
+})();
+</script>
+</body>
+</html>

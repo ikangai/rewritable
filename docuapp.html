@@ -1,0 +1,931 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>re-write-able · seed</title>
+
+<!-- ============================================================
+     SYNC LOADER — runs before anything else. If a built app
+     already exists in localStorage, the seed hands the page over
+     to it via document.write. The build screen below never paints.
+     Append ?reset=1 to bypass and rebuild from scratch.
+     ============================================================ -->
+<script>
+(function () {
+  if (window.__rwLoaded) return;
+  window.__rwLoaded = true;
+  try {
+    if (location.search.indexOf('reset=1') !== -1) {
+      localStorage.removeItem('docuapp_src');
+      localStorage.removeItem('docuapp_undo');
+      return;
+    }
+    var src = localStorage.getItem('docuapp_src');
+    if (src) {
+      document.open();
+      document.write(src);
+      document.close();
+    }
+  } catch (e) { /* fall through to build screen */ }
+})();
+</script>
+
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=DM+Mono:wght@400;500&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0e0e0f;
+    --surface: #161618;
+    --surface-2: #1c1c1f;
+    --border: #2d2d34;
+    --text: #dddde4;
+    --muted: #575766;
+    --green: #b8ff57;
+    --blue: #57c8ff;
+    --red: #ff5757;
+    --ui: 'DM Sans', system-ui, sans-serif;
+    --mono: 'DM Mono', ui-monospace, monospace;
+    --display: 'Instrument Serif', 'Times New Roman', serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { min-height: 100%; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--ui);
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  body::before {
+    content: '';
+    position: fixed; inset: 0;
+    pointer-events: none; z-index: 1000;
+    opacity: 0.05; mix-blend-mode: screen;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+
+  .frame { min-height: 100vh; display: grid; place-items: center; padding: 40px 24px; }
+  .seed { width: min(620px, 100%); }
+
+  .head {
+    display: flex; align-items: baseline; justify-content: space-between;
+    margin-bottom: 56px;
+  }
+  .mark {
+    font-family: var(--display); font-style: italic;
+    font-size: 64px; line-height: 1; letter-spacing: -0.02em;
+  }
+  .mark .dot {
+    display: inline-block; width: 10px; height: 10px;
+    background: var(--green); margin-left: 8px;
+    transform: translateY(-8px); border-radius: 50%;
+    animation: pulse 2.4s ease-in-out infinite;
+  }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
+  .meta {
+    font-family: var(--mono); font-size: 11px;
+    color: var(--muted); letter-spacing: 0.1em;
+    text-transform: uppercase; text-align: right;
+  }
+  .meta strong { color: var(--text); font-weight: 500; display: block; margin-bottom: 4px; }
+
+  .lede {
+    font-family: var(--display); font-style: italic;
+    font-size: 22px; line-height: 1.45;
+    color: var(--text);
+    margin-bottom: 18px;
+    letter-spacing: -0.005em;
+  }
+  .lede .accent { color: var(--green); }
+
+  .promptbox {
+    width: 100%;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: var(--ui);
+    font-size: 16px;
+    padding: 16px 18px;
+    resize: vertical;
+    min-height: 110px;
+    outline: none;
+    line-height: 1.5;
+    transition: border-color 0.15s ease;
+  }
+  .promptbox:focus { border-color: var(--green); }
+  .promptbox::placeholder { color: var(--muted); }
+
+  .examples {
+    display: flex; flex-wrap: wrap; gap: 6px;
+    margin-top: 10px;
+  }
+  .example {
+    font-family: var(--mono); font-size: 10px;
+    background: transparent; border: 1px solid var(--border);
+    color: var(--muted);
+    padding: 5px 9px; cursor: pointer;
+    letter-spacing: 0.06em; text-transform: uppercase;
+    transition: color 0.15s, border-color 0.15s;
+  }
+  .example:hover { color: var(--blue); border-color: var(--blue); }
+
+  .row {
+    display: grid; grid-template-columns: 1fr 2fr;
+    gap: 12px;
+    margin-top: 22px;
+  }
+  .field { display: flex; flex-direction: column; gap: 6px; }
+  .field label {
+    font-family: var(--mono); font-size: 10px;
+    color: var(--muted); letter-spacing: 0.18em;
+    text-transform: uppercase;
+  }
+  .field input, .field select {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 12px;
+    padding: 9px 11px;
+    outline: none;
+    transition: border-color 0.15s ease;
+  }
+  .field input:focus, .field select:focus { border-color: var(--green); }
+
+  .actions {
+    margin-top: 22px;
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 14px;
+  }
+  .key-link {
+    font-family: var(--mono); font-size: 10px;
+    color: var(--muted); letter-spacing: 0.1em;
+    text-transform: uppercase; text-decoration: none;
+    transition: color 0.15s ease;
+  }
+  .key-link:hover { color: var(--blue); }
+  .key-link span.arrow { color: var(--blue); margin-left: 4px; }
+
+  .build {
+    background: var(--green);
+    color: var(--bg);
+    border: none;
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    padding: 13px 26px;
+    cursor: pointer;
+    transition: background 0.15s ease, transform 0.1s ease;
+  }
+  .build:hover { background: #d2ff80; }
+  .build:active { transform: translateY(1px); }
+  .build:disabled { opacity: 0.4; cursor: not-allowed; background: var(--surface-2); color: var(--muted); }
+
+  .status {
+    margin-top: 22px;
+    padding: 14px 16px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    font-family: var(--mono); font-size: 11px;
+    color: var(--text); letter-spacing: 0.05em;
+    display: none;
+    align-items: center; gap: 12px;
+  }
+  .status.show { display: flex; }
+  .status.err { border-color: var(--red); color: #ff9b9b; }
+  .status .spin {
+    width: 12px; height: 12px;
+    border: 1px solid var(--border);
+    border-top-color: var(--green);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    flex: 0 0 auto;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .legend {
+    margin-top: 64px;
+    padding-top: 22px;
+    border-top: 1px solid var(--border);
+    font-family: var(--mono); font-size: 10px;
+    color: var(--muted); letter-spacing: 0.1em;
+    text-transform: uppercase;
+    line-height: 2;
+  }
+  .legend kbd {
+    font-family: var(--mono); font-size: 10px;
+    border: 1px solid var(--border); padding: 1px 5px;
+    color: var(--text); background: var(--surface);
+    margin-right: 4px;
+  }
+  .legend .reset {
+    color: var(--blue); text-decoration: none;
+    border-bottom: 1px dotted #1d3744;
+  }
+  .legend .reset:hover { color: var(--green); border-color: var(--green); }
+</style>
+</head>
+<body>
+
+<div class="frame">
+  <div class="seed">
+    <div class="head">
+      <div class="mark">re-write-able<span class="dot"></span></div>
+      <div class="meta"><strong>seed</strong>spec v0.3 · §5.1</div>
+    </div>
+
+    <div class="lede">describe the app you want.<br><span class="accent">one sentence</span> is enough.</div>
+
+    <textarea class="promptbox" id="prompt" rows="3" placeholder="a habit tracker with daily streaks, a weekly heatmap, and a one-tap mark-done"></textarea>
+
+    <div class="examples" id="examples">
+      <button class="example" data-p="a project tracker with status columns, due dates, and tag filtering">project tracker</button>
+      <button class="example" data-p="a daily journal with morning prompts and a weekly mood graph">journal</button>
+      <button class="example" data-p="a recipe collection with ingredient search, cook times, and a shopping-list builder">recipe book</button>
+      <button class="example" data-p="a personal expense ledger with monthly category totals and a running balance">expense ledger</button>
+      <button class="example" data-p="a reading list with tags, ratings, and notes — sortable by author or date added">reading list</button>
+    </div>
+
+    <div class="row">
+      <div class="field">
+        <label>OpenRouter key</label>
+        <input id="key" type="password" placeholder="sk-or-v1-…" autocomplete="off" />
+      </div>
+      <div class="field">
+        <label>Model</label>
+        <select id="model">
+          <option value="anthropic/claude-sonnet-4">anthropic/claude-sonnet-4 · default</option>
+          <option value="anthropic/claude-opus-4">anthropic/claude-opus-4 · slower, sturdier</option>
+          <option value="anthropic/claude-haiku-4-5">anthropic/claude-haiku-4-5 · faster</option>
+          <option value="openai/gpt-5">openai/gpt-5</option>
+          <option value="custom">custom · type below</option>
+        </select>
+      </div>
+    </div>
+
+    <div id="custom-model-wrap" class="field" style="margin-top:12px; display:none;">
+      <label>Custom model id</label>
+      <input id="custom-model" placeholder="provider/model-name" />
+    </div>
+
+    <div class="actions">
+      <a class="key-link" href="https://openrouter.ai/keys" target="_blank">
+        get a key <span class="arrow">↗</span>
+      </a>
+      <button class="build" id="build">BUILD →</button>
+    </div>
+
+    <div class="status" id="status">
+      <span class="spin" id="status-spin"></span>
+      <span id="status-text">building…</span>
+    </div>
+
+    <div class="legend">
+      <div>once built · <kbd>⌘K</kbd> rewrite · <kbd>⌘Z</kbd> undo · <kbd>⌘S</kbd> export</div>
+      <div>key lives in sessionStorage only · cleared on tab close · never written into the file</div>
+      <div>visit <a class="reset" href="?reset=1">?reset=1</a> to clear localStorage and rebuild from scratch</div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================
+     RUNTIME TEMPLATE — preserved verbatim as a <template>, so it
+     stays as real code (not an escaped string). The build flow
+     reads template.innerHTML and injects it before </body> in the
+     freshly-generated app. The agent system prompt forbids touching
+     this block on subsequent rewrites.
+     ============================================================ -->
+<template id="rw-runtime-tpl"><script id="re-write-able-runtime">
+/* re-write-able runtime · ⌘K rewrite · ⌘Z undo · ⌘S export */
+(() => {
+  const KEYS = { src: 'docuapp_src', undo: 'docuapp_undo', hist: 'da_hist', warn: 'da_storage_warned' };
+  const UNDO_CAP = 10, HIST_CAP = 15;
+  const SS_KEY = 'or_key', SS_MODEL = 'or_model';
+  const DEFAULT_MODEL = 'anthropic/claude-sonnet-4';
+  let unexported = 0;
+  let currentAbort = null;
+
+  // de-bloat: remove stale runtime DOM that previous rewrites baked into the source
+  document.querySelectorAll(
+    '#re-write-able-runtime-style, .rw-pill, .rw-overlay, .rw-toast'
+  ).forEach(n => n.remove());
+
+  const style = document.createElement('style');
+  style.id = 're-write-able-runtime-style';
+  style.textContent = `
+    .rw-pill { position: fixed; right: 14px; bottom: 14px; z-index: 99998; background: #0e0e0f; border: 1px solid #2d2d34; color: #575766; font-family: 'DM Mono', ui-monospace, monospace; font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; padding: 6px 10px; cursor: pointer; user-select: none; display: flex; align-items: center; gap: 10px; transition: color 0.15s, border-color 0.15s; }
+    .rw-pill:hover { color: #b8ff57; border-color: #b8ff57; }
+    .rw-pill .rw-dot { width: 6px; height: 6px; background: #b8ff57; display: inline-block; border-radius: 50%; }
+    .rw-overlay { position: fixed; inset: 0; z-index: 99999; background: rgba(0,0,0,0.6); backdrop-filter: blur(6px); display: none; align-items: flex-start; justify-content: center; padding-top: 18vh; animation: rw-fade 0.18s ease both; }
+    .rw-overlay.open { display: flex; }
+    @keyframes rw-fade { from { opacity: 0; } to { opacity: 1; } }
+    .rw-panel { width: min(640px, 92vw); background: #0e0e0f; border: 1px solid #2d2d34; box-shadow: 0 24px 80px rgba(0,0,0,0.6); animation: rw-slide 0.22s cubic-bezier(0.32, 0.72, 0.2, 1) both; }
+    @keyframes rw-slide { from { transform: translateY(-12px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+    .rw-head { padding: 14px 18px; border-bottom: 1px solid #2d2d34; font-family: 'DM Mono', ui-monospace, monospace; font-size: 11px; color: #575766; letter-spacing: 0.18em; text-transform: uppercase; display: flex; justify-content: space-between; align-items: center; }
+    .rw-head .rw-title { color: #dddde4; }
+    .rw-head .rw-title em { font-family: 'Instrument Serif', serif; font-style: italic; color: #b8ff57; text-transform: none; letter-spacing: 0; font-size: 14px; }
+    .rw-head .rw-model { font-size: 10px; cursor: pointer; padding: 3px 6px; border: 1px solid transparent; transition: border-color 0.15s, color 0.15s; }
+    .rw-head .rw-model:hover { color: #b8ff57; border-color: #2d2d34; }
+    .rw-head .rw-model-input { font-family: 'DM Mono', monospace; font-size: 10px; background: #161618; border: 1px solid #b8ff57; color: #dddde4; padding: 3px 6px; outline: none; min-width: 280px; letter-spacing: 0.06em; text-transform: none; }
+    .rw-body { padding: 18px; }
+    .rw-input { width: 100%; background: transparent; border: none; outline: none; color: #dddde4; font-family: 'DM Sans', system-ui, sans-serif; font-size: 16px; line-height: 1.5; resize: none; min-height: 56px; max-height: 200px; }
+    .rw-input::placeholder { color: #575766; }
+    .rw-hist { border-top: 1px solid #1f1f25; max-height: 220px; overflow-y: auto; }
+    .rw-hist-row { padding: 9px 18px; cursor: pointer; font-size: 13px; color: #dddde4; display: flex; gap: 12px; align-items: baseline; border-bottom: 1px solid #1a1a1f; }
+    .rw-hist-row:hover { background: #161618; }
+    .rw-hist-row .rw-when { font-family: 'DM Mono', monospace; font-size: 10px; color: #575766; flex: 0 0 auto; }
+    .rw-hist-row .rw-text { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .rw-foot { padding: 10px 18px; border-top: 1px solid #2d2d34; display: flex; justify-content: space-between; align-items: center; font-family: 'DM Mono', monospace; font-size: 10px; color: #575766; letter-spacing: 0.1em; text-transform: uppercase; }
+    .rw-foot kbd { font-family: 'DM Mono', monospace; font-size: 10px; border: 1px solid #2d2d34; padding: 1px 5px; color: #dddde4; background: #161618; margin-right: 4px; }
+    .rw-foot button { background: transparent; border: 1px solid #2d2d34; color: #b8ff57; font-family: 'DM Mono', monospace; font-size: 11px; padding: 6px 12px; cursor: pointer; letter-spacing: 0.12em; }
+    .rw-foot button:hover { background: #b8ff57; color: #0e0e0f; }
+    .rw-busy { padding: 18px; display: flex; align-items: center; gap: 14px; font-family: 'DM Mono', monospace; font-size: 11px; color: #b8ff57; letter-spacing: 0.12em; text-transform: uppercase; }
+    .rw-spin { width: 12px; height: 12px; border: 1px solid #2d2d34; border-top-color: #b8ff57; border-radius: 50%; animation: rw-spin 0.8s linear infinite; }
+    @keyframes rw-spin { to { transform: rotate(360deg); } }
+    .rw-err { padding: 14px 18px; background: #2a1416; border-top: 1px solid #ff5757; color: #ff9b9b; font-family: 'DM Mono', monospace; font-size: 11px; white-space: pre-wrap; word-break: break-word; max-height: 120px; overflow: auto; }
+    .rw-toast { position: fixed; left: 50%; bottom: 60px; transform: translateX(-50%); background: #161618; border: 1px solid #b8ff57; color: #b8ff57; font-family: 'DM Mono', monospace; font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; padding: 8px 14px; z-index: 100000; animation: rw-toast 2.2s ease both; }
+    .rw-toast.err { border-color: #ff5757; color: #ff5757; }
+    @keyframes rw-toast { 0% { opacity: 0; transform: translate(-50%, 8px); } 10%, 80% { opacity: 1; transform: translate(-50%, 0); } 100% { opacity: 0; transform: translate(-50%, -4px); } }
+  `;
+  document.head.appendChild(style);
+
+  const pill = document.createElement('div');
+  pill.className = 'rw-pill';
+  pill.innerHTML = '<span class="rw-dot"></span><span>⌘K REWRITE</span><span style="opacity:0.5">·</span><span>⌘Z</span><span style="opacity:0.5">·</span><span>⌘S</span>';
+  pill.title = 're-write-able runtime — ⌘K to rewrite, ⌘Z undo, ⌘S export';
+  pill.addEventListener('click', () => openPalette());
+  document.body.appendChild(pill);
+
+  const overlay = document.createElement('div');
+  overlay.className = 'rw-overlay';
+  overlay.innerHTML = `
+    <div class="rw-panel" role="dialog" aria-label="Rewrite this file">
+      <div class="rw-head">
+        <div class="rw-title">REWRITE — <em>tell the file what to change</em></div>
+        <div class="rw-model" id="rw-model-label">—</div>
+      </div>
+      <div class="rw-body">
+        <textarea class="rw-input" id="rw-input" rows="2" placeholder="e.g. add a 'priority filter' to the toolbar with high/med/low buttons"></textarea>
+      </div>
+      <div class="rw-hist" id="rw-hist"></div>
+      <div class="rw-foot">
+        <div><kbd>↵</kbd>send<span style="margin:0 12px;opacity:0.4">·</span><kbd>↑↓</kbd>history<span style="margin:0 12px;opacity:0.4">·</span><kbd>Esc</kbd>close</div>
+        <button id="rw-send">SEND →</button>
+      </div>
+    </div>
+  `;
+  overlay.addEventListener('click', e => { if (e.target === overlay) closePalette(); });
+  document.body.appendChild(overlay);
+  const input = overlay.querySelector('#rw-input');
+  const sendBtn = overlay.querySelector('#rw-send');
+  const histBox = overlay.querySelector('#rw-hist');
+  const modelLabel = overlay.querySelector('#rw-model-label');
+  let histIdx = -1;
+
+  function readJSON(k, fb) { try { return JSON.parse(localStorage.getItem(k) || 'null') ?? fb; } catch { return fb; } }
+  function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+  function relTime(t) {
+    const s = Math.round((Date.now() - t) / 1000);
+    if (s < 60) return s + 's ago';
+    if (s < 3600) return Math.round(s / 60) + 'm ago';
+    if (s < 86400) return Math.round(s / 3600) + 'h ago';
+    return Math.round(s / 86400) + 'd ago';
+  }
+  function renderHist() {
+    const h = readJSON(KEYS.hist, []);
+    histBox.innerHTML = '';
+    h.slice(0, 6).forEach(row => {
+      const el = document.createElement('div');
+      el.className = 'rw-hist-row';
+      el.innerHTML = `<span class="rw-when">${escapeHtml(relTime(row.t))}</span><span class="rw-text">${escapeHtml(row.p)}</span>`;
+      el.addEventListener('click', () => { input.value = row.p; input.focus(); });
+      histBox.appendChild(el);
+    });
+  }
+  function currentModel() { return sessionStorage.getItem(SS_MODEL) || DEFAULT_MODEL; }
+  function refreshModelLabel() {
+    modelLabel.textContent = currentModel().split('/').pop();
+    modelLabel.title = 'click to change · ' + currentModel();
+  }
+  modelLabel.addEventListener('click', () => {
+    if (modelLabel.querySelector('input')) return;
+    const cur = currentModel();
+    modelLabel.textContent = '';
+    const inp = document.createElement('input');
+    inp.className = 'rw-model-input';
+    inp.value = cur;
+    inp.placeholder = 'provider/model-id';
+    modelLabel.appendChild(inp);
+    inp.focus(); inp.select();
+    const commit = () => {
+      const v = inp.value.trim();
+      if (v) sessionStorage.setItem(SS_MODEL, v);
+      refreshModelLabel();
+    };
+    inp.addEventListener('keydown', e => {
+      if (e.key === 'Enter') { e.preventDefault(); commit(); }
+      else if (e.key === 'Escape') { e.preventDefault(); refreshModelLabel(); }
+      e.stopPropagation();
+    });
+    inp.addEventListener('blur', commit);
+  });
+
+  function openPalette() {
+    refreshModelLabel();
+    overlay.classList.add('open');
+    renderHist();
+    input.value = '';
+    histIdx = -1;
+    setTimeout(() => input.focus(), 30);
+  }
+  function closePalette() {
+    overlay.classList.remove('open');
+    const panel = overlay.querySelector('.rw-panel');
+    panel.querySelectorAll('.rw-busy, .rw-err').forEach(n => n.remove());
+    panel.querySelector('.rw-body').style.display = '';
+    panel.querySelector('.rw-foot').style.display = '';
+    panel.querySelector('.rw-hist').style.display = '';
+  }
+
+  function onKey(e) {
+    const meta = e.metaKey || e.ctrlKey;
+    const k = (e.key || '').toLowerCase();
+    const code = e.code || '';
+    if (meta && (k === 'k' || code === 'KeyK')) {
+      e.preventDefault(); e.stopPropagation();
+      overlay.classList.contains('open') ? closePalette() : openPalette();
+      return;
+    }
+    if (overlay.classList.contains('open')) {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        if (currentAbort) currentAbort.abort(new DOMException('cancelled by user', 'AbortError'));
+        else closePalette();
+        return;
+      }
+      if (document.activeElement === input) {
+        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); return; }
+        if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+          const h = readJSON(KEYS.hist, []);
+          if (!h.length) return;
+          if (e.key === 'ArrowUp') histIdx = Math.min(h.length - 1, histIdx + 1);
+          else histIdx = Math.max(-1, histIdx - 1);
+          input.value = histIdx >= 0 ? h[histIdx].p : '';
+          e.preventDefault();
+        }
+      }
+      return;
+    }
+    if (meta && (k === 'z' || code === 'KeyZ') && !e.shiftKey) {
+      const tag = document.activeElement?.tagName;
+      if (['INPUT','TEXTAREA','SELECT'].includes(tag)) return;
+      e.preventDefault(); undo();
+    } else if (meta && (k === 's' || code === 'KeyS')) {
+      e.preventDefault(); exportFile();
+    }
+  }
+  if (window.__rwOnKey) {
+    try { window.removeEventListener('keydown', window.__rwOnKey, true); } catch {}
+  }
+  window.__rwOnKey = onKey;
+  window.addEventListener('keydown', onKey, true);
+  sendBtn.addEventListener('click', submit);
+
+  async function submit() {
+    const instruction = input.value.trim();
+    if (!instruction) return;
+    const key = await ensureKey();
+    if (!key) return;
+    const model = sessionStorage.getItem(SS_MODEL) || DEFAULT_MODEL;
+    const panel = overlay.querySelector('.rw-panel');
+    panel.querySelector('.rw-body').style.display = 'none';
+    panel.querySelector('.rw-hist').style.display = 'none';
+    panel.querySelector('.rw-foot').style.display = 'none';
+    const busy = document.createElement('div');
+    busy.className = 'rw-busy';
+    busy.innerHTML = '<span class="rw-spin"></span><span>rewriting · model is reading the whole file…</span>';
+    panel.appendChild(busy);
+    pushHist(instruction);
+    let currentSrc;
+    try {
+      currentSrc = '<!doctype html>\n' + captureCleanOuterHTML();
+      currentSrc = await embedSeedData(currentSrc);
+    } catch (err) { return showErr(panel, 'snapshot failed: ' + err.message); }
+    pushUndo(currentSrc);
+    const startedAt = Date.now();
+    const ctrl = new AbortController();
+    currentAbort = ctrl;
+    const timeoutId = setTimeout(() => ctrl.abort(new DOMException('timeout 120s', 'AbortError')), 120000);
+    const tick = setInterval(() => {
+      const s = Math.round((Date.now() - startedAt) / 1000);
+      const t = panel.querySelector('.rw-busy .rw-busy-text');
+      if (t) t.textContent = `rewriting · ${Math.round(currentSrc.length / 1024)} kb · ${s}s`;
+    }, 500);
+    panel.querySelector('.rw-busy').innerHTML =
+      '<span class="rw-spin"></span>' +
+      '<span class="rw-busy-text" style="flex:1">rewriting · model is reading the whole file…</span>' +
+      '<button class="rw-cancel" style="background:transparent;border:1px solid #ff5757;color:#ff5757;font-family:\'DM Mono\',monospace;font-size:10px;padding:4px 10px;cursor:pointer;letter-spacing:0.12em;">CANCEL</button>';
+    panel.querySelector('.rw-cancel').addEventListener('click', () => ctrl.abort(new DOMException('cancelled by user', 'AbortError')));
+    try {
+      console.info('[re-write-able] sending', { model, srcKb: Math.round(currentSrc.length / 1024), instruction });
+      const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        signal: ctrl.signal,
+        headers: { 'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json', 'HTTP-Referer': 'https://re-write-able.local', 'X-Title': 're-write-able' },
+        body: JSON.stringify({
+          model,
+          max_tokens: 32000,
+          temperature: 0.2,
+          messages: [
+            { role: 'system', content: SYSTEM_PROMPT_DIFF },
+            { role: 'user', content: 'CURRENT FILE:\n```html\n' + currentSrc + '\n```\n\nINSTRUCTION: ' + instruction + '\n\nEmit SEARCH/REPLACE blocks for the smallest change that fulfills the instruction. Output blocks only, no prose.' },
+          ],
+        }),
+      });
+      if (!res.ok) throw new Error('HTTP ' + res.status + ' — ' + (await res.text()).slice(0, 400));
+      const json = await res.json();
+      console.info('[re-write-able] response', { finish: json.choices?.[0]?.finish_reason, usage: json.usage });
+      let raw = json.choices?.[0]?.message?.content;
+      const finish = json.choices?.[0]?.finish_reason;
+      if (!raw) throw new Error('empty response · finish_reason=' + finish);
+      raw = raw.replace(/^\s*```(?:html|HTML|diff|text)?\s*\n?/, '').replace(/\n?\s*```\s*$/, '').trim();
+      const parsed = parseEdits(raw);
+      let newSrc;
+      if (parsed.mode === 'full') {
+        newSrc = parsed.src;
+        if (!/^<!doctype/i.test(newSrc) && !/^<html/i.test(newSrc)) throw new Error('full-rewrite mode but response is not HTML (finish=' + finish + ') — first 240:\n' + newSrc.slice(0, 240));
+        if (!/<\/html\s*>\s*$/i.test(newSrc)) throw new Error('full-rewrite truncated — no </html> (finish=' + finish + ', length=' + newSrc.length + ').');
+      } else {
+        console.info('[re-write-able] applying', parsed.blocks.length, 'diff block(s)');
+        newSrc = applyEdits(currentSrc, parsed.blocks);
+      }
+      if (!/id=["']re-write-able-runtime["']/.test(newSrc)) throw new Error('result is missing the runtime block — refusing to apply');
+      newSrc = await embedSeedData(newSrc);
+      try { localStorage.setItem(KEYS.src, newSrc); } catch {}
+      unexported += 1;
+      document.open(); document.write(newSrc); document.close();
+    } catch (err) {
+      console.error('[re-write-able] rewrite failed', err);
+      const msg = err.name === 'AbortError' ? (err.message || 'cancelled') : (err.message || String(err));
+      showErr(panel, msg);
+    } finally {
+      clearInterval(tick);
+      clearTimeout(timeoutId);
+      currentAbort = null;
+    }
+  }
+
+  function showErr(panel, msg) {
+    panel.querySelectorAll('.rw-busy').forEach(n => n.remove());
+    panel.querySelector('.rw-body').style.display = '';
+    panel.querySelector('.rw-hist').style.display = '';
+    panel.querySelector('.rw-foot').style.display = '';
+    let err = panel.querySelector('.rw-err');
+    if (!err) { err = document.createElement('div'); err.className = 'rw-err'; panel.appendChild(err); }
+    err.textContent = msg;
+  }
+
+  function undo() {
+    const stack = readJSON(KEYS.undo, []);
+    if (!stack.length) { toast('nothing to undo', 'err'); return; }
+    const prev = stack.pop();
+    try { localStorage.setItem(KEYS.undo, JSON.stringify(stack)); } catch {}
+    try { localStorage.setItem(KEYS.src, prev); } catch {}
+    document.open(); document.write(prev); document.close();
+  }
+  function pushUndo(src) {
+    const stack = readJSON(KEYS.undo, []);
+    stack.push(src);
+    while (stack.length > UNDO_CAP) stack.shift();
+    try { localStorage.setItem(KEYS.undo, JSON.stringify(stack)); }
+    catch { while (stack.length > Math.floor(UNDO_CAP / 2)) stack.shift(); try { localStorage.setItem(KEYS.undo, JSON.stringify(stack)); } catch {} }
+  }
+  function pushHist(p) {
+    const h = readJSON(KEYS.hist, []);
+    h.unshift({ p, t: Date.now() });
+    while (h.length > HIST_CAP) h.pop();
+    try { localStorage.setItem(KEYS.hist, JSON.stringify(h)); } catch {}
+  }
+
+  async function ensureKey() {
+    let key = sessionStorage.getItem(SS_KEY);
+    if (key) return key;
+    const got = await askKey();
+    if (!got) return null;
+    sessionStorage.setItem(SS_KEY, got.key);
+    if (got.model) sessionStorage.setItem(SS_MODEL, got.model);
+    return got.key;
+  }
+  function askKey() {
+    return new Promise(resolve => {
+      const panel = overlay.querySelector('.rw-panel');
+      panel.querySelector('.rw-body').style.display = 'none';
+      panel.querySelector('.rw-hist').style.display = 'none';
+      panel.querySelector('.rw-foot').style.display = 'none';
+      const wrap = document.createElement('div');
+      wrap.style.padding = '18px';
+      wrap.innerHTML = `
+        <div style="font-family:'DM Mono',monospace;font-size:11px;color:#575766;letter-spacing:0.18em;text-transform:uppercase;margin-bottom:10px;">FIRST RUN — OPENROUTER KEY</div>
+        <div style="font-size:13px;color:#dddde4;margin-bottom:14px;line-height:1.5;">Paste your OpenRouter API key. It stays in <code style="font-family:'DM Mono';color:#b8ff57;">sessionStorage</code> only — cleared when you close this tab.</div>
+        <input id="rw-keyin" type="password" placeholder="sk-or-v1-…" style="width:100%;background:#161618;border:1px solid #2d2d34;color:#dddde4;font-family:'DM Mono',monospace;font-size:13px;padding:9px 11px;outline:none;margin-bottom:10px;" />
+        <input id="rw-modelin" placeholder="model · default ${DEFAULT_MODEL}" style="width:100%;background:#161618;border:1px solid #2d2d34;color:#dddde4;font-family:'DM Mono',monospace;font-size:12px;padding:9px 11px;outline:none;margin-bottom:14px;" />
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <a href="https://openrouter.ai/keys" target="_blank" style="font-family:'DM Mono',monospace;font-size:10px;color:#57c8ff;letter-spacing:0.1em;text-transform:uppercase;text-decoration:none;">openrouter.ai/keys ↗</a>
+          <button id="rw-keyok" style="background:transparent;border:1px solid #b8ff57;color:#b8ff57;font-family:'DM Mono',monospace;font-size:11px;padding:7px 14px;cursor:pointer;letter-spacing:0.12em;">SAVE</button>
+        </div>
+      `;
+      panel.appendChild(wrap);
+      const keyIn = wrap.querySelector('#rw-keyin');
+      const modelIn = wrap.querySelector('#rw-modelin');
+      setTimeout(() => keyIn.focus(), 30);
+      const finish = (val) => {
+        wrap.remove();
+        panel.querySelector('.rw-body').style.display = '';
+        panel.querySelector('.rw-hist').style.display = '';
+        panel.querySelector('.rw-foot').style.display = '';
+        resolve(val);
+      };
+      wrap.querySelector('#rw-keyok').addEventListener('click', () => {
+        const k = keyIn.value.trim();
+        if (!k) return;
+        finish({ key: k, model: modelIn.value.trim() || null });
+      });
+      keyIn.addEventListener('keydown', e => { if (e.key === 'Enter') wrap.querySelector('#rw-keyok').click(); });
+    });
+  }
+
+  function captureCleanOuterHTML() {
+    const clone = document.documentElement.cloneNode(true);
+    clone.querySelectorAll(
+      '#re-write-able-runtime-style, .rw-pill, .rw-overlay, .rw-toast'
+    ).forEach(n => n.remove());
+    return clone.outerHTML;
+  }
+
+  async function exportFile() {
+    let src = '<!doctype html>\n' + captureCleanOuterHTML();
+    src = await embedSeedData(src);
+    const slug = (document.title || 're-writeable').replace(/[^a-z0-9-]+/gi, '-').toLowerCase().replace(/^-+|-+$/g, '') || 're-writeable';
+    const blob = new Blob([src], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = slug + '.html';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    unexported = 0;
+    toast('exported · ' + a.download);
+  }
+
+  async function embedSeedData(src) {
+    if (typeof window.getExportData !== 'function') return src;
+    let data;
+    try { data = await window.getExportData(); } catch { return src; }
+    const json = JSON.stringify(data).replace(/<\/(script)/gi, '<\\/$1');
+    const tag = '<script type="application/json" id="app-seed-data">' + json + '</' + 'script>';
+    src = src.replace(/<script[^>]*id=["']app-seed-data["'][^>]*>[\s\S]*?<\/script>/i, '');
+    if (/<\/body>/i.test(src)) src = src.replace(/<\/body>/i, tag + '\n</body>');
+    else src += '\n' + tag;
+    return src;
+  }
+
+  function toast(msg, kind) {
+    const t = document.createElement('div');
+    t.className = 'rw-toast' + (kind === 'err' ? ' err' : '');
+    t.textContent = msg;
+    document.body.appendChild(t);
+    setTimeout(() => t.remove(), 2400);
+  }
+
+  // ---- diff protocol (spec §6.2 v0.4) ----
+  const SYSTEM_PROMPT_DIFF =
+'You modify a single-file HTML application by emitting one or more SEARCH/REPLACE diff blocks.\n' +
+'\n' +
+'FORMAT — use these literal seven-character markers:\n' +
+'\n' +
+'<<<<<<< SEARCH\n' +
+'<exact text from the current file>\n' +
+'=======\n' +
+'<the replacement text>\n' +
+'>>>>>>> REPLACE\n' +
+'\n' +
+'Rules:\n' +
+'- The SEARCH text must match the current file BYTE-FOR-BYTE — same indentation, same whitespace, same line breaks. The runtime uses literal string matching.\n' +
+'- The SEARCH text must be UNIQUE in the file. If a snippet appears more than once, include enough surrounding context to make it unique.\n' +
+'- Emit multiple blocks for multiple edits. Blocks are applied in order on the working text.\n' +
+'- NEVER include the <script id="re-write-able-runtime"> block in any SEARCH or REPLACE. Do not modify it.\n' +
+'- Output the blocks only — no prose, no explanation, no markdown fences. The first character of your response must be `<`.\n' +
+'\n' +
+'Fallback: if the change is too sweeping for diff blocks (full restructuring, bulk redesign), output the literal first line:\n' +
+'\n' +
+'MODE: full-rewrite\n' +
+'\n' +
+'followed by a newline and the complete new HTML file from <!doctype html> to </html>.\n' +
+'\n' +
+'Apply the user instruction precisely. Keep the file fully functional. Prefer the smallest possible diff.';
+
+  function parseEdits(text) {
+    text = text.trim();
+    if (/^MODE:\s*full-rewrite/i.test(text)) {
+      const rest = text.replace(/^MODE:\s*full-rewrite\s*\n?/i, '').trim();
+      return { mode: 'full', src: rest };
+    }
+    const blockRe = /<{7}\s*SEARCH\s*\r?\n([\s\S]*?)\r?\n={7}\s*\r?\n([\s\S]*?)\r?\n>{7}\s*REPLACE/g;
+    const blocks = [];
+    let m;
+    while ((m = blockRe.exec(text)) !== null) {
+      blocks.push({ search: m[1], replace: m[2] });
+    }
+    if (blocks.length === 0) {
+      throw new Error('no SEARCH/REPLACE blocks found and no MODE: full-rewrite header. First 240 chars:\n' + text.slice(0, 240));
+    }
+    return { mode: 'diff', blocks };
+  }
+
+  function applyEdits(src, blocks) {
+    let working = src;
+    for (let i = 0; i < blocks.length; i++) {
+      const { search, replace } = blocks[i];
+      if (!search) throw new Error(`block ${i + 1}: empty SEARCH text`);
+      if (/id=["']re-write-able-runtime["']/.test(search) || /id=["']re-write-able-runtime["']/.test(replace)) {
+        throw new Error(`block ${i + 1}: targets the re-write-able-runtime block — refusing`);
+      }
+      const idx = working.indexOf(search);
+      if (idx === -1) throw new Error(`block ${i + 1}/${blocks.length}: SEARCH not found. First 200 chars:\n${search.slice(0, 200)}`);
+      const lastIdx = working.lastIndexOf(search);
+      if (lastIdx !== idx) throw new Error(`block ${i + 1}/${blocks.length}: SEARCH appears multiple times — needs more context. First 200 chars:\n${search.slice(0, 200)}`);
+      working = working.slice(0, idx) + replace + working.slice(idx + search.length);
+    }
+    return working;
+  }
+
+  async function storageCheck() {
+    if (!navigator.storage?.estimate) return;
+    try {
+      const { usage = 0, quota = 1 } = await navigator.storage.estimate();
+      if (usage / quota > 0.8 && !sessionStorage.getItem(KEYS.warn)) {
+        sessionStorage.setItem(KEYS.warn, '1');
+        pill.querySelector('.rw-dot').style.background = '#ff5757';
+        toast('storage > 80% · export soon', 'err');
+      }
+    } catch {}
+  }
+
+  storageCheck();
+  if (navigator.storage?.persist) navigator.storage.persist().catch(() => {});
+  console.info('[re-write-able] runtime ready · ⌘K rewrite · ⌘Z undo · ⌘S export · or click the green pill bottom-right');
+
+  // First-run hint: app source isn't yet in localStorage; prompt user to ⌘S to make it durable on disk,
+  // and capture the on-load source as the first undo entry so ⌘Z works from the very first rewrite.
+  if (!localStorage.getItem(KEYS.src)) {
+    try { localStorage.setItem(KEYS.src, '<!doctype html>\n' + document.documentElement.outerHTML); } catch {}
+  }
+})();
+</script></template>
+
+<script>
+/* ============================================================
+   SEED BUILD FLOW — only runs if no app exists in localStorage
+   ============================================================ */
+(() => {
+  const $ = sel => document.querySelector(sel);
+  const SS_KEY = 'or_key', SS_MODEL = 'or_model';
+  const SYS_PROMPT =
+`You are building a single-file HTML application from a description.
+
+OUTPUT RULES:
+- Return the COMPLETE HTML file only. No explanation, no markdown fence, no prose.
+- Start with <!doctype html>. End with </html>.
+
+STRUCTURE:
+- A single .html file with all CSS and JavaScript inline.
+- No React, no build steps, no npm. External libraries only from cdnjs.cloudflare.com if genuinely needed.
+- DO NOT add any self-modification UI, ⌘K palette, prompt input, or rewrite controls. The runtime block is injected separately after your output.
+
+VISUAL:
+- Dark theme. Background #0e0e0f, surface #161618, border #2d2d34.
+- Text #dddde4 (primary), #575766 (muted).
+- Accents: #b8ff57 (green), #57c8ff (blue), #ff5757 (red).
+- Fonts via Google Fonts: 'DM Sans' (UI), 'DM Mono' (labels/code), 'Instrument Serif' (display).
+
+DATA:
+- App data in IndexedDB under a descriptive database name (e.g. tracker_db, journal_db).
+- For trivially small data (a few KB of settings), localStorage is acceptable.
+- RESERVED localStorage keys (do NOT touch): docuapp_src, docuapp_undo, da_hist, da_storage_warned. Anything starting with da_ is reserved.
+- Expose window.getExportData() returning a JSON-serializable snapshot of your IndexedDB contents.
+- Expose window.hydrate(data) restoring state from that snapshot (clear stores, then write).
+- On boot: check for <script id="app-seed-data" type="application/json"> — parse, hydrate, then remove the tag.
+
+QUALITY:
+- Real, representative seed data. No lorem ipsum.
+- Polished and complete. Keyboard shortcuts where appropriate.
+- Set <title> to a short descriptive name for the app.`;
+
+  // restore prior session values
+  const savedKey = sessionStorage.getItem(SS_KEY);
+  if (savedKey) $('#key').value = savedKey;
+  const savedModel = sessionStorage.getItem(SS_MODEL);
+  if (savedModel) {
+    const opt = Array.from($('#model').options).find(o => o.value === savedModel);
+    if (opt) $('#model').value = savedModel;
+    else { $('#model').value = 'custom'; $('#custom-model-wrap').style.display = ''; $('#custom-model').value = savedModel; }
+  }
+
+  $('#model').addEventListener('change', () => {
+    $('#custom-model-wrap').style.display = $('#model').value === 'custom' ? '' : 'none';
+  });
+
+  document.querySelectorAll('#examples .example').forEach(b => {
+    b.addEventListener('click', () => { $('#prompt').value = b.dataset.p; $('#prompt').focus(); });
+  });
+
+  $('#build').addEventListener('click', build);
+  $('#prompt').addEventListener('keydown', e => {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); build(); }
+  });
+
+  function setStatus(text, kind) {
+    const s = $('#status');
+    s.classList.remove('err');
+    if (kind === 'err') s.classList.add('err');
+    $('#status-spin').style.visibility = kind === 'err' ? 'hidden' : '';
+    $('#status-text').textContent = text;
+    s.classList.add('show');
+  }
+  function clearStatus() { $('#status').classList.remove('show'); }
+
+  async function build() {
+    const description = $('#prompt').value.trim();
+    const key = $('#key').value.trim();
+    let model = $('#model').value;
+    if (model === 'custom') model = $('#custom-model').value.trim();
+    if (!description) { $('#prompt').focus(); return; }
+    if (!key) { setStatus('paste your OpenRouter key', 'err'); $('#key').focus(); return; }
+    if (!model) { setStatus('pick or type a model', 'err'); return; }
+
+    sessionStorage.setItem(SS_KEY, key);
+    sessionStorage.setItem(SS_MODEL, model);
+
+    $('#build').disabled = true;
+    setStatus('building · the model is generating your app…');
+
+    try {
+      const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': 'Bearer ' + key,
+          'Content-Type': 'application/json',
+          'HTTP-Referer': 'https://re-write-able.local',
+          'X-Title': 're-write-able · seed',
+        },
+        body: JSON.stringify({
+          model,
+          max_tokens: 32000,
+          temperature: 0.4,
+          messages: [
+            { role: 'system', content: SYS_PROMPT },
+            { role: 'user', content: description },
+          ],
+        }),
+      });
+      if (!res.ok) throw new Error('HTTP ' + res.status + ' — ' + (await res.text()).slice(0, 400));
+      const json = await res.json();
+      let src = json.choices?.[0]?.message?.content;
+      if (!src) throw new Error('empty response from model');
+      src = src.replace(/^\s*```(?:html|HTML)?\s*\n?/, '').replace(/\n?\s*```\s*$/, '').trim();
+      if (!/^<!doctype/i.test(src) && !/^<html/i.test(src)) {
+        throw new Error('model did not return HTML — got: ' + src.slice(0, 200));
+      }
+
+      // inject runtime block
+      const runtimeHtml = document.getElementById('rw-runtime-tpl').innerHTML;
+      if (/id="re-write-able-runtime"/.test(src)) {
+        // Model snuck in a runtime placeholder; replace it with the real one
+        src = src.replace(/<script[^>]*id=["']re-write-able-runtime["'][^>]*>[\s\S]*?<\/script>/i, runtimeHtml);
+      } else if (/<\/body>/i.test(src)) {
+        src = src.replace(/<\/body>/i, runtimeHtml + '\n</body>');
+      } else {
+        src += '\n' + runtimeHtml;
+      }
+
+      // commit
+      try { localStorage.setItem('docuapp_src', src); }
+      catch (err) { throw new Error('localStorage write failed (quota?): ' + err.message); }
+
+      setStatus('built · loading…');
+      // hand off
+      setTimeout(() => {
+        document.open(); document.write(src); document.close();
+      }, 250);
+    } catch (err) {
+      $('#build').disabled = false;
+      setStatus(err.message || String(err), 'err');
+    }
+  }
+})();
+</script>
+</body>
+</html>
