@@ -64,6 +64,12 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);fon
 <script id="rwa-bootstrap">
 'use strict';
 
+// ─── Container identity ─────────────────────────────────────────────
+// Per-container UUID. Generated at creation time; preserved across commits
+// because buildFile only rewrites the INLINE_DOC literal contents. Used to
+// namespace IndexedDB so docs opened from file:// don't share state.
+const DOC_UUID = '1694e7c0-abaa-4c28-8a56-7d0953d922bc';
+
 // ─── INLINE_DOC ─────────────────────────────────────────────────────
 // The frozen snapshot of the document. First-open seed and commit target.
 // This is the only part of the bootstrap that changes between commits.
@@ -544,7 +550,7 @@ runtime.status = {                  // observable
 
 // ─── Constants ──────────────────────────────────────────────────────
 const RWA = {
-  DB: 'rwa',
+  DB: 'rwa_' + DOC_UUID,
   STORE_DOC: 'rwa_doc',
   STORE_UNDO: 'rwa_undo',
   STORE_HIST: 'rwa_hist',

@@ -87,7 +87,9 @@ The bootstrap is to a re-writeable file what `gate.py` is to a governed self-mod
 
 ### 5.2 The Bootstrap
 
-The bootstrap holds three responsibilities.
+The bootstrap holds four responsibilities.
+
+**Identity.** A per-container UUID, generated once at creation time and baked into the bootstrap as a top-level constant (`DOC_UUID`). The runtime uses it to namespace IndexedDB (§5.3) so containers opened from the same null origin do not collide. The UUID is part of the immutable bootstrap: every commit rewrites only the `INLINE_DOC` literal, so `DOC_UUID` is byte-identical pre- and post-commit and the container keeps the same database across its entire lifetime. UUID generation happens outside the runtime — at the moment a new container is created (e.g. by a Claude skill that scaffolds the file from a template).
 
 **Loader.** On every open, hydrates IndexedDB from the inline snapshot if IndexedDB is empty, then renders the document. The first-open path and every-other-open path are the same code path; the only difference is whether IndexedDB starts empty.
 
@@ -112,7 +114,7 @@ Four tiers, each chosen for what it does best.
 
 | Tier | Holds | Sync? | Browser support | Mutated when |
 |---|---|---|---|---|
-| **IndexedDB** | `rwa_doc`, `rwa_undo`, `rwa_hist`, plus document-defined stores | Async | All | Every ⌘K, ⌘Z, and document write |
+| **IndexedDB** | Per-container database `rwa_<DOC_UUID>` holding `rwa_doc`, `rwa_undo`, `rwa_hist`, `rwa_fsa`, plus document-defined stores | Async | All | Every ⌘K, ⌘Z, and document write |
 | **OPFS** | Binary blobs — images, attachments, large or streamable content | Async (sync handles inside Web Workers) | All modern | Document-driven |
 | **sessionStorage** | OpenRouter API key | Sync | All | On submit; cleared on tab close |
 | **Filesystem** | The container itself (bootstrap with current inline snapshot) | n/a | Chromium write-in-place via FSA; download elsewhere | On commit (⌘S) |
@@ -123,7 +125,8 @@ LocalStorage is not part of the architecture. Everything that previously lived t
 
 The runtime owns these — generated documents must not touch them.
 
-- IndexedDB stores: `rwa_doc`, `rwa_undo`, `rwa_hist`, and any future store named `rwa_*`.
+- IndexedDB databases: each container claims `rwa_<DOC_UUID>` (its own private DB, isolated from other containers — see §5.7). The shared composition database `rwa_shared`, if used, is also runtime-owned.
+- IndexedDB stores within `rwa_<DOC_UUID>`: `rwa_doc`, `rwa_undo`, `rwa_hist`, `rwa_fsa`, and any future store named `rwa_*`.
 - OPFS paths: anything under `_rwa/`.
 
 The document interacts with reserved storage only through the runtime API. The runtime is the only writer of reserved stores.
@@ -201,32 +204,31 @@ The runtime persists the FSA handle in IndexedDB (handles are structured-cloneab
 
 The runtime tracks dirty state — number of modifications since last commit — and surfaces a status indicator. After 5 uncommitted modifications it nudges: *"You have 5 uncommitted changes. ⌘S to commit."* This is critical because the inline snapshot is the only thing that travels: a recipient who opens an uncommitted file gets the snapshot from the previous commit, not the current IndexedDB state.
 
-### 5.7 The Null Origin Bus
+### 5.7 Container Isolation and the Null Origin
 
-Under `file://`, all re-writeable files share the same origin: `null`. They share IndexedDB and OPFS namespaces. This is by design — it is the local communication bus.
+Under `file://`, every container shares the same origin — `null`. Without further structure, they would share IndexedDB. Earlier drafts of this spec framed that as a feature: a free communication bus between documents on the same disk. In practice it makes containers shadow each other. Open `tracker.html`; its `rwa_doc` lands in the shared `rwa` database. Then open `notes.html`; the loader finds an `rwa_doc` already in IndexedDB and renders it instead of hydrating its own snapshot. Every container becomes a window into whichever container last wrote to the shared database.
 
-```
-budget.html      → writes  IDB store budget_data
-tracker.html     → writes  IDB store tracker_data
-dashboard.html   → reads   budget_data + tracker_data
-                 → renders a unified view across both documents
-```
+**Isolation by default.** Each container's IndexedDB lives in a database named after its UUID: `rwa_<DOC_UUID>` (§5.2, §5.3). Two containers opened from the same origin do not see each other's `rwa_doc` because they are looking at different databases. The null origin is no longer the bus; the UUID is the boundary.
 
-Two practical notes.
-
-**No free change event.** IndexedDB does not fire `storage` events. Use `BroadcastChannel` for cross-document pub/sub:
+**Composition is opt-in.** A document that wants to publish to or read from other containers does so through a shared database, `rwa_shared`, accessed via the runtime:
 
 ```javascript
-const ch = new BroadcastChannel('tracker_data');
-ch.postMessage({ type: 'rows_changed' });    // writer
-ch.onmessage = e => refreshTrackerSection(); // reader
+runtime.shared.put('tracker:tasks', tasks);
+const tasks = await runtime.shared.get('tracker:tasks');
+runtime.shared.subscribe('tracker:tasks', refreshTrackerSection);
 ```
 
-The runtime exposes a sugared form: `runtime.subscribe(storeName, callback)`.
+`rwa_shared` has a single store keyed by string. Naming convention: `<source>:<topic>`. The bus that previously existed by accident — every container's private state visible to every other container — becomes an explicit, namespaced API. The architectural intent is preserved; the failure mode (containers shadowing each other) is gone.
 
-**Async reads.** Every cross-document read is a Promise. Embedders should render a skeleton first and hydrate when the transaction resolves.
+The detailed shape of `runtime.shared.*` — naming rules, conflict resolution between writers, schema declarations — is deferred to §11.5.
 
-Served over HTTP/HTTPS, each file gets a real origin and the bus breaks. The bus is a local-distribution feature; hosting a re-writeable file behind a URL converts it from a composable artifact into a single-document island.
+**No free change event.** IndexedDB does not fire `storage` events. Use `BroadcastChannel` for cross-container pub/sub. The runtime's `shared.subscribe` wraps a `BroadcastChannel` keyed by the shared-store name.
+
+**Async reads.** Every cross-container read is a Promise. Embedders should render a skeleton first and hydrate when the transaction resolves.
+
+**OPFS is not yet namespaced.** Containers that write to `_rwa/` paths still share the null-origin OPFS namespace; collisions are possible. This is a known gap (§11.5).
+
+Served over HTTP/HTTPS, each file gets a real origin and `rwa_shared` becomes per-host. The composition surface is a local-disk feature; hosting a re-writeable file behind a URL converts it from a composable artifact into a single-document island.
 
 ### 5.8 Embedding and Composition
 
@@ -290,13 +292,21 @@ The model is configurable per file. The runtime passes the configured model to O
 The document interacts with the runtime through a small surface exposed on the global `runtime` object.
 
 ```javascript
-runtime.db = {
+runtime.db = {                      // private — scoped to rwa_<DOC_UUID>
   get(store, key),
   put(store, key, value),
   del(store, key),
   all(store),                       // iterate
   open(store, { autoIncrement }),   // declare document store (rejects rwa_*)
   subscribe(store, callback),       // BroadcastChannel-backed
+};
+
+runtime.shared = {                  // opt-in — scoped to rwa_shared (§5.7)
+  get(key),                         // key prefixed with <DOC_UUID>: by default
+  put(key, value),
+  del(key),
+  list(prefix),
+  subscribe(key, callback),
 };
 
 runtime.fs = {
@@ -306,6 +316,7 @@ runtime.fs = {
   list(prefix),                     // rejects _rwa/
 };
 
+runtime.id;                         // string — the container's DOC_UUID
 runtime.modify(instruction);        // ⌘K programmatic equivalent
 runtime.commit();                   // ⌘S programmatic equivalent
 runtime.undo();                     // ⌘Z programmatic equivalent
@@ -387,7 +398,7 @@ A user authors a tracker on their iPhone, doesn't open it for two weeks, and iOS
 
 ### 9.2 The Null Origin and Shared Quotas
 
-Under `file://`, all re-writeable files share the same origin and therefore the same storage quota. The bus benefits from this; the shared quota is a constraint. The runtime monitors the shared budget and warns before exhaustion.
+Under `file://`, all re-writeable files share the same origin and therefore the same storage quota — even though their IndexedDB databases are now isolated by `DOC_UUID` (§5.7). Per-container isolation prevents state collisions, not quota collisions. Many open containers add up to one shared budget. The runtime monitors usage and warns before exhaustion. Eviction under pressure can drop a container's private database without warning, which is why the inline snapshot in the file on disk remains the only durable artifact (§5.6).
 
 ---
 
@@ -468,6 +479,18 @@ For documents over ~200 KB, full-content rewrites get slow and expensive. A SEAR
 
 ⌘S means "commit" regardless of destination — write-in-place when possible, download otherwise. An alternative is to split: ⌘S for commit, ⌘E for explicit export. The current direction is the unified key, with the runtime choosing destination silently.
 
+### 11.5 The Shape of `runtime.shared.*`
+
+Container isolation by UUID (§5.7) closes a sharp footgun — every container shadowing every other — but pays for it by retracting the cross-container bus that earlier drafts treated as a free composition mechanism. A deliberate composition surface (`runtime.shared.put/get/subscribe` against a single `rwa_shared` database) is the current direction, but several questions remain.
+
+- **Naming.** `<source>:<topic>` is a convention, not a contract. Should the runtime enforce a namespace prefix (e.g. require keys to begin with the writing container's title or UUID)? Without enforcement, two containers can write the same key by accident and one will overwrite the other.
+- **Conflict and freshness.** When two containers write the same key concurrently, the last write wins. Some compositions need richer semantics — append-only logs, counters, CRDTs. Where is the line between "shared kv store" and "shared toolkit"?
+- **Schema and discovery.** A reader has no way to know which keys exist until a writer publishes one. A schema declaration step (the writer announces `{ key, shape, version }`) would let dashboards enumerate sources, but adds upfront ceremony.
+- **OPFS isolation.** Containers still share the null-origin OPFS namespace under `_rwa/`. Should OPFS be namespaced by `DOC_UUID` like IDB, with a parallel `_rwa_shared/` for opt-in sharing? The same logic that motivated IDB isolation applies, but no production document writes binary blobs yet, so the cost of the gap is currently zero.
+- **Same-host sharing.** Over HTTP, `rwa_shared` is per-origin and works for documents on the same host. Two re-writeables hosted on different domains cannot compose. Whether to bridge them (postMessage between iframes? a small relay?) is a separate question from the local-disk case and may not be worth solving until someone needs it.
+
+Current direction: ship `runtime.shared.put/get/subscribe` as a thin layer over `rwa_shared`, prefix keys with `<DOC_UUID>:` by default to prevent accidental collisions, and let documents opt out of the prefix when they want to publish under a stable name.
+
 ---
 
 ## 12. Citizen Development Model
@@ -523,8 +546,8 @@ The collaboration model is: *send the file. They have everything.*
 **Act 5 — The bus** (2 min)
 
 - Open a dashboard alongside the tracker and the letter
-- Show IndexedDB in DevTools — all three documents' stores visible under the null origin
-- The dashboard reads from both
+- Show IndexedDB in DevTools — each document has its own `rwa_<DOC_UUID>` database; the tracker and the letter publish to a shared `rwa_shared` database via `runtime.shared.put`
+- The dashboard reads from `rwa_shared` and renders a unified view across both
 - The web was supposed to be read/write. This is read/write.
 
 ---
@@ -560,13 +583,14 @@ It is a file that writes itself.
 
 These properties are load-bearing — every change to the runtime, bootstrap, or storage model should preserve them.
 
-1. The bootstrap is byte-identical across every open until commit, and a commit only rewrites the `INLINE_DOC` constant — the loader and runtime bytes do not change.
-2. The runtime is always loaded from the bootstrap, never from IndexedDB. The agent has no access to it.
-3. Reserved IndexedDB stores (`rwa_*`) and OPFS paths (`_rwa/`) are written only by the runtime.
-4. Every committed file is self-contained — opens and runs without external dependencies.
-5. The inline snapshot is the source of truth on first open. After hydration, IndexedDB is the source of truth until the next commit.
-6. Undo history lives in IndexedDB, not in the file. Commits do not carry undo state.
+1. The bootstrap is byte-identical across every open until commit, and a commit only rewrites the `INLINE_DOC` constant — the loader, runtime, and `DOC_UUID` bytes do not change.
+2. Each container has a `DOC_UUID` baked into its bootstrap at creation time. The container's IndexedDB database is `rwa_<DOC_UUID>`. Two containers opened from the same origin do not share a private database.
+3. The runtime is always loaded from the bootstrap, never from IndexedDB. The agent has no access to it.
+4. Reserved IndexedDB stores (`rwa_*`) within `rwa_<DOC_UUID>`, the shared composition database (`rwa_shared`), and OPFS paths (`_rwa/`) are written only by the runtime.
+5. Every committed file is self-contained — opens and runs without external dependencies.
+6. The inline snapshot is the source of truth on first open. After hydration, IndexedDB is the source of truth until the next commit.
+7. Undo history lives in IndexedDB, not in the file. Commits do not carry undo state.
 
 ---
 
-*Spec version 0.6 — terminology and framing pass on top of v0.5. The user-authored layer is consistently called a **document** (not "app content"). Renames: `INLINE_APP` → `INLINE_DOC`, `rwa_app` → `rwa_doc`. Adds the office-suite-replacement thesis to §2–§4: HTML can do everything Word, Excel, and PowerPoint did, all three in the same file. Rewrites §6.1 with an explicit document-first system prompt — interactivity is a property the document may have, not a definition. Loosens §8 design rules to admit pure-prose documents (CSS inline, JS optional). Demo (§13) now opens both a tracker and a prose document side by side. Architecture is unchanged from v0.5; only vocabulary, framing, and the agent's mental model shift.*
+*Spec version 0.7 — container isolation pass. Every container now carries a `DOC_UUID` baked into the bootstrap at creation time, and its private IndexedDB lives under `rwa_<DOC_UUID>` instead of the shared `rwa` namespace. This closes a sharp footgun in v0.6: every container opened from `file://` was looking at the same `rwa_doc` and shadowing whichever container last committed. §5.2 grows a fourth bootstrap responsibility (Identity); §5.3 namespaces the IDB row in the storage table; §5.7 is rewritten — the "null origin bus" that v0.6 sold as a feature is replaced by isolation by default plus an opt-in `runtime.shared.*` API against a shared `rwa_shared` database; §9.2 clarifies that containers share quota even when they no longer share state; §11 adds a new open question (§11.5) about the precise shape of the shared composition surface; Invariants gain a per-container UUID rule. Reference implementations (`hello.html`, `re-write-able-spec.html`) ship with fresh UUIDs.*

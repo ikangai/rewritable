@@ -44,6 +44,11 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);min
 <script id="rwa-bootstrap">
 'use strict';
 
+// Per-container identity — namespaces IndexedDB so file:// docs don't collide.
+// Generated at creation time; preserved across commits because buildFile only
+// rewrites the INLINE_DOC literal contents.
+const DOC_UUID = '4f6b3cdb-dc22-4882-a7a6-ced47f7d5e8d';
+
 // The document — a frozen snapshot, hydrated into IndexedDB on first open
 // and rewritten in place on every commit.
 const INLINE_DOC = `<style>
@@ -59,7 +64,7 @@ const INLINE_DOC = `<style>
 
 // ─── Storage ────────────────────────────────────────────────────────
 const RWA = {
-  DB:'rwa', KEY:'self',
+  DB:'rwa_'+DOC_UUID, KEY:'self',
   DOC:'rwa_doc', UNDO:'rwa_undo', HIST:'rwa_hist', FSA:'rwa_fsa',
   UNDO_CAP:10, HIST_CAP:15,
   K_API:'rwa_apikey', K_MODEL:'rwa_model',
