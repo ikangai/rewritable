@@ -34,6 +34,23 @@ The file is built around an **immutable bootstrap** — a loader, a runtime, and
 
 Send the file by email, put it on a USB stick, commit it to git. The recipient opens it in a browser and it runs.
 
+## Getting a fresh file
+
+Three ways, all produce the same self-contained `.html`:
+
+```sh
+# CLI — offline, npm
+npx rwa new                 # → ./rewritable.html
+npx rwa import notes.md     # → ./notes.html  (md/html/txt supported)
+```
+
+```sh
+# Service — hosted
+curl -O https://rewritable.ikangai.com/rewritable.html
+```
+
+Or hand-craft: copy `seeds/rewritable.html`, replace the nil `DOC_UUID` with a fresh `crypto.randomUUID()`, save.
+
 ## The spec
 
 [`re-write-able-spec.md`](re-write-able-spec.md) — the full specification covering architecture, storage model, agent contract, embedding, security, and platform behavior.

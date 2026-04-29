@@ -1,0 +1,13 @@
+.git
+.DS_Store
+node_modules
+**/node_modules
+npm-debug.log
+*.md
+.gitignore
+cli/
+service/docker-compose*.yml
+service/Dockerfile
+.dockerignore
+.autoresearch-starred
+autoresearch-results.tsv

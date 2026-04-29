@@ -7,11 +7,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `re-write-able-spec.md` — canonical spec (source of truth, currently v0.8)
 - `re-write-able-spec.html` — worked-example reference: the spec itself rendered as a re-writeable document
 - `hello.html` — minimal base variant: a one-line "hello world" wrapped in the same v0.7 bootstrap
+- `seeds/rewritable.html` — **canonical bootstrap seed**. Both the service and the CLI read this to emit fresh containers. Has a nil-UUID sentinel that is substituted at emit time.
+- `service/` — Node HTTP service that hands out fresh containers via `/new`. Build context is the **repo root** (so it can `COPY seeds/`); see `service/Dockerfile` and `service/docker-compose*.yml`.
+- `cli/` — `rwa` npm package (the CLI). `rwa new` emits a fresh container; `rwa import <file>` converts md/html/txt into one. Reads the canonical seed in dev; ships its own bundled copy on `npm publish` via the `prepublishOnly` hook.
 - `README.md` — short pitch
 
-There is no `package.json`, no build system, no test suite, no lint config. By design. "Run" = open the `.html` in a browser. "Test" = open the `.html` in a browser.
+The references and seed have no build step — "run" = open the `.html` in a browser, "test" = open the `.html` in a browser. The CLI has a `package.json` with one runtime dep (`marked`). There is no test suite or lint config at the repository level.
 
 If the user asks you to update the spec, edit `re-write-able-spec.md` and treat the `.html` rendering as derived (regenerate or note drift).
+
+If the user asks you to update the bootstrap, edit `seeds/rewritable.html` (the canonical copy). `hello.html` is intentionally not regenerated from this — it carries a real baked-in `DOC_UUID` and stays as a frozen reference.
 
 ## What re-write-able is (architecture in one page)
 
@@ -95,6 +100,14 @@ iOS Safari evicts IndexedDB aggressively after inactivity or storage pressure. T
 
 ## Conventions when editing the references
 
-- `hello.html` and `re-write-able-spec.html` share the same bootstrap structure. Bug fixes and architecture updates to one should be applied to the other.
+- `hello.html` and `re-write-able-spec.html` share the same bootstrap structure as `seeds/rewritable.html`. Bug fixes and architecture updates to one should be applied to the others.
 - Each reference ships with its own `DOC_UUID`. Never reuse a UUID across files. Generate fresh: `node -e 'console.log(crypto.randomUUID())'`.
 - The agent's system prompt lives in the bootstrap (`SYSTEM_PROMPT` constant). It must match §6.1 of the spec.
+
+## Conventions when editing the CLI (`cli/`)
+
+- The CLI is offline-first. `rwa new` and `rwa import` must work without network. Don't add anything that fetches the seed at runtime.
+- The seed is loaded by the CLI from a small candidate list: `cli/seeds/rewritable.html` (the in-package copy that prepublish creates) preferred; `seeds/rewritable.html` (canonical, dev mode) as fallback. Don't add more candidates without thinking about how the search semantics interact with `npm publish`.
+- The CLI mirrors three pieces of bootstrap-side logic: `escapeTL` (the template-literal escape), the INLINE_DOC backtick-walk, and the DOC_UUID substitution regex. If any of those change in `seeds/rewritable.html`, mirror the change in `cli/src/seed.mjs`.
+- `rwa import` ordering: apply seed-level substitutions (DOC_UUID/title/FILE) on the pristine seed first, *then* drop the imported content into INLINE_DOC. Doing it in the other order causes the `DOC_UUID` substitution to falsely match content the user imported (e.g. when importing another rwa file).
+- HTML import keeps `<script>` tags intentionally (rwa documents can be interactive per the spec) and prints a stderr `note:` warning. Don't strip them silently.

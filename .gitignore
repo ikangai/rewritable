@@ -1,2 +1,5 @@
 autoresearch-results.tsv
 .autoresearch-starred
+node_modules/
+cli/seeds/
+

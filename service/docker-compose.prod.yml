@@ -1,6 +1,8 @@
 services:
   rewritable:
-    build: .
+    build:
+      context: ..
+      dockerfile: service/Dockerfile
     image: ikangai/rewritable-new:latest
     container_name: rewritable-new
     restart: always

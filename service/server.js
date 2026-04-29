@@ -7,10 +7,11 @@ const crypto = require('node:crypto');
 
 const PORT = Number(process.env.PORT) || 80;
 const PUBLIC_DIR = path.join(__dirname, 'public');
+const SEEDS_DIR = path.join(__dirname, '..', 'seeds');
 
 // Read static assets once at startup. Updates require restart (rebuild+redeploy).
 const TRIGGER_HTML = fs.readFileSync(path.join(PUBLIC_DIR, 'new.html'));
-const SEED_TEMPLATE = fs.readFileSync(path.join(PUBLIC_DIR, 'rewritable.html'), 'utf8');
+const SEED_TEMPLATE = fs.readFileSync(path.join(SEEDS_DIR, 'rewritable.html'), 'utf8');
 
 // Per-container UUID injection. The seed ships with a placeholder DOC_UUID;
 // every download gets a fresh randomUUID() substituted in. Without this, two

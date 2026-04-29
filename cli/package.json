@@ -1,0 +1,24 @@
+{
+  "name": "rwa",
+  "version": "0.1.0",
+  "description": "CLI for re-writeable: emit and import single-file rwa documents.",
+  "type": "module",
+  "bin": {
+    "rwa": "./bin/rwa.mjs"
+  },
+  "files": [
+    "bin/",
+    "src/",
+    "seeds/",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "marked": "^14.1.0"
+  },
+  "scripts": {
+    "prepublishOnly": "mkdir -p seeds && cp ../seeds/rewritable.html seeds/rewritable.html"
+  }
+}
