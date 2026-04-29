@@ -33,9 +33,9 @@ A re-writeable file is that middle ground.
 A re-writeable file is a single `.html` file that:
 
 1. **Renders itself** — open it in any browser, it runs
-2. **Stores itself** — its live state lives in `localStorage`, not on a server
-3. **Modifies itself** — an embedded agent rewrites the file's own source code on instruction
-4. **Exports itself** — the current state can be saved as a new `.html` file at any time
+2. **Stores itself** — its working state lives in IndexedDB; the file itself is the durable record
+3. **Modifies itself** — an embedded agent rewrites the file's app content on instruction
+4. **Commits itself** — the current state is written back into the file (in place when the browser supports it, as a download otherwise)
 5. **Requires nothing** — no server, no install, no build step, no account
 
 The file is simultaneously a document, a tool, an application, and its own source code.
@@ -60,341 +60,402 @@ Tim Berners-Lee's original vision was a read/write web. The browser was meant to
 
 ## 5. Architecture
 
-### 5.1 The Seed File
+### 5.1 Container, Bootstrap, and App Content
 
-The seed file is the immutable bootstrap. It never changes. It is the equivalent of `gate.py` in a governed self-modification system — the one thing the agent cannot touch.
+Three terms anchor the rest of the spec:
 
-```
-docuapp.html  (seed — you distribute this)
-     │
-     │  on first open: generate app, inject runtime, store in localStorage
-     │  on subsequent opens: load from localStorage → document.write
-     ▼
-localStorage['docuapp_src']  (live app — the agent rewrites this)
-```
-
-The seed file contains:
-- A build screen (OpenRouter key + model + description)
-- The agent call to generate the initial app
-- The `injectRuntime()` function
-- A loader: `document.open(); document.write(src); document.close()`
-
-It does not contain the app. It does not get rewritten.
-
-### 5.2 The Runtime Block
-
-Every re-writeable app contains a single `<script id="re-write-able-runtime">` block. This is the self-modification engine. It is injected by the seed after the initial build and preserved verbatim through all subsequent rewrites.
-
-The runtime provides:
-- `⌘K` — command palette for modification instructions
-- `⌘Z` — undo (pop from undo stack, up to 10 levels)
-- `⌘S` — export current state as a standalone `.html` file
-- Prompt history (last 15 instructions, stored in `localStorage['da_hist']`)
-- Storage health indicator (warns when quota usage exceeds 80%)
-- Export nudge (prompts to export after 5 unexported modifications)
-
-The agent system prompt includes: *"Preserve the `<script id="re-write-able-runtime">` block exactly as-is. Never remove or alter it."*
-
-### 5.3 Storage Architecture
-
-The runtime separates storage into two tiers:
-
-#### Runtime tier (localStorage — sync, simple, ≤2 MB)
-
-The runtime's own state lives in localStorage. This is small, synchronous, and works identically across all browsers.
+- **Container** — the `.html` file as a whole. The thing you open, share, attach to email, drop on a desktop.
+- **Bootstrap** — the immutable shell inside the container: a loader, a runtime, and an inline snapshot of the app. The bootstrap is byte-identical across every open until a commit, and a commit only rewrites the snapshot — the loader and runtime bytes do not change.
+- **App content** — the user-authored part: HTML, CSS, JS, and structured data. Mutable. Lives in IndexedDB at runtime; lives as a frozen snapshot inside the bootstrap at rest.
 
 ```
-localStorage
-├── docuapp_src       — current app HTML source (the live running code)
-├── docuapp_undo      — undo stack (JSON array, up to 10 previous versions)
-├── da_hist           — prompt history (JSON array, last 15)
-└── da_storage_warned — flag: storage warning already shown this session
+container (the .html file on disk)
+└── bootstrap (immutable shell — never modified except by commit)
+    ├── loader        (hydrate IndexedDB on first open, render app on every open)
+    ├── runtime       (⌘K, ⌘Z, ⌘S, agent wrapper, status UI, storage API)
+    └── const INLINE_APP = `…`   (frozen snapshot — first-open seed and commit target)
 ```
 
-A typical app source is 50–100 KB. Ten undo levels cost ~1 MB. The full runtime tier fits comfortably within the ≈5 MB localStorage limit on every browser, including mobile Safari.
+The bootstrap is to a re-writeable file what `gate.py` is to a governed self-modification system: the one thing the agent cannot touch. The agent receives only app content; the bootstrap, loader, runtime, and inline snapshot are not visible to it. There is no "preserve this script block verbatim" instruction — the runtime is structurally inaccessible, not contractually protected.
 
-#### App data tier (IndexedDB — async, large, ≤50 MB+)
+### 5.2 The Bootstrap
 
-App-generated data — rows, records, images, documents — belongs in IndexedDB, not localStorage. IndexedDB provides hundreds of MB on desktop and ≈50–100 MB per origin on mobile, with async access that won't block the UI.
+The bootstrap holds three responsibilities.
 
-| What | Where | Why |
-|---|---|---|
-| App source + undo stack | localStorage | Small, sync reads needed for instant boot |
-| Prompt history | localStorage | Tiny, sync |
-| App data (rows, records) | IndexedDB | Can grow large, async is fine |
-| Binary/media data | IndexedDB | localStorage can't handle blobs efficiently |
-| API key | sessionStorage | Cleared on tab close, never persisted |
+**Loader.** On every open, hydrates IndexedDB from the inline snapshot if IndexedDB is empty, then renders the app content. The first-open path and every-other-open path are the same code path; the only difference is whether IndexedDB starts empty.
 
-The build prompt guides the agent to use IndexedDB for app data by default. For trivially small apps (a few KB of settings), localStorage is acceptable — but the agent should prefer IndexedDB for anything that could grow.
+**Runtime.** Provides the self-modification surface and a small API for the app:
 
-**Key namespace rules:**
-- `docuapp_src`, `docuapp_undo`, and `da_*` keys in localStorage are reserved by the runtime
-- App data in IndexedDB should use a descriptive database name (e.g. `tracker_db`, `recipes_db`)
-- Under `file://`, all re-writeable files share the null origin — both localStorage keys and IndexedDB databases are visible to all files
+- `⌘K` — modification prompt
+- `⌘Z` — undo (pop from the IDB undo stack, up to 10 levels)
+- `⌘S` — commit (write the bootstrap back to disk with an updated inline snapshot, in place when possible)
+- Storage adapters: `runtime.db.*` (IndexedDB), `runtime.fs.*` (OPFS)
+- Agent invocation: `runtime.modify(instruction)`
+- Status UI: storage health, FSA permission status, dirty/clean indicator, commit nudge
+
+The full runtime API surface is in §7.
+
+**Inline snapshot.** A JavaScript template literal containing a serialized payload — the rendered HTML/CSS/JS plus the contents of all IndexedDB stores and OPFS paths the app uses. The snapshot is the source of truth on first open; IndexedDB takes over after hydration; on commit, IndexedDB and OPFS are serialized back into the snapshot. One snapshot, one round-trip, one source of truth at any given moment.
+
+This replaces two structures from the prior architecture: the `<script id="re-write-able-runtime">` block inside the app source, and the `<script type="application/json" id="app-seed-data">` blob for IndexedDB hydration. Both are gone. The runtime is no longer in the app, no longer in localStorage, and no longer in the agent's context window.
+
+### 5.3 Storage Model
+
+Four tiers, each chosen for what it does best.
+
+| Tier | Holds | Sync? | Browser support | Mutated when |
+|---|---|---|---|---|
+| **IndexedDB** | `rwa_app`, `rwa_undo`, `rwa_hist`, plus app-defined stores | Async | All | Every ⌘K, ⌘Z, and app write |
+| **OPFS** | Binary blobs — images, attachments, large or streamable content | Async (sync handles inside Web Workers) | All modern | App-driven |
+| **sessionStorage** | OpenRouter API key | Sync | All | On submit; cleared on tab close |
+| **Filesystem** | The container itself (bootstrap with current inline snapshot) | n/a | Chromium write-in-place via FSA; download elsewhere | On commit (⌘S) |
+
+LocalStorage is not part of the architecture. Everything that previously lived there moves to IndexedDB. The benefit: one tier for all working state, larger quota, no split between source storage and data storage. The cost: async loading. For a 50–100 KB app the load is imperceptible; for larger apps the loader can render synchronously from the inline snapshot first and reconcile with IndexedDB after (§11.2).
+
+#### Reserved namespaces
+
+The runtime owns these — generated apps must not touch them.
+
+- IndexedDB stores: `rwa_app`, `rwa_undo`, `rwa_hist`, and any future store named `rwa_*`.
+- OPFS paths: anything under `_rwa/`.
+
+The app interacts with reserved storage only through the runtime API. The runtime is the only writer of reserved stores.
 
 #### Quota awareness
 
-The runtime checks available storage on boot and after each rewrite:
+The runtime checks available storage on boot and after each rewrite and surfaces a warning above 80% usage. On browsers that support it, persistent storage is requested:
 
 ```javascript
-if (navigator.storage && navigator.storage.estimate) {
-  const { usage, quota } = await navigator.storage.estimate();
-  if (usage / quota > 0.8) showStorageWarning();
-}
+if (navigator.storage?.persist) navigator.storage.persist();
 ```
 
-On browsers that support it, the runtime requests persistent storage to reduce eviction risk:
-
-```javascript
-if (navigator.storage && navigator.storage.persist) {
-  navigator.storage.persist();
-}
-```
-
-This helps on Chrome (desktop and Android). Safari ignores the request — see §9 for platform-specific behavior.
+Chrome (desktop and Android) honors this; Safari does not (§9.1).
 
 ### 5.4 The Rewrite Loop
 
 ```
-User: ⌘K → "add a priority column to the tracker"
-          │
-          ▼
-Runtime captures: document.documentElement.outerHTML
-          │        (the entire running app, including runtime block)
-          ▼
-Agent call: system = "modify HTML app, preserve runtime block"
-            user   = current outerHTML + "\n\nInstruction: " + prompt
-          │
-          ▼
-Agent returns: complete modified HTML
-          │
-          ▼
-Runtime:  undoStack = JSON.parse(localStorage['docuapp_undo'] || '[]')
-          undoStack.push(currentSrc)
-          if (undoStack.length > 10) undoStack.shift()   // cap at 10
-          localStorage['docuapp_undo'] = JSON.stringify(undoStack)
-          localStorage['docuapp_src']  = newSrc
-          document.open(); document.write(newSrc); document.close();
-          │
-          ▼
-Browser: re-renders the new app
-         the app has modified itself
+user presses ⌘K, types instruction
+  → runtime reads rwa_app from IndexedDB
+  → agent call: system prompt + app content + instruction
+                (no bootstrap, no runtime, no inline snapshot in the prompt)
+  → push prior rwa_app onto rwa_undo (cap 10)
+  → write returned content to rwa_app
+  → loader re-renders the new content
 ```
 
-`⌘Z` pops from the undo stack and writes it to `docuapp_src`. Multiple undos walk back through history. Ten levels is ~1 MB for a typical app — well within localStorage limits on all platforms.
+The agent receives only the app content. The bootstrap, loader, runtime, and inline snapshot are not in the prompt, and the agent cannot modify them because they are not visible. This eliminates the prior architecture's "preserve the runtime block verbatim" instruction — a fragile contract that depended on the model not drifting on the most repetition-prone part of the prompt.
 
-The undo stack (`docuapp_undo`) and prompt history (`da_hist`) together form a dialogue log: what the user asked and what the app became at each step. Undo isn't just version control — it's conversation replay. The user can walk backward through the dialogue, see the app as it was after each instruction, and branch forward from any point.
+A side benefit: the prompt is smaller. The runtime overhead (~10–15 KB) is no longer charged on every modification, and smaller, cheaper models become viable defaults.
 
-### 5.5 The Null Origin Bus
+`⌘Z` pops `rwa_undo` and writes it to `rwa_app`. Multiple undos walk back through history. Together, `rwa_undo` and `rwa_hist` form a dialogue log: what the user asked and what the app became at each step. Undo isn't just version control — it's conversation replay.
 
-When HTML files are opened locally via `file://`, all files share the same origin: `null`. This means all re-writeable files opened in the same browser share the same `localStorage` namespace.
-
-This is not a bug. It is a local communication bus:
+### 5.5 First Open and Hydration
 
 ```
-budget.html     → writes  localStorage['budget_data']
-tracker.html    → writes  localStorage['tracker_data']
-dashboard.html  → reads   localStorage['budget_data'] + localStorage['tracker_data']
-                → renders a unified view across both files
+open container.html
+  → bootstrap runs
+  → loader checks IndexedDB for rwa_app
+  → empty? hydrate: copy INLINE_APP into rwa_app, replay any data stores it carries
+  → render app content
+  → runtime attaches event listeners
 ```
 
-The `storage` event fires when localStorage changes in another tab. A re-writeable dashboard can subscribe to sibling documents and re-render reactively — with no server, no WebSockets, no protocol.
+There is no build form, no description prompt, no agent call on first open. The file is a document the moment it is opened. If you want a particular initial state, ship the file with that state baked into the inline snapshot. If you want a blank slate, ship a snapshot of a blank slate.
+
+The build flow from the prior architecture (open seed → enter description → agent generates app) is no longer privileged. A separate "starter" container can perform the build flow as an ordinary modification and then commit, but the act of building is just the first ⌘K.
+
+### 5.6 Commit and Export
+
+`⌘S` has one semantics — *commit* — and two implementations depending on browser capability.
+
+**Chromium with a persisted FSA handle (commit-in-place):**
+
+```
+serialize current rwa_app + all app-defined IDB stores + relevant OPFS contents
+  → rewrite the INLINE_APP constant inside the bootstrap
+  → handle.createWritable() → write whole .html → close
+  → status: clean
+```
+
+**All others (export-as-new-file):**
+
+```
+same serialization
+  → trigger download of new .html with updated INLINE_APP
+  → user manually attaches/saves
+  → status: clean since last export
+```
+
+Other than the destination, the two implementations are byte-identical: the same bootstrap, the same updated inline snapshot, the same self-contained file. The exported file opens and runs without external dependencies, and can keep rewriting itself.
+
+The runtime persists the FSA handle in IndexedDB (handles are structured-cloneable in modern Chromium) and reuses it for subsequent commits. If the permission lapses, the runtime falls back silently to download mode and surfaces a "regrant write access" affordance. The full FSA permission contract is in §10.1.
+
+**Undo state stays local.** `rwa_undo` and `rwa_hist` are not serialized into the inline snapshot. A committed file is a clean state, not a state plus its history. A recipient of a shared file starts with a fresh undo stack; the sender's history stays on the sender's machine.
+
+The runtime tracks dirty state — number of modifications since last commit — and surfaces a status indicator. After 5 uncommitted modifications it nudges: *"You have 5 uncommitted changes. ⌘S to commit."* This is critical because the inline snapshot is the only thing that travels: a recipient who opens an uncommitted file gets the snapshot from the previous commit, not the current IndexedDB state.
+
+### 5.7 The Null Origin Bus
+
+Under `file://`, all re-writeable files share the same origin: `null`. They share IndexedDB and OPFS namespaces. This is by design — it is the local communication bus.
+
+```
+budget.html      → writes  IDB store budget_data
+tracker.html     → writes  IDB store tracker_data
+dashboard.html   → reads   budget_data + tracker_data
+                 → renders a unified view across both files
+```
+
+Two practical notes.
+
+**No free change event.** IndexedDB does not fire `storage` events. Use `BroadcastChannel` for cross-document pub/sub:
 
 ```javascript
-window.addEventListener('storage', e => {
-  if (e.key === 'tracker_data') refreshTrackerSection();
-});
+const ch = new BroadcastChannel('tracker_data');
+ch.postMessage({ type: 'rows_changed' });    // writer
+ch.onmessage = e => refreshTrackerSection(); // reader
 ```
 
-### 5.6 Embedding and Composition
+The runtime exposes a sugared form: `runtime.subscribe(storeName, callback)`.
 
-A re-writeable file can embed another re-writeable file inline — not by referencing a file path, but by reading its source from the shared localStorage bus and rendering it via `srcdoc`.
+**Async reads.** Every cross-document read is a Promise. Embedders should render a skeleton first and hydrate when the transaction resolves.
+
+Served over HTTP/HTTPS, each file gets a real origin and the bus breaks. The bus is a local-distribution feature; hosting a re-writeable file behind a URL converts it from a composable artifact into a single-document island.
+
+### 5.8 Embedding and Composition
+
+A re-writeable can embed another re-writeable inline. Because the container lives on disk, the embedder reads the sibling's container file via FSA (or, in browsers without FSA, asks the user to attach it) and renders it via `srcdoc`:
 
 ```javascript
-// Read a sibling's source from shared null-origin localStorage
-const trackerSrc = localStorage.getItem('tracker_src');
-
-// Render a live preview in a sandboxed iframe
+const trackerContainer = await runtime.read('tracker.html');
 const iframe = document.createElement('iframe');
-iframe.srcdoc = trackerSrc;
-iframe.sandbox = 'allow-scripts';
-document.getElementById('embed-zone').appendChild(iframe);
+iframe.srcdoc = trackerContainer;
+iframe.sandbox = 'allow-scripts allow-same-origin';
+host.appendChild(iframe);
 ```
 
-This works because:
-- Under `file://`, all re-writeable files share the null origin, so their sources are mutually readable in localStorage
-- `srcdoc` does not trigger `file://` iframe restrictions (no filesystem path involved)
-- The `sandbox` attribute controls what the embedded app can do
-
-#### Embed modes
+`srcdoc` is required — `<iframe src="file://…">` is blocked by Chrome and Firefox. The `sandbox` attribute controls what the embedded app can do.
 
 | Mode | Sandbox value | Behavior |
 |---|---|---|
 | **Snapshot** | `sandbox=""` | Static render — no JS, pure visual preview |
-| **Live view** | `sandbox="allow-scripts"` | App runs JS but cannot access localStorage — fully isolated |
-| **Full embed** | `sandbox="allow-scripts allow-same-origin"` | App runs with full localStorage access — can modify its own data and rewrite itself |
+| **Live view** | `sandbox="allow-scripts"` | App runs JS but cannot access IndexedDB or OPFS — fully isolated |
+| **Full embed** | `sandbox="allow-scripts allow-same-origin"` | App has full storage access — can self-modify |
 
-**Snapshot** is the "embed like a tweet" model: a frozen visual of another app's current state. Lightweight, safe, no side effects.
-
-**Live view** is a running app in a box. The embedded tracker sorts, filters, and animates — but it can't write to localStorage or affect its siblings. Good for dashboards that compose multiple apps into a single view.
-
-**Full embed** gives the iframe the same capabilities as a standalone tab. The embedded app can modify its own localStorage keys, run its own agent calls, and rewrite itself. Use with care — this is full agency inside a frame.
-
-#### Reactive embedding
-
-Because embeds read from localStorage, they can refresh when the source app changes. A dashboard can subscribe to sibling rewrites and update its embeds in real time:
-
-```javascript
-window.addEventListener('storage', e => {
-  if (e.key === 'tracker_src') {
-    // The tracker was just rewritten in another tab — refresh the embed
-    document.getElementById('tracker-embed').srcdoc = e.newValue;
-  }
-});
-```
-
-This extends the null origin bus from data sharing (§5.5) to UI composition. A re-writeable can be a container for other re-writeables — a meta-app that assembles, arranges, and observes its siblings without owning them.
-
-#### Limitations
-
-- **`file://` iframes don't work** — `<iframe src="file:///path/to/app.html">` is blocked by most browsers (Chrome, Firefox). The `srcdoc` approach avoids this entirely by never referencing a file path.
-- **Exported files must re-embed manually** — when a dashboard is exported via `⌘S`, the `srcdoc` content is whatever was in localStorage at export time. The exported file contains a frozen snapshot of the embeds, not a live link. On next open, the dashboard should re-read from localStorage to get current sources.
-- **Private/incognito** — embeds rely on localStorage. No localStorage, no embedding.
+A dashboard can embed multiple siblings live and refresh them when their stores change (via `BroadcastChannel`). On export, the dashboard's inline snapshot can include either the embedded apps' last-known state (frozen embeds) or just references to them (live embeds that re-read on next open).
 
 ---
 
 ## 6. The Agent Contract
 
-### 6.1 Build (initial)
+### 6.1 Modify
 
-System prompt tells the agent to produce a polished single-file HTML application with:
-- All CSS and JS inline
-- No React, no build steps
-- Dark theme (specified palette)
-- Seed data included
-- App data stored in localStorage under a descriptive key
-- **No self-modification UI** (the runtime is injected by the seed after)
+There is no separate "build" path. Every modification — including the first one — goes through the same loop: agent receives current app content, returns modified app content.
 
-### 6.2 Modify (subsequent)
+System prompt to the agent:
 
-System prompt tells the agent:
-- Return the complete modified HTML file only, no explanation
-- Preserve `<script id="re-write-able-runtime">` exactly as-is
-- Apply the instruction precisely
-- The file must remain fully functional
+- Return the complete modified app content only — no commentary, no markdown fence
+- All CSS and JS inline, no React, no build steps
+- Use `runtime.db.*` for structured data, `runtime.fs.*` for blobs
+- Dark theme palette (§8)
+- The first character of the response should begin the modified content directly
 
-The agent receives the **entire running app source** as context. This is the complete truth of the current state — HTML structure, CSS, JS logic, data, runtime — in one payload.
+The agent receives only app content as context. The bootstrap, loader, runtime, inline snapshot, and undo stack are not visible. There is no `<script id="re-write-able-runtime">` block to preserve, no diff protocol, no full-rewrite fallback — just modified content in, modified content out.
 
-### 6.3 Model choice
+A diff protocol may return as an automatic optimization for large apps (§11.3). For the current architecture (apps in the 50–100 KB range), full-content responses are simple, robust, and cheap enough.
 
-`anthropic/claude-sonnet-4` via OpenRouter is the default. The full 200k context window can comfortably hold a 50–100kb app source plus instructions. For complex structural modifications, `claude-opus-4` produces more reliable results.
+### 6.2 Model choice
+
+`google/gemini-3-flash-preview` via OpenRouter is the default — fast, cheap, and a context window that comfortably holds any reasonable single-file app plus instructions. For complex structural modifications, `anthropic/claude-sonnet-4` produces more reliable results at higher cost.
+
+The model is configurable per file. The runtime passes the configured model to OpenRouter; users can swap providers (direct Anthropic, OpenAI, self-hosted) by replacing the agent invocation in the runtime's settings.
 
 ---
 
-## 7. Export and Portability
+## 7. Runtime API
 
-`⌘S` serializes `document.documentElement.outerHTML` and downloads it as `[title].html`.
+The app interacts with the runtime through a small surface exposed on the global `runtime` object.
 
-The exported file is:
-- Complete and standalone — no dependency on the seed file
-- Self-modifying — the runtime is embedded, so it can keep rewriting itself
-- Portable — open it on any machine with any browser
-- Diffable — it's just text, it lives happily in git
+```javascript
+runtime.db = {
+  get(store, key),
+  put(store, key, value),
+  del(store, key),
+  all(store),                       // iterate
+  open(store, { autoIncrement }),   // declare app store (rejects rwa_*)
+  subscribe(store, callback),       // BroadcastChannel-backed
+};
 
-A re-writeable file can be shared by email, Slack, USB stick, or GitHub. The recipient opens it in a browser and it runs. They can modify it. They own their copy.
+runtime.fs = {
+  read(path),                       // returns Blob
+  write(path, blob),
+  del(path),
+  list(prefix),                     // rejects _rwa/
+};
 
-### 7.1 Export as True Persistence
+runtime.modify(instruction);        // ⌘K programmatic equivalent
+runtime.commit();                   // ⌘S programmatic equivalent
+runtime.undo();                     // ⌘Z programmatic equivalent
 
-localStorage and IndexedDB are volatile. Browsers can evict data under storage pressure, and iOS Safari does so aggressively after periods of inactivity. The exported `.html` file is the only durable artifact.
+runtime.status = {                  // observable
+  dirty: boolean,                   // unexported changes?
+  fsa: 'granted' | 'prompt' | 'denied' | 'unsupported' | 'lost',
+  storage: { usage, quota },
+};
 
-The runtime tracks unexported modifications. After 5 rewrites without an export, it surfaces a non-intrusive prompt: *"You have 5 unsaved versions. Press ⌘S to export."* This is not a modal — it's a status bar indicator that respects the user's flow but prevents silent data loss.
+runtime.on('commit', cb);
+runtime.on('modify', cb);
+runtime.on('status', cb);
+```
 
-For apps with significant user data in IndexedDB, `⌘S` also serializes the app's IndexedDB data as a JSON blob embedded in a `<script type="application/json" id="app-seed-data">` tag within the exported file. On first open, the app checks for this tag, hydrates IndexedDB from it, then removes the tag. This ensures the exported file is truly self-contained.
+The app is free to use IndexedDB and OPFS directly without going through the runtime, but the API does the bookkeeping (cross-tab sync, status tracking, reserved-name protection).
 
 ---
 
 ## 8. Design Rules for Generated Apps
 
-Every app generated by re-write-able follows these rules:
-
 **Structure**
-- Single HTML file, all CSS and JS inline
+
+- Single self-contained app content, all CSS and JS inline
 - No React, no build steps, no npm
 - Libraries from `cdnjs.cloudflare.com` only if genuinely needed
+- Fonts from Google Fonts (DM Sans, DM Mono, Instrument Serif) — for true offline operation, the agent may inline them as base64
 
 **Visual**
+
 - Dark theme: `#0e0e0f` background, `#161618` surface, `#2d2d34` border
-- Text: `#dddde4` primary, `#575766` muted, `#dddde4` on dark
+- Text: `#dddde4` primary, `#575766` muted
 - Accent: `#b8ff57` (green), `#57c8ff` (blue), `#ff5757` (red)
 - Fonts: DM Sans (UI), DM Mono (labels/code), Instrument Serif (display)
 
 **Data**
-- App data stored in IndexedDB under a descriptive database name (e.g. `tracker_db`)
-- For trivially small data (a few KB of settings/preferences), localStorage is acceptable
-- Never use `docuapp_src`, `docuapp_undo`, or `da_*` keys in localStorage (reserved by runtime)
-- Seed data included so the app is useful on first open
-- App must implement a `getExportData()` function that returns its IndexedDB contents as JSON, and a `hydrate(data)` function that restores from it — these are called by the runtime during export/import
+
+- Structured data in IndexedDB via `runtime.db.*`
+- Binary blobs in OPFS via `runtime.fs.*`
+- Never use store names starting with `rwa_` (reserved)
+- Never write to `_rwa/` paths in OPFS (reserved)
+- Seed data baked into the inline snapshot so the app is useful on first open
 
 **Quality**
+
 - Production-quality: polished, usable, complete
 - No placeholder lorem ipsum — real representative data
 - Keyboard shortcuts where appropriate
+- No export/import hooks needed — the runtime serializes the full IDB and OPFS surface during commit and hydrates them on first open from the inline snapshot
 
 ---
 
-## 9. Storage Model — Platform Behavior
+## 9. Platform Behavior
 
-### 9.1 Storage Budget
+| Platform | IndexedDB | OPFS | FSA write-in-place | Eviction risk |
+|---|---|---|---|---|
+| Chrome (desktop) | Up to ≈60% of free disk | Yes | Yes (with permission) | Low |
+| Chrome (Android) | ≈6–10% of free disk | Yes | No | Medium |
+| Firefox (desktop) | ≈2 GB per origin | Yes | No | Low |
+| Safari (macOS) | ≈1 GB per origin | Yes | No | Low |
+| Safari (iOS) | ≈50 MB | Yes | No | **High — actively evicts after inactivity or under storage pressure** |
+| iOS PWA | Up to ≈1 GB | Yes | No | Medium |
 
-The runtime tier (localStorage) and app data tier (IndexedDB) have different limits and behaviors across platforms:
+### 9.1 The iOS Safari Problem
 
-| Platform | localStorage | IndexedDB | Eviction risk |
-|---|---|---|---|
-| Chrome (desktop) | ≈10 MB | Up to ≈60% of free disk | Low — data persists until cleared |
-| Chrome (Android) | ≈5–10 MB | ≈6–10% of free disk, typically <100 MB | Medium — can shrink quota when device is low on storage |
-| Firefox (desktop) | ≈5 MB | ≈2 GB per origin | Low |
-| Firefox (Android) | ≈5 MB | ≈50–100 MB after user approval | Medium |
-| Safari (macOS) | ≈5 MB | ≈1 GB per origin | Low |
-| Safari (iOS) | ≈5 MB | ≈50 MB effective cap | **High — actively evicts after inactivity or under storage pressure** |
-| iOS PWA | ≈5 MB | Up to ≈1 GB if space available | Medium — more durable than Safari tabs, still not guaranteed |
+WebKit on iOS actively evicts site data — IndexedDB and OPFS — when the device is low on storage or after a period of inactivity. Private mode provides near-zero quota.
 
-### 9.2 The iOS Safari Problem
-
-Safari on iOS is the most hostile environment for re-writeable files. WebKit actively evicts site data — including localStorage and IndexedDB — when the device is low on storage or after a period of inactivity. Private mode provides near-zero quota.
-
-This means: a user builds a tracker on their iPhone, doesn't open it for two weeks, and iOS may silently delete both the app source and its data.
+A user builds a tracker on their iPhone, doesn't open it for two weeks, and iOS may silently delete its working state.
 
 **Mitigations:**
-1. **Export is the backup.** The exported `.html` file on disk is immune to browser eviction. The runtime's export nudge (§5.2) is especially important on mobile.
+
+1. **The committed file is the only durable artifact.** The inline snapshot is always recoverable on open. The runtime's commit nudge is especially important on mobile.
 2. **`navigator.storage.persist()`** is requested on boot. Chrome Android honors it. Safari ignores it.
-3. **The seed file is always safe.** Even if localStorage is evicted, reopening the seed file triggers a fresh build. The user loses modifications but not the ability to start over.
-4. **Private/incognito mode is unsupported.** The spec does not attempt to work in private browsing. The runtime should detect it and show a clear message: *"re-write-able requires normal browsing mode."*
+3. **Private/incognito mode is unsupported.** The runtime detects it and shows a clear message: *"re-write-able requires normal browsing mode."*
 
-### 9.3 The Null Origin and Shared Quotas
+### 9.2 The Null Origin and Shared Quotas
 
-Under `file://`, all re-writeable files share the null origin. This means they share the same localStorage namespace *and* the same IndexedDB namespace. The cross-app communication bus (§5.5) benefits from this, but the shared quota is a constraint.
-
-With the two-tier storage model:
-- **localStorage** (~5 MB shared): easily holds runtime state for 10+ apps (each using ~100 KB for source + undo)
-- **IndexedDB** (50 MB+ shared): holds app data for multiple apps, but data-heavy apps should be mindful of siblings
-
-The runtime's quota check (§5.3) monitors the shared budget and warns before it's exhausted.
+Under `file://`, all re-writeable files share the same origin and therefore the same storage quota. The bus benefits from this; the shared quota is a constraint. The runtime monitors the shared budget and warns before exhaustion.
 
 ---
 
-## 10. Security Model
+## 10. Security and Permissions
 
-**API key**: stored in `sessionStorage` only. Survives reload, cleared on tab close. Never written to the file, never in localStorage, never leaves the browser except in the Authorization header.
+**API key**: stored in `sessionStorage` only. Survives reload, cleared on tab close. Never written to the file, never in IndexedDB, never leaves the browser except in the Authorization header.
 
-**Self-modification**: `document.write` from localStorage is essentially `eval` at document scope. For a personal local tool this is the correct tradeoff — maximum capability, user-owned environment. For shared or hosted deployments, the risk surface is: anyone who can write to the user's localStorage can inject code. This is mitigated by the `file://` origin model (no cross-origin writes) and by the fact that the user controls the key.
+**Self-modification**: rendering app content from IndexedDB is essentially `eval` at document scope. For a personal local tool this is the correct tradeoff — maximum capability, user-owned environment. For shared or hosted deployments, the risk surface is: anyone who can write to the user's IndexedDB can inject code. This is mitigated by the `file://` origin model (no cross-origin writes).
 
-**The seed is the anchor**: the seed file cannot be rewritten by the agent (it's never in localStorage). If something goes wrong, reset via the runtime's reset button, or delete `docuapp_src` from DevTools. The seed is always safe.
+**The bootstrap is the anchor**: it is never in IndexedDB and never modified by the agent. If something goes wrong, reload the file — the inline snapshot is the last known good state, and the runtime can be reset by clearing IndexedDB.
+
+### 10.1 FSA Permission Lifecycle
+
+The runtime's contract for the File System Access API:
+
+| State | Trigger | Behavior |
+|---|---|---|
+| `unsupported` | Browser is not Chromium | Commit always exports; ⌘S triggers a download |
+| `prompt` | First commit on a new session | Browser prompts; on grant, persist handle to IDB |
+| `granted` | Handle is persisted and verified | Commit-in-place; no further prompts unless revoked |
+| `denied` | User denied or revoked | Fall back to download mode; surface "regrant write access" affordance |
+| `lost` | Handle exists in IDB but is no longer valid (file moved/deleted) | Show "reattach to file" affordance |
+
+Permission is verified on each commit; the runtime never assumes a prior grant is still valid.
+
+### 10.2 Storage Exhaustion
+
+Quota errors during write must not corrupt `rwa_app`. The contract:
+
+```
+agent returns
+  → runtime attempts write to rwa_app
+  → write fails (QuotaExceededError)
+  → restore rwa_app from rwa_undo[top]
+  → show error
+  → preserve rwa_undo and rwa_hist
+```
+
+If headroom is still needed, the runtime sheds the oldest undo entry first. `rwa_app` is never lost.
+
+### 10.3 Multi-Tab Concurrency
+
+Two tabs of the same file both writing to IndexedDB: last write wins, undo stacks diverge. Two tabs trying to commit via FSA: file corruption is possible.
+
+The runtime acquires a soft lock via `BroadcastChannel` on first modification or commit. Other tabs detect the lock and open in read-only mode with a "take over" affordance. This is a coordination signal, not a hard mutex — the user can override.
 
 ---
 
-## 11. Citizen Development Model
+## 11. Open Questions
+
+The following are intentional open issues — load-bearing design decisions still being weighed. Each has a current direction but is not yet pinned.
+
+### 11.1 Rendering Isolation
+
+The runtime renders app content into the bootstrap document. Three options, each with cost.
+
+- **innerHTML** — simplest. App CSS and global JS can collide with the bootstrap's. The runtime must keep its own DOM and styles aggressively scoped.
+- **iframe srcdoc** — full isolation. The runtime API must cross the frame boundary via `postMessage`, complicating synchronous calls and Promise ergonomics.
+- **Shadow DOM for runtime UI, light DOM for app** — runtime UI is isolated, app gets a clean document. Doesn't fully isolate scripts.
+
+Current direction: *innerHTML for app, shadow DOM for runtime UI*.
+
+### 11.2 First-Render Strategy
+
+IndexedDB load is async. Three strategies for the gap between bootstrap parse and app render.
+
+- **Blank** — render nothing until IDB resolves. Briefly empty document.
+- **Splash** — render a runtime splash, swap on hydration.
+- **Synchronous from inline snapshot, reconcile after** — fastest perceived render, but needs a reconciliation pass when IDB diverges from the snapshot (which it does between commits).
+
+Current direction: *synchronous from inline snapshot*, with reconciliation only when IDB content differs from the snapshot.
+
+### 11.3 Diff Protocol Reintroduction
+
+For apps over ~200 KB, full-content rewrites get slow and expensive. A SEARCH/REPLACE diff protocol (as in v0.4) reduces cost dramatically but adds failure modes (unmatched blocks, ordering issues). The protocol may return as an automatic upgrade: full-rewrite by default, diff for apps over a size threshold.
+
+### 11.4 ⌘S Semantics
+
+⌘S means "commit" regardless of destination — write-in-place when possible, download otherwise. An alternative is to split: ⌘S for commit, ⌘E for explicit export. The current direction is the unified key, with the runtime choosing destination silently.
+
+---
+
+## 12. Citizen Development Model
 
 re-write-able is designed for the person who:
+
 - Has ideas for tools but cannot (or does not want to) write code
 - Is suspicious of cloud platforms and wants to own their data
 - Understands HTML at a surface level — enough to know it's "just a file"
@@ -408,51 +469,51 @@ The collaboration model is: *send the file. They have everything.*
 
 ---
 
-## 12. Webinar Demo Flow
+## 13. Webinar Demo Flow
 
 ### Narrative arc: "The file that builds itself"
 
-**Act 1 — The seed** (2 min)
-- Open `re-write-able.html` in Chrome
-- Show the build screen — three fields, nothing else
-- Talk about the seed as the immutable anchor
+**Act 1 — The container** (2 min)
 
-**Act 2 — First build** (3 min)
-- Type: `a project tracker with status columns and due dates`
-- Hit Build
-- The agent writes ~300 lines of HTML into localStorage
-- The app loads itself
-- Show the running app with seed data
+- Open `tracker.html` in Chrome
+- The app is just there — no build screen, no agent call, no waiting
+- Show the bootstrap in the source: loader, runtime, INLINE_APP constant
+- Talk about the bootstrap as the immutable shell
 
-**Act 3 — Self-modification** (5 min)
+**Act 2 — Self-modification** (5 min)
+
 - Hit ⌘K, type: `add a priority field — high, medium, low`
-- The agent receives the entire app source, returns modified HTML
+- The agent receives only the app content (not the runtime), returns modified app content
 - Watch the app reload with the new field
 - Hit ⌘K again: `add a small chart at the top showing status breakdown`
 - Repeat: `turn the status columns into a kanban board`
 
-**Act 4 — Undo** (1 min)
+**Act 3 — Undo** (1 min)
+
 - Hit ⌘Z — the kanban disappears, the list view returns
 - Hit ⌘Z again — the chart disappears
 - The file has memory
 
-**Act 5 — Export** (1 min)
-- Hit ⌘S — download `project-tracker.html`
-- Open it in a new tab — it runs, it has the runtime, it can keep evolving
+**Act 4 — Commit** (2 min)
+
+- Hit ⌘S — on Chromium, the file rewrites itself in place; elsewhere, a new download
+- Show the diff in the file: only the INLINE_APP constant changed
+- The bootstrap is byte-identical from one open to the next
 - This file can be emailed. It requires nothing.
 
-**Act 6 — The bus** (2 min)
+**Act 5 — The bus** (2 min)
+
 - Open the spec document alongside the tracker
-- Show `localStorage` in DevTools — both files' keys visible
+- Show IndexedDB in DevTools — both files' stores visible under the null origin
 - Write a 10-line dashboard that reads both
 - The web was supposed to be read/write. This is read/write.
 
 ---
 
-## 13. What This Is Not
+## 14. What This Is Not
 
 - **Not a no-code platform** — there is no platform. The file is the platform.
-- **Not a cloud app** — nothing is on a server. localStorage is the database.
+- **Not a cloud app** — nothing is on a server. IndexedDB is the database.
 - **Not an AI coding assistant** — the agent doesn't help you write code. It writes the whole thing.
 - **Not a CMS** — there is no content management layer. The source is the content.
 - **Not a framework** — there is nothing to install, nothing to configure, nothing to update.
@@ -461,9 +522,9 @@ It is a file that writes itself.
 
 ---
 
-## 14. Prior Art and Influences
+## 15. Prior Art and Influences
 
-**Clive** (ikangai/clive) — the direct intellectual ancestor. Clive gives an LLM a terminal to inhabit; re-write-able gives it a browser tab. The self-modification pipeline (proposer → reviewer → gate → apply) maps to: agent call → runtime injection → localStorage → document.write.
+**Clive** (ikangai/clive) — the direct intellectual ancestor. Clive gives an LLM a terminal to inhabit; re-write-able gives it a browser tab. The self-modification pipeline (proposer → reviewer → gate → apply) maps to: agent call → runtime → IndexedDB → render. The bootstrap plays the role of `gate.py`: the immutable thing the agent cannot touch.
 
 **Simon Willison's HTML tools** — 150+ single-file HTML applications demonstrating that the format is serious, durable, and production-worthy. re-write-able extends the model: the tools can now build and modify themselves.
 
@@ -473,4 +534,17 @@ It is a file that writes itself.
 
 ---
 
-*Spec version 0.2 — storage model revised with two-tier architecture, multi-level undo, and platform-specific persistence guidance*
+## Invariants
+
+These properties are load-bearing — every change to the runtime, bootstrap, or storage model should preserve them.
+
+1. The bootstrap is byte-identical across every open until commit, and a commit only rewrites the `INLINE_APP` constant — the loader and runtime bytes do not change.
+2. The runtime is always loaded from the bootstrap, never from IndexedDB. The agent has no access to it.
+3. Reserved IndexedDB stores (`rwa_*`) and OPFS paths (`_rwa/`) are written only by the runtime.
+4. Every committed file is self-contained — opens and runs without external dependencies.
+5. The inline snapshot is the source of truth on first open. After hydration, IndexedDB is the source of truth until the next commit.
+6. Undo history lives in IndexedDB, not in the file. Commits do not carry undo state.
+
+---
+
+*Spec version 0.5 — major architectural revision. Removes localStorage; runtime moves into the immutable bootstrap (no longer in app source); IndexedDB becomes the canonical working store; OPFS adopted for binary blobs; introduces the inline snapshot (`INLINE_APP`) as the file's source of truth at rest; no build screen on first open; ⌘S becomes a single "commit" operation with FSA write-in-place on Chromium and download elsewhere; reserved namespace renamed `rwa_*` / `_rwa/`; default model `google/gemini-3-flash-preview`. The `<script id="re-write-able-runtime">` contract and the v0.4 SEARCH/REPLACE diff protocol are retired (the latter may return as a size-triggered optimization, §11.3).*
