@@ -561,19 +561,33 @@ const RWA = {
 
 // ─── IndexedDB helpers ──────────────────────────────────────────────
 let _db = null;
-function openDB() {
-  if (_db) return Promise.resolve(_db);
-  return new Promise((res, rej) => {
-    const req = indexedDB.open(RWA.DB, 1);
-    req.onupgradeneeded = e => {
-      const db = e.target.result;
-      [RWA.STORE_DOC, RWA.STORE_UNDO, RWA.STORE_HIST, RWA.STORE_FSA].forEach(s => {
-        if (!db.objectStoreNames.contains(s)) db.createObjectStore(s);
-      });
-    };
-    req.onsuccess = e => { _db = e.target.result; res(_db); };
-    req.onerror = e => rej(e.target.error);
+const REQUIRED_STORES = [RWA.STORE_DOC, RWA.STORE_UNDO, RWA.STORE_HIST, RWA.STORE_FSA];
+async function openDB() {
+  if (_db) return _db;
+  // Open without a version so we work with whatever the existing db version is —
+  // hard-coding version 1 fails if a previous session ever opened the db at a higher version.
+  const probe = await new Promise((res, rej) => {
+    const r = indexedDB.open(RWA.DB);
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+    r.onblocked = () => rej(new Error('db open blocked by another tab'));
   });
+  const missing = REQUIRED_STORES.some(s => !probe.objectStoreNames.contains(s));
+  if (!missing) { _db = probe; return _db; }
+  // A required store is absent — bump the version to add it.
+  const newVersion = probe.version + 1;
+  probe.close();
+  _db = await new Promise((res, rej) => {
+    const r = indexedDB.open(RWA.DB, newVersion);
+    r.onupgradeneeded = e => {
+      const db = e.target.result;
+      REQUIRED_STORES.forEach(s => { if (!db.objectStoreNames.contains(s)) db.createObjectStore(s); });
+    };
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+    r.onblocked = () => rej(new Error('db upgrade blocked by another tab'));
+  });
+  return _db;
 }
 function idbGet(store, key) {
   return openDB().then(db => new Promise((res, rej) => {
