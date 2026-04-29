@@ -540,31 +540,30 @@
     setTimeout(() => t.remove(), 2400);
   }
 
-  const SYSTEM_PROMPT_DIFF =
-'You modify a single-file HTML application by emitting one or more SEARCH/REPLACE diff blocks.\n' +
-'\n' +
-'FORMAT — use these literal seven-character markers:\n' +
-'\n' +
-'<<<<<<< SEARCH\n' +
-'<exact text from the current file>\n' +
-'=======\n' +
-'<the replacement text>\n' +
-'>>>>>>> REPLACE\n' +
-'\n' +
-'Rules:\n' +
-'- The SEARCH text must match the current file BYTE-FOR-BYTE — same indentation, same whitespace, same line breaks. The runtime uses literal string matching.\n' +
-'- The SEARCH text must be UNIQUE in the file. If a snippet appears more than once, include enough surrounding context to make it unique.\n' +
-'- Emit multiple blocks for multiple edits. Blocks are applied in order on the working text.\n' +
-'- NEVER include the <script id="re-write-able-runtime"> block in any SEARCH or REPLACE. Do not modify it.\n' +
-'- Output the blocks only — no prose, no explanation, no markdown fences. The first character of your response must be `<`.\n' +
-'\n' +
-'Fallback: if the change is too sweeping for diff blocks (full restructuring, bulk redesign), output the literal first line:\n' +
-'\n' +
-'MODE: full-rewrite\n' +
-'\n' +
-'followed by a newline and the complete new HTML file from <!doctype html> to </html>.\n' +
-'\n' +
-'Apply the user instruction precisely. Keep the file fully functional. Prefer the smallest possible diff.';
+  const SYSTEM_PROMPT_DIFF = `You modify a single-file HTML application by emitting one or more SEARCH/REPLACE diff blocks.
+
+FORMAT — use these literal seven-character markers:
+
+<<<<<<< SEARCH
+<exact text from the current file>
+=======
+<the replacement text>
+>>>>>>> REPLACE
+
+Rules:
+- The SEARCH text must match the current file BYTE-FOR-BYTE — same indentation, same whitespace, same line breaks. The runtime uses literal string matching.
+- The SEARCH text must be UNIQUE in the file. If a snippet appears more than once, include enough surrounding context to make it unique.
+- Emit multiple blocks for multiple edits. Blocks are applied in order on the working text.
+- NEVER include the <script id="re-write-able-runtime"> block in any SEARCH or REPLACE. Do not modify it.
+- Output the blocks only — no prose, no explanation, no markdown fences. The first character of your response must be `<`.
+
+Fallback: if the change is too sweeping for diff blocks (full restructuring, bulk redesign), output the literal first line:
+
+MODE: full-rewrite
+
+followed by a newline and the complete new HTML file from <!doctype html> to </html>.
+
+Apply the user instruction precisely. Keep the file fully functional. Prefer the smallest possible diff.`;
 
   function parseEdits(text) {
     text = text.trim();
