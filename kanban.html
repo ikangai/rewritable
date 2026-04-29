@@ -214,10 +214,7 @@
   let unexported = 0;
   let currentAbort = null;
 
-  // ---- de-bloat: remove any stale runtime artifacts that were baked into
-  // the source by previous rewrites. Without this, every rewrite cycle
-  // accumulates another copy of the runtime style/pill/overlay in the
-  // captured outerHTML, ballooning the file and breaking diff uniqueness.
+  // de-bloat: remove stale runtime DOM that previous rewrites baked into the source
   document.querySelectorAll(
     '#re-write-able-runtime-style, .rw-pill, .rw-overlay, .rw-toast'
   ).forEach(n => n.remove());
@@ -397,10 +394,7 @@
       e.preventDefault(); exportFile();
     }
   }
-  // Listen on window capture phase — fires before document and any app handlers,
-  // and survives if app code replaces document.body.innerHTML on a fatal error.
-  // Window survives document.open(), so a previous runtime's listener (and its
-  // closure over a now-detached DOM) lingers. Detach it before adding our own.
+  // capture-phase listener on window: fires before app handlers; detach prior runtime's listener since window survives document.open()
   if (window.__rwOnKey) {
     try { window.removeEventListener('keydown', window.__rwOnKey, true); } catch {}
   }
@@ -694,9 +688,7 @@ Apply the user instruction precisely. Keep the file fully functional. Prefer the
     });
   }
 
-  // Clone the document element, strip runtime-injected ephemera, return outerHTML.
-  // Used both for capture-before-rewrite and export — both want the "as-authored"
-  // source, not the live DOM with runtime overlay/pill/toasts attached.
+  // clone documentElement, strip runtime-injected ephemera, return the "as-authored" outerHTML
   function captureCleanOuterHTML() {
     const clone = document.documentElement.cloneNode(true);
     clone.querySelectorAll(
