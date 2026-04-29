@@ -6,444 +6,953 @@
 <title>re-write-able</title>
 <link href="https://fonts.googleapis.com/css2?family=DM+Mono:ital,wght@0,400;0,500;1,400&family=Instrument+Serif:ital@0;1&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
 <style>
-:root {
-  --bg:#0e0e0f; --surf:#161618; --b1:#232327; --b2:#2d2d34;
-  --text:#dddde4; --muted:#575766; --muted2:#363642;
-  --accent:#b8ff57; --blue:#57c8ff; --red:#ff5757;
-  --reading:#c4c4d0; --col:680px;
-}
+:root{--bg:#0e0e0f;--surf:#161618;--b1:#232327;--b2:#2d2d34;--text:#dddde4;--muted:#575766;--muted2:#363642;--accent:#b8ff57;--blue:#57c8ff;--red:#ff5757;--reading:#c4c4d0;}
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
 html{scroll-behavior:smooth;}
-body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);
-  font-size:15px;line-height:1.6;min-height:100dvh;
-  display:grid;grid-template-rows:auto 1fr auto;}
-
-/* HEADER */
-header{display:flex;align-items:center;gap:12px;
-  padding:11px 24px;border-bottom:1px solid var(--b1);
-  position:sticky;top:0;z-index:50;
-  background:color-mix(in srgb,var(--bg) 88%,transparent);
-  backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);}
-.wordmark{font-family:'Instrument Serif',serif;font-style:italic;
-  font-size:18px;letter-spacing:-.3px;white-space:nowrap;}
-.wordmark em{color:var(--muted);font-style:normal;}
-.badge{font-family:'DM Mono',monospace;font-size:10px;
-  padding:2px 7px;border:1px solid var(--b2);border-radius:100px;
-  color:var(--muted);letter-spacing:.5px;}
-.dot{width:6px;height:6px;border-radius:50%;background:var(--accent);
-  box-shadow:0 0 8px var(--accent);}
-.sp{flex:1;}
-.hbtn{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:.6px;
-  text-transform:uppercase;padding:5px 11px;border-radius:5px;
-  border:1px solid var(--b2);background:transparent;color:var(--muted);
-  cursor:pointer;transition:all .15s;}
-.hbtn:hover{color:var(--text);border-color:var(--muted);}
-.hbtn.pri{background:var(--accent);color:#000;border-color:var(--accent);}
-.hbtn.pri:hover{background:#cbff6b;}
-
-/* SETTINGS */
-#settingsBar{overflow:hidden;max-height:0;border-bottom:1px solid transparent;
-  background:var(--surf);transition:max-height .3s,border-color .3s;}
-#settingsBar.open{max-height:60px;border-color:var(--b1);}
-.si{display:flex;align-items:center;gap:12px;padding:10px 24px;}
-.si label{font-family:'DM Mono',monospace;font-size:10px;
-  letter-spacing:1.5px;text-transform:uppercase;color:var(--muted);white-space:nowrap;}
-.si input{background:var(--bg);border:1px solid var(--b2);color:var(--text);
-  font-family:'DM Mono',monospace;font-size:12px;padding:6px 10px;
-  outline:none;border-radius:4px;}
-.si input:focus{border-color:var(--muted);}
-#apiKeyInput{width:260px;}
-#modelInput{width:220px;}
-
-/* LAYOUT */
-.layout{display:grid;grid-template-columns:200px 1fr;min-height:0;}
-
-/* SIDEBAR */
-.sidebar{border-right:1px solid var(--b1);padding:24px 0;
-  position:sticky;top:48px;height:calc(100dvh - 48px);
-  overflow-y:auto;align-self:start;}
-.sb-label{font-family:'DM Mono',monospace;font-size:9px;
-  letter-spacing:2px;text-transform:uppercase;
-  color:var(--muted2);padding:0 18px;margin-bottom:10px;}
-.toc-item{display:flex;align-items:baseline;gap:8px;
-  padding:5px 18px;cursor:pointer;text-decoration:none;
-  border-left:2px solid transparent;transition:border-color .15s,background .1s;}
-.toc-item:hover{background:rgba(255,255,255,.03);}
-.toc-item.active{border-left-color:var(--accent);}
-.toc-num{font-family:'DM Mono',monospace;font-size:10px;
-  color:var(--muted2);flex-shrink:0;width:18px;}
-.toc-title{font-size:12px;color:var(--muted);line-height:1.4;}
-.toc-item:hover .toc-title,.toc-item.active .toc-title{color:var(--text);}
-
-/* CONTENT */
-.content{padding:48px max(24px,calc((100% - var(--col)) / 2));
-  overflow-y:auto;max-height:calc(100dvh - 48px);}
-.doc-header{margin-bottom:52px;}
-.doc-title{font-family:'Instrument Serif',serif;font-style:italic;
-  font-size:clamp(38px,5vw,56px);line-height:1.02;letter-spacing:-.5px;
-  margin-bottom:10px;
-  background:linear-gradient(135deg,var(--text) 50%,var(--muted));
-  -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;}
-.doc-sub{font-size:16px;color:var(--muted);font-weight:300;font-style:italic;}
-
-/* SECTIONS */
-.section{margin-bottom:52px;scroll-margin-top:72px;}
-.sec-head{display:flex;align-items:baseline;gap:12px;
-  margin-bottom:20px;padding-bottom:10px;border-bottom:1px solid var(--b1);}
-.sec-num{font-family:'DM Mono',monospace;font-size:12px;color:var(--muted2);flex-shrink:0;}
-.sec-title{font-family:'Instrument Serif',serif;font-size:22px;letter-spacing:-.2px;flex:1;}
-.sec-spark{opacity:0;transition:opacity .15s;background:var(--surf);
-  border:1px solid var(--b2);border-radius:4px;padding:2px 8px;
-  font-size:11px;cursor:pointer;color:var(--muted);white-space:nowrap;flex-shrink:0;}
-.section:hover .sec-spark{opacity:1;}
-.sec-spark:hover{color:var(--accent);border-color:var(--accent);}
-
-/* BODY CONTENT */
-.sec-body p{font-family:'Instrument Serif',serif;font-size:17px;
-  line-height:1.78;color:var(--reading);margin-bottom:16px;}
-.sec-body h3{font-family:'DM Sans',sans-serif;font-weight:500;font-size:12px;
-  letter-spacing:.6px;text-transform:uppercase;color:var(--muted);
-  margin-top:24px;margin-bottom:10px;}
-.sec-body code{font-family:'DM Mono',monospace;font-size:13px;
-  background:var(--surf);border:1px solid var(--b2);
-  border-radius:3px;padding:1px 5px;color:var(--blue);}
-.sec-body pre{background:var(--surf);border:1px solid var(--b1);
-  border-radius:6px;padding:16px 18px;overflow-x:auto;margin-bottom:16px;}
-.sec-body pre code{background:none;border:none;padding:0;
-  font-size:12px;line-height:1.65;color:#aaa;}
-.sec-body ul,.sec-body ol{padding-left:0;list-style:none;margin-bottom:16px;}
-.sec-body li{font-family:'Instrument Serif',serif;font-size:17px;
-  line-height:1.72;color:var(--reading);padding:3px 0 3px 22px;position:relative;}
-.sec-body li::before{content:"—";position:absolute;left:0;
-  color:var(--muted2);font-family:'DM Mono',monospace;font-size:12px;top:7px;}
-.sec-body ol li::before{content:counter(li)".";counter-increment:li;
-  font-family:'DM Mono',monospace;font-size:11px;}
-.sec-body ol{counter-reset:li;}
-.sec-body strong{color:var(--text);font-weight:500;}
-.sec-body em{font-style:italic;}
-.sec-body blockquote{border-left:2px solid var(--accent);padding:10px 16px;
-  margin-bottom:16px;font-family:'Instrument Serif',serif;
-  font-style:italic;font-size:16px;color:var(--muted);line-height:1.6;}
-.sec-body table{width:100%;border-collapse:collapse;margin-bottom:16px;}
-.sec-body th{font-family:'DM Mono',monospace;font-size:10px;
-  letter-spacing:1.2px;text-transform:uppercase;color:var(--muted);
-  text-align:left;padding:8px 12px;border-bottom:1px solid var(--b1);}
-.sec-body td{padding:10px 12px;border-bottom:1px solid var(--b1);
-  color:var(--reading);font-family:'Instrument Serif',serif;font-size:15px;}
-.sec-body tr:hover td{background:rgba(255,255,255,.015);}
-.sec-body hr{border:none;border-top:1px solid var(--b1);margin:24px 0;}
-
-/* BOTTOM BAR */
-footer{position:sticky;bottom:0;z-index:50;
-  border-top:1px solid var(--b1);
-  background:color-mix(in srgb,var(--bg) 92%,transparent);
-  backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
-  padding:7px 24px;display:flex;align-items:center;
-  justify-content:space-between;gap:12px;}
-.log{font-family:'DM Mono',monospace;font-size:11px;color:var(--muted);
-  display:flex;align-items:center;gap:7px;}
-.log .ok{color:var(--accent);}.log .run{color:var(--blue);}
-.log .err{color:var(--red);}
-.kbd-hint{font-family:'DM Mono',monospace;font-size:11px;
-  color:var(--muted);display:flex;align-items:center;gap:6px;flex-shrink:0;}
-.kbd-hint kbd{background:var(--surf);border:1px solid var(--b2);
-  border-radius:3px;padding:2px 6px;font-family:inherit;font-size:10px;}
-
+body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);font-size:15px;line-height:1.6;min-height:100dvh;}
 ::-webkit-scrollbar{width:4px;height:4px;}
 ::-webkit-scrollbar-track{background:transparent;}
 ::-webkit-scrollbar-thumb{background:var(--b2);border-radius:2px;}
-@media(max-width:680px){.layout{grid-template-columns:1fr;}.sidebar{display:none;}}
+#rwa-runtime{font-family:'DM Sans',sans-serif;}
+#rwa-runtime button{font-family:inherit;cursor:pointer;}
+#rwa-runtime input{font-family:'DM Mono',monospace;}
+#rwa-set{position:fixed;top:11px;right:24px;z-index:1000;display:flex;align-items:center;gap:8px;}
+.rwa-st-btn{background:var(--surf);border:1px solid var(--b2);color:var(--muted);font-family:'DM Mono',monospace;font-size:10px;padding:6px 11px;border-radius:5px;letter-spacing:.5px;text-transform:uppercase;transition:all .15s;}
+.rwa-st-btn:hover{color:var(--text);border-color:var(--muted);}
+.rwa-st-btn.dirty{color:var(--accent);border-color:var(--accent);}
+.rwa-st-btn.pri{background:var(--accent);color:#000;border-color:var(--accent);}
+.rwa-st-btn.pri:hover{background:#cbff6b;}
+.rwa-st-btn.run{color:var(--blue);border-color:var(--blue);}
+.rwa-st-btn.err{color:var(--red);border-color:var(--red);}
+.rwa-st-btn.ok{color:var(--accent);border-color:var(--accent);}
+#rwa-set-panel{position:fixed;top:50px;right:24px;z-index:999;background:var(--surf);border:1px solid var(--b2);border-radius:8px;padding:14px;display:none;min-width:340px;box-shadow:0 12px 40px rgba(0,0,0,.6);}
+#rwa-set-panel.open{display:block;}
+.rwa-set-row{display:flex;flex-direction:column;gap:5px;margin-bottom:11px;}
+.rwa-set-row:last-child{margin-bottom:0;}
+.rwa-set-row label{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:1.5px;text-transform:uppercase;color:var(--muted);}
+.rwa-set-row input{background:var(--bg);border:1px solid var(--b2);color:var(--text);font-size:12px;padding:7px 10px;outline:none;border-radius:4px;}
+.rwa-set-row input:focus{border-color:var(--muted);}
+.rwa-set-info{font-family:'DM Mono',monospace;font-size:10px;color:var(--muted2);line-height:1.5;}
+#rwa-pal{position:fixed;inset:0;z-index:99999;display:flex;align-items:flex-start;justify-content:center;padding-top:min(13vh,100px);background:rgba(0,0,0,.6);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);opacity:0;pointer-events:none;transition:opacity .15s;}
+#rwa-pal.open{opacity:1;pointer-events:all;}
+#rwa-pal-box{width:min(640px,92vw);background:var(--surf);border:1px solid var(--b2);border-radius:10px;overflow:hidden;box-shadow:0 28px 90px rgba(0,0,0,.8);translate:0 -10px;transition:translate .15s;}
+#rwa-pal.open #rwa-pal-box{translate:0 0;}
+.rwa-pal-top{display:flex;align-items:center;border-bottom:1px solid var(--b1);}
+.rwa-pal-sig{padding:0 14px;font-size:14px;color:var(--accent);font-family:'DM Mono',monospace;flex-shrink:0;letter-spacing:.5px;}
+#rwa-pal-inp{flex:1;background:transparent;border:none;outline:none;color:var(--text);font-family:'DM Sans',sans-serif;font-size:15px;padding:16px 0;}
+#rwa-pal-inp::placeholder{color:var(--muted2);}
+#rwa-pal-go{flex-shrink:0;margin:7px 10px;background:var(--accent);color:#000;border:none;border-radius:5px;font-family:'DM Mono',monospace;font-size:11px;padding:6px 12px;letter-spacing:.5px;}
+#rwa-pal-go:disabled{opacity:.3;pointer-events:none;}
+#rwa-pal-hist{max-height:180px;overflow-y:auto;}
+.rwa-hi{display:flex;align-items:center;gap:10px;padding:9px 16px;cursor:pointer;color:var(--muted);font-size:13px;}
+.rwa-hi:hover{background:rgba(255,255,255,.04);color:var(--text);}
+.rwa-pal-foot{border-top:1px solid var(--b1);padding:8px 16px;display:flex;align-items:center;justify-content:space-between;}
+#rwa-pal-st{font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);}
+#rwa-pal-st.run{color:var(--blue);}
+#rwa-pal-st.ok{color:var(--accent);}
+#rwa-pal-st.err{color:var(--red);}
+.rwa-pal-acts{display:flex;gap:8px;}
+.rwa-b{background:transparent;border:1px solid var(--b2);border-radius:4px;color:var(--muted);font-family:'DM Mono',monospace;font-size:10px;padding:3px 8px;cursor:pointer;}
+.rwa-b:hover{color:var(--text);border-color:var(--muted);}
+.rwa-b.warn{color:#888;border-color:var(--b2);}
+.rwa-b.warn:hover{color:var(--red);border-color:var(--red);}
 </style>
 </head>
 <body>
-
-<header>
-  <div class="wordmark">re<em>-</em>write<em>-</em>able</div>
-  <div class="badge">spec v0.1</div>
-  <div class="dot"></div>
-  <div class="sp"></div>
-  <button class="hbtn" id="settingsBtn">⚙ Settings</button>
-  <button class="hbtn pri" id="exportBtn">⌘S Export</button>
-</header>
-
-<div id="settingsBar">
-  <div class="si">
-    <label>OpenRouter Key</label>
-    <input type="password" id="apiKeyInput" placeholder="sk-or-..." autocomplete="off">
-    <label>Model</label>
-    <input type="text" id="modelInput" value="anthropic/claude-sonnet-4" autocomplete="off">
-    <button class="hbtn" id="doneBtn">Done</button>
-  </div>
-</div>
-
-<div class="layout">
-  <nav class="sidebar" id="sidebar"></nav>
-  <main class="content" id="contentArea"></main>
-</div>
-
-<footer>
-  <div class="log" id="logEl"><span class="ok">●</span><span>loaded</span></div>
-  <div class="kbd-hint"><span>modify</span><kbd>⌘K</kbd></div>
-</footer>
-
-<script id="appData" type="application/json">
-{
-  "title": "re-write-able",
-  "subtitle": "A specification for self-modifying HTML applications",
-  "version": "v0.1",
-  "sections": [
-    {
-      "id": "1",
-      "heading": "The Name",
-      "html": "<p><strong>re</strong> — it does it again. The agent loop, self-modification, iteration over time.<br />\n<strong>write</strong> — not read. Not consume. Author. The read/write web, finally delivered.<br />\n<strong>able</strong> — a property of the file itself. Not a permission the OS grants you. Something it <em>is</em>.</p>\n<p><code>re-write-able</code> is both a description and a manifesto. A re-writeable file is one that participates in its own creation.</p>\n<hr />"
-    },
-    {
-      "id": "2",
-      "heading": "The Problem",
-      "html": "<p>The web became read-only for most people.</p>\n<p>You consume apps. Someone else made them, deployed them, owns them. You have no access to the source. You can't change them. You certainly can't ask them to change themselves.</p>\n<p>The tools that do let you modify things — code editors, CLIs, build pipelines — require you to already be a developer. Citizen development tools (no-code, low-code) give you drag-and-drop but hide the source and lock you to a platform.</p>\n<p>There is no middle ground: a tool that is fully sourceful, fully ownable, fully modifiable, but requires no environment, no install, no server, no account.</p>\n<p>A re-writeable file is that middle ground.</p>\n<hr />"
-    },
-    {
-      "id": "3",
-      "heading": "The Concept",
-      "html": "<p>A re-writeable file is a single <code>.html</code> file that:</p>\n<ol>\n<li><strong>Renders itself</strong> — open it in any browser, it runs</li>\n<li><strong>Stores itself</strong> — its live state lives in <code>localStorage</code>, not on a server</li>\n<li><strong>Modifies itself</strong> — an embedded agent rewrites the file's own source code on instruction</li>\n<li><strong>Exports itself</strong> — the current state can be saved as a new <code>.html</code> file at any time</li>\n<li><strong>Requires nothing</strong> — no server, no install, no build step, no account</li>\n</ol>\n<p>The file is simultaneously a document, a tool, an application, and its own source code.</p>\n<hr />"
-    },
-    {
-      "id": "4",
-      "heading": "The Read/Write Web",
-      "html": "<p>Tim Berners-Lee's original vision was a read/write web. The browser was meant to be an editor. The web became predominantly read-only — a distribution medium, not a creation medium.</p>\n<p><code>re-write-able</code> is a correction at the file level:</p>\n<table>\n<thead>\n<tr>\n<th>Web as it is</th>\n<th>re-write-able</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td>You consume apps</td>\n<td>You own the source</td>\n</tr>\n<tr>\n<td>Apps live on servers</td>\n<td>The file is the server</td>\n</tr>\n<tr>\n<td>Changing requires a developer</td>\n<td>Changing requires a sentence</td>\n</tr>\n<tr>\n<td>Deployment is a process</td>\n<td>Deployment is sharing a file</td>\n</tr>\n<tr>\n<td>Open source is a repository</td>\n<td>Open source is the file itself</td>\n</tr>\n</tbody>\n</table>\n<hr />"
-    },
-    {
-      "id": "5",
-      "heading": "Architecture",
-      "html": "<h3>5.1 The Seed File</h3>\n<p>The seed file is the immutable bootstrap. It never changes. It is the equivalent of <code>gate.py</code> in a governed self-modification system — the one thing the agent cannot touch.</p>\n<pre><code>docuapp.html  (seed — you distribute this)\n     │\n     │  on first open: generate app, inject runtime, store in localStorage\n     │  on subsequent opens: load from localStorage → document.write\n     ▼\nlocalStorage['docuapp_src']  (live app — the agent rewrites this)\n</code></pre>\n<p>The seed file contains:\n- A build screen (OpenRouter key + model + description)\n- The agent call to generate the initial app\n- The <code>injectRuntime()</code> function\n- A loader: <code>document.open(); document.write(src); document.close()</code></p>\n<p>It does not contain the app. It does not get rewritten.</p>\n<h3>5.2 The Runtime Block</h3>\n<p>Every re-writeable app contains a single <code>&lt;script id=\"re-write-able-runtime\"&gt;</code> block. This is the self-modification engine. It is injected by the seed after the initial build and preserved verbatim through all subsequent rewrites.</p>\n<p>The runtime provides:\n- <code>⌘K</code> — command palette for modification instructions\n- <code>⌘Z</code> — undo (swap current ↔ previous in localStorage)\n- <code>⌘S</code> — export current state as a standalone <code>.html</code> file\n- Prompt history (last 15 instructions, stored in <code>localStorage['da_hist']</code>)\n- Status indicator</p>\n<p>The agent system prompt includes: <em>\"Preserve the <code>&lt;script id=\"re-write-able-runtime\"&gt;</code> block exactly as-is. Never remove or alter it.\"</em></p>\n<h3>5.3 localStorage as Code Store</h3>\n<pre><code>localStorage\n├── docuapp_src    — current app HTML source (the live running code)\n├── docuapp_prev   — previous app source (one undo level)\n├── da_hist        — prompt history (JSON array, last 15)\n└── [app_data_key] — the app's own data (e.g. tracker_data, recipes_data)\n</code></pre>\n<p>The app's source code and its data coexist in localStorage under different keys. The runtime manages <code>docuapp_src</code> and <code>docuapp_prev</code>. The app manages its own data key.</p>\n<h3>5.4 The Rewrite Loop</h3>\n<pre><code>User: ⌘K → &quot;add a priority column to the tracker&quot;\n          │\n          ▼\nRuntime captures: document.documentElement.outerHTML\n          │        (the entire running app, including runtime block)\n          ▼\nAgent call: system = &quot;modify HTML app, preserve runtime block&quot;\n            user   = current outerHTML + &quot;\\n\\nInstruction: &quot; + prompt\n          │\n          ▼\nAgent returns: complete modified HTML\n          │\n          ▼\nRuntime:  localStorage['docuapp_prev'] = currentSrc\n          localStorage['docuapp_src']  = newSrc\n          document.open(); document.write(newSrc); document.close();\n          │\n          ▼\nBrowser: re-renders the new app\n         the app has modified itself\n</code></pre>\n<h3>5.5 The Null Origin Bus</h3>\n<p>When HTML files are opened locally via <code>file://</code>, all files share the same origin: <code>null</code>. This means all re-writeable files opened in the same browser share the same <code>localStorage</code> namespace.</p>\n<p>This is not a bug. It is a local communication bus:</p>\n<pre><code>budget.html     → writes  localStorage['budget_data']\ntracker.html    → writes  localStorage['tracker_data']\ndashboard.html  → reads   localStorage['budget_data'] + localStorage['tracker_data']\n                → renders a unified view across both files\n</code></pre>\n<p>The <code>storage</code> event fires when localStorage changes in another tab. A re-writeable dashboard can subscribe to sibling documents and re-render reactively — with no server, no WebSockets, no protocol.</p>\n<pre><code class=\"language-javascript\">window.addEventListener('storage', e =&gt; {\n  if (e.key === 'tracker_data') refreshTrackerSection();\n});\n</code></pre>\n<hr />"
-    },
-    {
-      "id": "6",
-      "heading": "The Agent Contract",
-      "html": "<h3>6.1 Build (initial)</h3>\n<p>System prompt tells the agent to produce a polished single-file HTML application with:\n- All CSS and JS inline\n- No React, no build steps\n- Dark theme (specified palette)\n- Seed data included\n- App data stored in localStorage under a descriptive key\n- <strong>No self-modification UI</strong> (the runtime is injected by the seed after)</p>\n<h3>6.2 Modify (subsequent)</h3>\n<p>System prompt tells the agent:\n- Return the complete modified HTML file only, no explanation\n- Preserve <code>&lt;script id=\"re-write-able-runtime\"&gt;</code> exactly as-is\n- Apply the instruction precisely\n- The file must remain fully functional</p>\n<p>The agent receives the <strong>entire running app source</strong> as context. This is the complete truth of the current state — HTML structure, CSS, JS logic, data, runtime — in one payload.</p>\n<h3>6.3 Model choice</h3>\n<p><code>anthropic/claude-sonnet-4</code> via OpenRouter is the default. The full 200k context window can comfortably hold a 50–100kb app source plus instructions. For complex structural modifications, <code>claude-opus-4</code> produces more reliable results.</p>\n<hr />"
-    },
-    {
-      "id": "7",
-      "heading": "Export and Portability",
-      "html": "<p><code>⌘S</code> serializes <code>document.documentElement.outerHTML</code> and downloads it as <code>[title].html</code>.</p>\n<p>The exported file is:\n- Complete and standalone — no dependency on the seed file\n- Self-modifying — the runtime is embedded, so it can keep rewriting itself\n- Portable — open it on any machine with any browser\n- Diffable — it's just text, it lives happily in git</p>\n<p>A re-writeable file can be shared by email, Slack, USB stick, or GitHub. The recipient opens it in a browser and it runs. They can modify it. They own their copy.</p>\n<hr />"
-    },
-    {
-      "id": "8",
-      "heading": "Design Rules for Generated Apps",
-      "html": "<p>Every app generated by re-write-able follows these rules:</p>\n<p><strong>Structure</strong>\n- Single HTML file, all CSS and JS inline\n- No React, no build steps, no npm\n- Libraries from <code>cdnjs.cloudflare.com</code> only if genuinely needed</p>\n<p><strong>Visual</strong>\n- Dark theme: <code>#0e0e0f</code> background, <code>#161618</code> surface, <code>#2d2d34</code> border\n- Text: <code>#dddde4</code> primary, <code>#575766</code> muted, <code>#dddde4</code> on dark\n- Accent: <code>#b8ff57</code> (green), <code>#57c8ff</code> (blue), <code>#ff5757</code> (red)\n- Fonts: DM Sans (UI), DM Mono (labels/code), Instrument Serif (display)</p>\n<p><strong>Data</strong>\n- All persistent state in localStorage under a descriptive key\n- Never use <code>docuapp_src</code>, <code>docuapp_prev</code>, or <code>da_*</code> keys (reserved by runtime)\n- Seed data included so the app is useful on first open</p>\n<p><strong>Quality</strong>\n- Production-quality: polished, usable, complete\n- No placeholder lorem ipsum — real representative data\n- Keyboard shortcuts where appropriate</p>\n<hr />"
-    },
-    {
-      "id": "9",
-      "heading": "Security Model",
-      "html": "<p><strong>API key</strong>: stored in <code>sessionStorage</code> only. Survives reload, cleared on tab close. Never written to the file, never in localStorage, never leaves the browser except in the Authorization header.</p>\n<p><strong>Self-modification</strong>: <code>document.write</code> from localStorage is essentially <code>eval</code> at document scope. For a personal local tool this is the correct tradeoff — maximum capability, user-owned environment. For shared or hosted deployments, the risk surface is: anyone who can write to the user's localStorage can inject code. This is mitigated by the <code>file://</code> origin model (no cross-origin writes) and by the fact that the user controls the key.</p>\n<p><strong>The seed is the anchor</strong>: the seed file cannot be rewritten by the agent (it's never in localStorage). If something goes wrong, reset via the runtime's reset button, or delete <code>docuapp_src</code> from DevTools. The seed is always safe.</p>\n<hr />"
-    },
-    {
-      "id": "10",
-      "heading": "Citizen Development Model",
-      "html": "<p>re-write-able is designed for the person who:\n- Has ideas for tools but cannot (or does not want to) write code\n- Is suspicious of cloud platforms and wants to own their data\n- Understands HTML at a surface level — enough to know it's \"just a file\"\n- Would share a spreadsheet but not deploy an app</p>\n<p>The mental model is: <em>it's like a spreadsheet, but the formula bar can redesign the spreadsheet.</em></p>\n<p>The deployment model is: <em>drag it to your desktop. Done.</em></p>\n<p>The collaboration model is: <em>send the file. They have everything.</em></p>\n<hr />"
-    },
-    {
-      "id": "11",
-      "heading": "Webinar Demo Flow",
-      "html": "<h3>Narrative arc: \"The file that builds itself\"</h3>\n<p><strong>Act 1 — The seed</strong> (2 min)\n- Open <code>re-write-able.html</code> in Chrome\n- Show the build screen — three fields, nothing else\n- Talk about the seed as the immutable anchor</p>\n<p><strong>Act 2 — First build</strong> (3 min)\n- Type: <code>a project tracker with status columns and due dates</code>\n- Hit Build\n- The agent writes ~300 lines of HTML into localStorage\n- The app loads itself\n- Show the running app with seed data</p>\n<p><strong>Act 3 — Self-modification</strong> (5 min)\n- Hit ⌘K, type: <code>add a priority field — high, medium, low</code>\n- The agent receives the entire app source, returns modified HTML\n- Watch the app reload with the new field\n- Hit ⌘K again: <code>add a small chart at the top showing status breakdown</code>\n- Repeat: <code>turn the status columns into a kanban board</code></p>\n<p><strong>Act 4 — Undo</strong> (1 min)\n- Hit ⌘Z — the kanban disappears, the list view returns\n- Hit ⌘Z again — the chart disappears\n- The file has memory</p>\n<p><strong>Act 5 — Export</strong> (1 min)\n- Hit ⌘S — download <code>project-tracker.html</code>\n- Open it in a new tab — it runs, it has the runtime, it can keep evolving\n- This file can be emailed. It requires nothing.</p>\n<p><strong>Act 6 — The bus</strong> (2 min)\n- Open the spec document alongside the tracker\n- Show <code>localStorage</code> in DevTools — both files' keys visible\n- Write a 10-line dashboard that reads both\n- The web was supposed to be read/write. This is read/write.</p>\n<hr />"
-    },
-    {
-      "id": "12",
-      "heading": "What This Is Not",
-      "html": "<ul>\n<li><strong>Not a no-code platform</strong> — there is no platform. The file is the platform.</li>\n<li><strong>Not a cloud app</strong> — nothing is on a server. localStorage is the database.</li>\n<li><strong>Not an AI coding assistant</strong> — the agent doesn't help you write code. It writes the whole thing.</li>\n<li><strong>Not a CMS</strong> — there is no content management layer. The source is the content.</li>\n<li><strong>Not a framework</strong> — there is nothing to install, nothing to configure, nothing to update.</li>\n</ul>\n<p>It is a file that writes itself.</p>\n<hr />"
-    },
-    {
-      "id": "13",
-      "heading": "Prior Art and Influences",
-      "html": "<p><strong>Clive</strong> (ikangai/clive) — the direct intellectual ancestor. Clive gives an LLM a terminal to inhabit; re-write-able gives it a browser tab. The self-modification pipeline (proposer → reviewer → gate → apply) maps to: agent call → runtime injection → localStorage → document.write.</p>\n<p><strong>Simon Willison's HTML tools</strong> — 150+ single-file HTML applications demonstrating that the format is serious, durable, and production-worthy. re-write-able extends the model: the tools can now build and modify themselves.</p>\n<p><strong>The read/write web</strong> (Berners-Lee, 1999) — the browser was meant to be an editor. WikiWiki, early blogging, Geocities — the web was briefly writable. re-write-able is a local, offline, agent-powered version of that original vision.</p>\n<p><strong>HyperCard</strong> (Atkinson, 1987) — a stack was a program you could read and modify. Every HyperCard user was implicitly a developer. re-write-able is HyperCard for the agent era: the card modifies itself.</p>\n<hr />\n<p><em>Spec version 0.1 — written alongside the first working implementation</em></p>"
-    }
-  ]
-}
-</script>
-
-<script>
+<div id="rwa-doc-mount"></div>
+<div id="rwa-runtime"></div>
+<script id="rwa-bootstrap">
 'use strict';
 
-// ── SETTINGS ──────────────────────────────────────────────────────
-{
-  const k = sessionStorage.getItem('da_apikey');
-  const m = sessionStorage.getItem('da_model');
-  if (k) document.getElementById('apiKeyInput').value = k;
-  if (m) document.getElementById('modelInput').value = m;
-}
-document.getElementById('apiKeyInput').addEventListener('input',
-  e => sessionStorage.setItem('da_apikey', e.target.value.trim()));
-document.getElementById('modelInput').addEventListener('input',
-  e => sessionStorage.setItem('da_model', e.target.value.trim()));
-document.getElementById('settingsBtn').onclick =
-  () => document.getElementById('settingsBar').classList.toggle('open');
-document.getElementById('doneBtn').onclick =
-  () => document.getElementById('settingsBar').classList.remove('open');
-document.getElementById('exportBtn').onclick = exportHTML;
+// ─── INLINE_DOC ─────────────────────────────────────────────────────
+// The frozen snapshot of the document. First-open seed and commit target.
+// This is the only part of the bootstrap that changes between commits.
+const INLINE_DOC = `<style>
+.rwa-doc{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);min-height:100dvh;}
+.rwa-doc-header{display:flex;align-items:center;gap:12px;padding:11px 24px;border-bottom:1px solid var(--b1);position:sticky;top:0;z-index:50;background:color-mix(in srgb,var(--bg) 88%,transparent);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);}
+.rwa-doc-wordmark{font-family:'Instrument Serif',serif;font-style:italic;font-size:18px;letter-spacing:-.3px;white-space:nowrap;}
+.rwa-doc-wordmark em{color:var(--muted);font-style:normal;}
+.rwa-doc-badge{font-family:'DM Mono',monospace;font-size:10px;padding:2px 7px;border:1px solid var(--b2);border-radius:100px;color:var(--muted);letter-spacing:.5px;}
+.rwa-doc-dot{width:6px;height:6px;border-radius:50%;background:var(--accent);box-shadow:0 0 8px var(--accent);}
+.rwa-doc-sp{flex:1;}
+.rwa-doc-kbd{font-family:'DM Mono',monospace;font-size:11px;color:var(--muted);display:flex;align-items:center;gap:6px;margin-right:200px;}
+.rwa-doc-kbd kbd{background:var(--surf);border:1px solid var(--b2);border-radius:3px;padding:2px 6px;font-family:inherit;font-size:10px;}
+.rwa-doc-layout{display:grid;grid-template-columns:200px 1fr;min-height:0;}
+.rwa-doc-sidebar{border-right:1px solid var(--b1);padding:24px 0;position:sticky;top:48px;height:calc(100dvh - 48px);overflow-y:auto;align-self:start;}
+.rwa-doc-sb-label{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:2px;text-transform:uppercase;color:var(--muted2);padding:0 18px;margin-bottom:10px;}
+.rwa-doc-toc{display:flex;align-items:baseline;gap:8px;padding:5px 18px;cursor:pointer;text-decoration:none;border-left:2px solid transparent;transition:border-color .15s,background .1s;}
+.rwa-doc-toc:hover{background:rgba(255,255,255,.03);}
+.rwa-doc-toc.active{border-left-color:var(--accent);}
+.rwa-doc-toc-num{font-family:'DM Mono',monospace;font-size:10px;color:var(--muted2);flex-shrink:0;width:18px;}
+.rwa-doc-toc-title{font-size:12px;color:var(--muted);line-height:1.4;}
+.rwa-doc-toc:hover .rwa-doc-toc-title,.rwa-doc-toc.active .rwa-doc-toc-title{color:var(--text);}
+.rwa-doc-content{padding:48px max(24px,calc((100% - 680px) / 2));overflow-y:auto;max-height:calc(100dvh - 48px);}
+.rwa-doc-title-block{margin-bottom:52px;}
+.rwa-doc-title{font-family:'Instrument Serif',serif;font-style:italic;font-size:clamp(38px,5vw,56px);line-height:1.02;letter-spacing:-.5px;margin-bottom:10px;background:linear-gradient(135deg,var(--text) 50%,var(--muted));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;}
+.rwa-doc-sub{font-size:16px;color:var(--muted);font-weight:300;font-style:italic;}
+.rwa-doc-section{margin-bottom:52px;scroll-margin-top:72px;}
+.rwa-doc-sec-head{display:flex;align-items:baseline;gap:12px;margin-bottom:20px;padding-bottom:10px;border-bottom:1px solid var(--b1);}
+.rwa-doc-sec-num{font-family:'DM Mono',monospace;font-size:12px;color:var(--muted2);flex-shrink:0;}
+.rwa-doc-sec-title{font-family:'Instrument Serif',serif;font-size:22px;letter-spacing:-.2px;flex:1;}
+.rwa-doc-body p{font-family:'Instrument Serif',serif;font-size:17px;line-height:1.78;color:var(--reading);margin-bottom:16px;}
+.rwa-doc-body h3{font-family:'DM Sans',sans-serif;font-weight:500;font-size:12px;letter-spacing:.6px;text-transform:uppercase;color:var(--muted);margin-top:28px;margin-bottom:10px;}
+.rwa-doc-body h4{font-family:'DM Sans',sans-serif;font-weight:500;font-size:11px;letter-spacing:.5px;text-transform:uppercase;color:var(--muted2);margin-top:18px;margin-bottom:8px;}
+.rwa-doc-body code{font-family:'DM Mono',monospace;font-size:13px;background:var(--surf);border:1px solid var(--b2);border-radius:3px;padding:1px 5px;color:var(--blue);}
+.rwa-doc-body pre{background:var(--surf);border:1px solid var(--b1);border-radius:6px;padding:16px 18px;overflow-x:auto;margin-bottom:16px;}
+.rwa-doc-body pre code{background:none;border:none;padding:0;font-size:12px;line-height:1.65;color:#aaa;}
+.rwa-doc-body ul,.rwa-doc-body ol{padding-left:0;list-style:none;margin-bottom:16px;}
+.rwa-doc-body li{font-family:'Instrument Serif',serif;font-size:17px;line-height:1.72;color:var(--reading);padding:3px 0 3px 22px;position:relative;}
+.rwa-doc-body li::before{content:"—";position:absolute;left:0;color:var(--muted2);font-family:'DM Mono',monospace;font-size:12px;top:7px;}
+.rwa-doc-body ol{counter-reset:li;}
+.rwa-doc-body ol li::before{content:counter(li) ".";counter-increment:li;font-family:'DM Mono',monospace;font-size:11px;}
+.rwa-doc-body strong{color:var(--text);font-weight:500;}
+.rwa-doc-body em{font-style:italic;}
+.rwa-doc-body blockquote{border-left:2px solid var(--accent);padding:10px 16px;margin:16px 0;font-family:'Instrument Serif',serif;font-style:italic;font-size:16px;color:var(--muted);line-height:1.6;}
+.rwa-doc-body table{width:100%;border-collapse:collapse;margin-bottom:16px;}
+.rwa-doc-body th{font-family:'DM Mono',monospace;font-size:10px;letter-spacing:1.2px;text-transform:uppercase;color:var(--muted);text-align:left;padding:8px 12px;border-bottom:1px solid var(--b1);}
+.rwa-doc-body td{padding:10px 12px;border-bottom:1px solid var(--b1);color:var(--reading);font-family:'Instrument Serif',serif;font-size:15px;}
+.rwa-doc-body tr:hover td{background:rgba(255,255,255,.015);}
+.rwa-doc-body hr{border:none;border-top:1px solid var(--b1);margin:24px 0;}
+.rwa-doc-version{text-align:center;margin:48px 0 24px;font-family:'Instrument Serif',serif;font-style:italic;font-size:14px;color:var(--muted);}
+@media(max-width:680px){.rwa-doc-layout{grid-template-columns:1fr;}.rwa-doc-sidebar{display:none;}.rwa-doc-kbd{margin-right:120px;}}
+</style>
+<div class="rwa-doc">
+<header class="rwa-doc-header">
+<div class="rwa-doc-wordmark">re<em>-</em>write<em>-</em>able</div>
+<div class="rwa-doc-badge">spec v0.6</div>
+<div class="rwa-doc-dot"></div>
+<div class="rwa-doc-sp"></div>
+<div class="rwa-doc-kbd"><span>modify</span><kbd>⌘K</kbd></div>
+</header>
+<div class="rwa-doc-layout">
+<nav class="rwa-doc-sidebar">
+<div class="rwa-doc-sb-label">Contents</div>
+<a class="rwa-doc-toc" href="#s1"><span class="rwa-doc-toc-num">1</span><span class="rwa-doc-toc-title">The Name</span></a>
+<a class="rwa-doc-toc" href="#s2"><span class="rwa-doc-toc-num">2</span><span class="rwa-doc-toc-title">The Problem</span></a>
+<a class="rwa-doc-toc" href="#s3"><span class="rwa-doc-toc-num">3</span><span class="rwa-doc-toc-title">The Concept</span></a>
+<a class="rwa-doc-toc" href="#s4"><span class="rwa-doc-toc-num">4</span><span class="rwa-doc-toc-title">The Read/Write Web</span></a>
+<a class="rwa-doc-toc" href="#s5"><span class="rwa-doc-toc-num">5</span><span class="rwa-doc-toc-title">Architecture</span></a>
+<a class="rwa-doc-toc" href="#s6"><span class="rwa-doc-toc-num">6</span><span class="rwa-doc-toc-title">The Agent Contract</span></a>
+<a class="rwa-doc-toc" href="#s7"><span class="rwa-doc-toc-num">7</span><span class="rwa-doc-toc-title">Runtime API</span></a>
+<a class="rwa-doc-toc" href="#s8"><span class="rwa-doc-toc-num">8</span><span class="rwa-doc-toc-title">Design Rules for Documents</span></a>
+<a class="rwa-doc-toc" href="#s9"><span class="rwa-doc-toc-num">9</span><span class="rwa-doc-toc-title">Platform Behavior</span></a>
+<a class="rwa-doc-toc" href="#s10"><span class="rwa-doc-toc-num">10</span><span class="rwa-doc-toc-title">Security and Permissions</span></a>
+<a class="rwa-doc-toc" href="#s11"><span class="rwa-doc-toc-num">11</span><span class="rwa-doc-toc-title">Open Questions</span></a>
+<a class="rwa-doc-toc" href="#s12"><span class="rwa-doc-toc-num">12</span><span class="rwa-doc-toc-title">Citizen Development</span></a>
+<a class="rwa-doc-toc" href="#s13"><span class="rwa-doc-toc-num">13</span><span class="rwa-doc-toc-title">Webinar Demo Flow</span></a>
+<a class="rwa-doc-toc" href="#s14"><span class="rwa-doc-toc-num">14</span><span class="rwa-doc-toc-title">What This Is Not</span></a>
+<a class="rwa-doc-toc" href="#s15"><span class="rwa-doc-toc-num">15</span><span class="rwa-doc-toc-title">Prior Art</span></a>
+<a class="rwa-doc-toc" href="#sinv"><span class="rwa-doc-toc-num">∎</span><span class="rwa-doc-toc-title">Invariants</span></a>
+</nav>
+<main class="rwa-doc-content">
+<div class="rwa-doc-title-block">
+<div class="rwa-doc-title">re-write-able</div>
+<div class="rwa-doc-sub">A specification for self-modifying HTML documents</div>
+</div>
 
-function exportHTML() {
-  const src = document.documentElement.outerHTML;
-  const a = Object.assign(document.createElement('a'), {
-    href: URL.createObjectURL(new Blob([src], {type:'text/html'})),
-    download: 're-write-able-spec.html'
+<section class="rwa-doc-section" id="s1">
+<div class="rwa-doc-sec-head"><span class="rwa-doc-sec-num">1.</span><span class="rwa-doc-sec-title">The Name</span></div>
+<div class="rwa-doc-body">
+<p><strong>re</strong> — it does it again. The agent loop, self-modification, iteration over time.<br><strong>write</strong> — not read. Not consume. Author. The read/write web, finally delivered.<br><strong>able</strong> — a property of the file itself. Not a permission the OS grants you. Something it <em>is</em>.</p>
+<p><code>re-write-able</code> is both a description and a manifesto. A re-writeable file is one that participates in its own creation.</p>
+</div>
+</section>
+
+<section class="rwa-doc-section" id="s2">
+<div class="rwa-doc-sec-head"><span class="rwa-doc-sec-num">2.</span><span class="rwa-doc-sec-title">The Problem</span></div>
+<div class="rwa-doc-body">
+<p>The web became read-only for most people.</p>
+<p>You consume apps. Someone else made them, deployed them, owns them. You have no access to the source. You can't change them. You certainly can't ask them to change themselves.</p>
+<p>Office suites used to ship documents — <code>.doc</code>, <code>.xls</code>, <code>.ppt</code>. Files you owned, on disk, sharable by email. They moved to the cloud and you stopped owning the document.</p>
+<p>The tools that do let you modify things — code editors, CLIs, build pipelines — require you to already be a developer. Citizen development tools (no-code, low-code) give you drag-and-drop but hide the source and lock you to a platform.</p>
+<p>There is no middle ground: a document that is fully sourceful, fully ownable, fully modifiable, but requires no environment, no install, no server, no account.</p>
+<p>A re-writeable file is that middle ground.</p>
+</div>
+</section>
+
+<section class="rwa-doc-section" id="s3">
+<div class="rwa-doc-sec-head"><span class="rwa-doc-sec-num">3.</span><span class="rwa-doc-sec-title">The Concept</span></div>
+<div class="rwa-doc-body">
+<p>A re-writeable file is a single <code>.html</code> file that:</p>
+<ol>
+<li><strong>Renders itself</strong> — open it in any browser, it runs</li>
+<li><strong>Stores itself</strong> — its working state lives in IndexedDB; the file itself is the durable record</li>
+<li><strong>Modifies itself</strong> — an embedded agent rewrites the document on instruction</li>
+<li><strong>Commits itself</strong> — the current state is written back into the file, in place when the browser supports it, as a download otherwise</li>
+<li><strong>Requires nothing</strong> — no server, no install, no build step, no account</li>
+</ol>
+<p>The user-authored content is a <strong>document</strong> — sometimes pure prose, sometimes a tracker, sometimes a spreadsheet, often all three at once. Interactivity is a property a document may or may not have, not a definition. Word, Excel, and PowerPoint each picked one mode and made the others awkward; HTML can do all three in the same file. <code>re-write-able</code> returns the document to the form factor that made office suites work in the first place: a file you own, on disk, that you can send.</p>
+<p>The runtime is software. The document is the artifact.</p>
+</div>
+</section>
+
+<section class="rwa-doc-section" id="s4">
+<div class="rwa-doc-sec-head"><span class="rwa-doc-sec-num">4.</span><span class="rwa-doc-sec-title">The Read/Write Web</span></div>
+<div class="rwa-doc-body">
+<p>Tim Berners-Lee's original vision was a read/write web. The browser was meant to be an editor. The web became predominantly read-only — a distribution medium, not a creation medium.</p>
+<p><code>re-write-able</code> is a correction at the file level:</p>
+<table>
+<thead><tr><th>Web as it is</th><th>re-write-able</th></tr></thead>
+<tbody>
+<tr><td>You consume apps</td><td>You own the document</td></tr>
+<tr><td>Documents live in the cloud</td><td>Documents live in a file</td></tr>
+<tr><td>The format is proprietary</td><td>The format is HTML</td></tr>
+<tr><td>Changing requires a developer</td><td>Changing requires a sentence</td></tr>
+<tr><td>Deployment is a process</td><td>Deployment is sharing a file</td></tr>
+<tr><td>Open source is a repository</td><td>Open source is the file itself</td></tr>
+</tbody>
+</table>
+<p>HTML can do everything Word, Excel, and PowerPoint did — and it can do all three in the same document. <code>re-write-able</code> makes the document writable again, on disk, by the person who owns it.</p>
+</div>
+</section>
+
+<section class="rwa-doc-section" id="s5">
+<div class="rwa-doc-sec-head"><span class="rwa-doc-sec-num">5.</span><span class="rwa-doc-sec-title">Architecture</span></div>
+<div class="rwa-doc-body">
+
+<h3>5.1 Container, Bootstrap, and Document</h3>
+<p>Three terms anchor the rest of the spec:</p>
+<ul>
+<li><strong>Container</strong> — the <code>.html</code> file as a whole. The thing you open, share, attach to email, drop on a desktop.</li>
+<li><strong>Bootstrap</strong> — the immutable shell inside the container: a loader, a runtime, and an inline snapshot of the document. The bootstrap is byte-identical across every open until a commit, and a commit only rewrites the snapshot — the loader and runtime bytes do not change.</li>
+<li><strong>Document</strong> — the user-authored part: HTML, CSS, optional JS, and structured data. Mutable. Lives in IndexedDB at runtime; lives as a frozen snapshot inside the bootstrap at rest.</li>
+</ul>
+<pre><code>container (the .html file on disk)
+└── bootstrap (immutable shell — never modified except by commit)
+    ├── loader        (hydrate IndexedDB on first open, render the document on every open)
+    ├── runtime       (⌘K, ⌘Z, ⌘S, agent wrapper, status UI, storage API)
+    └── const INLINE_DOC = \`…\`   (frozen snapshot — first-open seed and commit target)</code></pre>
+<p>The bootstrap is to a re-writeable file what <code>gate.py</code> is to a governed self-modification system: the one thing the agent cannot touch. The agent receives only the document; the bootstrap, loader, runtime, and inline snapshot are not visible to it. There is no "preserve this script block verbatim" instruction — the runtime is structurally inaccessible, not contractually protected.</p>
+
+<h3>5.2 The Bootstrap</h3>
+<p>The bootstrap holds three responsibilities.</p>
+<p><strong>Loader.</strong> On every open, hydrates IndexedDB from the inline snapshot if IndexedDB is empty, then renders the document. The first-open path and every-other-open path are the same code path; the only difference is whether IndexedDB starts empty.</p>
+<p><strong>Runtime.</strong> Provides the self-modification surface and a small API for the document:</p>
+<ul>
+<li><code>⌘K</code> — modification prompt</li>
+<li><code>⌘Z</code> — undo (pop from the IDB undo stack, up to 10 levels)</li>
+<li><code>⌘S</code> — commit (write the bootstrap back to disk with an updated inline snapshot, in place when possible)</li>
+<li>Storage adapters: <code>runtime.db.*</code> (IndexedDB), <code>runtime.fs.*</code> (OPFS)</li>
+<li>Agent invocation: <code>runtime.modify(instruction)</code></li>
+<li>Status UI: storage health, FSA permission status, dirty/clean indicator, commit nudge</li>
+</ul>
+<p>The full runtime API surface is in §7.</p>
+<p><strong>Inline snapshot.</strong> A JavaScript template literal containing a serialized payload — the rendered HTML/CSS/JS plus the contents of all IndexedDB stores and OPFS paths the document uses. The snapshot is the source of truth on first open; IndexedDB takes over after hydration; on commit, IndexedDB and OPFS are serialized back into the snapshot. One snapshot, one round-trip, one source of truth at any given moment.</p>
+
+<h3>5.3 Storage Model</h3>
+<p>Four tiers, each chosen for what it does best.</p>
+<table>
+<thead><tr><th>Tier</th><th>Holds</th><th>Sync?</th><th>Mutated when</th></tr></thead>
+<tbody>
+<tr><td><strong>IndexedDB</strong></td><td><code>rwa_doc</code>, <code>rwa_undo</code>, <code>rwa_hist</code>, plus document-defined stores</td><td>Async</td><td>Every ⌘K, ⌘Z, and document write</td></tr>
+<tr><td><strong>OPFS</strong></td><td>Binary blobs — images, attachments, large or streamable content</td><td>Async</td><td>Document-driven</td></tr>
+<tr><td><strong>sessionStorage</strong></td><td>OpenRouter API key</td><td>Sync</td><td>On submit; cleared on tab close</td></tr>
+<tr><td><strong>Filesystem</strong></td><td>The container itself (bootstrap with current inline snapshot)</td><td>n/a</td><td>On commit (⌘S)</td></tr>
+</tbody>
+</table>
+<p>LocalStorage is not part of the architecture. Everything that previously lived there moves to IndexedDB. The benefit: one tier for all working state, larger quota, no split between source storage and data storage.</p>
+<h4>Reserved namespaces</h4>
+<p>The runtime owns these — generated documents must not touch them.</p>
+<ul>
+<li>IndexedDB stores: <code>rwa_doc</code>, <code>rwa_undo</code>, <code>rwa_hist</code>, and any future store named <code>rwa_*</code>.</li>
+<li>OPFS paths: anything under <code>_rwa/</code>.</li>
+</ul>
+
+<h3>5.4 The Rewrite Loop</h3>
+<pre><code>user presses ⌘K, types instruction
+  → runtime reads rwa_doc from IndexedDB
+  → agent call: system prompt + document + instruction
+                (no bootstrap, no runtime, no inline snapshot in the prompt)
+  → push prior rwa_doc onto rwa_undo (cap 10)
+  → write returned document to rwa_doc
+  → loader re-renders</code></pre>
+<p>The agent receives only the document. The bootstrap, loader, runtime, and inline snapshot are not in the prompt, and the agent cannot modify them because they are not visible. This eliminates the prior architecture's "preserve the runtime block verbatim" instruction — a fragile contract that depended on the model not drifting on the most repetition-prone part of the prompt.</p>
+<p>A side benefit: the prompt is smaller. The runtime overhead (~10–15 KB) is no longer charged on every modification, and smaller, cheaper models become viable defaults.</p>
+<p><code>⌘Z</code> pops <code>rwa_undo</code> and writes it to <code>rwa_doc</code>. Multiple undos walk back through history. Together, <code>rwa_undo</code> and <code>rwa_hist</code> form a dialogue log: what the user asked and what the document became at each step. Undo isn't just version control — it's conversation replay.</p>
+
+<h3>5.5 First Open and Hydration</h3>
+<pre><code>open container.html
+  → bootstrap runs
+  → loader checks IndexedDB for rwa_doc
+  → empty? hydrate: copy INLINE_DOC into rwa_doc, replay any data stores it carries
+  → render document
+  → runtime attaches event listeners</code></pre>
+<p>There is no build form, no description prompt, no agent call on first open. The file is a document the moment it is opened. If you want a particular initial state, ship the file with that state baked into the inline snapshot. If you want a blank slate, ship a snapshot of a blank slate.</p>
+
+<h3>5.6 Commit and Export</h3>
+<p><code>⌘S</code> has one semantics — <em>commit</em> — and two implementations depending on browser capability.</p>
+<p><strong>Chromium with a persisted FSA handle (commit-in-place):</strong></p>
+<pre><code>serialize current rwa_doc + all document-defined IDB stores + relevant OPFS contents
+  → rewrite the INLINE_DOC constant inside the bootstrap
+  → handle.createWritable() → write whole .html → close
+  → status: clean</code></pre>
+<p><strong>All others (export-as-new-file):</strong></p>
+<pre><code>same serialization
+  → trigger download of new .html with updated INLINE_DOC
+  → user manually attaches/saves
+  → status: clean since last export</code></pre>
+<p>Other than the destination, the two implementations are byte-identical: the same bootstrap, the same updated inline snapshot, the same self-contained file.</p>
+<p><strong>Undo state stays local.</strong> <code>rwa_undo</code> and <code>rwa_hist</code> are not serialized into the inline snapshot. A committed file is a clean state, not a state plus its history. A recipient of a shared file starts with a fresh undo stack.</p>
+
+<h3>5.7 The Null Origin Bus</h3>
+<p>Under <code>file://</code>, all re-writeable files share the same origin: <code>null</code>. They share IndexedDB and OPFS namespaces. This is by design — it is the local communication bus.</p>
+<pre><code>budget.html      → writes  IDB store budget_data
+tracker.html     → writes  IDB store tracker_data
+dashboard.html   → reads   budget_data + tracker_data
+                 → renders a unified view across both documents</code></pre>
+<p>IndexedDB does not fire <code>storage</code> events. Use <code>BroadcastChannel</code> for cross-document pub/sub. Served over HTTP/HTTPS, each file gets a real origin and the bus breaks. The bus is a local-distribution feature.</p>
+
+<h3>5.8 Embedding and Composition</h3>
+<p>A re-writeable can embed another re-writeable inline via <code>iframe.srcdoc</code>. <code>&lt;iframe src="file://…"&gt;</code> is blocked by Chrome and Firefox; <code>srcdoc</code> avoids that. The <code>sandbox</code> attribute controls capability: <code>""</code> for snapshot, <code>"allow-scripts"</code> for live view, <code>"allow-scripts allow-same-origin"</code> for full embed.</p>
+
+</div>
+</section>
+
+<section class="rwa-doc-section" id="s6">
+<div class="rwa-doc-sec-head"><span class="rwa-doc-sec-num">6.</span><span class="rwa-doc-sec-title">The Agent Contract</span></div>
+<div class="rwa-doc-body">
+
+<h3>6.1 Modify</h3>
+<p>There is no separate "build" path. Every modification — including the first one — goes through the same loop: the agent receives the current document and returns a modified document.</p>
+<p>The agent's mental model is <strong>document, not application</strong>. The opening of the system prompt frames it that way:</p>
+<blockquote>You are modifying a document. The document may be prose, it may be a tracker, it may be a spreadsheet, it may be all three. Read what is there. Apply the user's instruction to the actual content — its tone if it is prose, its structure if it is data, its behavior if it is interactive.</blockquote>
+<p>A document-first prompt produces different default behavior from an app-first prompt: less reflexive interactivity, more attention to prose tone and visual structure when those are what the user is editing. A user editing a press release does not want the agent to add a button bar; a user editing a budget tracker does not want the agent to pad the rows with filler prose.</p>
+<p>Concrete rules supplied to the agent:</p>
+<ul>
+<li>Return the complete modified document only — no commentary, no markdown fence</li>
+<li>All CSS inline; JS inline only when the document has interactivity. Prose documents may be JS-free.</li>
+<li>No React, no build steps, no npm</li>
+<li>Use <code>runtime.db.*</code> for structured data, <code>runtime.fs.*</code> for blobs</li>
+<li>Dark theme palette by default (§8); honor explicit visual instructions over the default</li>
+<li>The first character of the response should begin the modified content directly</li>
+</ul>
+<p>The agent receives only the document as context. The bootstrap, loader, runtime, inline snapshot, and undo stack are not visible.</p>
+
+<h3>6.2 Model choice</h3>
+<p><code>google/gemini-3-flash-preview</code> via OpenRouter is the default — fast, cheap, and a context window that comfortably holds any reasonable single-file document plus instructions. For complex structural modifications, <code>anthropic/claude-sonnet-4</code> produces more reliable results at higher cost. The model is configurable per file via the runtime's settings.</p>
+
+</div>
+</section>
+
+<section class="rwa-doc-section" id="s7">
+<div class="rwa-doc-sec-head"><span class="rwa-doc-sec-num">7.</span><span class="rwa-doc-sec-title">Runtime API</span></div>
+<div class="rwa-doc-body">
+<p>The document interacts with the runtime through a small surface exposed on the global <code>runtime</code> object.</p>
+<pre><code>runtime.db = {
+  get(store, key),
+  put(store, key, value),
+  del(store, key),
+  all(store),                       // iterate
+  open(store, { autoIncrement }),   // declare document store (rejects rwa_*)
+  subscribe(store, callback),       // BroadcastChannel-backed
+};
+
+runtime.fs = {
+  read(path),                       // returns Blob
+  write(path, blob),
+  del(path),
+  list(prefix),                     // rejects _rwa/
+};
+
+runtime.modify(instruction);        // ⌘K programmatic equivalent
+runtime.commit();                   // ⌘S programmatic equivalent
+runtime.undo();                     // ⌘Z programmatic equivalent
+
+runtime.status = {                  // observable
+  dirty: boolean,                   // unexported changes?
+  fsa: 'granted' | 'prompt' | 'denied' | 'unsupported' | 'lost',
+  storage: { usage, quota },
+};</code></pre>
+<p>The document is free to use IndexedDB and OPFS directly without going through the runtime, but the API does the bookkeeping (cross-tab sync, status tracking, reserved-name protection).</p>
+<p>A pure-prose document may not call this API at all. The runtime is still loaded — ⌘K, ⌘Z, ⌘S still work — but the document itself can be a single <code>&lt;article&gt;</code> and a stylesheet.</p>
+</div>
+</section>
+
+<section class="rwa-doc-section" id="s8">
+<div class="rwa-doc-sec-head"><span class="rwa-doc-sec-num">8.</span><span class="rwa-doc-sec-title">Design Rules for Documents</span></div>
+<div class="rwa-doc-body">
+<h3>Structure</h3>
+<ul>
+<li>Single self-contained document; CSS inline; JS inline only when the document has interactivity</li>
+<li>No React, no build steps, no npm</li>
+<li>Libraries from <code>cdnjs.cloudflare.com</code> only when the document genuinely needs them</li>
+<li>Fonts from Google Fonts (DM Sans, DM Mono, Instrument Serif) — for true offline operation, the agent may inline them as base64</li>
+</ul>
+<h3>Visual</h3>
+<ul>
+<li>Dark theme: <code>#0e0e0f</code> background, <code>#161618</code> surface, <code>#2d2d34</code> border</li>
+<li>Text: <code>#dddde4</code> primary, <code>#575766</code> muted</li>
+<li>Accent: <code>#b8ff57</code> (green), <code>#57c8ff</code> (blue), <code>#ff5757</code> (red)</li>
+<li>Fonts: DM Sans (UI), DM Mono (labels/code), Instrument Serif (display)</li>
+</ul>
+<h3>Data</h3>
+<ul>
+<li>Structured data in IndexedDB via <code>runtime.db.*</code> (when the document has structured data)</li>
+<li>Binary blobs in OPFS via <code>runtime.fs.*</code> (when the document has blobs)</li>
+<li>Pure-prose documents need neither tier</li>
+<li>Never use store names starting with <code>rwa_</code> (reserved)</li>
+<li>Never write to <code>_rwa/</code> paths in OPFS (reserved)</li>
+</ul>
+<h3>Quality</h3>
+<ul>
+<li>Production-quality: polished, usable, complete</li>
+<li>For prose: well-typed, real representative copy — never lorem ipsum</li>
+<li>For data: real representative records — never lorem ipsum</li>
+<li>For interactive: keyboard shortcuts where appropriate</li>
+</ul>
+</div>
+</section>
+
+<section class="rwa-doc-section" id="s9">
+<div class="rwa-doc-sec-head"><span class="rwa-doc-sec-num">9.</span><span class="rwa-doc-sec-title">Platform Behavior</span></div>
+<div class="rwa-doc-body">
+<table>
+<thead><tr><th>Platform</th><th>IndexedDB</th><th>OPFS</th><th>FSA write-in-place</th><th>Eviction risk</th></tr></thead>
+<tbody>
+<tr><td>Chrome (desktop)</td><td>Up to ≈60% of free disk</td><td>Yes</td><td>Yes (with permission)</td><td>Low</td></tr>
+<tr><td>Chrome (Android)</td><td>≈6–10% of free disk</td><td>Yes</td><td>No</td><td>Medium</td></tr>
+<tr><td>Firefox (desktop)</td><td>≈2 GB per origin</td><td>Yes</td><td>No</td><td>Low</td></tr>
+<tr><td>Safari (macOS)</td><td>≈1 GB per origin</td><td>Yes</td><td>No</td><td>Low</td></tr>
+<tr><td>Safari (iOS)</td><td>≈50 MB</td><td>Yes</td><td>No</td><td><strong>High</strong></td></tr>
+<tr><td>iOS PWA</td><td>Up to ≈1 GB</td><td>Yes</td><td>No</td><td>Medium</td></tr>
+</tbody>
+</table>
+<h3>9.1 The iOS Safari Problem</h3>
+<p>WebKit on iOS actively evicts site data — IndexedDB and OPFS — when the device is low on storage or after a period of inactivity. Private mode provides near-zero quota.</p>
+<p>The committed file is the only durable artifact. The runtime's commit nudge is especially important on mobile. <code>navigator.storage.persist()</code> is requested on boot — Chrome Android honors it, Safari ignores it. Private/incognito mode is unsupported.</p>
+<h3>9.2 The Null Origin and Shared Quotas</h3>
+<p>Under <code>file://</code>, all re-writeable files share the same origin and therefore the same storage quota. The bus benefits from this; the shared quota is a constraint.</p>
+</div>
+</section>
+
+<section class="rwa-doc-section" id="s10">
+<div class="rwa-doc-sec-head"><span class="rwa-doc-sec-num">10.</span><span class="rwa-doc-sec-title">Security and Permissions</span></div>
+<div class="rwa-doc-body">
+<p><strong>API key</strong>: stored in <code>sessionStorage</code> only. Survives reload, cleared on tab close. Never written to the file, never in IndexedDB, never leaves the browser except in the Authorization header.</p>
+<p><strong>Self-modification</strong>: rendering the document from IndexedDB is essentially <code>eval</code> at document scope. For a personal local tool this is the correct tradeoff. The risk surface is mitigated by the <code>file://</code> origin model (no cross-origin writes).</p>
+<p><strong>The bootstrap is the anchor</strong>: it is never in IndexedDB and never modified by the agent. If something goes wrong, reload the file — the inline snapshot is the last known good state, and the runtime can be reset by clearing IndexedDB.</p>
+
+<h3>10.1 FSA Permission Lifecycle</h3>
+<table>
+<thead><tr><th>State</th><th>Trigger</th><th>Behavior</th></tr></thead>
+<tbody>
+<tr><td><code>unsupported</code></td><td>Browser is not Chromium</td><td>Commit always exports; ⌘S triggers a download</td></tr>
+<tr><td><code>prompt</code></td><td>First commit on a new session</td><td>Browser prompts; on grant, persist handle to IDB</td></tr>
+<tr><td><code>granted</code></td><td>Handle is persisted and verified</td><td>Commit-in-place; no further prompts unless revoked</td></tr>
+<tr><td><code>denied</code></td><td>User denied or revoked</td><td>Fall back to download mode</td></tr>
+<tr><td><code>lost</code></td><td>Handle exists but is no longer valid</td><td>Show "reattach to file" affordance</td></tr>
+</tbody>
+</table>
+
+<h3>10.2 Storage Exhaustion</h3>
+<p>Quota errors during write must not corrupt <code>rwa_doc</code>. On <code>QuotaExceededError</code>: restore <code>rwa_doc</code> from <code>rwa_undo</code> top, show error, preserve undo and history. If headroom is still needed, the runtime sheds the oldest undo entry first.</p>
+
+<h3>10.3 Multi-Tab Concurrency</h3>
+<p>Two tabs writing to IndexedDB: last write wins, undo stacks diverge. Two tabs committing via FSA: file corruption is possible. The runtime acquires a soft lock via <code>BroadcastChannel</code> on first modification or commit; other tabs detect the lock and open in read-only mode with a "take over" affordance.</p>
+</div>
+</section>
+
+<section class="rwa-doc-section" id="s11">
+<div class="rwa-doc-sec-head"><span class="rwa-doc-sec-num">11.</span><span class="rwa-doc-sec-title">Open Questions</span></div>
+<div class="rwa-doc-body">
+<p>Intentional open issues — load-bearing design decisions still being weighed.</p>
+<h3>11.1 Rendering Isolation</h3>
+<p>Three options for rendering the document into the bootstrap page: <strong>innerHTML</strong> (simplest, CSS/JS can collide), <strong>iframe srcdoc</strong> (full isolation, postMessage required), <strong>shadow DOM for runtime UI, light DOM for the document</strong> (UI isolated, scripts not). Current direction: <em>innerHTML for the document, runtime UI in plain DOM scoped under <code>#rwa-runtime</code></em>.</p>
+<h3>11.2 First-Render Strategy</h3>
+<p>IndexedDB load is async. Three strategies: <strong>blank</strong>, <strong>splash</strong>, or <strong>synchronous from inline snapshot, reconcile after</strong>. Current direction: synchronous from inline snapshot.</p>
+<h3>11.3 Diff Protocol Reintroduction</h3>
+<p>For documents over ~200 KB, full-content rewrites get slow and expensive. A SEARCH/REPLACE diff protocol may return as an automatic upgrade above a size threshold.</p>
+<h3>11.4 ⌘S Semantics</h3>
+<p>⌘S means "commit" regardless of destination — write-in-place when possible, download otherwise. Current direction: unified key.</p>
+</div>
+</section>
+
+<section class="rwa-doc-section" id="s12">
+<div class="rwa-doc-sec-head"><span class="rwa-doc-sec-num">12.</span><span class="rwa-doc-sec-title">Citizen Development Model</span></div>
+<div class="rwa-doc-body">
+<p>re-write-able is designed for the person who:</p>
+<ul>
+<li>Has ideas for documents and tools but cannot (or does not want to) write code</li>
+<li>Is suspicious of cloud platforms and wants to own their files</li>
+<li>Understands HTML at a surface level — enough to know it's "just a file"</li>
+<li>Would share a spreadsheet but not deploy an app</li>
+</ul>
+<p>The mental model is: <em>it's like a Word document, but the document can rewrite itself.</em></p>
+<p>The deployment model is: <em>drag it to your desktop. Done.</em></p>
+<p>The collaboration model is: <em>send the file. They have everything.</em></p>
+</div>
+</section>
+
+<section class="rwa-doc-section" id="s13">
+<div class="rwa-doc-sec-head"><span class="rwa-doc-sec-num">13.</span><span class="rwa-doc-sec-title">Webinar Demo Flow</span></div>
+<div class="rwa-doc-body">
+<h3>"The file that builds itself"</h3>
+<p><strong>Act 1 — The container</strong> (2 min). Open <code>tracker.html</code> in Chrome — the document is just there, no build screen. Open <code>letter.html</code> next to it — same architecture, different content type. Show the bootstrap in the source: loader, runtime, <code>INLINE_DOC</code> constant.</p>
+<p><strong>Act 2 — Self-modification</strong> (5 min). On the tracker: ⌘K, "add a priority field". On the letter: ⌘K, "tighten the second paragraph and pull the bullet list into a callout". Same loop, different content type, prose-aware response.</p>
+<p><strong>Act 3 — Undo</strong> (1 min). ⌘Z walks history backward. The file has memory.</p>
+<p><strong>Act 4 — Commit</strong> (2 min). ⌘S — on Chromium, the file rewrites itself in place; elsewhere, a new download. The diff in the file: only <code>INLINE_DOC</code> changed.</p>
+<p><strong>Act 5 — The bus</strong> (2 min). A dashboard reads from both. IndexedDB shows all three documents' stores under the null origin. The web was supposed to be read/write.</p>
+</div>
+</section>
+
+<section class="rwa-doc-section" id="s14">
+<div class="rwa-doc-sec-head"><span class="rwa-doc-sec-num">14.</span><span class="rwa-doc-sec-title">What This Is Not</span></div>
+<div class="rwa-doc-body">
+<ul>
+<li><strong>Not a no-code platform</strong> — there is no platform. The file is the platform.</li>
+<li><strong>Not a cloud app</strong> — nothing is on a server. IndexedDB is the database.</li>
+<li><strong>Not just for apps</strong> — a re-writeable file can be a press release, a tax return, a wedding invitation, a budget. Interactivity is a property a document may have, not a definition of one.</li>
+<li><strong>Not an AI coding assistant</strong> — the agent doesn't help you write code. It edits the document.</li>
+<li><strong>Not a CMS</strong> — there is no content management layer. The document is the content.</li>
+<li><strong>Not a framework</strong> — there is nothing to install, nothing to configure, nothing to update.</li>
+</ul>
+<p>It is a file that writes itself.</p>
+</div>
+</section>
+
+<section class="rwa-doc-section" id="s15">
+<div class="rwa-doc-sec-head"><span class="rwa-doc-sec-num">15.</span><span class="rwa-doc-sec-title">Prior Art and Influences</span></div>
+<div class="rwa-doc-body">
+<p><strong>Clive</strong> (ikangai/clive) — the direct intellectual ancestor. Clive gives an LLM a terminal to inhabit; re-write-able gives it a browser tab. The bootstrap plays the role of <code>gate.py</code>.</p>
+<p><strong>Simon Willison's HTML tools</strong> — 150+ single-file HTML applications demonstrating that the format is serious, durable, and production-worthy.</p>
+<p><strong>The read/write web</strong> (Berners-Lee, 1999) — the browser was meant to be an editor.</p>
+<p><strong>HyperCard</strong> (Atkinson, 1987) — a stack was a program you could read and modify. re-write-able is HyperCard for the agent era.</p>
+<p><strong>Word, Excel, PowerPoint</strong> (1980s–) — the office suite proved that a document is something you own, on disk, that you can send. Then the documents moved to the cloud. re-write-able returns the document to a file.</p>
+</div>
+</section>
+
+<section class="rwa-doc-section" id="sinv">
+<div class="rwa-doc-sec-head"><span class="rwa-doc-sec-num">∎</span><span class="rwa-doc-sec-title">Invariants</span></div>
+<div class="rwa-doc-body">
+<p>Load-bearing properties — every change to the runtime, bootstrap, or storage model should preserve them.</p>
+<ol>
+<li>The bootstrap is byte-identical across every open until commit, and a commit only rewrites the <code>INLINE_DOC</code> constant — the loader and runtime bytes do not change.</li>
+<li>The runtime is always loaded from the bootstrap, never from IndexedDB. The agent has no access to it.</li>
+<li>Reserved IndexedDB stores (<code>rwa_*</code>) and OPFS paths (<code>_rwa/</code>) are written only by the runtime.</li>
+<li>Every committed file is self-contained — opens and runs without external dependencies.</li>
+<li>The inline snapshot is the source of truth on first open. After hydration, IndexedDB is the source of truth until the next commit.</li>
+<li>Undo history lives in IndexedDB, not in the file. Commits do not carry undo state.</li>
+</ol>
+</div>
+</section>
+
+<div class="rwa-doc-version">Spec version 0.6 — document-first framing on top of the bootstrap-centric v0.5 architecture.</div>
+
+</main>
+</div>
+</div>`;
+
+// ─── Constants ──────────────────────────────────────────────────────
+const RWA = {
+  DB: 'rwa',
+  STORE_DOC: 'rwa_doc',
+  STORE_UNDO: 'rwa_undo',
+  STORE_HIST: 'rwa_hist',
+  STORE_FSA: 'rwa_fsa',
+  KEY: 'self',
+  UNDO_CAP: 10,
+  HIST_CAP: 15,
+  KEY_API: 'rwa_apikey',
+  KEY_MODEL: 'rwa_model',
+  DEFAULT_MODEL: 'google/gemini-3-flash-preview',
+  TITLE: 're-write-able',
+  FILENAME: 're-write-able-spec.html',
+};
+
+// ─── IndexedDB helpers ──────────────────────────────────────────────
+let _db = null;
+function openDB() {
+  if (_db) return Promise.resolve(_db);
+  return new Promise((res, rej) => {
+    const req = indexedDB.open(RWA.DB, 1);
+    req.onupgradeneeded = e => {
+      const db = e.target.result;
+      [RWA.STORE_DOC, RWA.STORE_UNDO, RWA.STORE_HIST, RWA.STORE_FSA].forEach(s => {
+        if (!db.objectStoreNames.contains(s)) db.createObjectStore(s);
+      });
+    };
+    req.onsuccess = e => { _db = e.target.result; res(_db); };
+    req.onerror = e => rej(e.target.error);
   });
-  a.click(); URL.revokeObjectURL(a.href);
-  log('ok', 'exported');
+}
+function idbGet(store, key) {
+  return openDB().then(db => new Promise((res, rej) => {
+    const r = db.transaction(store).objectStore(store).get(key || RWA.KEY);
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+  }));
+}
+function idbPut(store, val, key) {
+  return openDB().then(db => new Promise((res, rej) => {
+    const r = db.transaction(store, 'readwrite').objectStore(store).put(val, key || RWA.KEY);
+    r.onsuccess = () => res();
+    r.onerror = () => rej(r.error);
+  }));
 }
 
-// ── DATA ──────────────────────────────────────────────────────────
-function getData() {
-  return JSON.parse(document.getElementById('appData').textContent);
+// ─── Document storage ───────────────────────────────────────────────
+async function getDoc() {
+  let doc = await idbGet(RWA.STORE_DOC);
+  if (doc == null) { doc = INLINE_DOC; await idbPut(RWA.STORE_DOC, doc); }
+  return doc;
 }
+async function setDoc(doc) { await idbPut(RWA.STORE_DOC, doc); }
+async function pushUndo(prev) {
+  const stack = (await idbGet(RWA.STORE_UNDO)) || [];
+  stack.push(prev);
+  while (stack.length > RWA.UNDO_CAP) stack.shift();
+  await idbPut(RWA.STORE_UNDO, stack);
+}
+async function popUndo() {
+  const stack = (await idbGet(RWA.STORE_UNDO)) || [];
+  if (stack.length === 0) return null;
+  const v = stack.pop();
+  await idbPut(RWA.STORE_UNDO, stack);
+  return v;
+}
+async function addHist(instr) {
+  const list = (await idbGet(RWA.STORE_HIST)) || [];
+  const next = [instr, ...list.filter(x => x !== instr)].slice(0, RWA.HIST_CAP);
+  await idbPut(RWA.STORE_HIST, next);
+  return next;
+}
+async function getHist() { return (await idbGet(RWA.STORE_HIST)) || []; }
 
-// ── RENDER ────────────────────────────────────────────────────────
-function render() {
-  const d = getData();
-
-  // Sidebar
-  const sb = document.getElementById('sidebar');
-  sb.innerHTML = '<div class="sb-label">Contents</div>' +
-    d.sections.map(s =>
-      '<a class="toc-item" href="#s' + s.id + '" data-id="' + s.id + '">' +
-      '<span class="toc-num">' + s.id + '</span>' +
-      '<span class="toc-title">' + s.heading + '</span>' +
-      '</a>'
-    ).join('');
-
-  // Content
-  const ca = document.getElementById('contentArea');
-  ca.innerHTML =
-    '<div class="doc-header">' +
-    '<div class="doc-title">' + d.title + '</div>' +
-    '<div class="doc-sub">' + d.subtitle + '</div>' +
-    '</div>' +
-    d.sections.map(s =>
-      '<section class="section" id="s' + s.id + '" data-id="' + s.id + '">' +
-      '<div class="sec-head">' +
-      '<span class="sec-num">' + s.id + '.</span>' +
-      '<span class="sec-title">' + s.heading + '</span>' +
-      '<button class="sec-spark" onclick="openPalette(' + JSON.stringify(s.id) + ')">&#x26A1; Ask agent</button>' +
-      '</div>' +
-      '<div class="sec-body">' + s.html + '</div>' +
-      '</section>'
-    ).join('');
-
-  // TOC intersection observer
-  const observer = new IntersectionObserver(entries => {
-    entries.forEach(entry => {
-      if (entry.isIntersecting) {
-        const id = entry.target.dataset.id;
-        document.querySelectorAll('.toc-item').forEach(a =>
-          a.classList.toggle('active', a.dataset.id === id));
+// ─── Renderer ───────────────────────────────────────────────────────
+function renderDoc(html) {
+  const mount = document.getElementById('rwa-doc-mount');
+  mount.innerHTML = html;
+  // Re-execute scripts inserted via innerHTML (innerHTML doesn't run them).
+  mount.querySelectorAll('script').forEach(old => {
+    const s = document.createElement('script');
+    for (const a of old.attributes) s.setAttribute(a.name, a.value);
+    s.textContent = old.textContent;
+    old.parentNode.replaceChild(s, old);
+  });
+  // Wire TOC active-state for sections that scroll into view.
+  wireToc();
+}
+function wireToc() {
+  const sections = document.querySelectorAll('.rwa-doc-section');
+  if (!sections.length) return;
+  const obs = new IntersectionObserver(entries => {
+    entries.forEach(e => {
+      if (e.isIntersecting) {
+        const id = e.target.id;
+        document.querySelectorAll('.rwa-doc-toc').forEach(a =>
+          a.classList.toggle('active', a.getAttribute('href') === '#' + id));
       }
     });
   }, { threshold: 0.2 });
-  document.querySelectorAll('.section').forEach(s => observer.observe(s));
-
-  document.querySelectorAll('.toc-item').forEach(a =>
-    a.addEventListener('click', e => {
-      e.preventDefault();
-      document.getElementById('s' + a.dataset.id)?.scrollIntoView({ behavior: 'smooth' });
-    }));
+  sections.forEach(s => obs.observe(s));
 }
 
-// ── PALETTE ───────────────────────────────────────────────────────
-let sectionCtx = null;
-
-function openPalette(sid) {
-  sectionCtx = sid || null;
-  // Delegate to runtime palette if available
-  const runtimeOpen = window.__daOpen;
-  if (runtimeOpen) { runtimeOpen(sid); return; }
-  // Fallback: show settings to get key first
-  document.getElementById('settingsBar').classList.add('open');
-  document.getElementById('apiKeyInput').focus();
-  log('warn', 'enter API key in settings, then use ⌘K');
+// ─── Bootstrap snapshot capture ─────────────────────────────────────
+// Captures the file's "frozen" form (with empty mount points) at boot,
+// before the document is rendered. Used as the template at commit time:
+// only the INLINE_DOC literal contents change between commits.
+let FROZEN = '';
+function captureBootstrap() {
+  FROZEN = '<!DOCTYPE html>\n' + document.documentElement.outerHTML;
+}
+function escapeForTL(s) {
+  return s
+    .replace(/\\/g, '\\\\')
+    .replace(/`/g, '\\`')
+    .replace(/\$\{/g, '\\${')
+    .replace(/<\/script/gi, '<\\/script'); // prevent the HTML parser from ending the bootstrap script tag
+}
+function buildFile(currentDoc) {
+  const marker = 'const INLINE_DOC = `';
+  const start = FROZEN.indexOf(marker);
+  if (start < 0) throw new Error('cannot locate INLINE_DOC literal');
+  const cs = start + marker.length;
+  let i = cs;
+  while (i < FROZEN.length) {
+    if (FROZEN[i] === '\\') { i += 2; continue; }
+    if (FROZEN[i] === '`') break;
+    i++;
+  }
+  if (i >= FROZEN.length) throw new Error('unterminated INLINE_DOC literal');
+  return FROZEN.slice(0, cs) + escapeForTL(currentDoc) + FROZEN.slice(i);
 }
 
+// ─── Runtime UI ─────────────────────────────────────────────────────
+function buildRuntimeUI() {
+  const root = document.getElementById('rwa-runtime');
+  root.innerHTML = `
+<div id="rwa-set">
+  <button class="rwa-st-btn" id="rwa-st-status">● ready</button>
+  <button class="rwa-st-btn" id="rwa-st-cog">⚙</button>
+  <button class="rwa-st-btn pri" id="rwa-st-commit">⌘S</button>
+</div>
+<div id="rwa-set-panel">
+  <div class="rwa-set-row">
+    <label>OpenRouter Key</label>
+    <input type="password" id="rwa-key" placeholder="sk-or-..." autocomplete="off">
+  </div>
+  <div class="rwa-set-row">
+    <label>Model</label>
+    <input type="text" id="rwa-model" autocomplete="off">
+  </div>
+  <div class="rwa-set-row">
+    <div class="rwa-set-info">Key lives in sessionStorage only — cleared on tab close. Document, undo, and history live in IndexedDB.</div>
+  </div>
+  <div class="rwa-set-row">
+    <button class="rwa-b warn" id="rwa-reset">⟲ Reset document to inline snapshot</button>
+  </div>
+</div>
+<div id="rwa-pal">
+  <div id="rwa-pal-box">
+    <div class="rwa-pal-top">
+      <span class="rwa-pal-sig">⌘K</span>
+      <input id="rwa-pal-inp" placeholder="modify this document..." autocomplete="off" spellcheck="false">
+      <button id="rwa-pal-go" disabled>Run ↵</button>
+    </div>
+    <div id="rwa-pal-hist"></div>
+    <div class="rwa-pal-foot">
+      <span id="rwa-pal-st">● ready</span>
+      <div class="rwa-pal-acts">
+        <button class="rwa-b" id="rwa-act-undo">⌘Z undo</button>
+        <button class="rwa-b" id="rwa-act-commit">⌘S commit</button>
+      </div>
+    </div>
+  </div>
+</div>`;
+
+  const keyInp = document.getElementById('rwa-key');
+  const modelInp = document.getElementById('rwa-model');
+  keyInp.value = sessionStorage.getItem(RWA.KEY_API) || '';
+  modelInp.value = sessionStorage.getItem(RWA.KEY_MODEL) || RWA.DEFAULT_MODEL;
+  keyInp.oninput = e => sessionStorage.setItem(RWA.KEY_API, e.target.value.trim());
+  modelInp.oninput = e => sessionStorage.setItem(RWA.KEY_MODEL, e.target.value.trim() || RWA.DEFAULT_MODEL);
+
+  document.getElementById('rwa-st-cog').onclick = () =>
+    document.getElementById('rwa-set-panel').classList.toggle('open');
+  document.getElementById('rwa-st-commit').onclick = () => commit();
+  document.getElementById('rwa-reset').onclick = async () => {
+    if (!confirm('Reset the document to its inline snapshot? Undo history will be cleared.')) return;
+    await idbPut(RWA.STORE_DOC, INLINE_DOC);
+    await idbPut(RWA.STORE_UNDO, []);
+    renderDoc(INLINE_DOC);
+    setDirty(false);
+    setStatus('ok', '⟲ reset');
+    document.getElementById('rwa-set-panel').classList.remove('open');
+  };
+
+  const pal = document.getElementById('rwa-pal');
+  const inp = document.getElementById('rwa-pal-inp');
+  const go = document.getElementById('rwa-pal-go');
+  pal.onclick = e => { if (e.target === pal) closePalette(); };
+  inp.oninput = () => { go.disabled = !inp.value.trim(); };
+  inp.onkeydown = e => {
+    if (e.key === 'Enter' && !e.shiftKey && inp.value.trim()) { e.preventDefault(); modify(inp.value.trim()); }
+    if (e.key === 'Escape') closePalette();
+  };
+  go.onclick = () => inp.value.trim() && modify(inp.value.trim());
+  document.getElementById('rwa-act-undo').onclick = () => { closePalette(); undo(); };
+  document.getElementById('rwa-act-commit').onclick = () => { closePalette(); commit(); };
+}
+
+async function refreshHist() {
+  const items = await getHist();
+  const hist = document.getElementById('rwa-pal-hist');
+  if (!hist) return;
+  hist.innerHTML = items.map(h =>
+    `<div class="rwa-hi" data-p="${escapeAttr(h)}">↻ ${escapeHTML(h)}</div>`
+  ).join('');
+  hist.querySelectorAll('.rwa-hi').forEach(el => {
+    el.onclick = () => {
+      const inp = document.getElementById('rwa-pal-inp');
+      inp.value = el.dataset.p;
+      document.getElementById('rwa-pal-go').disabled = false;
+      inp.focus();
+    };
+  });
+}
+function escapeHTML(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function escapeAttr(s) { return String(s).replace(/"/g, '&quot;'); }
+
+function openPalette() {
+  document.getElementById('rwa-pal').classList.add('open');
+  requestAnimationFrame(() => document.getElementById('rwa-pal-inp').focus());
+  refreshHist();
+  setPalStatus('', '● ready');
+}
+function closePalette() {
+  document.getElementById('rwa-pal').classList.remove('open');
+  document.getElementById('rwa-pal-inp').value = '';
+  document.getElementById('rwa-pal-go').disabled = true;
+}
+
+function setStatus(cls, msg) {
+  const el = document.getElementById('rwa-st-status');
+  if (!el) return;
+  el.className = 'rwa-st-btn ' + (cls || '');
+  el.textContent = msg;
+}
+function setPalStatus(cls, msg) {
+  const el = document.getElementById('rwa-pal-st');
+  if (!el) return;
+  el.className = cls || '';
+  el.textContent = msg;
+}
+
+let _dirty = false;
+function setDirty(d) {
+  _dirty = d;
+  const btn = document.getElementById('rwa-st-commit');
+  if (btn) btn.classList.toggle('dirty', d);
+}
+
+// ─── ⌘K Modify ──────────────────────────────────────────────────────
+const SYSTEM_PROMPT = `You are modifying a document. The document may be prose, it may be a tracker, it may be a spreadsheet, it may be all three. Read what is there. Apply the user's instruction to the actual content — its tone if it is prose, its structure if it is data, its behavior if it is interactive.
+
+Return the complete modified document only — no commentary, no markdown fence. The document is an HTML fragment that lives inside a mount div. CSS may be inline in <style> tags; JS may be inline in <script> tags. Do NOT include <!DOCTYPE>, <html>, <head>, or <body> — those belong to the bootstrap. Use the existing structure and conventions of the document. The first character of your response should begin the modified content directly.
+
+A document-first response: less reflexive interactivity, more attention to prose tone and visual structure when those are what the user is editing. A user editing a press release does not want a button bar; a user editing a budget tracker does not want filler prose. Do not invent a runtime or a self-modification UI — the bootstrap provides those.`;
+
+async function modify(instruction) {
+  const key = sessionStorage.getItem(RWA.KEY_API);
+  const model = sessionStorage.getItem(RWA.KEY_MODEL) || RWA.DEFAULT_MODEL;
+  if (!key) {
+    setPalStatus('err', 'no API key — open ⚙ settings');
+    document.getElementById('rwa-set-panel').classList.add('open');
+    document.getElementById('rwa-key').focus();
+    return;
+  }
+  closePalette();
+  setStatus('run', '⌘K running');
+  try {
+    const cur = await getDoc();
+    const r = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + key,
+        'HTTP-Referer': 'https://github.com/ikangai/rewritable',
+        'X-Title': RWA.TITLE,
+      },
+      body: JSON.stringify({
+        model: model,
+        max_tokens: 32000,
+        messages: [
+          { role: 'system', content: SYSTEM_PROMPT },
+          { role: 'user', content: 'Document:\n' + cur + '\n\nInstruction: ' + instruction },
+        ],
+      }),
+    });
+    if (!r.ok) {
+      const e = await r.json().catch(() => ({}));
+      throw new Error((e.error && e.error.message) || r.statusText);
+    }
+    const data = await r.json();
+    let text = (data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) || '';
+    text = text.trim();
+    const fence = '```';
+    if (text.startsWith(fence)) {
+      const nl = text.indexOf('\n');
+      if (nl > 0) text = text.slice(nl + 1);
+    }
+    if (text.endsWith(fence)) text = text.slice(0, text.lastIndexOf(fence)).trim();
+    if (text.length === 0) throw new Error('empty response');
+    await pushUndo(cur);
+    await setDoc(text);
+    await addHist(instruction);
+    renderDoc(text);
+    setDirty(true);
+    setStatus('ok', '✓ done');
+  } catch (e) {
+    setStatus('err', '✗ ' + e.message);
+    console.error(e);
+  }
+}
+
+// ─── ⌘Z Undo ────────────────────────────────────────────────────────
+async function undo() {
+  const prev = await popUndo();
+  if (!prev) { setStatus('err', '✗ nothing to undo'); return; }
+  await setDoc(prev);
+  renderDoc(prev);
+  setDirty(true);
+  setStatus('ok', '↩ undone');
+}
+
+// ─── ⌘S Commit ──────────────────────────────────────────────────────
+async function commit() {
+  setStatus('run', '⌘S writing');
+  try {
+    const doc = await getDoc();
+    const fileText = buildFile(doc);
+    if ('showSaveFilePicker' in window) {
+      let handle = null;
+      try { handle = await idbGet(RWA.STORE_FSA); } catch (_) {}
+      try {
+        if (handle) {
+          let perm = await handle.queryPermission({ mode: 'readwrite' });
+          if (perm === 'prompt') perm = await handle.requestPermission({ mode: 'readwrite' });
+          if (perm !== 'granted') throw new Error('permission denied');
+        } else {
+          handle = await window.showSaveFilePicker({
+            suggestedName: RWA.FILENAME,
+            types: [{ description: 'HTML', accept: { 'text/html': ['.html', '.htm'] } }],
+          });
+          await idbPut(RWA.STORE_FSA, handle);
+        }
+        const w = await handle.createWritable();
+        await w.write(fileText);
+        await w.close();
+        setDirty(false);
+        setStatus('ok', '✓ committed');
+        return;
+      } catch (e) {
+        if (e.name === 'AbortError') { setStatus('', 'cancelled'); return; }
+        console.warn('FSA failed, falling back to download:', e);
+      }
+    }
+    const a = document.createElement('a');
+    const blob = new Blob([fileText], { type: 'text/html' });
+    a.href = URL.createObjectURL(blob);
+    a.download = RWA.FILENAME;
+    a.click();
+    URL.revokeObjectURL(a.href);
+    setDirty(false);
+    setStatus('ok', '✓ exported');
+  } catch (e) {
+    setStatus('err', '✗ ' + e.message);
+    console.error(e);
+  }
+}
+
+// ─── Keyboard ───────────────────────────────────────────────────────
 document.addEventListener('keydown', e => {
   const mod = navigator.platform.includes('Mac') ? e.metaKey : e.ctrlKey;
-  if (mod && e.key === 'k') { e.preventDefault(); openPalette(null); }
-  if (mod && e.key === 's') { e.preventDefault(); exportHTML(); }
+  if (!mod) return;
+  if (e.key === 'k') {
+    e.preventDefault();
+    document.getElementById('rwa-pal').classList.contains('open') ? closePalette() : openPalette();
+  } else if (e.key === 'z') {
+    e.preventDefault(); undo();
+  } else if (e.key === 's') {
+    e.preventDefault(); commit();
+  }
 });
 
-function log(type, msg) {
-  document.getElementById('logEl').innerHTML =
-    '<span class="' + type + '">' +
-    ({ok:'●', run:'➿', err:'✗', warn:'⚠'}[type]||'·') +
-    '</span><span>' + msg + '</span>';
-}
-
-render();
-</script>
-
-<script id="re-write-able-runtime">
-(function(){
-  var SRC='docuapp_src',PRV='docuapp_prev',SK='da_apikey',SM='da_model';
-  var css='#da-pal{position:fixed;inset:0;z-index:99999;display:flex;align-items:flex-start;justify-content:center;padding-top:min(13vh,100px);background:rgba(0,0,0,.6);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);opacity:0;pointer-events:none;transition:opacity .15s}#da-pal.open{opacity:1;pointer-events:all}#da-box{width:min(600px,92vw);background:#161618;border:1px solid #2d2d34;border-radius:10px;overflow:hidden;box-shadow:0 28px 90px rgba(0,0,0,.8);translate:0 -10px;transition:translate .15s}#da-pal.open #da-box{translate:0 0}#da-top{display:flex;align-items:center;border-bottom:1px solid #232327}#da-sig{padding:0 14px;font-size:15px;color:#b8ff57;font-family:monospace;flex-shrink:0}#da-inp{flex:1;background:transparent;border:none;outline:none;color:#dddde4;font-family:sans-serif;font-size:15px;padding:16px 0}#da-inp::placeholder{color:#363642}#da-go{flex-shrink:0;margin:7px 10px;background:#b8ff57;color:#000;border:none;border-radius:5px;font-family:monospace;font-size:11px;padding:6px 12px;cursor:pointer;letter-spacing:.5px}#da-go:disabled{opacity:.3;pointer-events:none}#da-hist{max-height:180px;overflow-y:auto}.da-hi{display:flex;align-items:center;gap:10px;padding:9px 16px;cursor:pointer;color:#575766;font-size:13px}.da-hi:hover{background:rgba(255,255,255,.04);color:#dddde4}#da-foot{border-top:1px solid #232327;padding:8px 16px;display:flex;align-items:center;justify-content:space-between}#da-st{font-family:monospace;font-size:10px;color:#575766}#da-st.run{color:#57c8ff}#da-st.ok{color:#b8ff57}#da-st.err{color:#ff5757}#da-acts{display:flex;gap:8px}.da-b{background:transparent;border:1px solid #2d2d34;border-radius:4px;color:#575766;font-family:monospace;font-size:10px;padding:3px 8px;cursor:pointer}.da-b:hover{color:#dddde4;border-color:#575766}';
-  var st=document.createElement('style');st.textContent=css;document.head.appendChild(st);
-  var d=document.createElement('div');d.id='da-pal';
-  d.innerHTML='<div id="da-box"><div id="da-top"><span id="da-sig">\u27bf<\/span><input id="da-inp" placeholder="modify this app..." autocomplete="off" spellcheck="false"><button id="da-go" disabled>Run \u21b5<\/button><\/div><div id="da-hist"><\/div><div id="da-foot"><span id="da-st">\u25cf ready<\/span><div id="da-acts"><button class="da-b" id="da-ub">\u2318Z undo<\/button><button class="da-b" id="da-eb">\u2318S export<\/button><button class="da-b" id="da-rb">reset<\/button><\/div><\/div><\/div>';
-  document.body.appendChild(d);
-  var pal=document.getElementById('da-pal'),inp=document.getElementById('da-inp'),go=document.getElementById('da-go'),hist=document.getElementById('da-hist'),sta=document.getElementById('da-st');
-  function opn(){pal.classList.add('open');requestAnimationFrame(function(){inp.focus();});rh();}
-  function cls(){pal.classList.remove('open');inp.value='';go.disabled=true;}
-  function ss(c,m){sta.className=c;sta.textContent=m;}
-  function gh(){try{return JSON.parse(localStorage.getItem('da_hist')||'[]');}catch(e){return[];}}
-  function ph(x){var h=[x].concat(gh().filter(function(i){return i!==x;})).slice(0,15);localStorage.setItem('da_hist',JSON.stringify(h));}
-  function rh(){var items=gh();hist.innerHTML=items.map(function(h){return'<div class="da-hi" data-p="'+h.replace(/"/g,'&quot;')+'">\u21bb '+h+'<\/div>';}).join('');hist.querySelectorAll('.da-hi').forEach(function(el){el.addEventListener('click',function(){inp.value=el.dataset.p;go.disabled=false;inp.focus();});});}
-  pal.addEventListener('click',function(e){if(e.target===pal)cls();});
-  inp.addEventListener('input',function(){go.disabled=!inp.value.trim();});
-  inp.addEventListener('keydown',function(e){if(e.key==='Enter'&&!e.shiftKey&&inp.value.trim()){e.preventDefault();run(inp.value.trim());}if(e.key==='Escape')cls();});
-  go.addEventListener('click',function(){if(inp.value.trim())run(inp.value.trim());});
-  document.addEventListener('keydown',function(e){var mod=navigator.platform.includes('Mac')?e.metaKey:e.ctrlKey;if(mod&&e.key==='k'){e.preventDefault();pal.classList.contains('open')?cls():opn();}if(mod&&e.key==='s'){e.preventDefault();exp();}if(mod&&e.key==='z'){e.preventDefault();undo();}});
-  document.getElementById('da-ub').onclick=undo;
-  document.getElementById('da-eb').onclick=exp;
-  document.getElementById('da-rb').onclick=function(){if(confirm('Reset to home screen?')){localStorage.removeItem(SRC);localStorage.removeItem(PRV);location.reload();}};
-  function run(instruction){
-    var key=sessionStorage.getItem(SK),model=sessionStorage.getItem(SM)||'anthropic/claude-sonnet-4';
-    if(!key){ss('err','no API key \u2014 reload and enter key');return;}
-    cls();ss('run','\u27bf '+instruction);
-    var cur=document.documentElement.outerHTML;
-    fetch('https://openrouter.ai/api/v1/chat/completions',{
-      method:'POST',
-      headers:{'Content-Type':'application/json','Authorization':'Bearer '+key,'HTTP-Referer':'re-write-able','X-Title':'re-write-able'},
-      body:JSON.stringify({model:model,max_tokens:16000,messages:[
-        {role:'system',content:'You are an expert HTML app modifier. Return ONLY the complete modified HTML file. No explanation, no markdown fences, raw HTML only. CRITICAL: preserve the <script id="re-write-able-runtime"> block exactly as-is. Never remove or alter it. Apply the instruction precisely.'},
-        {role:'user',content:'Current app:\n'+cur+'\n\nInstruction: '+instruction}
-      ]})
-    })
-    .then(function(r){return r.ok?r.json():r.json().then(function(e){throw new Error(e.error&&e.error.message||r.statusText);});})
-    .then(function(result){
-      var text=result.choices[0].message.content||'';
-      text=text.trim();
-      var f=String.fromCharCode(96,96,96);
-      if(text.indexOf(f)===0)text=text.slice(text.indexOf('\n')+1);
-      if(text.slice(-3)===f)text=text.slice(0,text.lastIndexOf(f)).trim();
-      if(text.indexOf('<html')<0)throw new Error('response is not HTML');
-      localStorage.setItem(PRV,cur);localStorage.setItem(SRC,text);
-      ph(instruction);ss('ok','\u2713 done \u2014 reloading');
-      setTimeout(function(){document.open();document.write(text);document.close();},300);
-    })
-    .catch(function(e){ss('err','\u2717 '+e.message);});
+// ─── Boot ───────────────────────────────────────────────────────────
+(async () => {
+  try {
+    captureBootstrap();
+    buildRuntimeUI();
+    if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
+    const doc = await getDoc();
+    renderDoc(doc);
+    setStatus('ok', '● ready');
+  } catch (e) {
+    document.body.innerHTML = '<pre style="color:#ff5757;padding:24px;font-family:monospace;">Bootstrap error: ' + escapeHTML(e.message) + '</pre>';
+    console.error(e);
   }
-  function undo(){
-    var prev=localStorage.getItem(PRV);
-    if(!prev){ss('err','nothing to undo');return;}
-    localStorage.setItem(PRV,document.documentElement.outerHTML);
-    localStorage.setItem(SRC,prev);
-    ss('ok','\u21a9 reloading');
-    setTimeout(function(){document.open();document.write(prev);document.close();},300);
-  }
-  function exp(){
-    var src=document.documentElement.outerHTML;
-    var a=document.createElement('a');
-    a.href=URL.createObjectURL(new Blob([src],{type:'text/html'}));
-    a.download=(document.title||'re-write-able')+'.html';
-    a.click();URL.revokeObjectURL(a.href);
-    ss('ok','\u2713 exported');
-  }
-  ss('ok','\u25cf ready \u00b7 \u2318K to modify');
 })();
 </script>
 </body>
