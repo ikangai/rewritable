@@ -543,43 +543,42 @@
       .replace(/\n?\s*```\s*$/, '');
   }
 
-  const SYSTEM_PROMPT_DIFF =
-'You modify a single-file HTML application by emitting one or more SEARCH/REPLACE diff blocks.\n' +
-'\n' +
-'FORMAT — use these literal seven-character markers:\n' +
-'\n' +
-'<<<<<<< SEARCH\n' +
-'<exact text from the current file>\n' +
-'=======\n' +
-'<the replacement text>\n' +
-'>>>>>>> REPLACE\n' +
-'\n' +
-'Hard rules — violating any of these will cause the runtime to abort the rewrite:\n' +
-'\n' +
-'1. EXACT MATCH. The SEARCH text must match the current file BYTE-FOR-BYTE — same indentation, same whitespace, same line breaks. The runtime uses literal string matching, no regex, no fuzzy match.\n' +
-'\n' +
-'2. UNIQUE MATCH. The SEARCH text must occur EXACTLY ONCE in the file. NEVER emit a single-line SEARCH for a value (e.g. just `--bg: #f7e047;`). Always include enough surrounding context to be unique:\n' +
-'   - For a CSS variable or property change → include the parent selector line, the property line, and the closing brace of the rule. Example:\n' +
-'       :root {\n' +
-'         --bg: #0e0e0f;\n' +
-'         --surface: #161618;\n' +
-'   - For a JS constant or function body → include the function declaration line above and at least one line below.\n' +
-'   - For a short HTML attribute or text node → include the parent element\'s opening tag.\n' +
-'   When in doubt, add MORE context, never less. A 5-line SEARCH is normal, a 1-line SEARCH is almost always wrong.\n' +
-'\n' +
-'3. NEVER touch the runtime. Do not include any part of the <script id="re-write-able-runtime"> block (or its accompanying <style id="re-write-able-runtime-style">) in any SEARCH or REPLACE. The runtime guards this and will refuse the apply.\n' +
-'\n' +
-'4. OUTPUT ONLY BLOCKS. No prose, no explanation, no markdown fences. The first character of your response must be `<`.\n' +
-'\n' +
-'Multiple edits → multiple blocks, applied in order on the working text.\n' +
-'\n' +
-'Fallback: if the change is too sweeping for diff blocks (full restructuring, bulk redesign), output the literal first line:\n' +
-'\n' +
-'MODE: full-rewrite\n' +
-'\n' +
-'followed by a newline and the complete new HTML file from <!doctype html> to </html>.\n' +
-'\n' +
-'Apply the user instruction precisely. Keep the file fully functional. Prefer the smallest possible diff that is also UNAMBIGUOUS.';
+  const SYSTEM_PROMPT_DIFF = `You modify a single-file HTML application by emitting one or more SEARCH/REPLACE diff blocks.
+
+FORMAT — use these literal seven-character markers:
+
+<<<<<<< SEARCH
+<exact text from the current file>
+=======
+<the replacement text>
+>>>>>>> REPLACE
+
+Hard rules — violating any of these will cause the runtime to abort the rewrite:
+
+1. EXACT MATCH. The SEARCH text must match the current file BYTE-FOR-BYTE — same indentation, same whitespace, same line breaks. The runtime uses literal string matching, no regex, no fuzzy match.
+
+2. UNIQUE MATCH. The SEARCH text must occur EXACTLY ONCE in the file. NEVER emit a single-line SEARCH for a value (e.g. just \`--bg: #f7e047;\`). Always include enough surrounding context to be unique:
+   - For a CSS variable or property change → include the parent selector line, the property line, and the closing brace of the rule. Example:
+       :root {
+         --bg: #0e0e0f;
+         --surface: #161618;
+   - For a JS constant or function body → include the function declaration line above and at least one line below.
+   - For a short HTML attribute or text node → include the parent element's opening tag.
+   When in doubt, add MORE context, never less. A 5-line SEARCH is normal, a 1-line SEARCH is almost always wrong.
+
+3. NEVER touch the runtime. Do not include any part of the <script id="re-write-able-runtime"> block (or its accompanying <style id="re-write-able-runtime-style">) in any SEARCH or REPLACE. The runtime guards this and will refuse the apply.
+
+4. OUTPUT ONLY BLOCKS. No prose, no explanation, no markdown fences. The first character of your response must be \`<\`.
+
+Multiple edits → multiple blocks, applied in order on the working text.
+
+Fallback: if the change is too sweeping for diff blocks (full restructuring, bulk redesign), output the literal first line:
+
+MODE: full-rewrite
+
+followed by a newline and the complete new HTML file from <!doctype html> to </html>.
+
+Apply the user instruction precisely. Keep the file fully functional. Prefer the smallest possible diff that is also UNAMBIGUOUS.`;
 
   function parseEdits(text) {
     text = text.trim();
