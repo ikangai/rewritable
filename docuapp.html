@@ -35,197 +35,48 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=DM+Mono:wght@400;500&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
 <style>
-  :root {
-    --bg: #0e0e0f;
-    --surface: #161618;
-    --surface-2: #1c1c1f;
-    --border: #2d2d34;
-    --text: #dddde4;
-    --muted: #575766;
-    --green: #b8ff57;
-    --blue: #57c8ff;
-    --red: #ff5757;
-    --ui: 'DM Sans', system-ui, sans-serif;
-    --mono: 'DM Mono', ui-monospace, monospace;
-    --display: 'Instrument Serif', 'Times New Roman', serif;
-  }
+  :root { --bg: #0e0e0f; --surface: #161618; --surface-2: #1c1c1f; --border: #2d2d34; --text: #dddde4; --muted: #575766; --green: #b8ff57; --blue: #57c8ff; --red: #ff5757; --ui: 'DM Sans', system-ui, sans-serif; --mono: 'DM Mono', ui-monospace, monospace; --display: 'Instrument Serif', 'Times New Roman', serif; }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html, body { min-height: 100%; }
-  body {
-    background: var(--bg);
-    color: var(--text);
-    font-family: var(--ui);
-    font-size: 14px;
-    line-height: 1.5;
-    -webkit-font-smoothing: antialiased;
-  }
-  body::before {
-    content: '';
-    position: fixed; inset: 0;
-    pointer-events: none; z-index: 1000;
-    opacity: 0.05; mix-blend-mode: screen;
-    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
-  }
-
+  body { background: var(--bg); color: var(--text); font-family: var(--ui); font-size: 14px; line-height: 1.5; -webkit-font-smoothing: antialiased; }
+  body::before { content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 1000; opacity: 0.05; mix-blend-mode: screen; background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); }
   .frame { min-height: 100vh; display: grid; place-items: center; padding: 40px 24px; }
   .seed { width: min(620px, 100%); }
-
-  .head {
-    display: flex; align-items: baseline; justify-content: space-between;
-    margin-bottom: 56px;
-  }
-  .mark {
-    font-family: var(--display); font-style: italic;
-    font-size: 64px; line-height: 1; letter-spacing: -0.02em;
-  }
-  .mark .dot {
-    display: inline-block; width: 10px; height: 10px;
-    background: var(--green); margin-left: 8px;
-    transform: translateY(-8px); border-radius: 50%;
-    animation: pulse 2.4s ease-in-out infinite;
-  }
+  .head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 56px; }
+  .mark { font-family: var(--display); font-style: italic; font-size: 64px; line-height: 1; letter-spacing: -0.02em; }
+  .mark .dot { display: inline-block; width: 10px; height: 10px; background: var(--green); margin-left: 8px; transform: translateY(-8px); border-radius: 50%; animation: pulse 2.4s ease-in-out infinite; }
   @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
-  .meta {
-    font-family: var(--mono); font-size: 11px;
-    color: var(--muted); letter-spacing: 0.1em;
-    text-transform: uppercase; text-align: right;
-  }
+  .meta { font-family: var(--mono); font-size: 11px; color: var(--muted); letter-spacing: 0.1em; text-transform: uppercase; text-align: right; }
   .meta strong { color: var(--text); font-weight: 500; display: block; margin-bottom: 4px; }
-
-  .lede {
-    font-family: var(--display); font-style: italic;
-    font-size: 22px; line-height: 1.45;
-    color: var(--text);
-    margin-bottom: 18px;
-    letter-spacing: -0.005em;
-  }
+  .lede { font-family: var(--display); font-style: italic; font-size: 22px; line-height: 1.45; color: var(--text); margin-bottom: 18px; letter-spacing: -0.005em; }
   .lede .accent { color: var(--green); }
-
-  .promptbox {
-    width: 100%;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    color: var(--text);
-    font-family: var(--ui);
-    font-size: 16px;
-    padding: 16px 18px;
-    resize: vertical;
-    min-height: 110px;
-    outline: none;
-    line-height: 1.5;
-    transition: border-color 0.15s ease;
-  }
+  .promptbox { width: 100%; background: var(--surface); border: 1px solid var(--border); color: var(--text); font-family: var(--ui); font-size: 16px; padding: 16px 18px; resize: vertical; min-height: 110px; outline: none; line-height: 1.5; transition: border-color 0.15s ease; }
   .promptbox:focus { border-color: var(--green); }
   .promptbox::placeholder { color: var(--muted); }
-
-  .examples {
-    display: flex; flex-wrap: wrap; gap: 6px;
-    margin-top: 10px;
-  }
-  .example {
-    font-family: var(--mono); font-size: 10px;
-    background: transparent; border: 1px solid var(--border);
-    color: var(--muted);
-    padding: 5px 9px; cursor: pointer;
-    letter-spacing: 0.06em; text-transform: uppercase;
-    transition: color 0.15s, border-color 0.15s;
-  }
+  .examples { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .example { font-family: var(--mono); font-size: 10px; background: transparent; border: 1px solid var(--border); color: var(--muted); padding: 5px 9px; cursor: pointer; letter-spacing: 0.06em; text-transform: uppercase; transition: color 0.15s, border-color 0.15s; }
   .example:hover { color: var(--blue); border-color: var(--blue); }
-
-  .row {
-    display: grid; grid-template-columns: 1fr 2fr;
-    gap: 12px;
-    margin-top: 22px;
-  }
+  .row { display: grid; grid-template-columns: 1fr 2fr; gap: 12px; margin-top: 22px; }
   .field { display: flex; flex-direction: column; gap: 6px; }
-  .field label {
-    font-family: var(--mono); font-size: 10px;
-    color: var(--muted); letter-spacing: 0.18em;
-    text-transform: uppercase;
-  }
-  .field input, .field select {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    color: var(--text);
-    font-family: var(--mono);
-    font-size: 12px;
-    padding: 9px 11px;
-    outline: none;
-    transition: border-color 0.15s ease;
-  }
+  .field label { font-family: var(--mono); font-size: 10px; color: var(--muted); letter-spacing: 0.18em; text-transform: uppercase; }
+  .field input, .field select { background: var(--surface); border: 1px solid var(--border); color: var(--text); font-family: var(--mono); font-size: 12px; padding: 9px 11px; outline: none; transition: border-color 0.15s ease; }
   .field input:focus, .field select:focus { border-color: var(--green); }
-
-  .actions {
-    margin-top: 22px;
-    display: flex; align-items: center; justify-content: space-between;
-    gap: 14px;
-  }
-  .key-link {
-    font-family: var(--mono); font-size: 10px;
-    color: var(--muted); letter-spacing: 0.1em;
-    text-transform: uppercase; text-decoration: none;
-    transition: color 0.15s ease;
-  }
+  .actions { margin-top: 22px; display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+  .key-link { font-family: var(--mono); font-size: 10px; color: var(--muted); letter-spacing: 0.1em; text-transform: uppercase; text-decoration: none; transition: color 0.15s ease; }
   .key-link:hover { color: var(--blue); }
   .key-link span.arrow { color: var(--blue); margin-left: 4px; }
-
-  .build {
-    background: var(--green);
-    color: var(--bg);
-    border: none;
-    font-family: var(--mono);
-    font-size: 12px;
-    letter-spacing: 0.18em;
-    text-transform: uppercase;
-    padding: 13px 26px;
-    cursor: pointer;
-    transition: background 0.15s ease, transform 0.1s ease;
-  }
+  .build { background: var(--green); color: var(--bg); border: none; font-family: var(--mono); font-size: 12px; letter-spacing: 0.18em; text-transform: uppercase; padding: 13px 26px; cursor: pointer; transition: background 0.15s ease, transform 0.1s ease; }
   .build:hover { background: #d2ff80; }
   .build:active { transform: translateY(1px); }
   .build:disabled { opacity: 0.4; cursor: not-allowed; background: var(--surface-2); color: var(--muted); }
-
-  .status {
-    margin-top: 22px;
-    padding: 14px 16px;
-    border: 1px solid var(--border);
-    background: var(--surface);
-    font-family: var(--mono); font-size: 11px;
-    color: var(--text); letter-spacing: 0.05em;
-    display: none;
-    align-items: center; gap: 12px;
-  }
+  .status { margin-top: 22px; padding: 14px 16px; border: 1px solid var(--border); background: var(--surface); font-family: var(--mono); font-size: 11px; color: var(--text); letter-spacing: 0.05em; display: none; align-items: center; gap: 12px; }
   .status.show { display: flex; }
   .status.err { border-color: var(--red); color: #ff9b9b; }
-  .status .spin {
-    width: 12px; height: 12px;
-    border: 1px solid var(--border);
-    border-top-color: var(--green);
-    border-radius: 50%;
-    animation: spin 0.8s linear infinite;
-    flex: 0 0 auto;
-  }
+  .status .spin { width: 12px; height: 12px; border: 1px solid var(--border); border-top-color: var(--green); border-radius: 50%; animation: spin 0.8s linear infinite; flex: 0 0 auto; }
   @keyframes spin { to { transform: rotate(360deg); } }
-
-  .legend {
-    margin-top: 64px;
-    padding-top: 22px;
-    border-top: 1px solid var(--border);
-    font-family: var(--mono); font-size: 10px;
-    color: var(--muted); letter-spacing: 0.1em;
-    text-transform: uppercase;
-    line-height: 2;
-  }
-  .legend kbd {
-    font-family: var(--mono); font-size: 10px;
-    border: 1px solid var(--border); padding: 1px 5px;
-    color: var(--text); background: var(--surface);
-    margin-right: 4px;
-  }
-  .legend .reset {
-    color: var(--blue); text-decoration: none;
-    border-bottom: 1px dotted #1d3744;
-  }
+  .legend { margin-top: 64px; padding-top: 22px; border-top: 1px solid var(--border); font-family: var(--mono); font-size: 10px; color: var(--muted); letter-spacing: 0.1em; text-transform: uppercase; line-height: 2; }
+  .legend kbd { font-family: var(--mono); font-size: 10px; border: 1px solid var(--border); padding: 1px 5px; color: var(--text); background: var(--surface); margin-right: 4px; }
+  .legend .reset { color: var(--blue); text-decoration: none; border-bottom: 1px dotted #1d3744; }
   .legend .reset:hover { color: var(--green); border-color: var(--green); }
 </style>
 </head>
