@@ -1,0 +1,8 @@
+services:
+  rewritable-new:
+    build: .
+    image: ikangai/rewritable-new:latest
+    container_name: rewritable-new
+    restart: unless-stopped
+    ports:
+      - "8080:80"

@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>re-writeable</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Instrument+Serif:ital@0;1&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#0e0e0f;--surf:#161618;--b1:#232327;--b2:#2d2d34;--text:#dddde4;--muted:#575766;--accent:#b8ff57;--blue:#57c8ff;--red:#ff5757;}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);min-height:100dvh;}
+#rwa-set{position:fixed;top:12px;right:12px;display:flex;gap:6px;z-index:1000;}
+.rwa-st-btn{background:var(--surf);border:1px solid var(--b2);color:var(--muted);font-family:'DM Mono',monospace;font-size:10px;padding:6px 10px;border-radius:4px;cursor:pointer;letter-spacing:.5px;text-transform:uppercase;}
+.rwa-st-btn:hover{color:var(--text);border-color:var(--muted);}
+.rwa-st-btn.dirty{color:var(--accent);border-color:var(--accent);}
+.rwa-st-btn.pri{background:var(--accent);color:#000;border-color:var(--accent);}
+.rwa-st-btn.run{color:var(--blue);border-color:var(--blue);}
+.rwa-st-btn.err{color:var(--red);border-color:var(--red);}
+.rwa-st-btn.ok{color:var(--accent);border-color:var(--accent);}
+#rwa-set-panel{position:fixed;top:50px;right:12px;background:var(--surf);border:1px solid var(--b2);border-radius:6px;padding:12px;display:none;min-width:300px;z-index:999;}
+#rwa-set-panel.open{display:block;}
+.rwa-set-row{display:flex;flex-direction:column;gap:4px;margin-bottom:10px;}
+.rwa-set-row:last-child{margin-bottom:0;}
+.rwa-set-row label{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:1.5px;text-transform:uppercase;color:var(--muted);}
+.rwa-set-row input{background:var(--bg);border:1px solid var(--b2);color:var(--text);font-family:'DM Mono',monospace;font-size:12px;padding:6px 9px;outline:none;border-radius:3px;}
+#rwa-pal{position:fixed;inset:0;display:none;align-items:flex-start;justify-content:center;padding-top:13vh;background:rgba(0,0,0,.6);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);z-index:99999;}
+#rwa-pal.open{display:flex;}
+#rwa-pal-box{width:min(540px,92vw);background:var(--surf);border:1px solid var(--b2);border-radius:8px;overflow:hidden;}
+.rwa-pal-top{display:flex;align-items:center;border-bottom:1px solid var(--b1);}
+.rwa-pal-sig{padding:0 14px;font-size:13px;color:var(--accent);font-family:'DM Mono',monospace;letter-spacing:.5px;}
+#rwa-pal-inp{flex:1;background:transparent;border:none;outline:none;color:var(--text);font-family:'DM Sans',sans-serif;font-size:14px;padding:14px 0;}
+#rwa-pal-inp::placeholder{color:#363642;}
+#rwa-pal-go{background:var(--accent);color:#000;border:none;border-radius:4px;font-family:'DM Mono',monospace;font-size:10px;padding:5px 11px;margin:7px 10px;cursor:pointer;letter-spacing:.5px;}
+#rwa-pal-go:disabled{opacity:.3;pointer-events:none;}
+.rwa-pal-foot{border-top:1px solid var(--b1);padding:7px 14px;display:flex;justify-content:space-between;align-items:center;}
+#rwa-pal-st{font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);}
+#rwa-pal-st.run{color:var(--blue);}#rwa-pal-st.ok{color:var(--accent);}#rwa-pal-st.err{color:var(--red);}
+.rwa-pal-hint{font-family:'DM Mono',monospace;font-size:10px;color:#363642;}
+</style>
+</head>
+<body>
+<div id="rwa-doc-mount"></div>
+<div id="rwa-runtime"></div>
+<script id="rwa-bootstrap">
+'use strict';
+
+// Per-container identity — namespaces IndexedDB so file:// docs don't collide.
+// Generated at creation time; preserved across commits because buildFile only
+// rewrites the INLINE_DOC literal contents.
+//
+// The nil UUID below is a sentinel — the /new service substitutes a fresh
+// crypto.randomUUID() at request time. If a downloaded file still has all
+// zeros here, the substitution failed and isolation is broken.
+const DOC_UUID = '00000000-0000-0000-0000-000000000000';
+
+// The document — a frozen snapshot, hydrated into IndexedDB on first open
+// and rewritten in place on every commit.
+const INLINE_DOC = `<style>
+.hello{display:grid;place-items:center;min-height:100dvh;text-align:center;padding:24px;}
+.hello h1{font-family:'Instrument Serif',serif;font-style:italic;font-size:clamp(56px,9vw,112px);line-height:1;letter-spacing:-.02em;background:linear-gradient(135deg,var(--text) 50%,var(--muted));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;}
+.hello p{font-family:'Instrument Serif',serif;font-size:18px;color:var(--muted);margin-top:22px;font-style:italic;max-width:42ch;line-height:1.5;}
+.hello kbd{font-family:'DM Mono',monospace;font-size:11px;background:var(--surf);border:1px solid var(--b2);padding:2px 7px;border-radius:3px;color:var(--accent);font-style:normal;}
+</style>
+<div class="hello">
+<h1>Hello, world.</h1>
+<p>This is a re-writeable document. Press <kbd>⌘K</kbd> and tell it what to become.</p>
+</div>`;
+
+// ─── Storage ────────────────────────────────────────────────────────
+const RWA = {
+  DB:'rwa_'+DOC_UUID, KEY:'self',
+  DOC:'rwa_doc', UNDO:'rwa_undo', HIST:'rwa_hist', FSA:'rwa_fsa',
+  UNDO_CAP:10, HIST_CAP:15,
+  K_API:'rwa_apikey', K_MODEL:'rwa_model',
+  MODEL:'google/gemini-3-flash-preview',
+  FILE:'rewritable.html',
+};
+let _db;
+const REQUIRED_STORES = [RWA.DOC, RWA.UNDO, RWA.HIST, RWA.FSA];
+async function openDB() {
+  if (_db) return _db;
+  // Open without specifying a version, so we work whatever the existing db version is.
+  const probe = await new Promise((res, rej) => {
+    const r = indexedDB.open(RWA.DB);
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+    r.onblocked = () => rej(new Error('db open blocked by another tab'));
+  });
+  // We expect every required store to use out-of-line keys (keyPath === null).
+  // If a store is missing — or exists with the wrong schema (in-line keys from
+  // an old prototype) — we need to (re)create it.
+  const toRecreate = [];
+  for (const name of REQUIRED_STORES) {
+    if (!probe.objectStoreNames.contains(name)) { toRecreate.push(name); continue; }
+    const store = probe.transaction(name, 'readonly').objectStore(name);
+    if (store.keyPath !== null) toRecreate.push(name);
+  }
+  if (toRecreate.length === 0) { _db = probe; return _db; }
+  const newVersion = probe.version + 1;
+  probe.close();
+  _db = await new Promise((res, rej) => {
+    const r = indexedDB.open(RWA.DB, newVersion);
+    r.onupgradeneeded = e => {
+      const db = e.target.result;
+      toRecreate.forEach(name => {
+        if (db.objectStoreNames.contains(name)) db.deleteObjectStore(name);
+        db.createObjectStore(name); // out-of-line keys
+      });
+    };
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+    r.onblocked = () => rej(new Error('db upgrade blocked by another tab'));
+  });
+  return _db;
+}
+const idbGet = (s, k = RWA.KEY) => openDB().then(db => new Promise((res, rej) => {
+  const r = db.transaction(s).objectStore(s).get(k);
+  r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+}));
+const idbPut = (s, v, k = RWA.KEY) => openDB().then(db => new Promise((res, rej) => {
+  const r = db.transaction(s, 'readwrite').objectStore(s).put(v, k);
+  r.onsuccess = () => res(); r.onerror = () => rej(r.error);
+}));
+
+async function getDoc() {
+  let d = await idbGet(RWA.DOC);
+  if (d == null) { d = INLINE_DOC; await idbPut(RWA.DOC, d); }
+  return d;
+}
+async function pushUndo(p) {
+  const s = (await idbGet(RWA.UNDO)) || [];
+  s.push(p); while (s.length > RWA.UNDO_CAP) s.shift();
+  await idbPut(RWA.UNDO, s);
+}
+async function popUndo() {
+  const s = (await idbGet(RWA.UNDO)) || [];
+  if (!s.length) return null;
+  const v = s.pop(); await idbPut(RWA.UNDO, s); return v;
+}
+async function addHist(i) {
+  const l = (await idbGet(RWA.HIST)) || [];
+  await idbPut(RWA.HIST, [i, ...l.filter(x => x !== i)].slice(0, RWA.HIST_CAP));
+}
+
+// ─── Render ─────────────────────────────────────────────────────────
+function renderDoc(html) {
+  const m = document.getElementById('rwa-doc-mount');
+  m.innerHTML = html;
+  m.querySelectorAll('script').forEach(o => {
+    const s = document.createElement('script');
+    for (const a of o.attributes) s.setAttribute(a.name, a.value);
+    s.textContent = o.textContent;
+    o.parentNode.replaceChild(s, o);
+  });
+}
+
+// ─── File rebuild ───────────────────────────────────────────────────
+let FROZEN = '';
+const escapeTL = s => s
+  .replace(/\\/g, '\\\\')
+  .replace(/`/g, '\\`')
+  .replace(/\$\{/g, '\\${')
+  .replace(/<\/script/gi, '<\\/script');
+function buildFile(doc) {
+  const marker = 'const INLINE_DOC = `';
+  const start = FROZEN.indexOf(marker);
+  if (start < 0) throw new Error('cannot locate INLINE_DOC');
+  const cs = start + marker.length;
+  let i = cs;
+  while (i < FROZEN.length) {
+    if (FROZEN[i] === '\\') { i += 2; continue; }
+    if (FROZEN[i] === '`') break;
+    i++;
+  }
+  if (i >= FROZEN.length) throw new Error('unterminated INLINE_DOC');
+  return FROZEN.slice(0, cs) + escapeTL(doc) + FROZEN.slice(i);
+}
+
+// ─── Runtime UI ─────────────────────────────────────────────────────
+function buildUI() {
+  document.getElementById('rwa-runtime').innerHTML = `
+<div id="rwa-set">
+  <button class="rwa-st-btn" id="rwa-st-status">● ready</button>
+  <button class="rwa-st-btn" id="rwa-st-cog">⚙</button>
+  <button class="rwa-st-btn pri" id="rwa-st-commit">⌘S</button>
+</div>
+<div id="rwa-set-panel">
+  <div class="rwa-set-row"><label>OpenRouter Key</label><input type="password" id="rwa-key" placeholder="sk-or-..." autocomplete="off"></div>
+  <div class="rwa-set-row"><label>Model</label><input type="text" id="rwa-model" autocomplete="off"></div>
+</div>
+<div id="rwa-pal">
+  <div id="rwa-pal-box">
+    <div class="rwa-pal-top">
+      <span class="rwa-pal-sig">⌘K</span>
+      <input id="rwa-pal-inp" placeholder="modify this document..." autocomplete="off" spellcheck="false">
+      <button id="rwa-pal-go" disabled>Run ↵</button>
+    </div>
+    <div class="rwa-pal-foot">
+      <span id="rwa-pal-st">● ready</span>
+      <span class="rwa-pal-hint">⌘Z undo · ⌘S commit · esc close</span>
+    </div>
+  </div>
+</div>`;
+
+  const k = document.getElementById('rwa-key'), m = document.getElementById('rwa-model');
+  k.value = sessionStorage.getItem(RWA.K_API) || '';
+  m.value = sessionStorage.getItem(RWA.K_MODEL) || RWA.MODEL;
+  k.oninput = e => sessionStorage.setItem(RWA.K_API, e.target.value.trim());
+  m.oninput = e => sessionStorage.setItem(RWA.K_MODEL, e.target.value.trim() || RWA.MODEL);
+
+  document.getElementById('rwa-st-cog').onclick = () => document.getElementById('rwa-set-panel').classList.toggle('open');
+  document.getElementById('rwa-st-commit').onclick = commit;
+
+  const pal = document.getElementById('rwa-pal'), inp = document.getElementById('rwa-pal-inp'), go = document.getElementById('rwa-pal-go');
+  pal.onclick = e => { if (e.target === pal) closePal(); };
+  inp.oninput = () => { go.disabled = !inp.value.trim(); };
+  inp.onkeydown = e => {
+    if (e.key === 'Enter' && !e.shiftKey && inp.value.trim()) { e.preventDefault(); modify(inp.value.trim()); }
+    if (e.key === 'Escape') closePal();
+  };
+  go.onclick = () => inp.value.trim() && modify(inp.value.trim());
+}
+const setStatus = (cls, msg) => { const e = document.getElementById('rwa-st-status'); if (e) { e.className = 'rwa-st-btn ' + (cls || ''); e.textContent = msg; } };
+const setPalSt = (cls, msg) => { const e = document.getElementById('rwa-pal-st'); if (e) { e.className = cls || ''; e.textContent = msg; } };
+const setDirty = d => { const e = document.getElementById('rwa-st-commit'); if (e) e.classList.toggle('dirty', d); };
+const openPal = () => { document.getElementById('rwa-pal').classList.add('open'); requestAnimationFrame(() => document.getElementById('rwa-pal-inp').focus()); setPalSt('', '● ready'); };
+const closePal = () => { document.getElementById('rwa-pal').classList.remove('open'); document.getElementById('rwa-pal-inp').value = ''; document.getElementById('rwa-pal-go').disabled = true; };
+
+// ─── Agent ──────────────────────────────────────────────────────────
+const SYSTEM_PROMPT = `You are modifying a document. The document may be prose, it may be a tracker, it may be a spreadsheet, it may be all three. Read what is there. Apply the user's instruction to the actual content — its tone if it is prose, its structure if it is data, its behavior if it is interactive.
+
+Return the complete modified document only — no commentary, no markdown fence. The document is an HTML fragment that lives inside a mount div. CSS may be inline in <style> tags; JS may be inline in <script> tags. Do NOT include <!DOCTYPE>, <html>, <head>, or <body> — those belong to the bootstrap. The first character of your response should begin the modified content directly.`;
+
+async function modify(instr) {
+  const key = sessionStorage.getItem(RWA.K_API);
+  const model = sessionStorage.getItem(RWA.K_MODEL) || RWA.MODEL;
+  if (!key) {
+    setPalSt('err', 'no API key — open ⚙ settings');
+    document.getElementById('rwa-set-panel').classList.add('open');
+    document.getElementById('rwa-key').focus();
+    return;
+  }
+  closePal();
+  setStatus('run', '⌘K running');
+  try {
+    const cur = await getDoc();
+    const r = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + key, 'HTTP-Referer': 'https://github.com/ikangai/rewritable', 'X-Title': 're-write-able' },
+      body: JSON.stringify({ model, max_tokens: 8000, messages: [{ role: 'system', content: SYSTEM_PROMPT }, { role: 'user', content: 'Document:\n' + cur + '\n\nInstruction: ' + instr }] }),
+    });
+    if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error((e.error && e.error.message) || r.statusText); }
+    let text = (((await r.json()).choices || [{}])[0].message?.content || '').trim();
+    const fence = '```';
+    if (text.startsWith(fence)) { const nl = text.indexOf('\n'); if (nl > 0) text = text.slice(nl + 1); }
+    if (text.endsWith(fence)) text = text.slice(0, text.lastIndexOf(fence)).trim();
+    if (!text) throw new Error('empty response');
+    await pushUndo(cur);
+    await idbPut(RWA.DOC, text);
+    await addHist(instr);
+    renderDoc(text);
+    setDirty(true);
+    setStatus('ok', '✓ done');
+  } catch (e) {
+    setStatus('err', '✗ ' + e.message);
+    console.error(e);
+  }
+}
+
+async function undo() {
+  const p = await popUndo();
+  if (!p) { setStatus('err', '✗ nothing to undo'); return; }
+  await idbPut(RWA.DOC, p);
+  renderDoc(p);
+  setDirty(true);
+  setStatus('ok', '↩ undone');
+}
+
+async function commit() {
+  setStatus('run', '⌘S writing');
+  try {
+    const text = buildFile(await getDoc());
+    if ('showSaveFilePicker' in window) {
+      let h = null; try { h = await idbGet(RWA.FSA); } catch (_) {}
+      try {
+        if (h) {
+          let p = await h.queryPermission({ mode: 'readwrite' });
+          if (p === 'prompt') p = await h.requestPermission({ mode: 'readwrite' });
+          if (p !== 'granted') throw new Error('permission denied');
+        } else {
+          h = await window.showSaveFilePicker({ suggestedName: RWA.FILE, types: [{ description: 'HTML', accept: { 'text/html': ['.html'] } }] });
+          await idbPut(RWA.FSA, h);
+        }
+        const w = await h.createWritable(); await w.write(text); await w.close();
+        setDirty(false); setStatus('ok', '✓ committed'); return;
+      } catch (e) {
+        if (e.name === 'AbortError') { setStatus('', 'cancelled'); return; }
+        console.warn('FSA failed, falling back to download:', e);
+      }
+    }
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([text], { type: 'text/html' }));
+    a.download = RWA.FILE;
+    a.click();
+    URL.revokeObjectURL(a.href);
+    setDirty(false); setStatus('ok', '✓ exported');
+  } catch (e) {
+    setStatus('err', '✗ ' + e.message);
+  }
+}
+
+document.addEventListener('keydown', e => {
+  const mod = navigator.platform.includes('Mac') ? e.metaKey : e.ctrlKey;
+  if (!mod) return;
+  if (e.key === 'k') { e.preventDefault(); document.getElementById('rwa-pal').classList.contains('open') ? closePal() : openPal(); }
+  else if (e.key === 'z') { e.preventDefault(); undo(); }
+  else if (e.key === 's') { e.preventDefault(); commit(); }
+});
+
+(async () => {
+  try {
+    FROZEN = '<!DOCTYPE html>\n' + document.documentElement.outerHTML;
+    buildUI();
+    if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
+    renderDoc(await getDoc());
+    setStatus('ok', '● ready');
+  } catch (e) {
+    document.body.textContent = 'Bootstrap error: ' + e.message;
+    console.error(e);
+  }
+})();
+</script>
+</body>
+</html>
