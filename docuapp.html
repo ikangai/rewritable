@@ -555,7 +555,7 @@ Rules:
 - The SEARCH text must be UNIQUE in the file. If a snippet appears more than once, include enough surrounding context to make it unique.
 - Emit multiple blocks for multiple edits. Blocks are applied in order on the working text.
 - NEVER include the <script id="re-write-able-runtime"> block in any SEARCH or REPLACE. Do not modify it.
-- Output the blocks only — no prose, no explanation, no markdown fences. The first character of your response must be `<`.
+- Output the blocks only — no prose, no explanation, no markdown fences. The first character of your response must be \`<\`.
 
 Fallback: if the change is too sweeping for diff blocks (full restructuring, bulk redesign), output the literal first line:
 
