@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repository contents
 
-- `re-write-able-spec.md` — canonical spec (source of truth, currently v0.7)
+- `re-write-able-spec.md` — canonical spec (source of truth, currently v0.8)
 - `re-write-able-spec.html` — worked-example reference: the spec itself rendered as a re-writeable document
 - `hello.html` — minimal base variant: a one-line "hello world" wrapped in the same v0.7 bootstrap
 - `README.md` — short pitch
@@ -89,7 +89,7 @@ iOS Safari evicts IndexedDB aggressively after inactivity or storage pressure. T
 
 ## Conventions when editing the spec
 
-- The spec is versioned in its closing line (`Spec version 0.7 — ...`). Bump it on material changes and update the trailing summary to describe what changed.
+- The spec is versioned in its closing line (`Spec version 0.8 — ...`). Bump it on material changes and update the trailing summary to describe what changed.
 - Cross-references use `§N.M` (e.g. `§5.3`); preserve numbering when reorganizing.
 - Load-bearing invariants (listed in the spec's "Invariants" section): the bootstrap is byte-identical except for `INLINE_DOC` contents; each container has its own UUID and IDB; the runtime is never in IDB and never visible to the agent; reserved stores are runtime-only; commits do not carry undo state. Flag any proposed change to these explicitly.
 

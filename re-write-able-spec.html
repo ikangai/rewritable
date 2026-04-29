@@ -840,6 +840,8 @@ function setDirty(d) {
 // ─── ⌘K Modify ──────────────────────────────────────────────────────
 const SYSTEM_PROMPT = `You are modifying a document. The document may be prose, it may be a tracker, it may be a spreadsheet, it may be all three. Read what is there. Apply the user's instruction to the actual content — its tone if it is prose, its structure if it is data, its behavior if it is interactive.
 
+If the user's input is itself substantial content — a long block of prose, a structured outline, a markdown document, a list of items — they want that content rendered into the document, not summarized. Preserve every paragraph, every section, every list item, every example. Do not condense, abbreviate with ellipsis, or omit anything for brevity. If the input has 100 items, the output has 100 items. If the input has 12 sections, the output has 12 sections.
+
 Return the complete modified document only — no commentary, no markdown fence. The document is an HTML fragment that lives inside a mount div. CSS may be inline in <style> tags; JS may be inline in <script> tags. Do NOT include <!DOCTYPE>, <html>, <head>, or <body> — those belong to the bootstrap. Use the existing structure and conventions of the document. The first character of your response should begin the modified content directly.
 
 A document-first response: less reflexive interactivity, more attention to prose tone and visual structure when those are what the user is editing. A user editing a press release does not want a button bar; a user editing a budget tracker does not want filler prose. Do not invent a runtime or a self-modification UI — the bootstrap provides those.`;

@@ -266,14 +266,19 @@ The agent's mental model is **document, not application**. The opening of the sy
 
 A document-first prompt produces different default behavior than an app-first prompt: less reflexive interactivity, more attention to prose tone and visual structure when those are what the user is editing. A user editing a press release does not want the agent to add a button bar; a user editing a budget tracker does not want the agent to pad the rows with filler prose.
 
+**Substantial content as input.** When the user pastes a long block — a structured outline, a markdown document, a list of items, a multi-section piece — they want that content rendered into the document, not summarized into a paraphrase. The system prompt is explicit about this: every paragraph, every section, every list item, every example is preserved. No condensing, no ellipsis, no omission for brevity. If the input has 100 items, the output has 100. This rule resolves the ambiguity in the word "instruction": with a small directive ("make it darker") the agent transforms the existing content; with a large paste, the agent treats the input as the new content of the document.
+
 Concrete rules supplied to the agent:
 
 - Return the complete modified document only — no commentary, no markdown fence
+- Preserve substantial user-provided content verbatim — never abbreviate or summarize a paste
 - All CSS inline; JS inline only when the document has interactivity. Prose documents may be JS-free.
 - No React, no build steps, no npm
 - Use `runtime.db.*` for structured data, `runtime.fs.*` for blobs
 - Dark theme palette by default (§8); honor explicit visual instructions over the default
 - The first character of the response should begin the modified content directly
+
+**Output budget.** The runtime requests `max_tokens: 32000` from OpenRouter. This is a hard ceiling on the response size — chosen large enough to hold a typical 20–40 KB document fully rendered with markup, small enough that mainstream models accept it without complaint. If the model's native cap is lower, OpenRouter passes through whatever the provider supports.
 
 The agent receives only the document as context. The bootstrap, loader, runtime, inline snapshot, and undo stack are not visible. There is no `<script id="re-write-able-runtime">` block to preserve, no diff protocol, no full-rewrite fallback — just the document in, the document out.
 
@@ -592,5 +597,7 @@ These properties are load-bearing — every change to the runtime, bootstrap, or
 7. Undo history lives in IndexedDB, not in the file. Commits do not carry undo state.
 
 ---
+
+*Spec version 0.8 — agent-fidelity pass. §6.1 grows two new pieces. First, an explicit "substantial content as input" rule: when the user pastes a multi-section document or a long list as their ⌘K instruction, the agent must render it as the new content rather than summarize it. The previous wording — "apply the user's instruction to the actual content" — was ambiguous, and Flash-tier models reliably read it as a cue to compress. The new rule pins the behavior: 100 items in, 100 items out. Second, an "output budget" subsection documents the runtime's `max_tokens: 32000` request, large enough to hold a typical 20–40 KB document without truncation. Reference implementations (`hello.html`, `re-write-able-spec.html`, `service/public/rewritable.html`) match. No structural changes; the storage model, container UUIDs, and bootstrap invariants from v0.7 are unchanged.*
 
 *Spec version 0.7 — container isolation pass. Every container now carries a `DOC_UUID` baked into the bootstrap at creation time, and its private IndexedDB lives under `rwa_<DOC_UUID>` instead of the shared `rwa` namespace. This closes a sharp footgun in v0.6: every container opened from `file://` was looking at the same `rwa_doc` and shadowing whichever container last committed. §5.2 grows a fourth bootstrap responsibility (Identity); §5.3 namespaces the IDB row in the storage table; §5.7 is rewritten — the "null origin bus" that v0.6 sold as a feature is replaced by isolation by default plus an opt-in `runtime.shared.*` API against a shared `rwa_shared` database; §9.2 clarifies that containers share quota even when they no longer share state; §11 adds a new open question (§11.5) about the precise shape of the shared composition surface; Invariants gain a per-container UUID rule. Reference implementations (`hello.html`, `re-write-able-spec.html`) ship with fresh UUIDs.*
