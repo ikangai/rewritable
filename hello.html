@@ -77,16 +77,26 @@ async function openDB() {
     r.onerror = () => rej(r.error);
     r.onblocked = () => rej(new Error('db open blocked by another tab'));
   });
-  const missing = REQUIRED_STORES.some(s => !probe.objectStoreNames.contains(s));
-  if (!missing) { _db = probe; return _db; }
-  // A required store is absent — bump the version to add it.
+  // We expect every required store to use out-of-line keys (keyPath === null).
+  // If a store is missing — or exists with the wrong schema (in-line keys from
+  // an old prototype) — we need to (re)create it.
+  const toRecreate = [];
+  for (const name of REQUIRED_STORES) {
+    if (!probe.objectStoreNames.contains(name)) { toRecreate.push(name); continue; }
+    const store = probe.transaction(name, 'readonly').objectStore(name);
+    if (store.keyPath !== null) toRecreate.push(name);
+  }
+  if (toRecreate.length === 0) { _db = probe; return _db; }
   const newVersion = probe.version + 1;
   probe.close();
   _db = await new Promise((res, rej) => {
     const r = indexedDB.open(RWA.DB, newVersion);
     r.onupgradeneeded = e => {
       const db = e.target.result;
-      REQUIRED_STORES.forEach(s => { if (!db.objectStoreNames.contains(s)) db.createObjectStore(s); });
+      toRecreate.forEach(name => {
+        if (db.objectStoreNames.contains(name)) db.deleteObjectStore(name);
+        db.createObjectStore(name); // out-of-line keys
+      });
     };
     r.onsuccess = () => res(r.result);
     r.onerror = () => rej(r.error);
