@@ -7,8 +7,8 @@ A re-writeable file is a self-contained `.html` that renders, stores, modifies, 
 ## Install
 
 ```sh
-npx rwa --help          # zero-install
-npm i -g rwa            # global, for repeat use
+npx rewritable --help       # zero-install (one-time cost is the longer name)
+npm i -g rewritable         # global; after this, the bin is `rwa` so daily use is `rwa <verb>`
 ```
 
 Requires Node ≥ 18.

@@ -1,5 +1,5 @@
 {
-  "name": "rwa",
+  "name": "rewritable",
   "version": "0.1.0",
   "description": "CLI for re-writeable: emit and import single-file rwa documents.",
   "type": "module",
