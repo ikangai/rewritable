@@ -27,7 +27,9 @@ export function applySeedSubs(seed, { uuid, title, fileMeta }) {
 }
 
 // Mirrors the bootstrap's escapeTL — keep in sync with seeds/rewritable.html.
-const escapeTL = s => s
+// LF-canonicalizes first; rwa-edit/1 invariant is that on-disk docs are LF-only.
+const canonLF = s => s == null ? '' : String(s).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+const escapeTL = s => canonLF(s)
   .replace(/\\/g, '\\\\')
   .replace(/`/g, '\\`')
   .replace(/\$\{/g, '\\${')
