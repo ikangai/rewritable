@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Hello</title>
+<title>re-writeable</title>
 <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Instrument+Serif:ital@0;1&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
 <style>
 :root{--bg:#0e0e0f;--surf:#161618;--b1:#232327;--b2:#2d2d34;--text:#dddde4;--muted:#575766;--accent:#b8ff57;--blue:#57c8ff;--red:#ff5757;}
@@ -47,6 +47,10 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);min
 // Per-container identity — namespaces IndexedDB so file:// docs don't collide.
 // Generated at creation time; preserved across commits because buildFile only
 // rewrites the INLINE_DOC literal contents.
+//
+// The nil UUID below is a sentinel — the /new service substitutes a fresh
+// crypto.randomUUID() at request time. If a downloaded file still has all
+// zeros here, the substitution failed and isolation is broken.
 const DOC_UUID = '4f6b3cdb-dc22-4882-a7a6-ced47f7d5e8d';
 
 // The document — a frozen snapshot, hydrated into IndexedDB on first open
@@ -71,6 +75,10 @@ const RWA = {
   MODEL:'google/gemini-3-flash-preview',
   FILE:'hello.html',
 };
+
+// LF canonicalization: doc text is stored, validated, and committed LF-only.
+const canonLF = s => s == null ? '' : String(s).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+
 let _db;
 const REQUIRED_STORES = [RWA.DOC, RWA.UNDO, RWA.HIST, RWA.FSA];
 async function openDB() {
@@ -123,21 +131,11 @@ async function getDoc() {
   if (d == null) { d = INLINE_DOC; await idbPut(RWA.DOC, d); }
   return d;
 }
-async function pushUndo(p) {
-  const s = (await idbGet(RWA.UNDO)) || [];
-  s.push(p); while (s.length > RWA.UNDO_CAP) s.shift();
-  await idbPut(RWA.UNDO, s);
-}
 async function popUndo() {
   const s = (await idbGet(RWA.UNDO)) || [];
   if (!s.length) return null;
   const v = s.pop(); await idbPut(RWA.UNDO, s); return v;
 }
-async function addHist(i) {
-  const l = (await idbGet(RWA.HIST)) || [];
-  await idbPut(RWA.HIST, [i, ...l.filter(x => x !== i)].slice(0, RWA.HIST_CAP));
-}
-
 // ─── Render ─────────────────────────────────────────────────────────
 function renderDoc(html) {
   const m = document.getElementById('rwa-doc-mount');
@@ -152,7 +150,7 @@ function renderDoc(html) {
 
 // ─── File rebuild ───────────────────────────────────────────────────
 let FROZEN = '';
-const escapeTL = s => s
+const escapeTL = s => canonLF(s)
   .replace(/\\/g, '\\\\')
   .replace(/`/g, '\\`')
   .replace(/\$\{/g, '\\${')
@@ -222,12 +220,321 @@ const setDirty = d => { const e = document.getElementById('rwa-st-commit'); if (
 const openPal = () => { document.getElementById('rwa-pal').classList.add('open'); requestAnimationFrame(() => document.getElementById('rwa-pal-inp').focus()); setPalSt('', '● ready'); };
 const closePal = () => { document.getElementById('rwa-pal').classList.remove('open'); document.getElementById('rwa-pal-inp').value = ''; document.getElementById('rwa-pal-go').disabled = true; };
 
-// ─── Agent ──────────────────────────────────────────────────────────
-const SYSTEM_PROMPT = `You are modifying a document. The document may be prose, it may be a tracker, it may be a spreadsheet, it may be all three. Read what is there. Apply the user's instruction to the actual content — its tone if it is prose, its structure if it is data, its behavior if it is interactive.
+// ─── Agent (rwa-edit/1) ─────────────────────────────────────────────
+// Spec: rwa-edit-spec.md (v1.4). The agent edits the doc via tool calls,
+// not by emitting a full rewritten document. unchanged regions are byte-
+// identical because the model never re-emits them.
 
-If the user's input is itself substantial content — a long block of prose, a structured outline, a markdown document, a list of items — they want that content rendered into the document, not summarized. Preserve every paragraph, every section, every list item, every example. Do not condense, abbreviate with ellipsis, or omit anything for brevity. If the input has 100 items, the output has 100 items. If the input has 12 sections, the output has 12 sections.
+const SYSTEM_PROMPT = `You are editing a rewritable HTML document. Apply the user's request as a small set of surgical edits via tool calls.
 
-Return the complete modified document only — no commentary, no markdown fence. The document is an HTML fragment that lives inside a mount div. CSS may be inline in <style> tags; JS may be inline in <script> tags. Do NOT include <!DOCTYPE>, <html>, <head>, or <body> — those belong to the bootstrap. The first character of your response should begin the modified content directly.`;
+You have two tools:
+  • apply_edits — preferred. Submit (find, replace) pairs. Each find must be a non-empty literal substring that appears exactly once in the doc.
+  • replace_document — escape hatch. Use only for scaffolding a fresh document, or when the user explicitly asked for a wholesale redesign.
+
+Rules for apply_edits:
+  • Copy anchors from the doc verbatim. Do not retype them.
+  • Whitespace and line endings in find must match the doc exactly.
+  • If your natural anchor is not unique, extend it with surrounding context until it is.
+  • Never include the substrings rwa:frozen:begin, rwa:frozen:end, the HTML/CSS/JS comment prefixes that start with rwa: (HTML <!--, CSS /*, JS //), or the attribute name data-rwa-frozen in find or replace. Frozen zones are listed in the user message and are off-limits.
+  • Do not add or remove <script> or <style> tags via apply_edits — that requires replace_document.
+  • If your edit's anchor would be longer than the changed region itself, replace_document is probably more appropriate.
+
+Rules for replace_document:
+  • Frozen-zone marker pairs and data-rwa-frozen elements must appear in the new doc with byte-identical content. They are author-declared invariants.
+  • Provide a reason explaining why apply_edits was not appropriate.
+
+If the user's input is itself substantial content (a long block of prose, an outline, a list of items), they want it rendered into the document, not summarized. When no surgical anchor exists for substantial content insertion, use replace_document.
+
+Always call a tool. Respond with text-only only when you genuinely need to ask for clarification before editing.`;
+
+const TOOL_SCHEMAS = [
+  {
+    type: 'function',
+    function: {
+      name: 'apply_edits',
+      description: 'Apply anchor-based string edits. Each edit specifies a literal substring to find (unique in the doc) and a replacement. Edits are applied in order, atomically. Frozen zones (rwa:frozen markers and data-rwa-frozen elements) are off-limits. <script>/<style> tag counts must not change.',
+      parameters: {
+        type: 'object',
+        required: ['version', 'edits'],
+        properties: {
+          version: { type: 'string', enum: ['rwa-edit/1'] },
+          reason: { type: 'string' },
+          edits: {
+            type: 'array', minItems: 1,
+            items: {
+              type: 'object',
+              required: ['find', 'replace'],
+              properties: {
+                find: { type: 'string', minLength: 1 },
+                replace: { type: 'string' },
+                reason: { type: 'string' }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'replace_document',
+      description: 'Wholesale-replace the document. Use only for scaffolding a fresh document or for a wholesale redesign the user explicitly requested. Frozen zones (rwa:frozen markers and data-rwa-frozen elements) must be preserved byte-identically.',
+      parameters: {
+        type: 'object',
+        required: ['version', 'doc', 'reason'],
+        properties: {
+          version: { type: 'string', enum: ['rwa-edit/1'] },
+          doc: { type: 'string' },
+          reason: { type: 'string', minLength: 1 }
+        }
+      }
+    }
+  }
+];
+
+// ─── Validator (rwa-edit/1) ─────────────────────────────────────────
+class RwaEditError extends Error {
+  constructor(code, editIndex = null, context = {}) {
+    super(code);
+    this.code = code;
+    this.editIndex = editIndex;
+    this.context = context;
+  }
+}
+
+const RWA_EDIT = {
+  MAX_REPLACE: 8 * 1024,                 // per-edit replace cap (spec §13 rule 5)
+  MAX_DOC: 1024 * 1024,                  // whole-doc cap
+  RETRIES: 3,                            // §9.2
+  RESERVED: ['rwa:frozen:begin', 'rwa:frozen:end', '<' + '!-- rwa:', '/*' + ' rwa:', '//' + ' rwa:', 'data-rwa-frozen'],
+};
+
+function containsReservedMarker(s) {
+  if (!s) return false;
+  for (const m of RWA_EDIT.RESERVED) if (s.includes(m)) return true;
+  return false;
+}
+
+function countOccurrences(haystack, needle) {
+  if (!needle) return 0;
+  let n = 0, i = 0;
+  while ((i = haystack.indexOf(needle, i)) !== -1) { n++; i += needle.length; }
+  return n;
+}
+
+function nearbySnippets(haystack, needle, max = 3, ctx = 40) {
+  const out = []; let i = 0;
+  while ((i = haystack.indexOf(needle, i)) !== -1 && out.length < max) {
+    const a = Math.max(0, i - ctx);
+    const b = Math.min(haystack.length, i + needle.length + ctx);
+    out.push({ pos: i, before: haystack.slice(a, i), after: haystack.slice(i + needle.length, b) });
+    i += needle.length;
+  }
+  return out;
+}
+
+const escapeRegex = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+// Extract frozen zones. Three marker forms:
+//   <!-- rwa:frozen:begin <name> --> ... <!-- rwa:frozen:end <name> -->
+//   /* rwa:frozen:begin <name> */   ... /* rwa:frozen:end <name> */
+//   // rwa:frozen:begin <name>(\n)  ... (\n)// rwa:frozen:end <name>(\n|$)
+// Returns array of {name, inner} or {name, error} on unterminated/duplicate.
+function extractFrozenZones(doc) {
+  const zones = [];
+  const seen = new Set();
+  const beginRe = /(<!--|\/\*|\/\/)\s*rwa:frozen:begin\s+([A-Za-z0-9_-]+)\s*(-->|\*\/|(?=\r?\n|$))/g;
+  let m;
+  while ((m = beginRe.exec(doc)) !== null) {
+    const opener = m[1];
+    const name = m[2];
+    let innerStart = m.index + m[0].length;
+    if (opener === '//') {
+      // Line-comment form: skip to and past the newline.
+      while (innerStart < doc.length && doc[innerStart] !== '\n') innerStart++;
+      if (innerStart < doc.length) innerStart++;
+    }
+    let endRe;
+    if (opener === '<!--') {
+      endRe = new RegExp('<!--\\s*rwa:frozen:end\\s+' + escapeRegex(name) + '\\s*-->', 'g');
+    } else if (opener === '/*') {
+      endRe = new RegExp('\\/\\*\\s*rwa:frozen:end\\s+' + escapeRegex(name) + '\\s*\\*\\/', 'g');
+    } else {
+      endRe = new RegExp('\\/\\/\\s*rwa:frozen:end\\s+' + escapeRegex(name) + '(?=\\r?\\n|$)', 'g');
+    }
+    endRe.lastIndex = innerStart;
+    const e = endRe.exec(doc);
+    if (!e) { zones.push({ name, error: 'unterminated' }); continue; }
+    if (seen.has(name)) { zones.push({ name, error: 'duplicate' }); continue; }
+    seen.add(name);
+    zones.push({ name, inner: doc.slice(innerStart, e.index) });
+  }
+  return zones;
+}
+
+function frozenZonesIntact(before, after) {
+  if (before.some(z => z.error) || after.some(z => z.error)) return false;
+  if (before.length !== after.length) return false;
+  const beforeMap = new Map(before.map(z => [z.name, z.inner]));
+  if (beforeMap.size !== before.length) return false;
+  const afterMap = new Map(after.map(z => [z.name, z.inner]));
+  if (afterMap.size !== after.length) return false;
+  for (const [name, inner] of beforeMap) {
+    if (!afterMap.has(name)) return false;
+    if (afterMap.get(name) !== inner) return false;
+  }
+  return true;
+}
+
+function parseHtmlFragment(doc) {
+  try {
+    const parsed = new DOMParser().parseFromString('<!DOCTYPE html><html><body>' + doc + '</body></html>', 'text/html');
+    const errs = parsed.querySelectorAll('parsererror');
+    if (errs.length) return { ok: false, error: errs[0].textContent.slice(0, 200) };
+    return { ok: true, doc: parsed };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+function computeShape(parsedDoc) {
+  if (!parsedDoc) return null;
+  return {
+    scripts: parsedDoc.querySelectorAll('script').length,
+    styles: parsedDoc.querySelectorAll('style').length,
+  };
+}
+
+const shapesEqual = (a, b) => !!a && !!b && a.scripts === b.scripts && a.styles === b.styles;
+
+function dataRwaFrozenSnapshot(parsedDoc) {
+  if (!parsedDoc) return [];
+  return Array.from(parsedDoc.querySelectorAll('[data-rwa-frozen]'))
+    .map(el => el.tagName.toLowerCase() + '\0' + el.outerHTML)
+    .sort();
+}
+
+function snapshotsEqual(a, b) {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
+
+// ─── Commit (rwa-edit/1) ────────────────────────────────────────────
+// Single IDB transaction across rwa_doc, rwa_undo, rwa_hist. Reads happen
+// before the transaction (modifyMutex prevents concurrent writes). The
+// transaction itself only writes — three put()s, all atomic.
+async function commitDoc(currentDoc, newDoc, histRecord) {
+  const db = await openDB();
+  const undoArr = (await idbGet(RWA.UNDO)) || [];
+  undoArr.push(currentDoc);
+  while (undoArr.length > RWA.UNDO_CAP) undoArr.shift();
+  const histArr = (await idbGet(RWA.HIST)) || [];
+  histArr.unshift(histRecord);
+  const histTrimmed = histArr.slice(0, RWA.HIST_CAP);
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction([RWA.DOC, RWA.UNDO, RWA.HIST], 'readwrite');
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error || new Error('transaction error'));
+    tx.onabort = () => reject(tx.error || new Error('transaction aborted'));
+    tx.objectStore(RWA.DOC).put(newDoc, RWA.KEY);
+    tx.objectStore(RWA.UNDO).put(undoArr, RWA.KEY);
+    tx.objectStore(RWA.HIST).put(histTrimmed, RWA.KEY);
+  });
+}
+
+// ─── apply_edits / replace_document ─────────────────────────────────
+async function applyEdits(envelope, currentDocRaw) {
+  if (envelope?.version !== 'rwa-edit/1') throw new RwaEditError('version_unsupported');
+  if (!Array.isArray(envelope.edits) || envelope.edits.length === 0) throw new RwaEditError('malformed_envelope');
+
+  const currentDoc = canonLF(currentDocRaw);
+  const originalFrozen = extractFrozenZones(currentDoc);
+  const originalParsed = parseHtmlFragment(currentDoc);
+  const originalShape = computeShape(originalParsed.doc);
+  const originalAttrs = dataRwaFrozenSnapshot(originalParsed.doc);
+
+  let work = currentDoc;
+  for (let i = 0; i < envelope.edits.length; i++) {
+    const edit = envelope.edits[i] || {};
+    if (!edit.find) throw new RwaEditError('empty_find', i);
+    const replaceRaw = edit.replace || '';
+    if (containsReservedMarker(edit.find) || containsReservedMarker(replaceRaw))
+      throw new RwaEditError('frozen_zone_violation', i);
+    if (replaceRaw.length > RWA_EDIT.MAX_REPLACE)
+      throw new RwaEditError('replace_too_large', i, { length: replaceRaw.length, cap: RWA_EDIT.MAX_REPLACE });
+    const find = canonLF(edit.find);
+    const replace = canonLF(replaceRaw);
+    const occ = countOccurrences(work, find);
+    if (occ === 0) throw new RwaEditError('find_not_found', i);
+    if (occ > 1) throw new RwaEditError('find_not_unique', i, { count: occ, hints: nearbySnippets(work, find) });
+    work = work.replace(find, replace);
+  }
+
+  const newFrozen = extractFrozenZones(work);
+  if (!frozenZonesIntact(originalFrozen, newFrozen))
+    throw new RwaEditError('frozen_zone_corrupted');
+
+  const parseResult = parseHtmlFragment(work);
+  if (!parseResult.ok) throw new RwaEditError('parse_error_post_apply', null, { message: parseResult.error });
+
+  const newShape = computeShape(parseResult.doc);
+  if (!shapesEqual(originalShape, newShape))
+    throw new RwaEditError('structural_shape_changed', null, { shape_before: originalShape, shape_after: newShape });
+
+  if (!snapshotsEqual(originalAttrs, dataRwaFrozenSnapshot(parseResult.doc)))
+    throw new RwaEditError('frozen_zone_corrupted');
+
+  if (work.length > RWA_EDIT.MAX_DOC) throw new RwaEditError('target_size_exceeded');
+
+  await commitDoc(currentDoc, work, { ts: Date.now(), kind: 'edit_batch', envelope });
+  return work;
+}
+
+async function replaceDocument(envelope, currentDocRaw) {
+  if (envelope?.version !== 'rwa-edit/1') throw new RwaEditError('version_unsupported');
+  if (typeof envelope.doc !== 'string' || typeof envelope.reason !== 'string' || !envelope.reason)
+    throw new RwaEditError('malformed_envelope');
+
+  const currentDoc = canonLF(currentDocRaw);
+  const newDoc = canonLF(envelope.doc);
+  const originalFrozen = extractFrozenZones(currentDoc);
+  const originalAttrs = dataRwaFrozenSnapshot(parseHtmlFragment(currentDoc).doc);
+
+  const parseResult = parseHtmlFragment(newDoc);
+  if (!parseResult.ok) throw new RwaEditError('parse_error_post_apply', null, { message: parseResult.error });
+
+  if (!frozenZonesIntact(originalFrozen, extractFrozenZones(newDoc)))
+    throw new RwaEditError('frozen_zone_corrupted');
+
+  if (!snapshotsEqual(originalAttrs, dataRwaFrozenSnapshot(parseResult.doc)))
+    throw new RwaEditError('frozen_zone_corrupted');
+
+  if (newDoc.length > RWA_EDIT.MAX_DOC) throw new RwaEditError('target_size_exceeded');
+
+  await commitDoc(currentDoc, newDoc, { ts: Date.now(), kind: 'replace_document', reason: envelope.reason });
+  return newDoc;
+}
+
+// ─── Modify lifecycle (rwa-edit/1) ──────────────────────────────────
+let modifyMutex = false;
+
+function buildUserPrompt(instr, doc, frozenZones) {
+  const fzText = frozenZones.length === 0
+    ? '(none)'
+    : frozenZones.map(z => '- ' + z.name + (z.error ? ' [' + z.error + ']' : '')).join('\n');
+  return 'User request:\n' + instr +
+    '\n\nFrozen zones in the current doc (do not produce marker text in find/replace; do not modify their inner content):\n' + fzText +
+    '\n\nThe current document follows. Make your edit by calling apply_edits or replace_document.\n\n<DOC>\n' + doc + '\n</DOC>';
+}
+
+function failureToToolResult(err) {
+  const payload = { ok: false, code: err.code };
+  if (err.editIndex != null) payload.edit_index = err.editIndex;
+  if (err.context) Object.assign(payload, err.context);
+  return JSON.stringify(payload);
+}
 
 async function modify(instr) {
   const key = sessionStorage.getItem(RWA.K_API);
@@ -238,30 +545,110 @@ async function modify(instr) {
     document.getElementById('rwa-key').focus();
     return;
   }
+
+  if (modifyMutex) {
+    setPalSt('err', '✗ another modify in progress');
+    return;
+  }
+  modifyMutex = true;
+
   closePal();
   setStatus('run', '⌘K running');
+
   try {
-    const cur = await getDoc();
-    const r = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + key, 'HTTP-Referer': 'https://github.com/ikangai/rewritable', 'X-Title': 're-write-able' },
-      body: JSON.stringify({ model, max_tokens: 32000, messages: [{ role: 'system', content: SYSTEM_PROMPT }, { role: 'user', content: 'Document:\n' + cur + '\n\nInstruction: ' + instr }] }),
-    });
-    if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error((e.error && e.error.message) || r.statusText); }
-    let text = (((await r.json()).choices || [{}])[0].message?.content || '').trim();
-    const fence = '```';
-    if (text.startsWith(fence)) { const nl = text.indexOf('\n'); if (nl > 0) text = text.slice(nl + 1); }
-    if (text.endsWith(fence)) text = text.slice(0, text.lastIndexOf(fence)).trim();
-    if (!text) throw new Error('empty response');
-    await pushUndo(cur);
-    await idbPut(RWA.DOC, text);
-    await addHist(instr);
-    renderDoc(text);
-    setDirty(true);
-    setStatus('ok', '✓ done');
+    const cur = canonLF(await getDoc());
+    const frozenZones = extractFrozenZones(cur);
+
+    const messages = [
+      { role: 'system', content: SYSTEM_PROMPT },
+      { role: 'user', content: buildUserPrompt(instr, cur, frozenZones) }
+    ];
+
+    let attemptsLeft = RWA_EDIT.RETRIES;
+    let lastFailure = null;
+    let newDoc = null;
+
+    while (attemptsLeft > 0 && newDoc === null) {
+      attemptsLeft--;
+
+      const r = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer ' + key,
+          'HTTP-Referer': 'https://github.com/ikangai/rewritable',
+          'X-Title': 're-write-able'
+        },
+        body: JSON.stringify({
+          model,
+          max_tokens: 32000,
+          messages,
+          tools: TOOL_SCHEMAS,
+          tool_choice: 'auto',
+        }),
+      });
+
+      if (!r.ok) {
+        const e = await r.json().catch(() => ({}));
+        throw new Error((e.error && e.error.message) || r.statusText);
+      }
+
+      const data = await r.json();
+      const msg = data.choices?.[0]?.message;
+      if (!msg) throw new Error('empty response');
+
+      const toolCalls = msg.tool_calls || [];
+      if (toolCalls.length === 0) {
+        const text = (msg.content || '(no message)').trim();
+        setStatus('err', '✗ model declined');
+        setPalSt('err', text.slice(0, 200));
+        return;
+      }
+
+      const tc = toolCalls[0];
+      const fnName = tc.function?.name;
+      let envelope;
+      try {
+        envelope = JSON.parse(tc.function?.arguments ?? '{}');
+      } catch {
+        lastFailure = new RwaEditError('malformed_envelope', null, { message: 'invalid JSON arguments' });
+        if (attemptsLeft > 0) {
+          messages.push({ role: 'assistant', content: msg.content || '', tool_calls: toolCalls });
+          messages.push({ role: 'tool', tool_call_id: tc.id, content: failureToToolResult(lastFailure) });
+        }
+        continue;
+      }
+
+      try {
+        if (fnName === 'apply_edits') newDoc = await applyEdits(envelope, cur);
+        else if (fnName === 'replace_document') newDoc = await replaceDocument(envelope, cur);
+        else throw new RwaEditError('unknown_tool', null, { name: fnName });
+      } catch (err) {
+        if (!(err instanceof RwaEditError)) throw err;
+        lastFailure = err;
+        if (attemptsLeft > 0) {
+          messages.push({ role: 'assistant', content: msg.content || '', tool_calls: toolCalls });
+          messages.push({ role: 'tool', tool_call_id: tc.id, content: failureToToolResult(err) });
+        }
+      }
+    }
+
+    if (newDoc !== null) {
+      renderDoc(newDoc);
+      setDirty(true);
+      setStatus('ok', '✓ done');
+    } else {
+      const summary = lastFailure
+        ? '✗ ' + lastFailure.code + (lastFailure.editIndex != null ? ' [edit ' + lastFailure.editIndex + ']' : '')
+        : '✗ retry budget exhausted';
+      setStatus('err', summary);
+      console.error('rwa-edit retry exhausted', lastFailure);
+    }
   } catch (e) {
     setStatus('err', '✗ ' + e.message);
     console.error(e);
+  } finally {
+    modifyMutex = false;
   }
 }
 
@@ -317,7 +704,7 @@ document.addEventListener('keydown', e => {
 
 (async () => {
   try {
-    FROZEN = '<!DOCTYPE html>\n' + document.documentElement.outerHTML;
+    FROZEN = canonLF('<!DOCTYPE html>\n' + document.documentElement.outerHTML);
     buildUI();
     if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
     renderDoc(await getDoc());
