@@ -32,6 +32,8 @@ Open the file in a browser. It's a document the moment it opens — no build scr
 
 The file is built around an **immutable bootstrap** — a loader, a runtime, and a frozen snapshot of the document — and a **mutable working copy** that lives in IndexedDB. The agent only sees the document; it never sees the runtime. On commit, the bootstrap is rewritten with an updated snapshot, and only the snapshot changes.
 
+The agent edits via **anchor-based surgical edits** (rwa-edit/1): it submits `(find, replace)` pairs against unique substrings, and the runtime applies them as exact string substitutions. The 99% of the document the agent did not need to change is byte-identical because the model never re-emitted it. For scaffolding or wholesale redesigns, the model can call `replace_document` instead, with a required reason. Both paths validate frozen zones, structural shape (`<script>`/`<style>` counts), and HTML well-formedness before committing atomically.
+
 Send the file by email, put it on a USB stick, commit it to git. The recipient opens it in a browser and it runs.
 
 ## Getting a fresh file
@@ -51,9 +53,11 @@ curl -O https://rewritable.ikangai.com/rewritable.html
 
 Or hand-craft: copy `seeds/rewritable.html`, replace the nil `DOC_UUID` with a fresh `crypto.randomUUID()`, save.
 
-## The spec
+## The specs
 
-[`re-write-able-spec.md`](re-write-able-spec.md) — the full specification covering architecture, storage model, agent contract, embedding, security, and platform behavior.
+- [`re-write-able-spec.md`](re-write-able-spec.md) — the container spec: architecture, storage model, agent contract, embedding, security, platform behavior. Currently v0.8.
+- [`rwa-edit-spec.md`](rwa-edit-spec.md) — the anchor-based edit protocol the agent uses to modify documents. Currently rwa-edit/1 (v1.4).
+- [`CHANGELOG.md`](CHANGELOG.md) — release notes.
 
 ## Related
 
