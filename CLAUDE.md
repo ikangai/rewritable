@@ -11,9 +11,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `seeds/rewritable.html` — **canonical bootstrap seed**. Both the service and the CLI read this to emit fresh containers. Has a nil-UUID sentinel that is substituted at emit time.
 - `service/` — Node HTTP service that hands out fresh containers via `/new`. Build context is the **repo root** (so it can `COPY seeds/`); see `service/Dockerfile` and `service/docker-compose*.yml`.
 - `cli/` — `rwa` npm package (the CLI). `rwa new` emits a fresh container; `rwa import <file>` converts md/html/txt into one. Reads the canonical seed in dev; ships its own bundled copy on `npm publish` via the `prepublishOnly` hook.
+- `tests/` — end-to-end harness for the rwa-edit/1 modify pathway. Loads the seed in jsdom with stubbed fetch + fake-indexeddb and exercises every scenario in `rwa-edit-spec.md`. Run via `cd tests && npm install && npm test`.
 - `README.md` — short pitch
 
-The references and seed have no build step — "run" = open the `.html` in a browser, "test" = open the `.html` in a browser. The CLI has a `package.json` with one runtime dep (`marked`). There is no test suite or lint config at the repository level.
+The references and seed have no build step — "run" = open the `.html` in a browser, "test" = open the `.html` in a browser. The CLI has a `package.json` with one runtime dep (`marked`). The `tests/` package is dev-only (jsdom + fake-indexeddb) and is not part of any shipped artifact. There is no lint config at the repository level.
 
 If the user asks you to update the container spec, edit `re-write-able-spec.md` and treat the `.html` rendering as derived (regenerate or note drift).
 

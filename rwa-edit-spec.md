@@ -202,7 +202,7 @@ Validation rules for `replace_document`:
 
 1. `version` is `rwa-edit/1`.
 2. The new doc parses cleanly via `DOMParser` in `text/html` mode (else `parse_error_post_apply`). Note: `replace_document` does **not** check structural-shape preservation — wholesale rewrites legitimately change the shape.
-3. Every frozen-zone name from the prior doc appears in the new doc, with intact begin/end markers and byte-identical content between them (else `frozen_zone_corrupted`). The escape hatch can rewrite anything *except* frozen zones.
+3. The set of frozen-zone names in the new doc equals the set in the prior doc — every prior name is still present *and* no new names are introduced — with intact begin/end markers and byte-identical content between them (else `frozen_zone_corrupted`). The escape hatch can rewrite anything *except* frozen zones; it can neither remove nor introduce them.
 4. New doc is within the size budget (else `target_size_exceeded`, same cap as `apply_edits`).
 
 Commit semantics are identical to `apply_edits`: single IDB transaction across `rwa_doc`, `rwa_undo`, `rwa_hist`. The audit-log entry is `{ ts, kind: 'replace_document', reason }` — the new doc body is not duplicated into history.
@@ -244,7 +244,7 @@ CSS-block markers (`/* … */`) are valid in JS too; line-comment markers (`// �
 ### 7.2 Enforcement
 
 - Edits cannot contain marker substrings or `data-rwa-frozen` in `find` or `replace` (rule 6 in §4).
-- After a batch applies, every marker name present in the original doc must still be present, paired, with byte-identical inner content. This is checked by extracting the substring between each `begin <name>` / `end <name>` pair before and after, and comparing.
+- After a batch applies, the set of frozen-zone names must be unchanged — every prior name is still present, paired, with byte-identical inner content, *and* no new names are introduced. The post-apply check extracts the substring between each `begin <name>` / `end <name>` pair before and after, and compares the full sets. Adding a new frozen zone via concatenated edits is rejected for the same reason as removing one.
 - Nested or mismatched markers (`begin foo` … `begin foo` … `end foo`) are a `frozen_zone_corrupted` failure regardless of cause.
 
 **Adding, modifying, or removing frozen-zone markers and content requires external editing of the container file.** Neither `apply_edits` nor `replace_document` can introduce, alter, or delete them — `apply_edits` is forbidden by rule 6 from producing the marker text at all, and `replace_document` is required by §6 rule 3 to preserve every prior frozen zone byte-identically.
@@ -597,6 +597,7 @@ async function applyEdits(envelope, db) {
 - **Structural shape narrowed** from triple `(top-level, script, style)` to pair `(script, style)`. Top-level element count is no longer constrained, because adding a top-level section (e.g. a footer) is a common, intentional edit that should remain in `apply_edits` territory. Script/style count drift remains the realistic accidental-damage signal. Updated: §2 vocab, §5.1 step 5, §5.6, §8 `apply_edits` schema description, §9.1 prompt, §10 `structural_shape_changed`, §13 rule 9, §14, §17, §18 pseudocode.
 - **`replace_too_large` added to §10** as an explicit failure code with default cap of 8 KB. Was referenced in §13 rule 5 and §18 pseudocode but missing from the failure-modes table in v1.3.
 - **§12 size-pressure rationale corrected.** Eliding envelope bodies past the most recent 5 entries is now framed as advisory (IDB quota defence), not normative for "snapshot-format compatibility" — `rwa_hist` is in IndexedDB, not in the snapshot, so elision strategies cannot affect file format.
+- **§6 rule 3 and §7.2 tightened** to require set-equality (not subset) of frozen-zone names post-apply. Adding a new frozen-zone name is a `frozen_zone_corrupted` failure, the same way removing one is. Closes a gap where `replace_document` could introduce new author-only invariants. Implementation already enforces this; the spec text now matches.
 
 ## Appendix B — Changes from v1.2 to v1.3
 
