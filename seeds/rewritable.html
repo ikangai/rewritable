@@ -499,7 +499,11 @@ async function applyEdits(envelope, currentDocRaw) {
     const occ = countOccurrences(work, find);
     if (occ === 0) throw new RwaEditError('find_not_found', i);
     if (occ > 1) throw new RwaEditError('find_not_unique', i, { count: occ, hints: nearbySnippets(work, find) });
-    work = work.replace(find, replace);
+    // Slice-based splice — String.prototype.replace honors $&, $$, $`, $' patterns
+    // even when the search arg is a literal string, mangling replacements like
+    // "$$amount" → "$amount". Splicing preserves the model's bytes verbatim.
+    const idx = work.indexOf(find);
+    work = work.slice(0, idx) + replace + work.slice(idx + find.length);
   }
 
   const newFrozen = extractFrozenZones(work);

@@ -525,6 +525,39 @@ await window.modify('claim data-rwa-id');
 await new Promise(r => setTimeout(r, 100));
 check('reserved-attr replace_document rejected: doc unchanged', (await window.getDoc()) === docBefore13);
 
+// Test 14: replace string containing $& / $$ must be inserted literally.
+// String.prototype.replace honors $&, $$, $`, $' patterns even when the search
+// arg is a string — `work.replace('foo', '$$x$&y')` yields '$xfooy'. The runtime
+// must splice replacements byte-for-byte so the model's intent is preserved.
+console.log('\n== Test 14: $&/$$ in replace inserted literally ==');
+fetchHandler = async () => ({
+  ok: true,
+  json: async () => ({
+    choices: [{
+      message: {
+        role: 'assistant', content: '',
+        tool_calls: [{
+          id: 'call_dollar', type: 'function',
+          function: {
+            name: 'apply_edits',
+            arguments: JSON.stringify({
+              version: 'rwa-edit/1',
+              edits: [{ find: 'parallel-fixed', replace: '$$amount $&literal' }],
+            }),
+          },
+        }],
+      },
+    }],
+  }),
+});
+
+await window.modify('test dollar literals');
+await new Promise(r => setTimeout(r, 100));
+const docAfter14 = await window.getDoc();
+check('$$ inserted literally (not collapsed to $)', docAfter14.includes('$$amount'));
+check('$& inserted literally (not expanded to find)', docAfter14.includes('$&literal'));
+check('no expanded backreference artifact', !docAfter14.includes('parallel-fixedliteral'));
+
 console.log('\n== Summary ==');
 console.log(`pass: ${pass}, fail: ${fail}`);
 process.exit(fail > 0 ? 1 : 0);
