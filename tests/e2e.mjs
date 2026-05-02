@@ -836,6 +836,63 @@ await window.modify('empty find anchor');
 await new Promise(r => setTimeout(r, 200));
 check('empty_find: doc unchanged', (await window.getDoc()) === docBefore21);
 
+// Tests 22-24: size cap + replace_document envelope-shape rejection.
+// MAX_REPLACE caps a single replace string at 8 KiB to bound damage from a
+// runaway model. replace_document requires a non-empty reason and a string
+// doc — both protect against accidental wholesale rewrites.
+
+console.log('\n== Test 22: replace_too_large ==');
+const HUGE_REPLACE = 'X'.repeat(8 * 1024 + 1);
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: {
+      role: 'assistant', content: '',
+      tool_calls: [{ id: 'call_huge', type: 'function', function: {
+        name: 'apply_edits',
+        arguments: JSON.stringify({ version: 'rwa-edit/1', edits: [{ find: 'FINAL_DESTINATION', replace: HUGE_REPLACE }] }),
+      } }],
+    } }],
+  }),
+});
+const docBefore22 = await window.getDoc();
+await window.modify('oversized replace string');
+await new Promise(r => setTimeout(r, 200));
+check('replace_too_large: doc unchanged', (await window.getDoc()) === docBefore22);
+
+console.log('\n== Test 23: replace_document with empty reason rejected ==');
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: {
+      role: 'assistant', content: '',
+      tool_calls: [{ id: 'call_er', type: 'function', function: {
+        name: 'replace_document',
+        arguments: JSON.stringify({ version: 'rwa-edit/1', doc: '<div>x</div>', reason: '' }),
+      } }],
+    } }],
+  }),
+});
+const docBefore23 = await window.getDoc();
+await window.modify('replace_document with empty reason');
+await new Promise(r => setTimeout(r, 200));
+check('replace_document empty reason: doc unchanged', (await window.getDoc()) === docBefore23);
+
+console.log('\n== Test 24: replace_document with missing doc rejected ==');
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: {
+      role: 'assistant', content: '',
+      tool_calls: [{ id: 'call_md', type: 'function', function: {
+        name: 'replace_document',
+        arguments: JSON.stringify({ version: 'rwa-edit/1', reason: 'no doc field' }),
+      } }],
+    } }],
+  }),
+});
+const docBefore24 = await window.getDoc();
+await window.modify('replace_document with missing doc');
+await new Promise(r => setTimeout(r, 200));
+check('replace_document missing doc: doc unchanged', (await window.getDoc()) === docBefore24);
+
 console.log('\n== Summary ==');
 console.log(`pass: ${pass}, fail: ${fail}`);
 process.exit(fail > 0 ? 1 : 0);
