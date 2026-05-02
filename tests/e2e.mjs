@@ -691,6 +691,77 @@ const docAfter16 = await window.getDoc();
 check('apply_edits outside frozen zone allowed', docAfter16.includes('changed-outside'));
 check('zone inner content preserved across allowed edit', docAfter16.includes('--frozen-knob: 1'));
 
+// Tests 17a-17b: multi-edit batch fidelity. Two properties matter:
+//   (a) Atomicity — if edit[N] fails, edits[0..N-1] must NOT persist. The runtime
+//       only commits to IDB after every edit in the batch is validated, so a
+//       partial-batch commit would be a fidelity violation that silently
+//       changed bytes without the user's intent.
+//   (b) Sequential application — edit[i+1].find may anchor on text produced
+//       by edit[i].replace. The runtime must apply edits in order against the
+//       evolving working buffer, not against a frozen pre-batch snapshot.
+console.log('\n== Test 17a: multi-edit batch atomicity ==');
+fetchHandler = async () => ({
+  ok: true,
+  json: async () => ({
+    choices: [{
+      message: {
+        role: 'assistant', content: '',
+        tool_calls: [{
+          id: 'call_atomic', type: 'function',
+          function: {
+            name: 'apply_edits',
+            arguments: JSON.stringify({
+              version: 'rwa-edit/1',
+              edits: [
+                { find: 'changed-outside', replace: 'PARTIAL_STEP_A' },
+                { find: 'NEVER_PRESENT_ANCHOR', replace: 'PARTIAL_STEP_B' },
+              ],
+            }),
+          },
+        }],
+      },
+    }],
+  }),
+});
+
+const docBefore17a = await window.getDoc();
+await window.modify('multi-edit batch with edit[1] failing');
+await new Promise(r => setTimeout(r, 200));
+check('atomic batch: doc unchanged when edit[1] fails', (await window.getDoc()) === docBefore17a);
+check('atomic batch: edit[0] result not persisted', !(await window.getDoc()).includes('PARTIAL_STEP_A'));
+
+console.log('\n== Test 17b: sequential dependent edits ==');
+fetchHandler = async () => ({
+  ok: true,
+  json: async () => ({
+    choices: [{
+      message: {
+        role: 'assistant', content: '',
+        tool_calls: [{
+          id: 'call_seq', type: 'function',
+          function: {
+            name: 'apply_edits',
+            arguments: JSON.stringify({
+              version: 'rwa-edit/1',
+              edits: [
+                { find: 'changed-outside', replace: 'BRIDGE_TOKEN' },
+                { find: 'BRIDGE_TOKEN', replace: 'FINAL_DESTINATION' },
+              ],
+            }),
+          },
+        }],
+      },
+    }],
+  }),
+});
+
+await window.modify('sequential dependent edits');
+await new Promise(r => setTimeout(r, 100));
+const docAfter17b = await window.getDoc();
+check('sequential edits: final state has FINAL_DESTINATION', docAfter17b.includes('FINAL_DESTINATION'));
+check('sequential edits: intermediate BRIDGE_TOKEN consumed', !docAfter17b.includes('BRIDGE_TOKEN'));
+check('sequential edits: original anchor consumed', !docAfter17b.includes('changed-outside'));
+
 console.log('\n== Summary ==');
 console.log(`pass: ${pass}, fail: ${fail}`);
 process.exit(fail > 0 ? 1 : 0);
