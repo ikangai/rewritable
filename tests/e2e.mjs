@@ -1257,6 +1257,97 @@ await window.modify('upstream http error');
 await new Promise(r => setTimeout(r, 50));
 check('41c: upstream HTTP error leaves doc unchanged', (await window.getDoc()) === before41c);
 
+// Test 42: rwa_hist edit_batch record shape. Test 8 only verifies the kind
+// field is present; this verifies the stored envelope is still readable so
+// downstream tooling (a future "show me what the model did" UI) gets faithful
+// audit trail data.
+console.log('\n== Test 42: hist record content for edit_batch ==');
+await seedDoc('<div>HIST_TEST_ANCHOR_42</div>');
+const envelope42 = {
+  version: 'rwa-edit/1',
+  edits: [{ find: 'HIST_TEST_ANCHOR_42', replace: 'HIST_TEST_REPLACED_42' }],
+};
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: {
+      role: 'assistant', content: '',
+      tool_calls: [{ id: 'call_hist42', type: 'function', function: {
+        name: 'apply_edits',
+        arguments: JSON.stringify(envelope42),
+      } }],
+    } }],
+  }),
+});
+await window.modify('hist record check');
+await new Promise(r => setTimeout(r, 100));
+
+const hist42 = await new Promise((res, rej) => {
+  window.openDB().then(db => {
+    const r = db.transaction('rwa_hist').objectStore('rwa_hist').get('self');
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+  });
+});
+check('42: hist newest record kind=edit_batch', hist42[0]?.kind === 'edit_batch');
+check('42: hist newest record envelope preserved (version)', hist42[0]?.envelope?.version === 'rwa-edit/1');
+check('42: hist newest record envelope preserved (find)', hist42[0]?.envelope?.edits?.[0]?.find === 'HIST_TEST_ANCHOR_42');
+check('42: hist newest record envelope preserved (replace)', hist42[0]?.envelope?.edits?.[0]?.replace === 'HIST_TEST_REPLACED_42');
+check('42: hist newest record has numeric timestamp', typeof hist42[0]?.ts === 'number' && hist42[0].ts > 0);
+
+// Tests 43a-c: malformed_envelope shapes beyond the JSON-parse path in test 6.
+console.log('\n== Tests 43a-c: malformed_envelope shape variants ==');
+
+// 43a: edits is not an array (object instead).
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: {
+      role: 'assistant', content: '',
+      tool_calls: [{ id: 'me_a', type: 'function', function: {
+        name: 'apply_edits',
+        arguments: JSON.stringify({ version: 'rwa-edit/1', edits: { wrong: 'shape' } }),
+      } }],
+    } }],
+  }),
+});
+const before43a = await window.getDoc();
+await window.modify('edits as object');
+await new Promise(r => setTimeout(r, 200));
+check('43a: edits-as-object rejected', (await window.getDoc()) === before43a);
+
+// 43b: edits is an empty array.
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: {
+      role: 'assistant', content: '',
+      tool_calls: [{ id: 'me_b', type: 'function', function: {
+        name: 'apply_edits',
+        arguments: JSON.stringify({ version: 'rwa-edit/1', edits: [] }),
+      } }],
+    } }],
+  }),
+});
+const before43b = await window.getDoc();
+await window.modify('edits empty');
+await new Promise(r => setTimeout(r, 200));
+check('43b: empty edits array rejected', (await window.getDoc()) === before43b);
+
+// 43c: envelope missing version field entirely.
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: {
+      role: 'assistant', content: '',
+      tool_calls: [{ id: 'me_c', type: 'function', function: {
+        name: 'apply_edits',
+        arguments: JSON.stringify({ edits: [{ find: 'X', replace: 'Y' }] }),
+      } }],
+    } }],
+  }),
+});
+const before43c = await window.getDoc();
+await window.modify('no version field');
+await new Promise(r => setTimeout(r, 200));
+check('43c: missing version rejected', (await window.getDoc()) === before43c);
+
 console.log('\n== Summary ==');
 console.log(`pass: ${pass}, fail: ${fail}`);
 process.exit(fail > 0 ? 1 : 0);
