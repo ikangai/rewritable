@@ -2520,6 +2520,94 @@ await new Promise(r => setTimeout(r, 100));
 const after72 = await window.getDoc();
 check('72: zone with name containing dots is not enforced (silently ignored)', after72.includes('CHANGED_72'));
 
+// Test 73: hist record content for replace_document. Test 8 verifies kind;
+// this verifies the reason and timestamp are preserved so an audit trail
+// reader can reconstruct WHY the wholesale rewrite happened.
+console.log('\n== Test 73: hist record content for replace_document ==');
+await seedDoc('<div>RD_HIST_SEED</div>');
+await new Promise((res, rej) => {
+  window.openDB().then(db => {
+    const r = db.transaction('rwa_hist', 'readwrite').objectStore('rwa_hist').put([], 'self');
+    r.onsuccess = res;
+    r.onerror = () => rej(r.error);
+  });
+});
+
+const reason73 = 'specific reason for audit trail';
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: {
+      role: 'assistant', content: '',
+      tool_calls: [{ id: 'rd_h', type: 'function', function: {
+        name: 'replace_document',
+        arguments: JSON.stringify({ version: 'rwa-edit/1', doc: '<div>RD_HIST_AFTER</div>', reason: reason73 }),
+      } }],
+    } }],
+  }),
+});
+await window.modify('rd hist record check');
+await new Promise(r => setTimeout(r, 100));
+
+const histRD = await new Promise((res, rej) => {
+  window.openDB().then(db => {
+    const r = db.transaction('rwa_hist').objectStore('rwa_hist').get('self');
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+  });
+});
+check('73: hist record kind is replace_document', histRD[0]?.kind === 'replace_document');
+check('73: hist record contains the reason verbatim', histRD[0]?.reason === reason73);
+check('73: hist record has numeric timestamp', typeof histRD[0]?.ts === 'number' && histRD[0].ts > 0);
+
+// Test 74: multi-edit batch all-succeed positive case. The negative case
+// (atomicity rollback) is in test 17a; this verifies the positive path
+// where every edit applies cleanly and the final doc reflects all of them.
+console.log('\n== Test 74: multi-edit batch all-succeed positive ==');
+await seedDoc('<div>A_74</div>\n<div>B_74</div>\n<div>C_74</div>');
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: {
+      role: 'assistant', content: '',
+      tool_calls: [{ id: 'mb_pos', type: 'function', function: {
+        name: 'apply_edits',
+        arguments: JSON.stringify({ version: 'rwa-edit/1', edits: [
+          { find: 'A_74', replace: 'A_NEW_74' },
+          { find: 'B_74', replace: 'B_NEW_74' },
+          { find: 'C_74', replace: 'C_NEW_74' },
+        ] }),
+      } }],
+    } }],
+  }),
+});
+await window.modify('apply 3 edits all succeed');
+await new Promise(r => setTimeout(r, 100));
+const after74 = await window.getDoc();
+check('74: 3-edit batch result is exactly the expected doc', after74 === '<div>A_NEW_74</div>\n<div>B_NEW_74</div>\n<div>C_NEW_74</div>');
+check('74: all original anchors consumed', !after74.includes('A_74') && !after74.includes('B_74') && !after74.includes('C_74'));
+
+// Test 75: countOccurrences uses non-overlapping advance (i += needle.length).
+// For doc 'aaaXaa' with anchor 'aaa', only one non-overlapping match exists
+// (at position 0). The remaining 'Xaa' has no further 'aaa'. Edit succeeds.
+// Pin this down so a future "use indexOf with i++" change doesn't silently
+// flip the uniqueness semantics.
+console.log('\n== Test 75: non-overlapping countOccurrences (uniqueness) ==');
+await seedDoc('<div>aaaXaa</div>');
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: {
+      role: 'assistant', content: '',
+      tool_calls: [{ id: 'noo', type: 'function', function: {
+        name: 'apply_edits',
+        arguments: JSON.stringify({ version: 'rwa-edit/1',
+          edits: [{ find: 'aaa', replace: 'YYY' }] }),
+      } }],
+    } }],
+  }),
+});
+await window.modify('non-overlapping anchor match');
+await new Promise(r => setTimeout(r, 100));
+check('75: non-overlapping single match accepted, splice at position 0', (await window.getDoc()) === '<div>YYYXaa</div>');
+
 console.log('\n== Summary ==');
 console.log(`pass: ${pass}, fail: ${fail}`);
 process.exit(fail > 0 ? 1 : 0);
