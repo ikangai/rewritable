@@ -3101,6 +3101,30 @@ await new Promise(r => setTimeout(r, 50));
 const mountUndo94 = window.document.getElementById('rwa-doc-mount').innerHTML;
 check('94: mount restored to UM_SEED_94 after undo', mountUndo94.includes('UM_SEED_94') && !mountUndo94.includes('UM_AFTER_94'));
 
+// Test 95: envelope version strings — only literal "rwa-edit/1" accepted.
+// The runtime uses strict === comparison, so any drift (case, hyphenation,
+// version bump) gets rejected. Pin down so a future "lenient version"
+// change doesn't accidentally accept incompatible envelopes.
+console.log('\n== Test 95: envelope version variants ==');
+const VERSION_VARIANTS = ['rwa-edit', 'rwa-edit/0', 'rwa-edit/2', 'RWA-EDIT/1', 'rwa-edit/1.0'];
+for (const v of VERSION_VARIANTS) {
+  await seedDoc('<div>VER_95_ANCHOR</div>');
+  fetchHandler = async () => ({
+    ok: true, json: async () => ({
+      choices: [{ message: { role: 'assistant', content: '', tool_calls: [{
+        id: 'v95_' + v.replace(/[^a-z0-9]/gi, '_'), type: 'function', function: {
+          name: 'apply_edits',
+          arguments: JSON.stringify({ version: v, edits: [{ find: 'VER_95_ANCHOR', replace: 'X' }] }),
+        },
+      }] } }],
+    }),
+  });
+  const before95 = await window.getDoc();
+  await window.modify('version variant ' + v);
+  await new Promise(r => setTimeout(r, 200));
+  check('95: version "' + v + '" rejected', (await window.getDoc()) === before95);
+}
+
 console.log('\n== Summary ==');
 console.log(`pass: ${pass}, fail: ${fail}`);
 process.exit(fail > 0 ? 1 : 0);
