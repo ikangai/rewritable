@@ -1602,6 +1602,86 @@ await window.modify('replace_document scaffolding');
 await new Promise(r => setTimeout(r, 100));
 check('49: replace_document changing script/style count allowed', (await window.getDoc()) === newDoc49);
 
+// Tests 50a-d: replace_document data-rwa-frozen element preservation matrix.
+// Tests 45a-c cover the apply_edits side. The snapshot-equality check also
+// guards replace_document. These four cover removal, inner mutation,
+// addition, and the success case.
+console.log('\n== Tests 50a-d: replace_document data-rwa-frozen preservation ==');
+
+const seed50 = '<div data-rwa-frozen>FE_BODY</div>\n<div>tail-50</div>';
+
+// 50a: remove the frozen element entirely -> rejected.
+await seedDoc(seed50);
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: {
+      role: 'assistant', content: '',
+      tool_calls: [{ id: 'rd50_a', type: 'function', function: {
+        name: 'replace_document',
+        arguments: JSON.stringify({ version: 'rwa-edit/1', doc: '<div>just tail</div>', reason: 'remove frozen elem' }),
+      } }],
+    } }],
+  }),
+});
+const before50a = await window.getDoc();
+await window.modify('remove frozen elem via rd');
+await new Promise(r => setTimeout(r, 200));
+check('50a: removing data-rwa-frozen element via rd rejected', (await window.getDoc()) === before50a);
+
+// 50b: mutate inner content of the frozen element -> rejected (outerHTML differs).
+await seedDoc(seed50);
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: {
+      role: 'assistant', content: '',
+      tool_calls: [{ id: 'rd50_b', type: 'function', function: {
+        name: 'replace_document',
+        arguments: JSON.stringify({ version: 'rwa-edit/1', doc: '<div data-rwa-frozen>NEW_FE_BODY</div>\n<div>tail-50</div>', reason: 'mutate inner' }),
+      } }],
+    } }],
+  }),
+});
+const before50b = await window.getDoc();
+await window.modify('mutate frozen elem inner');
+await new Promise(r => setTimeout(r, 200));
+check('50b: mutating data-rwa-frozen inner via rd rejected', (await window.getDoc()) === before50b);
+
+// 50c: introduce a NEW data-rwa-frozen element alongside the existing one -> rejected.
+await seedDoc(seed50);
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: {
+      role: 'assistant', content: '',
+      tool_calls: [{ id: 'rd50_c', type: 'function', function: {
+        name: 'replace_document',
+        arguments: JSON.stringify({ version: 'rwa-edit/1', doc: '<div data-rwa-frozen>FE_BODY</div>\n<span data-rwa-frozen>NEW_FE</span>\n<div>tail-50</div>', reason: 'inject frozen elem' }),
+      } }],
+    } }],
+  }),
+});
+const before50c = await window.getDoc();
+await window.modify('inject another frozen elem');
+await new Promise(r => setTimeout(r, 200));
+check('50c: introducing additional data-rwa-frozen element via rd rejected', (await window.getDoc()) === before50c);
+
+// 50d: preserve frozen element verbatim, change surrounding content -> allowed.
+await seedDoc(seed50);
+const newDoc50d = '<div data-rwa-frozen>FE_BODY</div>\n<div>NEW_TAIL_50D</div>';
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: {
+      role: 'assistant', content: '',
+      tool_calls: [{ id: 'rd50_d', type: 'function', function: {
+        name: 'replace_document',
+        arguments: JSON.stringify({ version: 'rwa-edit/1', doc: newDoc50d, reason: 'change tail only' }),
+      } }],
+    } }],
+  }),
+});
+await window.modify('change tail, preserve frozen elem');
+await new Promise(r => setTimeout(r, 100));
+check('50d: replace_document preserving frozen elem allowed', (await window.getDoc()) === newDoc50d);
+
 console.log('\n== Summary ==');
 console.log(`pass: ${pass}, fail: ${fail}`);
 process.exit(fail > 0 ? 1 : 0);
