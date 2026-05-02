@@ -2404,6 +2404,35 @@ await new Promise(r => setTimeout(r, 100));
 const mount68c = window.document.getElementById('rwa-doc-mount').innerHTML;
 check('68c: mount updates after second successful modify', mount68c.includes('SYNC_FINAL_68') && !mount68c.includes('SYNC_INITIAL_68'));
 
+// Test 69: doc with CRLF gets normalized to LF on first apply_edits.
+// The runtime canonLF()s `cur = canonLF(await getDoc())` before any splice,
+// so even a doc seeded with CRLF (e.g., from a Windows hand-edit) produces
+// LF-only output on commit. Pin this normalization down so the spec's
+// LF-canonical invariant doesn't drift.
+console.log('\n== Test 69: doc normalized to LF on first edit ==');
+await seedDoc('<div>line1\r\nline2\r\nLINE_69_ANCHOR</div>');
+const docInitial69 = await window.getDoc();
+check('69: seeded doc has CR characters', docInitial69.includes('\r'));
+
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: {
+      role: 'assistant', content: '',
+      tool_calls: [{ id: 'norm69', type: 'function', function: {
+        name: 'apply_edits',
+        arguments: JSON.stringify({ version: 'rwa-edit/1',
+          edits: [{ find: 'LINE_69_ANCHOR', replace: 'LINE_69_REPLACED' }] }),
+      } }],
+    } }],
+  }),
+});
+await window.modify('normalize doc to LF on edit');
+await new Promise(r => setTimeout(r, 100));
+const docAfter69 = await window.getDoc();
+check('69: doc has no CR characters after edit (canonLF applied)', !docAfter69.includes('\r'));
+check('69: edit applied (anchor replaced with LF-canonical content)', docAfter69.includes('LINE_69_REPLACED'));
+check('69: original line structure preserved as LF-only', docAfter69.includes('line1\nline2\n'));
+
 console.log('\n== Summary ==');
 console.log(`pass: ${pass}, fail: ${fail}`);
 process.exit(fail > 0 ? 1 : 0);
