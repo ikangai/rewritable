@@ -2433,6 +2433,93 @@ check('69: doc has no CR characters after edit (canonLF applied)', !docAfter69.i
 check('69: edit applied (anchor replaced with LF-canonical content)', docAfter69.includes('LINE_69_REPLACED'));
 check('69: original line structure preserved as LF-only', docAfter69.includes('line1\nline2\n'));
 
+// Tests 70-72: frozen-zone name regex coverage + mismatched markers.
+// The runtime restricts zone names to [A-Za-z0-9_-]+. Names with digits
+// and underscores/hyphens must match; names with dots etc. fail to match
+// and the zone is silently ignored. Mismatched begin/end marker styles
+// register as unterminated and fail-close all modifies.
+console.log('\n== Tests 70-72: frozen-zone name regex + mismatched markers ==');
+
+// 70a: zone name made entirely of digits.
+await seedDoc('<!-- rwa:frozen:begin 12345 -->\nFROZEN_70A_INNER\n<!-- rwa:frozen:end 12345 -->\n<div>tail-70a</div>');
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: {
+      role: 'assistant', content: '',
+      tool_calls: [{ id: 'fz70_a', type: 'function', function: {
+        name: 'apply_edits',
+        arguments: JSON.stringify({ version: 'rwa-edit/1',
+          edits: [{ find: 'FROZEN_70A_INNER', replace: 'TAMPERED_70A' }] }),
+      } }],
+    } }],
+  }),
+});
+const before70a = await window.getDoc();
+await window.modify('mutate inside digit-named zone');
+await new Promise(r => setTimeout(r, 200));
+check('70a: zone with all-digit name still enforced', (await window.getDoc()) === before70a);
+
+// 70b: zone name with underscores and hyphens.
+await seedDoc('<!-- rwa:frozen:begin my_zone-2 -->\nFROZEN_70B_INNER\n<!-- rwa:frozen:end my_zone-2 -->\n<div>tail-70b</div>');
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: {
+      role: 'assistant', content: '',
+      tool_calls: [{ id: 'fz70_b', type: 'function', function: {
+        name: 'apply_edits',
+        arguments: JSON.stringify({ version: 'rwa-edit/1',
+          edits: [{ find: 'FROZEN_70B_INNER', replace: 'TAMPERED_70B' }] }),
+      } }],
+    } }],
+  }),
+});
+const before70b = await window.getDoc();
+await window.modify('mutate inside underscore-hyphen named zone');
+await new Promise(r => setTimeout(r, 200));
+check('70b: zone with underscore/hyphen name enforced', (await window.getDoc()) === before70b);
+
+// 71: mismatched begin/end opener types -> begin registers as unterminated,
+// fails-close every modify until the marker is fixed externally.
+await seedDoc('<!-- rwa:frozen:begin mismatch -->\nMISMATCH_INNER\n/* rwa:frozen:end mismatch */\n<div>tail-71</div>');
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: {
+      role: 'assistant', content: '',
+      tool_calls: [{ id: 'fz71', type: 'function', function: {
+        name: 'apply_edits',
+        arguments: JSON.stringify({ version: 'rwa-edit/1',
+          edits: [{ find: 'tail-71', replace: 'tail-71-CHANGED' }] }),
+      } }],
+    } }],
+  }),
+});
+const before71 = await window.getDoc();
+await window.modify('modify on doc with mismatched markers');
+await new Promise(r => setTimeout(r, 200));
+check('71: mismatched begin/end opener fails-close all modifies', (await window.getDoc()) === before71);
+
+// 72: zone name with characters outside [A-Za-z0-9_-] doesn't match the begin
+// regex; the zone is silently unrecognized so edits inside it are allowed.
+// This is intentional: stricter author validation is out of scope; runtime
+// just enforces what it can parse.
+await seedDoc('<!-- rwa:frozen:begin zone.with.dots -->\nINNER_72\n<!-- rwa:frozen:end zone.with.dots -->\n<div>tail-72</div>');
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: {
+      role: 'assistant', content: '',
+      tool_calls: [{ id: 'fz72', type: 'function', function: {
+        name: 'apply_edits',
+        arguments: JSON.stringify({ version: 'rwa-edit/1',
+          edits: [{ find: 'INNER_72', replace: 'CHANGED_72' }] }),
+      } }],
+    } }],
+  }),
+});
+await window.modify('mutate inside unrecognized-name zone');
+await new Promise(r => setTimeout(r, 100));
+const after72 = await window.getDoc();
+check('72: zone with name containing dots is not enforced (silently ignored)', after72.includes('CHANGED_72'));
+
 console.log('\n== Summary ==');
 console.log(`pass: ${pass}, fail: ${fail}`);
 process.exit(fail > 0 ? 1 : 0);
