@@ -3176,6 +3176,63 @@ await window.modify('leading whitespace anchor');
 await new Promise(r => setTimeout(r, 100));
 check('98: leading-whitespace anchor matched and consumed entire doc', (await window.getDoc()) === 'LEAD_98_DONE');
 
+// Test 99: edit object with no `replace` field defaults to '' (deletion).
+// The runtime does `const replaceRaw = edit.replace || ''` — pin down so
+// a future strict shape check doesn't break models that legitimately omit it.
+console.log('\n== Test 99: edit with omitted replace defaults to delete ==');
+await seedDoc('<div>before-TARGET_99-after</div>');
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: { role: 'assistant', content: '', tool_calls: [{
+      id: 'omit_r', type: 'function', function: {
+        name: 'apply_edits',
+        arguments: JSON.stringify({ version: 'rwa-edit/1', edits: [{ find: 'TARGET_99' }] }),
+      },
+    }] } }],
+  }),
+});
+await window.modify('omit replace field');
+await new Promise(r => setTimeout(r, 100));
+check('99: edit with no replace field deletes anchor cleanly', (await window.getDoc()) === '<div>before--after</div>');
+
+// Test 100: edits[].reason is an optional field per the schema.
+console.log('\n== Test 100: edit-level reason field accepted ==');
+await seedDoc('<div>R100_TARGET</div>');
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: { role: 'assistant', content: '', tool_calls: [{
+      id: 'edit_r', type: 'function', function: {
+        name: 'apply_edits',
+        arguments: JSON.stringify({ version: 'rwa-edit/1', edits: [{
+          find: 'R100_TARGET', replace: 'R100_DONE', reason: 'documenting change',
+        }] }),
+      },
+    }] } }],
+  }),
+});
+await window.modify('edit-level reason');
+await new Promise(r => setTimeout(r, 100));
+check('100: per-edit reason field accepted, edit applied', (await window.getDoc()) === '<div>R100_DONE</div>');
+
+// Test 101: envelope.reason on apply_edits is also optional/accepted.
+console.log('\n== Test 101: envelope reason field accepted on apply_edits ==');
+await seedDoc('<div>ENV_R_TARGET</div>');
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: { role: 'assistant', content: '', tool_calls: [{
+      id: 'env_r', type: 'function', function: {
+        name: 'apply_edits',
+        arguments: JSON.stringify({ version: 'rwa-edit/1',
+          reason: 'overall description of the batch',
+          edits: [{ find: 'ENV_R_TARGET', replace: 'ENV_R_DONE' }] }),
+      },
+    }] } }],
+  }),
+});
+await window.modify('envelope-level reason');
+await new Promise(r => setTimeout(r, 100));
+check('101: envelope.reason field on apply_edits accepted', (await window.getDoc()) === '<div>ENV_R_DONE</div>');
+
 console.log('\n== Summary ==');
 console.log(`pass: ${pass}, fail: ${fail}`);
 process.exit(fail > 0 ? 1 : 0);
