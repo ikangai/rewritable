@@ -1,5 +1,6 @@
 autoresearch-results.tsv
 .autoresearch-starred
+debug/
 node_modules/
 cli/seeds/
 
