@@ -2892,6 +2892,28 @@ const after87 = await window.getDoc();
 check('87: retry switching apply_edits → replace_document committed', after87 === '<div>RD_AFTER_RETRY_87</div>');
 check('87: exactly 2 fetches (no more attempts after success)', switch87Calls === 2);
 
+// Test 88: fetch URL, method, headers, and body shape. The runtime calls
+// OpenRouter's chat/completions endpoint with Bearer auth and a specific
+// JSON body shape. A regression in any of these would silently break
+// every modify request — these tests are infrastructure pin-downs.
+console.log('\n== Test 88: fetch URL, method, headers, body shape ==');
+let url88 = null, opts88 = null, body88 = null;
+fetchHandler = async (url, opts) => {
+  url88 = url;
+  opts88 = opts;
+  body88 = JSON.parse(opts.body);
+  return ({ ok: true, json: async () => ({ choices: [{ message: { role: 'assistant', content: 'noop' } }] }) });
+};
+await window.modify('inspect fetch shape');
+await new Promise(r => setTimeout(r, 100));
+check('88: URL is OpenRouter chat/completions endpoint', url88 === 'https://openrouter.ai/api/v1/chat/completions');
+check('88: HTTP method is POST', opts88?.method === 'POST');
+check('88: Authorization header uses Bearer scheme', typeof opts88?.headers?.Authorization === 'string' && opts88.headers.Authorization.startsWith('Bearer '));
+check('88: Content-Type header is application/json', opts88?.headers?.['Content-Type'] === 'application/json');
+check('88: body.model is a non-empty string', typeof body88?.model === 'string' && body88.model.length > 0);
+check('88: body.max_tokens is set to a generous value', typeof body88?.max_tokens === 'number' && body88.max_tokens >= 8000);
+check('88: body.messages = [system, user]', body88?.messages?.length === 2 && body88?.messages?.[0]?.role === 'system' && body88?.messages?.[1]?.role === 'user');
+
 console.log('\n== Summary ==');
 console.log(`pass: ${pass}, fail: ${fail}`);
 process.exit(fail > 0 ? 1 : 0);
