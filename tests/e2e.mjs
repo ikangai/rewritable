@@ -2040,6 +2040,80 @@ check('58: hist[0] is most-recent edit_batch (newest)', histOrder[0]?.kind === '
 check('58: hist[1] is replace_document (middle)', histOrder[1]?.kind === 'replace_document');
 check('58: hist[2] is original edit_batch (oldest)', histOrder[2]?.kind === 'edit_batch');
 
+// Test 59: multiple frozen zones in one doc — all preserved on outside-edit,
+// edits inside any zone rejected. The runtime tracks zones in a Map keyed
+// by name; this verifies that map is populated and consulted for every zone.
+console.log('\n== Test 59: multiple frozen zones in one doc ==');
+const multiZoneSeed =
+  '<style>\n' +
+  '/* rwa:frozen:begin colors */\n' +
+  ':root { --primary-multi: blue; }\n' +
+  '/* rwa:frozen:end colors */\n' +
+  '/* rwa:frozen:begin spacing */\n' +
+  ':root { --gap-multi: 12px; }\n' +
+  '/* rwa:frozen:end spacing */\n' +
+  '</style>\n' +
+  '<div>multi-zone-tail</div>';
+
+// 59a: edit OUTSIDE both zones allowed; both zone interiors preserved.
+await seedDoc(multiZoneSeed);
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: {
+      role: 'assistant', content: '',
+      tool_calls: [{ id: 'mfz_a', type: 'function', function: {
+        name: 'apply_edits',
+        arguments: JSON.stringify({ version: 'rwa-edit/1',
+          edits: [{ find: 'multi-zone-tail', replace: 'multi-zone-tail-CHANGED' }] }),
+      } }],
+    } }],
+  }),
+});
+await window.modify('edit outside both zones');
+await new Promise(r => setTimeout(r, 100));
+const after59a = await window.getDoc();
+check('59a: edit outside multiple zones allowed', after59a.includes('multi-zone-tail-CHANGED'));
+check('59a: first zone (colors) inner preserved', after59a.includes('--primary-multi: blue'));
+check('59a: second zone (spacing) inner preserved', after59a.includes('--gap-multi: 12px'));
+
+// 59b: edit INSIDE the first zone (colors) rejected.
+await seedDoc(multiZoneSeed);
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: {
+      role: 'assistant', content: '',
+      tool_calls: [{ id: 'mfz_b', type: 'function', function: {
+        name: 'apply_edits',
+        arguments: JSON.stringify({ version: 'rwa-edit/1',
+          edits: [{ find: '--primary-multi: blue', replace: '--primary-multi: red' }] }),
+      } }],
+    } }],
+  }),
+});
+const before59b = await window.getDoc();
+await window.modify('mutate first zone');
+await new Promise(r => setTimeout(r, 200));
+check('59b: edit inside first zone (colors) rejected', (await window.getDoc()) === before59b);
+
+// 59c: edit INSIDE the second zone (spacing) rejected.
+await seedDoc(multiZoneSeed);
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: {
+      role: 'assistant', content: '',
+      tool_calls: [{ id: 'mfz_c', type: 'function', function: {
+        name: 'apply_edits',
+        arguments: JSON.stringify({ version: 'rwa-edit/1',
+          edits: [{ find: '--gap-multi: 12px', replace: '--gap-multi: 99px' }] }),
+      } }],
+    } }],
+  }),
+});
+const before59c = await window.getDoc();
+await window.modify('mutate second zone');
+await new Promise(r => setTimeout(r, 200));
+check('59c: edit inside second zone (spacing) rejected', (await window.getDoc()) === before59c);
+
 console.log('\n== Summary ==');
 console.log(`pass: ${pass}, fail: ${fail}`);
 process.exit(fail > 0 ? 1 : 0);
