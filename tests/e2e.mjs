@@ -930,6 +930,32 @@ for (const [label, payload] of RESERVED_SAMPLES) {
   check('reserved marker rejected in replace: ' + label, (await window.getDoc()) === before);
 }
 
+// Tests 31-36: same reserved-marker rejection but on the find side. The model
+// might try to anchor on a frozen-zone marker to splice content right next to
+// it; the runtime must refuse so authors keep exclusive control of those
+// substrings. Mirrors Tests 25-30.
+console.log('\n== Tests 31-36: reserved-marker rejection in find ==');
+for (const [label, payload] of RESERVED_SAMPLES) {
+  fetchHandler = async () => ({
+    ok: true, json: async () => ({
+      choices: [{ message: {
+        role: 'assistant', content: '',
+        tool_calls: [{ id: 'rfn_' + label.slice(0, 6), type: 'function', function: {
+          name: 'apply_edits',
+          arguments: JSON.stringify({
+            version: 'rwa-edit/1',
+            edits: [{ find: payload, replace: 'X' }],
+          }),
+        } }],
+      } }],
+    }),
+  });
+  const before = await window.getDoc();
+  await window.modify('reserved marker in find: ' + label);
+  await new Promise(r => setTimeout(r, 200));
+  check('reserved marker rejected in find: ' + label, (await window.getDoc()) === before);
+}
+
 console.log('\n== Summary ==');
 console.log(`pass: ${pass}, fail: ${fail}`);
 process.exit(fail > 0 ? 1 : 0);
