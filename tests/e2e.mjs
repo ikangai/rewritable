@@ -1007,6 +1007,67 @@ check('byte-fidelity: gamma paragraph (incl. NBSP+emoji) preserved verbatim', do
 check('byte-fidelity: trailing comment with U+2028 preserved', docAfter37.endsWith('<!-- trailing comment with   LSEP -->\n'));
 check('byte-fidelity: replacement inserted verbatim', docAfter37.includes(newBeta));
 
+// Tests 38a-e: undo() correctness on the success path. Test 1 only verified
+// the undo stack accumulates entries; test 10 only verified undo() bails
+// during in-flight ⌘K. Neither exercised the actual restoration semantics:
+// after popping, the doc must equal the prior state byte-for-byte.
+console.log('\n== Tests 38a-e: undo() restoration semantics ==');
+
+// Clear undo stack to isolate from the dozens of prior modifies that
+// stacked entries during tests 1-37.
+await new Promise((res, rej) => {
+  window.openDB().then(db => {
+    const r = db.transaction('rwa_undo', 'readwrite').objectStore('rwa_undo').put([], 'self');
+    r.onsuccess = res;
+    r.onerror = () => rej(r.error);
+  });
+});
+
+// 38a: undo on empty stack is a no-op (doc unchanged, no throw).
+const doc38a = await window.getDoc();
+await window.undo();
+await new Promise(r => setTimeout(r, 50));
+check('38a: undo on empty stack leaves doc byte-identical', (await window.getDoc()) === doc38a);
+
+// 38b/c: a fresh modify then undo restores doc byte-equally.
+const checkpoint38 = await window.getDoc();
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: {
+      role: 'assistant', content: '',
+      tool_calls: [{ id: 'call_u_b', type: 'function', function: {
+        name: 'apply_edits',
+        arguments: JSON.stringify({ version: 'rwa-edit/1',
+          edits: [{ find: newBeta, replace: '<p data-id="beta">UNDO_38_TARGET</p>' }] }),
+      } }],
+    } }],
+  }),
+});
+await window.modify('install undo target');
+await new Promise(r => setTimeout(r, 100));
+check('38b: modify took effect (UNDO_38_TARGET present)', (await window.getDoc()).includes('UNDO_38_TARGET'));
+
+await window.undo();
+await new Promise(r => setTimeout(r, 50));
+const afterUndo38 = await window.getDoc();
+check('38c: undo restored doc byte-equally to checkpoint', afterUndo38 === checkpoint38);
+check('38c: undo target removed', !afterUndo38.includes('UNDO_38_TARGET'));
+
+// 38d/e: stack is empty after the single undo; second undo is also a no-op.
+const undoStackAfter = await new Promise((res, rej) => {
+  window.openDB().then(db => {
+    const r = db.transaction('rwa_undo').objectStore('rwa_undo').get('self');
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+  });
+});
+check('38d: undo stack drained to empty after pop', Array.isArray(undoStackAfter) && undoStackAfter.length === 0);
+
+const doc38e = await window.getDoc();
+await window.undo();
+await new Promise(r => setTimeout(r, 50));
+check('38e: second undo on now-empty stack is also a no-op', (await window.getDoc()) === doc38e);
+
 console.log('\n== Summary ==');
 console.log(`pass: ${pass}, fail: ${fail}`);
 process.exit(fail > 0 ? 1 : 0);
