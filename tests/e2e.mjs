@@ -1859,6 +1859,75 @@ await window.modify('no-op edit');
 await new Promise(r => setTimeout(r, 100));
 check('54: no-op edit succeeds with doc byte-equal', (await window.getDoc()) === before54);
 
+// Test 55: progressive failure types across retry attempts. Test 2 covers
+// a single retry of the same failure type; this exercises three distinct
+// failure modes in sequence (find_not_unique → frozen_zone_violation →
+// success). Each retry must feed back the correct error code so the model
+// can change strategy mid-conversation.
+console.log('\n== Test 55: progressive failure types across retries ==');
+await seedDoc('<div>PROG_A</div>\n<div>PROG_A</div>\n<div>PROG_TARGET</div>');
+
+let prog55Calls = 0;
+fetchHandler = async (url, opts) => {
+  prog55Calls++;
+  if (prog55Calls === 1) {
+    return {
+      ok: true, json: async () => ({
+        choices: [{ message: {
+          role: 'assistant', content: '',
+          tool_calls: [{ id: 'p55_1', type: 'function', function: {
+            name: 'apply_edits',
+            arguments: JSON.stringify({ version: 'rwa-edit/1',
+              edits: [{ find: 'PROG_A', replace: 'X' }] }),
+          } }],
+        } }],
+      }),
+    };
+  }
+  if (prog55Calls === 2) {
+    const body = JSON.parse(opts.body);
+    const last = body.messages.at(-1);
+    check('55: attempt 2 received prior failure as tool_result', last.role === 'tool');
+    const payload = JSON.parse(last.content);
+    check('55: attempt 2 saw find_not_unique code', payload.code === 'find_not_unique');
+    return {
+      ok: true, json: async () => ({
+        choices: [{ message: {
+          role: 'assistant', content: '',
+          tool_calls: [{ id: 'p55_2', type: 'function', function: {
+            name: 'apply_edits',
+            arguments: JSON.stringify({ version: 'rwa-edit/1',
+              edits: [{ find: 'PROG_TARGET', replace: 'data-rwa-frozen content' }] }),
+          } }],
+        } }],
+      }),
+    };
+  }
+  // attempt 3: success after a different failure feedback
+  const body = JSON.parse(opts.body);
+  const last = body.messages.at(-1);
+  check('55: attempt 3 received prior failure as tool_result', last.role === 'tool');
+  const payload = JSON.parse(last.content);
+  check('55: attempt 3 saw frozen_zone_violation code', payload.code === 'frozen_zone_violation');
+  return {
+    ok: true, json: async () => ({
+      choices: [{ message: {
+        role: 'assistant', content: '',
+        tool_calls: [{ id: 'p55_3', type: 'function', function: {
+          name: 'apply_edits',
+          arguments: JSON.stringify({ version: 'rwa-edit/1',
+            edits: [{ find: 'PROG_TARGET', replace: 'PROG_FINAL' }] }),
+        } }],
+      } }],
+    }),
+  };
+};
+
+await window.modify('progressive failures');
+await new Promise(r => setTimeout(r, 200));
+check('55: 3rd attempt succeeded — PROG_FINAL committed', (await window.getDoc()).includes('PROG_FINAL'));
+check('55: exactly 3 fetches consumed (within retry budget)', prog55Calls === 3);
+
 console.log('\n== Summary ==');
 console.log(`pass: ${pass}, fail: ${fail}`);
 process.exit(fail > 0 ? 1 : 0);
