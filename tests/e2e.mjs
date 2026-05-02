@@ -2608,6 +2608,47 @@ await window.modify('non-overlapping anchor match');
 await new Promise(r => setTimeout(r, 100));
 check('75: non-overlapping single match accepted, splice at position 0', (await window.getDoc()) === '<div>YYYXaa</div>');
 
+// Test 76: find_not_unique tool_result content structure. Test 2 only checks
+// the array existence; this verifies the count, the hint structure (pos,
+// before, after), and the cap at max=3 — these fields drive the model's
+// next-attempt strategy, so silent regressions break recovery.
+console.log('\n== Test 76: find_not_unique hint structure ==');
+await seedDoc('<div>HINT_TARGET_76</div>\n<div>HINT_TARGET_76</div>\n<div>HINT_TARGET_76</div>\n<div>HINT_TARGET_76</div>');
+let h76Calls = 0;
+let firstHints76 = null;
+fetchHandler = async (url, opts) => {
+  h76Calls++;
+  if (h76Calls === 1) {
+    return ({
+      ok: true, json: async () => ({
+        choices: [{ message: { role: 'assistant', content: '', tool_calls: [{
+          id: 'h76_1', type: 'function', function: {
+            name: 'apply_edits',
+            arguments: JSON.stringify({ version: 'rwa-edit/1',
+              edits: [{ find: 'HINT_TARGET_76', replace: 'X' }] }),
+          },
+        }] } }],
+      }),
+    });
+  }
+  const body = JSON.parse(opts.body);
+  const last = body.messages.at(-1);
+  if (last.role === 'tool') {
+    firstHints76 = JSON.parse(last.content);
+  }
+  return ({
+    ok: true, json: async () => ({
+      choices: [{ message: { role: 'assistant', content: 'no further attempt' } }],
+    }),
+  });
+};
+await window.modify('intentionally non-unique to inspect hint structure');
+await new Promise(r => setTimeout(r, 200));
+check('76: tool_result code is find_not_unique', firstHints76?.code === 'find_not_unique');
+check('76: tool_result count reflects 4 occurrences', firstHints76?.count === 4);
+check('76: hints array entries have pos/before/after structure', firstHints76?.hints?.[0] && 'pos' in firstHints76.hints[0] && 'before' in firstHints76.hints[0] && 'after' in firstHints76.hints[0]);
+check('76: hints capped at max=3 even when more matches exist', firstHints76?.hints?.length <= 3 && firstHints76?.hints?.length > 0);
+
 console.log('\n== Summary ==');
 console.log(`pass: ${pass}, fail: ${fail}`);
 process.exit(fail > 0 ? 1 : 0);
