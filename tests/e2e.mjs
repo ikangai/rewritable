@@ -2343,6 +2343,67 @@ await new Promise(r => setTimeout(r, 100));
 const after67 = await window.getDoc();
 check('67: replace="" deletes matched text exactly, surroundings preserved', after67 === '<div>before--after</div>');
 
+// Tests 68a-c: render mount stays in sync with doc after modifies.
+// renderDoc() is called by the runtime only on successful modifies. A
+// rejected modify must leave the mount byte-identical so the user sees
+// stable UI even when the agent fails. A subsequent success must update.
+console.log('\n== Tests 68a-c: render mount sync with doc state ==');
+
+// 68a: seed and run a successful modify; mount reflects new content.
+await seedDoc('<div>SYNC_BEFORE_68</div>');
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: {
+      role: 'assistant', content: '',
+      tool_calls: [{ id: 's68_init', type: 'function', function: {
+        name: 'apply_edits',
+        arguments: JSON.stringify({ version: 'rwa-edit/1',
+          edits: [{ find: 'SYNC_BEFORE_68', replace: 'SYNC_INITIAL_68' }] }),
+      } }],
+    } }],
+  }),
+});
+await window.modify('initialize mount sync');
+await new Promise(r => setTimeout(r, 100));
+const mount68a = window.document.getElementById('rwa-doc-mount').innerHTML;
+check('68a: mount reflects new content after successful modify', mount68a.includes('SYNC_INITIAL_68'));
+
+// 68b: reject a modify; mount unchanged.
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: {
+      role: 'assistant', content: '',
+      tool_calls: [{ id: 's68_rej', type: 'function', function: {
+        name: 'apply_edits',
+        arguments: JSON.stringify({ version: 'rwa-edit/1',
+          edits: [{ find: 'NEVER_PRESENT_68', replace: 'X' }] }),
+      } }],
+    } }],
+  }),
+});
+await window.modify('rejected modify');
+await new Promise(r => setTimeout(r, 200));
+const mount68b = window.document.getElementById('rwa-doc-mount').innerHTML;
+check('68b: mount unchanged after rejected modify', mount68b === mount68a);
+
+// 68c: subsequent successful modify updates mount again.
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: {
+      role: 'assistant', content: '',
+      tool_calls: [{ id: 's68_2', type: 'function', function: {
+        name: 'apply_edits',
+        arguments: JSON.stringify({ version: 'rwa-edit/1',
+          edits: [{ find: 'SYNC_INITIAL_68', replace: 'SYNC_FINAL_68' }] }),
+      } }],
+    } }],
+  }),
+});
+await window.modify('second successful modify');
+await new Promise(r => setTimeout(r, 100));
+const mount68c = window.document.getElementById('rwa-doc-mount').innerHTML;
+check('68c: mount updates after second successful modify', mount68c.includes('SYNC_FINAL_68') && !mount68c.includes('SYNC_INITIAL_68'));
+
 console.log('\n== Summary ==');
 console.log(`pass: ${pass}, fail: ${fail}`);
 process.exit(fail > 0 ? 1 : 0);
