@@ -956,6 +956,57 @@ for (const [label, payload] of RESERVED_SAMPLES) {
   check('reserved marker rejected in find: ' + label, (await window.getDoc()) === before);
 }
 
+// Test 37: end-to-end byte-fidelity. Install a doc with multiple segments
+// (text, unicode, emoji, exotic whitespace), apply a uniquely-anchored edit,
+// and assert byte-equality with a hand-constructed expected string. This is
+// the most direct possible test of "edits don't change unintended bytes" —
+// any drift in the splice arithmetic, canonLF order, surrogate pair handling,
+// or trailing-newline preservation would surface here.
+console.log('\n== Test 37: end-to-end byte-fidelity (multi-segment + unicode) ==');
+const fidelitySeed =
+  '<p data-id="alpha">Alpha — Α — \u{1F600}</p>\n' +
+  '<p data-id="beta">Beta · Β · \u{1F4A1}</p>\n' +
+  '<p data-id="gamma">Gamma Γ \u{1F525}</p>\n' +
+  '<!-- trailing comment with   LSEP -->\n';
+await new Promise((res, rej) => {
+  window.openDB().then(db => {
+    const r = db.transaction('rwa_doc', 'readwrite').objectStore('rwa_doc').put(fidelitySeed, 'self');
+    r.onsuccess = res;
+    r.onerror = () => rej(r.error);
+  });
+});
+
+const newBeta = '<p data-id="beta">Beta · Β · \u{1F4A1} (rewritten)</p>';
+const expectedAfter37 =
+  '<p data-id="alpha">Alpha — Α — \u{1F600}</p>\n' +
+  newBeta + '\n' +
+  '<p data-id="gamma">Gamma Γ \u{1F525}</p>\n' +
+  '<!-- trailing comment with   LSEP -->\n';
+
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: {
+      role: 'assistant', content: '',
+      tool_calls: [{ id: 'call_byte', type: 'function', function: {
+        name: 'apply_edits',
+        arguments: JSON.stringify({
+          version: 'rwa-edit/1',
+          edits: [{ find: '<p data-id="beta">Beta · Β · \u{1F4A1}</p>', replace: newBeta }],
+        }),
+      } }],
+    } }],
+  }),
+});
+
+await window.modify('rewrite beta paragraph');
+await new Promise(r => setTimeout(r, 100));
+const docAfter37 = await window.getDoc();
+check('byte-fidelity: full doc equals expected exactly', docAfter37 === expectedAfter37);
+check('byte-fidelity: alpha paragraph (incl. emoji) byte-identical', docAfter37.startsWith('<p data-id="alpha">Alpha — Α — \u{1F600}</p>\n'));
+check('byte-fidelity: gamma paragraph (incl. NBSP+emoji) preserved verbatim', docAfter37.includes('<p data-id="gamma">Gamma Γ \u{1F525}</p>'));
+check('byte-fidelity: trailing comment with U+2028 preserved', docAfter37.endsWith('<!-- trailing comment with   LSEP -->\n'));
+check('byte-fidelity: replacement inserted verbatim', docAfter37.includes(newBeta));
+
 console.log('\n== Summary ==');
 console.log(`pass: ${pass}, fail: ${fail}`);
 process.exit(fail > 0 ? 1 : 0);
