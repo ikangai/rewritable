@@ -2731,6 +2731,62 @@ await new Promise(r => setTimeout(r, 100));
 const after80 = await window.getDoc();
 check('80: replace string with tabs/multi-spaces preserved verbatim', after80 === '<div>' + wsContent80 + '</div>');
 
+// Test 81: when modify retries, the assistant message echoed back must
+// preserve the original assistant content (chain-of-thought / explanation),
+// not just the consumed tool_call. Some providers reject empty-string
+// content on retried assistant turns; this also gives the model context
+// for its next attempt.
+console.log('\n== Test 81: retry preserves original assistant content ==');
+await seedDoc('<div>ECHO_TARGET_81</div>');
+let echo81Calls = 0;
+let retryAssistant81 = null;
+fetchHandler = async (url, opts) => {
+  echo81Calls++;
+  if (echo81Calls === 1) {
+    return ({
+      ok: true, json: async () => ({
+        choices: [{ message: { role: 'assistant', content: 'I am attempting an edit on this anchor', tool_calls: [{
+          id: 'echo81_1', type: 'function', function: {
+            name: 'apply_edits',
+            arguments: JSON.stringify({ version: 'rwa-edit/1',
+              edits: [{ find: 'NEVER_PRESENT_ECHO_81', replace: 'X' }] }),
+          },
+        }] } }],
+      }),
+    });
+  }
+  const body = JSON.parse(opts.body);
+  retryAssistant81 = [...body.messages].reverse().find(m => m.role === 'assistant');
+  return ({
+    ok: true, json: async () => ({
+      choices: [{ message: { role: 'assistant', content: 'declined further attempts' } }],
+    }),
+  });
+};
+await window.modify('echo content test');
+await new Promise(r => setTimeout(r, 200));
+check('81: retry assistant message preserves original content verbatim', retryAssistant81?.content === 'I am attempting an edit on this anchor');
+check('81: retry assistant message carries the consumed tool_call', retryAssistant81?.tool_calls?.length === 1 && retryAssistant81?.tool_calls?.[0]?.id === 'echo81_1');
+
+// Test 82: text-only response (no tool_calls) terminates immediately with
+// no retries — modify() returns from inside the loop. A regression that
+// looped on text-only would burn the retry budget for nothing.
+console.log('\n== Test 82: text-only response triggers single fetch ==');
+await seedDoc('<div>NO_RETRY_82</div>');
+let textOnly82Calls = 0;
+fetchHandler = async () => {
+  textOnly82Calls++;
+  return ({
+    ok: true, json: async () => ({
+      choices: [{ message: { role: 'assistant', content: 'I refuse to edit' } }],
+    }),
+  });
+};
+await window.modify('text-only decline');
+await new Promise(r => setTimeout(r, 300));
+check('82: text-only response = single fetch (no retry)', textOnly82Calls === 1);
+check('82: doc unchanged after text-only response', (await window.getDoc()) === '<div>NO_RETRY_82</div>');
+
 console.log('\n== Summary ==');
 console.log(`pass: ${pass}, fail: ${fail}`);
 process.exit(fail > 0 ? 1 : 0);
