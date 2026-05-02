@@ -16,7 +16,7 @@ A re-writeable file is a `.html` file that:
 
 1. **Renders itself** — open it in any browser, it runs
 2. **Stores itself** — its working state lives in IndexedDB; the file itself is the durable record
-3. **Modifies itself** — an embedded agent rewrites the document on instruction
+3. **Modifies itself** — an embedded agent rewrites the document via anchor-based surgical edits, validated and committed atomically; failed edits leave the document untouched
 4. **Commits itself** — the current state is written back into the file, in place when the browser allows it, as a download otherwise
 5. **Requires nothing** — no server, no install, no build step, no account
 

@@ -2,6 +2,35 @@
 
 Notable changes to `re-write-able`. The container format is versioned in `re-write-able-spec.md`; the edit protocol in `rwa-edit-spec.md`. The CLI follows semver in `cli/package.json`.
 
+## 2026-05-02 — hardening: undo race, FSA stale handle, parallel tool_calls
+
+Three correctness fixes on the rwa-edit/1 modify pathway, found by an autonomous bug-hunt over the runtime, CLI, service, and tests. All landed against the canonical seed and were regenerated into `hello.html` and `re-write-able-spec.html`. The container spec stays at v0.8 and the edit protocol stays at rwa-edit/1 (v1.4) — these are implementation corrections, not contract changes.
+
+### What changed
+
+- **`⌘Z` is now rejected while a `⌘K` is in flight** (HIGH). Previously, an undo pressed during the agent's fetch would `popUndo` and write `rwa_doc`, then `commitDoc` resolving inside `modify()` would clobber the doc and re-push the *pre-undo* doc onto the undo stack — silently destroying the user's revert and the popped state. `undo()` now checks `modifyMutex` and surfaces `✗ modify in progress`. The popped state is preserved for the next `⌘Z` once the modify completes.
+- **Stale `FileSystemFileHandle` is purged on permission denial** (MEDIUM). When a saved handle's permission could not be regranted (file moved, access revoked, OS-level lockout), `commit()` fell through to a download blob — but left the dead handle in IDB, so every subsequent `⌘S` repeated the cycle and downloaded forever. The handle is now deleted from `rwa_<DOC_UUID>.rwa_fsa` on `permission !== 'granted'`, and the next `⌘S` re-prompts via `showSaveFilePicker`.
+- **Parallel `tool_calls` no longer break retries** (MEDIUM). When the model emits two or more `tool_calls` in one assistant message, the runtime processes only the first. Previously, the failure feedback loop echoed the *full* `tool_calls` array back into the conversation but only emitted a `tool_result` for the consumed call — providers (OpenAI/OpenRouter spec) reject any assistant message whose `tool_calls` aren't all paired with `tool_results` on the next turn, so the next fetch returned HTTP 400 and the user saw a provider error instead of the structured rwa-edit retry. The runtime now echoes only `[tc]`.
+
+### What changed for the seed
+
+- New `idbDel` helper alongside `idbGet` / `idbPut`, scoped to a single read/write transaction.
+- `undo()` gains the `modifyMutex` early-return guard.
+- `commit()` calls `idbDel(RWA.FSA)` on the denied-permission branch and re-throws as `'permission denied — re-pick on next ⌘S'`.
+- `modify()` retries push `tool_calls: [tc]` (the consumed one) instead of the full `toolCalls` array, in both the malformed-JSON and the `RwaEditError` branches.
+
+### What changed for testing
+
+- `tests/e2e.mjs` grows from 26 to 33 assertions. Two new scenarios:
+    - **Test 10:** in-flight `⌘K` blocks `⌘Z`. Stubs `fetch` with a never-resolving promise, calls `modify()`, then awaits `undo()` and asserts the doc and the undo stack are unchanged. Resolves the fetch and asserts the modify completes cleanly.
+    - **Test 11:** a model response with two parallel `tool_calls` triggers a retry that echoes only the consumed call. Asserts the retry assistant message has exactly one `tool_call` and that its id matches the consumed one.
+- The FSA fix is *not* exercised in the harness: `FileSystemFileHandle` carries methods, and `fake-indexeddb`'s structured-clone roundtrip drops or rejects function-bearing values, so jsdom can't faithfully simulate the denied-permission path. The fix is verified by inspection; integration coverage requires a real Chromium harness.
+
+### Backward compatibility
+
+- Existing IDB state is unaffected. Containers committed with the morning's rwa-edit/1 bootstrap continue to work; their bootstrap upgrades only on the next `⌘S`.
+- The bootstrap byte-identity invariant still holds: any container's bootstrap is byte-identical to any other (modulo `DOC_UUID`, `RWA.FILE`, and `INLINE_DOC` body) within a release. Across the morning and afternoon releases of 2026-05-02, the bootstrap differs by ~12 lines.
+
 ## 2026-05-02 — rwa-edit/1 anchor-based modify pathway
 
 The headline change: the agent now edits documents via **surgical anchor-based edits** instead of returning a fully rewritten document. Format drift across edits — the slow accumulation of model-driven whitespace, attribute reordering, comment removal, "improvements" to class names — is eliminated, because the model never re-emits the unchanged regions.
