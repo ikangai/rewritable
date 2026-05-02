@@ -2172,6 +2172,60 @@ check('60c: hist envelope find = successful attempt anchor', histProv[0]?.envelo
 check('60c: hist envelope replace = successful attempt replace', histProv[0]?.envelope?.edits?.[0]?.replace === 'HIST_PROV_FINAL');
 check('60c: hist envelope NOT contaminated with failed attempt anchor', histProv[0]?.envelope?.edits?.[0]?.find !== 'NOT_PRESENT_60');
 
+// Tests 61-62: cross-edit reserved-marker assembly. Each individual edit's
+// find/replace passes the per-edit containsReservedMarker check, but the
+// concatenated splice result contains a reserved substring or attribute.
+// The per-edit byte check can't catch this — the post-apply
+// extractFrozenZones / dataRwaFrozenSnapshot checks must.
+console.log('\n== Tests 61-62: cross-edit reserved-marker assembly ==');
+
+// 61: assemble "// rwa:frozen:begin sneaky\n" across two adjacent edits.
+// Caught because the post-apply extractFrozenZones flags the new
+// unterminated begin marker as error="unterminated".
+await seedDoc('<div>FRAG_PARTA-FRAG_PARTB</div>');
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: {
+      role: 'assistant', content: '',
+      tool_calls: [{ id: 'asm61', type: 'function', function: {
+        name: 'apply_edits',
+        arguments: JSON.stringify({ version: 'rwa-edit/1',
+          edits: [
+            { find: 'FRAG_PARTA', replace: '// rw' },
+            { find: '-FRAG_PARTB', replace: 'a:frozen:begin sneaky\n' },
+          ] }),
+      } }],
+    } }],
+  }),
+});
+const before61 = await window.getDoc();
+await window.modify('cross-edit assembly of frozen-zone marker');
+await new Promise(r => setTimeout(r, 200));
+check('61: cross-edit assembly of // rwa:frozen:begin rejected', (await window.getDoc()) === before61);
+
+// 62: assemble data-rwa-frozen attribute across two adjacent edits.
+// Caught by post-apply dataRwaFrozenSnapshot count mismatch.
+await seedDoc('<span FRAG2A-FRAG2B>cell</span>');
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: {
+      role: 'assistant', content: '',
+      tool_calls: [{ id: 'asm62', type: 'function', function: {
+        name: 'apply_edits',
+        arguments: JSON.stringify({ version: 'rwa-edit/1',
+          edits: [
+            { find: 'FRAG2A', replace: 'data-rwa-fr' },
+            { find: '-FRAG2B', replace: 'ozen' },
+          ] }),
+      } }],
+    } }],
+  }),
+});
+const before62 = await window.getDoc();
+await window.modify('cross-edit assembly of data-rwa-frozen attr');
+await new Promise(r => setTimeout(r, 200));
+check('62: cross-edit assembly of data-rwa-frozen rejected', (await window.getDoc()) === before62);
+
 console.log('\n== Summary ==');
 console.log(`pass: ${pass}, fail: ${fail}`);
 process.exit(fail > 0 ? 1 : 0);
