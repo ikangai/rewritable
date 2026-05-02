@@ -3370,6 +3370,57 @@ const result105b = await window.replaceDocument(
 );
 check('105b: replaceDocument returns the new doc directly', result105b === '<div>DIRECT_RD_NEW</div>');
 
+// Test 106: post-apply failures (frozen_zone_corrupted, structural_shape_changed,
+// reserved_id_used) are not tied to a specific edit index. The failure
+// tool_result must NOT include edit_index for these — including a misleading
+// edit_index would point the model at the wrong edit on retry.
+console.log('\n== Test 106: post-apply failure tool_result omits edit_index ==');
+await seedDoc('<div>FRAG106A-FRAG106B</div>');
+let cap106 = null;
+fetchHandler = async (url, opts) => {
+  const body = JSON.parse(opts.body);
+  const last = body.messages.at(-1);
+  if (last?.role === 'tool' && cap106 == null) {
+    cap106 = JSON.parse(last.content);
+  }
+  return ({
+    ok: true, json: async () => ({
+      choices: [{ message: { role: 'assistant', content: '', tool_calls: [{
+        id: 'pa_fail', type: 'function', function: {
+          name: 'apply_edits',
+          arguments: JSON.stringify({ version: 'rwa-edit/1', edits: [
+            { find: 'FRAG106A', replace: '// rw' },
+            { find: '-FRAG106B', replace: 'a:frozen:begin tomato_106\n' },
+          ] }),
+        },
+      }] } }],
+    }),
+  });
+};
+await window.modify('cross-edit assembly to trigger post-apply failure');
+await new Promise(r => setTimeout(r, 200));
+check('106: post-apply failure has code = frozen_zone_corrupted', cap106?.code === 'frozen_zone_corrupted');
+check('106: post-apply failure tool_result does NOT include edit_index', cap106 != null && !('edit_index' in cap106));
+
+// Test 107: replace_document commits envelope.doc verbatim — every byte
+// outside frozen zones must be exactly what the model sent.
+console.log('\n== Test 107: replace_document commits envelope.doc verbatim ==');
+await seedDoc('<div>RD_VERBATIM_SEED</div>');
+const exactDoc107 = '<div>RD_NEW_BODY_EXACT</div>\n<!--   comment with    weird   spacing   -->\n<span>extra-107</span>';
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: { role: 'assistant', content: '', tool_calls: [{
+      id: 'verb_rd', type: 'function', function: {
+        name: 'replace_document',
+        arguments: JSON.stringify({ version: 'rwa-edit/1', doc: exactDoc107, reason: 'verbatim commit test' }),
+      },
+    }] } }],
+  }),
+});
+await window.modify('rd verbatim commit');
+await new Promise(r => setTimeout(r, 100));
+check('107: replace_document committed the doc exactly as sent', (await window.getDoc()) === exactDoc107);
+
 console.log('\n== Summary ==');
 console.log(`pass: ${pass}, fail: ${fail}`);
 process.exit(fail > 0 ? 1 : 0);
