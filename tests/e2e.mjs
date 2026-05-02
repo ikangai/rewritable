@@ -1068,6 +1068,89 @@ await window.undo();
 await new Promise(r => setTimeout(r, 50));
 check('38e: second undo on now-empty stack is also a no-op', (await window.getDoc()) === doc38e);
 
+// Tests 39a-c: frozen-zone enforcement across all three marker forms.
+// Tests 15-16 cover the CSS form only. extractFrozenZones() also handles
+// HTML <!-- --> and JS // forms; this exercises both reject-inside and
+// allow-outside semantics for each, so a regression in any single form's
+// regex would surface.
+console.log('\n== Tests 39a-c: frozen-zone enforcement across HTML/CSS/JS forms ==');
+
+const FZ_VARIANTS = [
+  {
+    tag: 'HTML',
+    seed: '<div>before</div>\n<!-- rwa:frozen:begin htmlzone -->\nHTML_FROZEN_BODY\n<!-- rwa:frozen:end htmlzone -->\n<div>tail-html</div>',
+    insideFind: 'HTML_FROZEN_BODY',
+    insideReplace: 'HTML_MUTATED',
+    outsideFind: 'tail-html',
+    outsideReplace: 'tail-html-CHANGED',
+  },
+  {
+    tag: 'CSS',
+    seed: '<style>\n/* rwa:frozen:begin csszone */\n:root { --css-knob: 1; }\n/* rwa:frozen:end csszone */\n</style>\n<div>tail-css</div>',
+    insideFind: '--css-knob: 1',
+    insideReplace: '--css-knob: 999',
+    outsideFind: 'tail-css',
+    outsideReplace: 'tail-css-CHANGED',
+  },
+  {
+    tag: 'JS',
+    seed: '<script>\n// rwa:frozen:begin jszone\nconst JS_FROZEN_KNOB = 1;\n// rwa:frozen:end jszone\n</script>\n<div>tail-js</div>',
+    insideFind: 'JS_FROZEN_KNOB = 1',
+    insideReplace: 'JS_FROZEN_KNOB = 999',
+    outsideFind: 'tail-js',
+    outsideReplace: 'tail-js-CHANGED',
+  },
+];
+
+const seedDoc = (s) => new Promise((res, rej) => {
+  window.openDB().then(db => {
+    const r = db.transaction('rwa_doc', 'readwrite').objectStore('rwa_doc').put(s, 'self');
+    r.onsuccess = res;
+    r.onerror = () => rej(r.error);
+  });
+});
+
+for (const v of FZ_VARIANTS) {
+  // (a) edit inside zone -> rejected
+  await seedDoc(v.seed);
+  fetchHandler = async () => ({
+    ok: true, json: async () => ({
+      choices: [{ message: {
+        role: 'assistant', content: '',
+        tool_calls: [{ id: 'fzin_' + v.tag, type: 'function', function: {
+          name: 'apply_edits',
+          arguments: JSON.stringify({ version: 'rwa-edit/1',
+            edits: [{ find: v.insideFind, replace: v.insideReplace }] }),
+        } }],
+      } }],
+    }),
+  });
+  const docInBefore = await window.getDoc();
+  await window.modify('mutate inside ' + v.tag + ' frozen zone');
+  await new Promise(r => setTimeout(r, 200));
+  check(v.tag + ' frozen-zone form: edit inside zone rejected', (await window.getDoc()) === docInBefore);
+
+  // (b) edit outside zone -> allowed; zone inner preserved
+  await seedDoc(v.seed);
+  fetchHandler = async () => ({
+    ok: true, json: async () => ({
+      choices: [{ message: {
+        role: 'assistant', content: '',
+        tool_calls: [{ id: 'fzout_' + v.tag, type: 'function', function: {
+          name: 'apply_edits',
+          arguments: JSON.stringify({ version: 'rwa-edit/1',
+            edits: [{ find: v.outsideFind, replace: v.outsideReplace }] }),
+        } }],
+      } }],
+    }),
+  });
+  await window.modify('mutate outside ' + v.tag + ' frozen zone');
+  await new Promise(r => setTimeout(r, 100));
+  const docOutAfter = await window.getDoc();
+  check(v.tag + ' frozen-zone form: edit outside zone allowed', docOutAfter.includes(v.outsideReplace));
+  check(v.tag + ' frozen-zone form: zone inner preserved across allowed edit', docOutAfter.includes(v.insideFind));
+}
+
 console.log('\n== Summary ==');
 console.log(`pass: ${pass}, fail: ${fail}`);
 process.exit(fail > 0 ? 1 : 0);
