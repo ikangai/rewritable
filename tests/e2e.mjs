@@ -1214,6 +1214,49 @@ await window.modify('remove a style tag via apply_edits');
 await new Promise(r => setTimeout(r, 200));
 check('40c: removed <style> via apply_edits rejected', (await window.getDoc()) === before40c);
 
+// Tests 41a-c: modify() preconditions. Each verifies that a precondition
+// failure leaves the doc byte-identical and (where relevant) makes no API
+// call. These are the early-exit safety nets that prevent silent rewrites.
+console.log('\n== Tests 41a-c: modify() preconditions ==');
+
+// 41a: missing API key — bail before any fetch.
+const savedKey41 = window.sessionStorage.getItem('rwa_apikey');
+window.sessionStorage.removeItem('rwa_apikey');
+let fetchCalled41a = false;
+fetchHandler = async () => { fetchCalled41a = true; throw new Error('unreachable'); };
+const before41a = await window.getDoc();
+await window.modify('without api key');
+await new Promise(r => setTimeout(r, 50));
+check('41a: modify without api key leaves doc unchanged', (await window.getDoc()) === before41a);
+check('41a: modify without api key issues no fetch', fetchCalled41a === false);
+window.sessionStorage.setItem('rwa_apikey', savedKey41 || 'test-key');
+
+// 41b: modify-while-modify-in-flight — mutex rejects the second call cleanly.
+let inFlightResolve41 = null;
+let inFlightFetches41 = 0;
+fetchHandler = () => { inFlightFetches41++; return new Promise(r => { inFlightResolve41 = r; }); };
+const m1_41 = window.modify('first slow modify');
+await new Promise(r => setTimeout(r, 30));
+await window.modify('second concurrent modify');
+check('41b: concurrent modify rejected — only the first fetch issued', inFlightFetches41 === 1);
+// Release first cleanly: model returns a text-only "decline" so no commit happens.
+inFlightResolve41({
+  ok: true, json: async () => ({
+    choices: [{ message: { role: 'assistant', content: 'never mind' } }],
+  }),
+});
+await m1_41;
+
+// 41c: HTTP error from upstream — doc unchanged, no commit.
+fetchHandler = async () => ({
+  ok: false, statusText: 'Bad Gateway',
+  json: async () => ({ error: { message: 'upstream blew up' } }),
+});
+const before41c = await window.getDoc();
+await window.modify('upstream http error');
+await new Promise(r => setTimeout(r, 50));
+check('41c: upstream HTTP error leaves doc unchanged', (await window.getDoc()) === before41c);
+
 console.log('\n== Summary ==');
 console.log(`pass: ${pass}, fail: ${fail}`);
 process.exit(fail > 0 ? 1 : 0);
