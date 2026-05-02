@@ -762,6 +762,80 @@ check('sequential edits: final state has FINAL_DESTINATION', docAfter17b.include
 check('sequential edits: intermediate BRIDGE_TOKEN consumed', !docAfter17b.includes('BRIDGE_TOKEN'));
 check('sequential edits: original anchor consumed', !docAfter17b.includes('changed-outside'));
 
+// Tests 18-21: pin down remaining validator error-code paths. Each test
+// drives one malformed envelope through modify(), exhausts the 3-attempt
+// retry budget (since the stub returns the same broken response each time),
+// and asserts the doc stays byte-identical. A refactor that drops any of
+// these checks would silently let the model's bad output slip through.
+
+console.log('\n== Test 18: version_unsupported ==');
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: {
+      role: 'assistant', content: '',
+      tool_calls: [{ id: 'call_v', type: 'function', function: {
+        name: 'apply_edits',
+        arguments: JSON.stringify({ version: 'rwa-edit/99', edits: [{ find: 'FINAL_DESTINATION', replace: 'X' }] }),
+      } }],
+    } }],
+  }),
+});
+const docBefore18 = await window.getDoc();
+await window.modify('wrong protocol version');
+await new Promise(r => setTimeout(r, 200));
+check('version_unsupported: doc unchanged', (await window.getDoc()) === docBefore18);
+
+console.log('\n== Test 19: unknown_tool ==');
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: {
+      role: 'assistant', content: '',
+      tool_calls: [{ id: 'call_u', type: 'function', function: {
+        name: 'magic_rewrite',
+        arguments: JSON.stringify({ version: 'rwa-edit/1' }),
+      } }],
+    } }],
+  }),
+});
+const docBefore19 = await window.getDoc();
+await window.modify('unknown tool name');
+await new Promise(r => setTimeout(r, 200));
+check('unknown_tool: doc unchanged', (await window.getDoc()) === docBefore19);
+
+console.log('\n== Test 20: find_not_found ==');
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: {
+      role: 'assistant', content: '',
+      tool_calls: [{ id: 'call_nf', type: 'function', function: {
+        name: 'apply_edits',
+        arguments: JSON.stringify({ version: 'rwa-edit/1', edits: [{ find: 'absolutely_not_in_the_doc_xyz123', replace: 'X' }] }),
+      } }],
+    } }],
+  }),
+});
+const docBefore20 = await window.getDoc();
+await window.modify('anchor missing');
+await new Promise(r => setTimeout(r, 200));
+check('find_not_found: doc unchanged', (await window.getDoc()) === docBefore20);
+
+console.log('\n== Test 21: empty_find ==');
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: {
+      role: 'assistant', content: '',
+      tool_calls: [{ id: 'call_ef', type: 'function', function: {
+        name: 'apply_edits',
+        arguments: JSON.stringify({ version: 'rwa-edit/1', edits: [{ find: '', replace: 'whatever' }] }),
+      } }],
+    } }],
+  }),
+});
+const docBefore21 = await window.getDoc();
+await window.modify('empty find anchor');
+await new Promise(r => setTimeout(r, 200));
+check('empty_find: doc unchanged', (await window.getDoc()) === docBefore21);
+
 console.log('\n== Summary ==');
 console.log(`pass: ${pass}, fail: ${fail}`);
 process.exit(fail > 0 ? 1 : 0);
