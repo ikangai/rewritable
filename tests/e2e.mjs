@@ -3497,6 +3497,75 @@ const histAfterPos = await new Promise((res, rej) => {
 check('110: doc updated to expected post-edit text', (await window.getDoc()).includes('POS_110_DONE'));
 check('110: hist either grew by 1 OR hit HIST_CAP=15', histAfterPos.length === histLenBefore + 1 || histAfterPos.length === 15);
 
+// Test 111: edit[1] anchors on text consumed by edit[0] -> find_not_found
+// at edit_index 1; whole batch rejected (atomicity). Common real-world
+// model mistake — both edits target the same anchor.
+console.log('\n== Test 111: shared anchor across batch rejected at edit[1] ==');
+await seedDoc('<div>SHARED_111</div>');
+let cap111 = null;
+fetchHandler = async (url, opts) => {
+  const body = JSON.parse(opts.body);
+  const last = body.messages.at(-1);
+  if (last?.role === 'tool' && cap111 == null) {
+    cap111 = JSON.parse(last.content);
+  }
+  return ({
+    ok: true, json: async () => ({
+      choices: [{ message: { role: 'assistant', content: '', tool_calls: [{
+        id: 'shared_111', type: 'function', function: {
+          name: 'apply_edits',
+          arguments: JSON.stringify({ version: 'rwa-edit/1', edits: [
+            { find: 'SHARED_111', replace: 'CONSUMED' },
+            { find: 'SHARED_111', replace: 'NEVER' },
+          ] }),
+        },
+      }] } }],
+    }),
+  });
+};
+const before111 = await window.getDoc();
+await window.modify('shared anchor across batch');
+await new Promise(r => setTimeout(r, 200));
+check('111: shared-anchor batch rejected, doc unchanged', (await window.getDoc()) === before111);
+check('111: failure has edit_index=1 and code=find_not_found', cap111?.edit_index === 1 && cap111?.code === 'find_not_found');
+
+// Test 113: <noscript> tag preserved across edits.
+console.log('\n== Test 113: <noscript> tag preserved across edit ==');
+await seedDoc('<noscript>fallback for old browsers</noscript>\n<div>NS_TARGET_113</div>');
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: { role: 'assistant', content: '', tool_calls: [{
+      id: 'ns113', type: 'function', function: {
+        name: 'apply_edits',
+        arguments: JSON.stringify({ version: 'rwa-edit/1', edits: [{ find: 'NS_TARGET_113', replace: 'NS_DONE_113' }] }),
+      },
+    }] } }],
+  }),
+});
+await window.modify('preserve noscript');
+await new Promise(r => setTimeout(r, 100));
+check('113: <noscript> content preserved across edit', (await window.getDoc()) === '<noscript>fallback for old browsers</noscript>\n<div>NS_DONE_113</div>');
+
+// Test 114: SVG and MathML inline content preserved verbatim across edits.
+console.log('\n== Test 114: SVG/MathML preserved across edit ==');
+await seedDoc('<svg width="10" height="10"><circle cx="5" cy="5" r="4"/></svg>\n<math><mi>x</mi></math>\n<div>SM_TARGET_114</div>');
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: { role: 'assistant', content: '', tool_calls: [{
+      id: 'sm114', type: 'function', function: {
+        name: 'apply_edits',
+        arguments: JSON.stringify({ version: 'rwa-edit/1', edits: [{ find: 'SM_TARGET_114', replace: 'SM_DONE_114' }] }),
+      },
+    }] } }],
+  }),
+});
+await window.modify('preserve svg/math');
+await new Promise(r => setTimeout(r, 100));
+const after114 = await window.getDoc();
+check('114: SVG content preserved verbatim', after114.includes('<svg width="10" height="10"><circle cx="5" cy="5" r="4"/></svg>'));
+check('114: MathML content preserved verbatim', after114.includes('<math><mi>x</mi></math>'));
+check('114: edit applied alongside foreign-content preservation', after114.includes('SM_DONE_114'));
+
 console.log('\n== Summary ==');
 console.log(`pass: ${pass}, fail: ${fail}`);
 process.exit(fail > 0 ? 1 : 0);
