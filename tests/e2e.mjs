@@ -2826,6 +2826,72 @@ check('84: apply_edits required fields include version + edits', Array.isArray(a
 check('84: replace_document tool schema present', !!rd84);
 check('84: replace_document required fields include version + doc + reason', Array.isArray(rd84?.function?.parameters?.required) && rd84.function.parameters.required.includes('version') && rd84.function.parameters.required.includes('doc') && rd84.function.parameters.required.includes('reason'));
 
+// Test 85: failure tool_result must include edit_index for batch failures
+// so the model knows which edit to fix. Without this, the model can't tell
+// whether its first or third edit was the problem.
+console.log('\n== Test 85: edit_index in failure tool_result ==');
+await seedDoc('<div>EI_85</div>');
+let cap85 = null;
+fetchHandler = async (url, opts) => {
+  const body = JSON.parse(opts.body);
+  const last = body.messages.at(-1);
+  if (last?.role === 'tool' && cap85 == null) {
+    cap85 = JSON.parse(last.content);
+  }
+  return ({
+    ok: true, json: async () => ({
+      choices: [{ message: {
+        role: 'assistant', content: '',
+        tool_calls: [{ id: 'ei85_' + Date.now(), type: 'function', function: {
+          name: 'apply_edits',
+          arguments: JSON.stringify({ version: 'rwa-edit/1', edits: [
+            { find: 'EI_85', replace: 'KEPT_85' },
+            { find: 'NOT_PRESENT_EI_85', replace: 'X' },
+          ] }),
+        } }],
+      } }],
+    }),
+  });
+};
+await window.modify('batch where second edit fails');
+await new Promise(r => setTimeout(r, 200));
+check('85: failure tool_result has edit_index = 1 (second edit)', cap85?.edit_index === 1);
+check('85: failure tool_result code = find_not_found', cap85?.code === 'find_not_found');
+
+// Test 87: a retry can switch from apply_edits to replace_document.
+// The runtime dispatches on the per-call function name, so the model can
+// abandon a brittle anchor strategy and fall back to wholesale rewrite.
+console.log('\n== Test 87: retry can switch tools mid-conversation ==');
+await seedDoc('<div>SWITCH_87_ANCHOR</div>');
+let switch87Calls = 0;
+fetchHandler = async () => {
+  switch87Calls++;
+  if (switch87Calls === 1) {
+    return ({
+      ok: true, json: async () => ({
+        choices: [{ message: { role: 'assistant', content: '', tool_calls: [{ id: 'sw87_1', type: 'function', function: {
+          name: 'apply_edits',
+          arguments: JSON.stringify({ version: 'rwa-edit/1',
+            edits: [{ find: 'NOT_PRESENT_SWITCH', replace: 'X' }] }),
+        } }] } }],
+      }),
+    });
+  }
+  return ({
+    ok: true, json: async () => ({
+      choices: [{ message: { role: 'assistant', content: '', tool_calls: [{ id: 'sw87_2', type: 'function', function: {
+        name: 'replace_document',
+        arguments: JSON.stringify({ version: 'rwa-edit/1', doc: '<div>RD_AFTER_RETRY_87</div>', reason: 'switching to rd after find_not_found' }),
+      } }] } }],
+    }),
+  });
+};
+await window.modify('switch tools mid-conversation');
+await new Promise(r => setTimeout(r, 200));
+const after87 = await window.getDoc();
+check('87: retry switching apply_edits → replace_document committed', after87 === '<div>RD_AFTER_RETRY_87</div>');
+check('87: exactly 2 fetches (no more attempts after success)', switch87Calls === 2);
+
 console.log('\n== Summary ==');
 console.log(`pass: ${pass}, fail: ${fail}`);
 process.exit(fail > 0 ? 1 : 0);
