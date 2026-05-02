@@ -3125,6 +3125,57 @@ for (const v of VERSION_VARIANTS) {
   check('95: version "' + v + '" rejected', (await window.getDoc()) === before95);
 }
 
+// Test 96: replace_document missing version field rejected.
+console.log('\n== Test 96: replace_document without version field ==');
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: { role: 'assistant', content: '', tool_calls: [{
+      id: 'rd96', type: 'function', function: {
+        name: 'replace_document',
+        arguments: JSON.stringify({ doc: '<div>x</div>', reason: 'no version field' }),
+      },
+    }] } }],
+  }),
+});
+const before96 = await window.getDoc();
+await window.modify('rd missing version');
+await new Promise(r => setTimeout(r, 200));
+check('96: replace_document without version rejected', (await window.getDoc()) === before96);
+
+// Test 97: tab character in find anchor matches doc tab byte-equally.
+console.log('\n== Test 97: tab in find anchor ==');
+await seedDoc('<pre>\tTAB_ANCHOR_97</pre>');
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: { role: 'assistant', content: '', tool_calls: [{
+      id: 'tab97', type: 'function', function: {
+        name: 'apply_edits',
+        arguments: JSON.stringify({ version: 'rwa-edit/1', edits: [{ find: '\tTAB_ANCHOR_97', replace: 'TAB_REPLACED_97' }] }),
+      },
+    }] } }],
+  }),
+});
+await window.modify('tab in find anchor');
+await new Promise(r => setTimeout(r, 100));
+check('97: tab character in find anchor matches doc tab', (await window.getDoc()) === '<pre>TAB_REPLACED_97</pre>');
+
+// Test 98: leading-whitespace anchor matches identical leading whitespace.
+console.log('\n== Test 98: leading whitespace anchor ==');
+await seedDoc('  prefix-spaces-LEAD_98');
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: { role: 'assistant', content: '', tool_calls: [{
+      id: 'lead98', type: 'function', function: {
+        name: 'apply_edits',
+        arguments: JSON.stringify({ version: 'rwa-edit/1', edits: [{ find: '  prefix-spaces-LEAD_98', replace: 'LEAD_98_DONE' }] }),
+      },
+    }] } }],
+  }),
+});
+await window.modify('leading whitespace anchor');
+await new Promise(r => setTimeout(r, 100));
+check('98: leading-whitespace anchor matched and consumed entire doc', (await window.getDoc()) === 'LEAD_98_DONE');
+
 console.log('\n== Summary ==');
 console.log(`pass: ${pass}, fail: ${fail}`);
 process.exit(fail > 0 ? 1 : 0);
