@@ -618,6 +618,79 @@ check('$$ inserted literally (not collapsed to $)', docAfter14.includes('$$amoun
 check('$& inserted literally (not expanded to find)', docAfter14.includes('$&literal'));
 check('no expanded backreference artifact', !docAfter14.includes('parallel-fixedliteral'));
 
+// Tests 15-16: apply_edits frozen-zone enforcement. Seed a doc that contains a
+// frozen zone via raw IDB (frozen zones cannot be added through the modify
+// pathway — only through bootstrap/seeds), then verify:
+//   • edits whose anchor lands inside the zone change inner content -> rejected
+//   • edits whose anchor lands outside the zone are allowed and leave the zone untouched
+// Without this coverage, a runtime refactor that drops the post-apply
+// frozenZonesIntact() check would let the model rewrite "author-declared
+// invariants" silently — the worst kind of unintended change.
+console.log('\n== Tests 15-16: apply_edits frozen-zone enforcement ==');
+const frozenDoc = '<style>\n/* rwa:frozen:begin theme */\n:root { --frozen-knob: 1; }\n/* rwa:frozen:end theme */\n</style>\n<div>outside-zone-anchor</div>';
+await new Promise((res, rej) => {
+  window.openDB().then(db => {
+    const r = db.transaction('rwa_doc', 'readwrite').objectStore('rwa_doc').put(frozenDoc, 'self');
+    r.onsuccess = res;
+    r.onerror = () => rej(r.error);
+  });
+});
+
+// Test 15: apply_edits anchor inside frozen zone -> rejected (frozen_zone_corrupted).
+fetchHandler = async () => ({
+  ok: true,
+  json: async () => ({
+    choices: [{
+      message: {
+        role: 'assistant', content: '',
+        tool_calls: [{
+          id: 'call_inside_fz', type: 'function',
+          function: {
+            name: 'apply_edits',
+            arguments: JSON.stringify({
+              version: 'rwa-edit/1',
+              edits: [{ find: '--frozen-knob: 1', replace: '--frozen-knob: 2' }],
+            }),
+          },
+        }],
+      },
+    }],
+  }),
+});
+
+const docBefore15 = await window.getDoc();
+await window.modify('mutate inside frozen zone');
+await new Promise(r => setTimeout(r, 100));
+check('apply_edits inside frozen zone rejected: doc unchanged', (await window.getDoc()) === docBefore15);
+
+// Test 16: apply_edits anchor outside frozen zone -> allowed, zone inner preserved.
+fetchHandler = async () => ({
+  ok: true,
+  json: async () => ({
+    choices: [{
+      message: {
+        role: 'assistant', content: '',
+        tool_calls: [{
+          id: 'call_outside_fz', type: 'function',
+          function: {
+            name: 'apply_edits',
+            arguments: JSON.stringify({
+              version: 'rwa-edit/1',
+              edits: [{ find: 'outside-zone-anchor', replace: 'changed-outside' }],
+            }),
+          },
+        }],
+      },
+    }],
+  }),
+});
+
+await window.modify('mutate outside frozen zone');
+await new Promise(r => setTimeout(r, 100));
+const docAfter16 = await window.getDoc();
+check('apply_edits outside frozen zone allowed', docAfter16.includes('changed-outside'));
+check('zone inner content preserved across allowed edit', docAfter16.includes('--frozen-knob: 1'));
+
 console.log('\n== Summary ==');
 console.log(`pass: ${pass}, fail: ${fail}`);
 process.exit(fail > 0 ? 1 : 0);
