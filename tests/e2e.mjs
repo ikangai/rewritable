@@ -2787,6 +2787,45 @@ await new Promise(r => setTimeout(r, 300));
 check('82: text-only response = single fetch (no retry)', textOnly82Calls === 1);
 check('82: doc unchanged after text-only response', (await window.getDoc()) === '<div>NO_RETRY_82</div>');
 
+// Test 83: system prompt content. The bootstrap's SYSTEM_PROMPT must
+// continue to mention both tools and reserved-marker rules, otherwise the
+// model loses guidance on how to operate safely. A regression that quietly
+// shortened it would silently degrade fidelity over time.
+console.log('\n== Test 83: system prompt content ==');
+let sp83 = null;
+fetchHandler = async (url, opts) => {
+  const body = JSON.parse(opts.body);
+  sp83 = body.messages.find(m => m.role === 'system')?.content;
+  return ({ ok: true, json: async () => ({ choices: [{ message: { role: 'assistant', content: 'noop' } }] }) });
+};
+await window.modify('inspect system prompt');
+await new Promise(r => setTimeout(r, 100));
+check('83: system prompt mentions apply_edits tool', sp83?.includes('apply_edits'));
+check('83: system prompt mentions replace_document tool', sp83?.includes('replace_document'));
+check('83: system prompt warns about frozen-zone rules', sp83?.toLowerCase().includes('frozen zone'));
+check('83: system prompt names the reserved frozen marker substring', sp83?.includes('rwa:frozen:begin') || sp83?.includes('rwa:frozen:end'));
+check('83: system prompt warns about data-rwa-frozen attribute', sp83?.includes('data-rwa-frozen'));
+
+// Test 84: tool schemas content. The bootstrap's TOOL_SCHEMAS must declare
+// apply_edits and replace_document with the required fields the validator
+// expects. A drift here would let the model emit envelopes the validator
+// rejects unconditionally.
+console.log('\n== Test 84: tool schemas content ==');
+let tools84 = null;
+fetchHandler = async (url, opts) => {
+  const body = JSON.parse(opts.body);
+  tools84 = body.tools;
+  return ({ ok: true, json: async () => ({ choices: [{ message: { role: 'assistant', content: 'noop' } }] }) });
+};
+await window.modify('inspect tool schemas');
+await new Promise(r => setTimeout(r, 100));
+const ae84 = tools84?.find(t => t.function?.name === 'apply_edits');
+const rd84 = tools84?.find(t => t.function?.name === 'replace_document');
+check('84: apply_edits tool schema present', !!ae84);
+check('84: apply_edits required fields include version + edits', Array.isArray(ae84?.function?.parameters?.required) && ae84.function.parameters.required.includes('version') && ae84.function.parameters.required.includes('edits'));
+check('84: replace_document tool schema present', !!rd84);
+check('84: replace_document required fields include version + doc + reason', Array.isArray(rd84?.function?.parameters?.required) && rd84.function.parameters.required.includes('version') && rd84.function.parameters.required.includes('doc') && rd84.function.parameters.required.includes('reason'));
+
 console.log('\n== Summary ==');
 console.log(`pass: ${pass}, fail: ${fail}`);
 process.exit(fail > 0 ? 1 : 0);
