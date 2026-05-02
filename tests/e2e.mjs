@@ -3421,6 +3421,82 @@ await window.modify('rd verbatim commit');
 await new Promise(r => setTimeout(r, 100));
 check('107: replace_document committed the doc exactly as sent', (await window.getDoc()) === exactDoc107);
 
+// Test 108: newline-bracketed anchor — find with leading and trailing \n
+// matches an identical newline-flanked region; replace inserts its own
+// newlines verbatim. Tests that canonLF doesn't drop trailing \n.
+console.log('\n== Test 108: newline-bracketed anchor ==');
+await seedDoc('<div>a-108</div>\n<div>NL_TARGET_108</div>\n<div>b-108</div>');
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: { role: 'assistant', content: '', tool_calls: [{
+      id: 'nl_108', type: 'function', function: {
+        name: 'apply_edits',
+        arguments: JSON.stringify({ version: 'rwa-edit/1', edits: [{
+          find: '\n<div>NL_TARGET_108</div>\n', replace: '\n<div>NL_REPLACED_108</div>\n'
+        }] }),
+      },
+    }] } }],
+  }),
+});
+await window.modify('newline-bracketed anchor');
+await new Promise(r => setTimeout(r, 100));
+check('108: newline-bracketed anchor matched and replaced byte-equally', (await window.getDoc()) === '<div>a-108</div>\n<div>NL_REPLACED_108</div>\n<div>b-108</div>');
+
+// Test 109: replace string with consecutive newlines — preserved verbatim.
+console.log('\n== Test 109: consecutive newlines in replace preserved ==');
+await seedDoc('<div>X_109</div>');
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: { role: 'assistant', content: '', tool_calls: [{
+      id: 'adj_nl', type: 'function', function: {
+        name: 'apply_edits',
+        arguments: JSON.stringify({ version: 'rwa-edit/1', edits: [{
+          find: 'X_109', replace: 'A\n\n\n\nB'
+        }] }),
+      },
+    }] } }],
+  }),
+});
+await window.modify('adjacent newlines');
+await new Promise(r => setTimeout(r, 100));
+check('109: 4 consecutive newlines preserved verbatim', (await window.getDoc()) === '<div>A\n\n\n\nB</div>');
+
+// Test 110: positive-case audit — modify writes the new doc AND grows hist.
+console.log('\n== Test 110: positive-case audit (doc+hist updated) ==');
+await seedDoc('<div>POS_110</div>');
+const histBeforePos = await new Promise((res, rej) => {
+  window.openDB().then(db => {
+    const r = db.transaction('rwa_hist').objectStore('rwa_hist').get('self');
+    r.onsuccess = () => res(r.result || []);
+    r.onerror = () => rej(r.error);
+  });
+});
+const histLenBefore = histBeforePos.length;
+
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: { role: 'assistant', content: '', tool_calls: [{
+      id: 'pos_110', type: 'function', function: {
+        name: 'apply_edits',
+        arguments: JSON.stringify({ version: 'rwa-edit/1',
+          edits: [{ find: 'POS_110', replace: 'POS_110_DONE' }] }),
+      },
+    }] } }],
+  }),
+});
+await window.modify('positive case audit');
+await new Promise(r => setTimeout(r, 100));
+
+const histAfterPos = await new Promise((res, rej) => {
+  window.openDB().then(db => {
+    const r = db.transaction('rwa_hist').objectStore('rwa_hist').get('self');
+    r.onsuccess = () => res(r.result || []);
+    r.onerror = () => rej(r.error);
+  });
+});
+check('110: doc updated to expected post-edit text', (await window.getDoc()).includes('POS_110_DONE'));
+check('110: hist either grew by 1 OR hit HIST_CAP=15', histAfterPos.length === histLenBefore + 1 || histAfterPos.length === 15);
+
 console.log('\n== Summary ==');
 console.log(`pass: ${pass}, fail: ${fail}`);
 process.exit(fail > 0 ? 1 : 0);
