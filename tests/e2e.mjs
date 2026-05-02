@@ -2261,6 +2261,88 @@ check('63: messages start with system prompt', capturedRequest?.messages?.[0]?.r
 check('63: tools array (apply_edits + replace_document) passed', Array.isArray(capturedRequest?.tools) && capturedRequest.tools.length === 2);
 check('63: tool_choice is auto', capturedRequest?.tool_choice === 'auto');
 
+// Tests 64-67: edit position / consumption edge cases.
+// Anchors at the very start and end of the doc, replacing the entire doc
+// text via apply_edits, and deletion via empty replace — all must preserve
+// surrounding bytes (or, for deletion/full-replace, leave nothing else).
+console.log('\n== Tests 64-67: edit position and consumption edge cases ==');
+
+// 64: edit anchored at start of doc.
+await seedDoc('START_TOKEN_64<div>middle-64</div><div>tail-64</div>');
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: {
+      role: 'assistant', content: '',
+      tool_calls: [{ id: 'pos64', type: 'function', function: {
+        name: 'apply_edits',
+        arguments: JSON.stringify({ version: 'rwa-edit/1',
+          edits: [{ find: 'START_TOKEN_64', replace: 'CHANGED_START_64' }] }),
+      } }],
+    } }],
+  }),
+});
+await window.modify('edit at very start of doc');
+await new Promise(r => setTimeout(r, 100));
+const after64 = await window.getDoc();
+check('64: edit anchored at doc start applies, suffix preserved', after64 === 'CHANGED_START_64<div>middle-64</div><div>tail-64</div>');
+
+// 65: edit anchored at end of doc.
+await seedDoc('<div>head-65</div><div>middle-65</div>END_TOKEN_65');
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: {
+      role: 'assistant', content: '',
+      tool_calls: [{ id: 'pos65', type: 'function', function: {
+        name: 'apply_edits',
+        arguments: JSON.stringify({ version: 'rwa-edit/1',
+          edits: [{ find: 'END_TOKEN_65', replace: 'CHANGED_END_65' }] }),
+      } }],
+    } }],
+  }),
+});
+await window.modify('edit at very end of doc');
+await new Promise(r => setTimeout(r, 100));
+const after65 = await window.getDoc();
+check('65: edit anchored at doc end applies, prefix preserved', after65 === '<div>head-65</div><div>middle-65</div>CHANGED_END_65');
+
+// 66: edit whose find anchor IS the entire doc text.
+await seedDoc('ENTIRE_DOC_BODY_66');
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: {
+      role: 'assistant', content: '',
+      tool_calls: [{ id: 'pos66', type: 'function', function: {
+        name: 'apply_edits',
+        arguments: JSON.stringify({ version: 'rwa-edit/1',
+          edits: [{ find: 'ENTIRE_DOC_BODY_66', replace: 'WHOLLY_NEW_BODY_66' }] }),
+      } }],
+    } }],
+  }),
+});
+await window.modify('replace entire doc via apply_edits');
+await new Promise(r => setTimeout(r, 100));
+const after66 = await window.getDoc();
+check('66: full-doc-text edit applies cleanly', after66 === 'WHOLLY_NEW_BODY_66');
+
+// 67: replace = '' deletes the matched text without affecting surroundings.
+await seedDoc('<div>before-DELETE_ME_67-after</div>');
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: {
+      role: 'assistant', content: '',
+      tool_calls: [{ id: 'pos67', type: 'function', function: {
+        name: 'apply_edits',
+        arguments: JSON.stringify({ version: 'rwa-edit/1',
+          edits: [{ find: 'DELETE_ME_67', replace: '' }] }),
+      } }],
+    } }],
+  }),
+});
+await window.modify('delete content via empty replace');
+await new Promise(r => setTimeout(r, 100));
+const after67 = await window.getDoc();
+check('67: replace="" deletes matched text exactly, surroundings preserved', after67 === '<div>before--after</div>');
+
 console.log('\n== Summary ==');
 console.log(`pass: ${pass}, fail: ${fail}`);
 process.exit(fail > 0 ? 1 : 0);
