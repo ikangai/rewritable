@@ -1348,6 +1348,87 @@ await window.modify('no version field');
 await new Promise(r => setTimeout(r, 200));
 check('43c: missing version rejected', (await window.getDoc()) === before43c);
 
+// Tests 44a-d: replace_document frozen-zone preservation. Test 9 only covers
+// "introducing a new frozen zone is rejected"; here we close the matrix —
+// removal, rename, inner mutation, and the byte-equal preservation success
+// path. Frozen zones are author-declared invariants — every mutation path
+// other than identity must be rejected.
+console.log('\n== Tests 44a-d: replace_document frozen-zone preservation ==');
+
+const seed44 = '<style>\n/* rwa:frozen:begin themex */\n:root { --x: 1; }\n/* rwa:frozen:end themex */\n</style>\n<div>seed-44</div>';
+
+// 44a: replace_document removing the existing frozen zone -> rejected.
+await seedDoc(seed44);
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: {
+      role: 'assistant', content: '',
+      tool_calls: [{ id: 'rd44a', type: 'function', function: {
+        name: 'replace_document',
+        arguments: JSON.stringify({ version: 'rwa-edit/1', doc: '<div>no zone</div>', reason: 'remove zone' }),
+      } }],
+    } }],
+  }),
+});
+const before44a = await window.getDoc();
+await window.modify('remove existing frozen zone');
+await new Promise(r => setTimeout(r, 200));
+check('44a: replace_document removing zone rejected', (await window.getDoc()) === before44a);
+
+// 44b: replace_document renaming the zone -> rejected (name set differs).
+await seedDoc(seed44);
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: {
+      role: 'assistant', content: '',
+      tool_calls: [{ id: 'rd44b', type: 'function', function: {
+        name: 'replace_document',
+        arguments: JSON.stringify({ version: 'rwa-edit/1', doc: '<style>\n/* rwa:frozen:begin renamed */\n:root { --x: 1; }\n/* rwa:frozen:end renamed */\n</style>\n<div>x</div>', reason: 'rename zone' }),
+      } }],
+    } }],
+  }),
+});
+const before44b = await window.getDoc();
+await window.modify('rename frozen zone');
+await new Promise(r => setTimeout(r, 200));
+check('44b: replace_document renaming zone rejected', (await window.getDoc()) === before44b);
+
+// 44c: replace_document mutating zone inner content -> rejected.
+await seedDoc(seed44);
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: {
+      role: 'assistant', content: '',
+      tool_calls: [{ id: 'rd44c', type: 'function', function: {
+        name: 'replace_document',
+        arguments: JSON.stringify({ version: 'rwa-edit/1', doc: '<style>\n/* rwa:frozen:begin themex */\n:root { --x: 999; }\n/* rwa:frozen:end themex */\n</style>\n<div>y</div>', reason: 'mutate inner' }),
+      } }],
+    } }],
+  }),
+});
+const before44c = await window.getDoc();
+await window.modify('mutate inner of frozen zone');
+await new Promise(r => setTimeout(r, 200));
+check('44c: replace_document mutating zone inner rejected', (await window.getDoc()) === before44c);
+
+// 44d: replace_document with byte-equal zone preservation -> allowed; outside-zone content updated.
+await seedDoc(seed44);
+const newDoc44d = '<style>\n/* rwa:frozen:begin themex */\n:root { --x: 1; }\n/* rwa:frozen:end themex */\n</style>\n<div>OK_44D_TAIL</div>';
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: {
+      role: 'assistant', content: '',
+      tool_calls: [{ id: 'rd44d', type: 'function', function: {
+        name: 'replace_document',
+        arguments: JSON.stringify({ version: 'rwa-edit/1', doc: newDoc44d, reason: 'preserve zone, replace tail' }),
+      } }],
+    } }],
+  }),
+});
+await window.modify('preserve zone, replace tail');
+await new Promise(r => setTimeout(r, 100));
+check('44d: replace_document with preserved zone allowed', (await window.getDoc()) === newDoc44d);
+
 console.log('\n== Summary ==');
 console.log(`pass: ${pass}, fail: ${fail}`);
 process.exit(fail > 0 ? 1 : 0);
