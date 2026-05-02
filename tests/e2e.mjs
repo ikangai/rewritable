@@ -1517,6 +1517,91 @@ const undoFinal = await new Promise((res, rej) => {
 check('46: undo stack capped at UNDO_CAP=10 after 12 successful modifies', Array.isArray(undoFinal) && undoFinal.length === 10);
 check('46: oldest entries dropped (no UNDO_CAP_SEED in stack)', !undoFinal.some(d => d.includes('UNDO_CAP_SEED')));
 
+// Test 47: HIST_CAP behavior — newest-first, capped at 15.
+console.log('\n== Test 47: HIST_CAP behavior ==');
+await seedDoc('<div>HIST_CAP_SEED</div>');
+await new Promise((res, rej) => {
+  window.openDB().then(db => {
+    const r = db.transaction('rwa_hist', 'readwrite').objectStore('rwa_hist').put([], 'self');
+    r.onsuccess = res;
+    r.onerror = () => rej(r.error);
+  });
+});
+
+for (let i = 0; i < 17; i++) {
+  const findText = i === 0 ? 'HIST_CAP_SEED' : `HSTEP_${i}`;
+  const replaceText = `HSTEP_${i+1}`;
+  fetchHandler = async () => ({
+    ok: true, json: async () => ({
+      choices: [{ message: {
+        role: 'assistant', content: '',
+        tool_calls: [{ id: 'hcap_' + i, type: 'function', function: {
+          name: 'apply_edits',
+          arguments: JSON.stringify({ version: 'rwa-edit/1',
+            edits: [{ find: findText, replace: replaceText }] }),
+        } }],
+      } }],
+    }),
+  });
+  await window.modify('hist step ' + i);
+  await new Promise(r => setTimeout(r, 50));
+}
+
+const histFinal = await new Promise((res, rej) => {
+  window.openDB().then(db => {
+    const r = db.transaction('rwa_hist').objectStore('rwa_hist').get('self');
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+  });
+});
+check('47: hist capped at HIST_CAP=15 after 17 successful modifies', Array.isArray(histFinal) && histFinal.length === 15);
+
+// Test 48: CRLF in find/replace canonicalized to LF before splice.
+// The runtime stores docs as LF-canonical; model output may emit CRLF.
+// Both sides are canonLF'd so the match still works and the stored doc
+// stays LF-only — preserving the spec's normalization invariant.
+console.log('\n== Test 48: CRLF in find/replace canonicalized ==');
+await seedDoc('<p>line1</p>\n<p>CRLF_TEST_ANCHOR</p>\n<p>line3</p>');
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: {
+      role: 'assistant', content: '',
+      tool_calls: [{ id: 'crlf', type: 'function', function: {
+        name: 'apply_edits',
+        arguments: JSON.stringify({ version: 'rwa-edit/1',
+          edits: [{ find: '<p>CRLF_TEST_ANCHOR</p>', replace: '<p>line2a</p>\r\n<p>line2b</p>' }] }),
+      } }],
+    } }],
+  }),
+});
+await window.modify('crlf in replace');
+await new Promise(r => setTimeout(r, 100));
+const docCrlf = await window.getDoc();
+check('48: edit with CRLF in replace succeeded', docCrlf.includes('<p>line2a</p>') && docCrlf.includes('<p>line2b</p>'));
+check('48: stored doc is LF-only (no CR characters)', !docCrlf.includes('\r'));
+
+// Test 49: replace_document is intentionally allowed to change script/style count.
+// apply_edits enforces shape invariance, but replace_document is the escape
+// hatch where shape may legitimately change. Pin this down so a future
+// tightening doesn't accidentally apply the shape check to replace_document.
+console.log('\n== Test 49: replace_document may change script/style count ==');
+await seedDoc('<div>plain-49</div>');
+const newDoc49 = '<style>.k{}</style>\n<script>const Y=1;</script>\n<div>after-rd-shape</div>';
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: {
+      role: 'assistant', content: '',
+      tool_calls: [{ id: 'rd49', type: 'function', function: {
+        name: 'replace_document',
+        arguments: JSON.stringify({ version: 'rwa-edit/1', doc: newDoc49, reason: 'add scaffolding' }),
+      } }],
+    } }],
+  }),
+});
+await window.modify('replace_document scaffolding');
+await new Promise(r => setTimeout(r, 100));
+check('49: replace_document changing script/style count allowed', (await window.getDoc()) === newDoc49);
+
 console.log('\n== Summary ==');
 console.log(`pass: ${pass}, fail: ${fail}`);
 process.exit(fail > 0 ? 1 : 0);
