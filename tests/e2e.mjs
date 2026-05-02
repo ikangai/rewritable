@@ -893,6 +893,43 @@ await window.modify('replace_document with missing doc');
 await new Promise(r => setTimeout(r, 200));
 check('replace_document missing doc: doc unchanged', (await window.getDoc()) === docBefore24);
 
+// Tests 25-30: reserved-marker rejection in apply_edits replace strings.
+// Test 3 covers data-rwa-frozen specifically; this expands to all six reserved
+// substring forms the runtime guards (frozen-zone keyword pair + 3 comment
+// prefixes + the data-* attribute). Adding a new comment form to the doc
+// schema without updating RWA_EDIT.RESERVED would silently allow the model
+// to inject reserved markers — these tests pin the current invariant down.
+console.log('\n== Tests 25-30: reserved-marker rejection in replace ==');
+const RESERVED_SAMPLES = [
+  ['rwa:frozen:begin', 'rwa:frozen:begin theme'],
+  ['rwa:frozen:end',   'rwa:frozen:end theme'],
+  ['<!-- rwa:',        '<!-- rwa:custom -->'],
+  ['/* rwa:',          '/* rwa:custom */'],
+  ['// rwa:',          '// rwa:custom\n'],
+  ['data-rwa-frozen',  'data-rwa-frozen="x"'],
+];
+
+for (const [label, payload] of RESERVED_SAMPLES) {
+  fetchHandler = async () => ({
+    ok: true, json: async () => ({
+      choices: [{ message: {
+        role: 'assistant', content: '',
+        tool_calls: [{ id: 'rsv_' + label.slice(0, 6), type: 'function', function: {
+          name: 'apply_edits',
+          arguments: JSON.stringify({
+            version: 'rwa-edit/1',
+            edits: [{ find: 'FINAL_DESTINATION', replace: payload }],
+          }),
+        } }],
+      } }],
+    }),
+  });
+  const before = await window.getDoc();
+  await window.modify('reserved marker in replace: ' + label);
+  await new Promise(r => setTimeout(r, 200));
+  check('reserved marker rejected in replace: ' + label, (await window.getDoc()) === before);
+}
+
 console.log('\n== Summary ==');
 console.log(`pass: ${pass}, fail: ${fail}`);
 process.exit(fail > 0 ? 1 : 0);
