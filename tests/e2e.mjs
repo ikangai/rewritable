@@ -1928,6 +1928,118 @@ await new Promise(r => setTimeout(r, 200));
 check('55: 3rd attempt succeeded — PROG_FINAL committed', (await window.getDoc()).includes('PROG_FINAL'));
 check('55: exactly 3 fetches consumed (within retry budget)', prog55Calls === 3);
 
+// Test 56: target_size_exceeded — replace_document with doc > MAX_DOC rejected.
+console.log('\n== Test 56: target_size_exceeded (replace_document) ==');
+await seedDoc('<div>SIZE_GUARD_SEED</div>');
+const HUGE_DOC = '<div>' + 'X'.repeat(1024 * 1024) + '</div>';
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: {
+      role: 'assistant', content: '',
+      tool_calls: [{ id: 'tse', type: 'function', function: {
+        name: 'replace_document',
+        arguments: JSON.stringify({ version: 'rwa-edit/1', doc: HUGE_DOC, reason: 'over cap test' }),
+      } }],
+    } }],
+  }),
+});
+const before56 = await window.getDoc();
+await window.modify('huge replace_document');
+await new Promise(r => setTimeout(r, 1000));
+check('56: target_size_exceeded: huge replace_document rejected, doc unchanged', (await window.getDoc()) === before56);
+
+// Test 57: replace at exactly MAX_REPLACE bytes is accepted (boundary case).
+// Test 22 covers MAX_REPLACE+1 (rejected); 8192 itself must succeed.
+console.log('\n== Test 57: replace at MAX_REPLACE boundary ==');
+await seedDoc('<div>BOUNDARY_TARGET</div>');
+const exactly8kb = 'Y'.repeat(8 * 1024);
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: {
+      role: 'assistant', content: '',
+      tool_calls: [{ id: 'bnd57', type: 'function', function: {
+        name: 'apply_edits',
+        arguments: JSON.stringify({ version: 'rwa-edit/1',
+          edits: [{ find: 'BOUNDARY_TARGET', replace: exactly8kb }] }),
+      } }],
+    } }],
+  }),
+});
+await window.modify('replace at MAX_REPLACE boundary');
+await new Promise(r => setTimeout(r, 100));
+const after57 = await window.getDoc();
+check('57: replace at exactly MAX_REPLACE bytes (8192) accepted', after57.includes(exactly8kb));
+check('57: original anchor consumed by boundary edit', !after57.includes('BOUNDARY_TARGET'));
+
+// Test 58: hist newest-first ordering across mixed apply_edits / replace_document.
+console.log('\n== Test 58: hist newest-first across mixed kinds ==');
+await seedDoc('<div>HIST_ORDER_SEED</div>');
+await new Promise((res, rej) => {
+  window.openDB().then(db => {
+    const r = db.transaction('rwa_hist', 'readwrite').objectStore('rwa_hist').put([], 'self');
+    r.onsuccess = res;
+    r.onerror = () => rej(r.error);
+  });
+});
+
+// modify 1: apply_edits
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: {
+      role: 'assistant', content: '',
+      tool_calls: [{ id: 'h_e1', type: 'function', function: {
+        name: 'apply_edits',
+        arguments: JSON.stringify({ version: 'rwa-edit/1',
+          edits: [{ find: 'HIST_ORDER_SEED', replace: 'HIST_AFTER_E1' }] }),
+      } }],
+    } }],
+  }),
+});
+await window.modify('hist e1');
+await new Promise(r => setTimeout(r, 100));
+
+// modify 2: replace_document
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: {
+      role: 'assistant', content: '',
+      tool_calls: [{ id: 'h_rd', type: 'function', function: {
+        name: 'replace_document',
+        arguments: JSON.stringify({ version: 'rwa-edit/1', doc: '<div>HIST_AFTER_RD</div>', reason: 'hist test' }),
+      } }],
+    } }],
+  }),
+});
+await window.modify('hist rd');
+await new Promise(r => setTimeout(r, 100));
+
+// modify 3: apply_edits
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: {
+      role: 'assistant', content: '',
+      tool_calls: [{ id: 'h_e2', type: 'function', function: {
+        name: 'apply_edits',
+        arguments: JSON.stringify({ version: 'rwa-edit/1',
+          edits: [{ find: 'HIST_AFTER_RD', replace: 'HIST_AFTER_E2' }] }),
+      } }],
+    } }],
+  }),
+});
+await window.modify('hist e2');
+await new Promise(r => setTimeout(r, 100));
+
+const histOrder = await new Promise((res, rej) => {
+  window.openDB().then(db => {
+    const r = db.transaction('rwa_hist').objectStore('rwa_hist').get('self');
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+  });
+});
+check('58: hist[0] is most-recent edit_batch (newest)', histOrder[0]?.kind === 'edit_batch');
+check('58: hist[1] is replace_document (middle)', histOrder[1]?.kind === 'replace_document');
+check('58: hist[2] is original edit_batch (oldest)', histOrder[2]?.kind === 'edit_batch');
+
 console.log('\n== Summary ==');
 console.log(`pass: ${pass}, fail: ${fail}`);
 process.exit(fail > 0 ? 1 : 0);
