@@ -3286,6 +3286,90 @@ await new Promise(r => setTimeout(r, 100));
 const after102c = await window.getDoc();
 check('102c: special HTML chars (&amp;, &lt;) preserved verbatim across edit', after102c === '<div>q&amp;a &lt;/div&gt; REPLACED_102C</div>');
 
+// Test 103: edit_index = 0 when the FIRST edit in a batch fails.
+// Test 85 covered edit_index = 1; this completes the symmetric coverage.
+console.log('\n== Test 103: edit_index = 0 for first-edit failure ==');
+await seedDoc('<div>FIRST_FAIL_103</div>');
+let cap103 = null;
+fetchHandler = async (url, opts) => {
+  const body = JSON.parse(opts.body);
+  const last = body.messages.at(-1);
+  if (last?.role === 'tool' && cap103 == null) {
+    cap103 = JSON.parse(last.content);
+  }
+  return ({
+    ok: true, json: async () => ({
+      choices: [{ message: { role: 'assistant', content: '', tool_calls: [{
+        id: 'first_fail', type: 'function', function: {
+          name: 'apply_edits',
+          arguments: JSON.stringify({ version: 'rwa-edit/1', edits: [
+            { find: 'NEVER_PRESENT_103', replace: 'X' },
+            { find: 'FIRST_FAIL_103', replace: 'KEPT' },
+          ] }),
+        },
+      }] } }],
+    }),
+  });
+};
+await window.modify('first-edit fails');
+await new Promise(r => setTimeout(r, 200));
+check('103: edit_index = 0 when the first edit fails', cap103?.edit_index === 0);
+
+// Test 104: same seed + same edit twice produces byte-equal results.
+// Determinism is a fidelity property — non-deterministic splice would mean
+// the agent can't reason about its own outputs.
+console.log('\n== Test 104: deterministic edits across two runs ==');
+await seedDoc('<div>DET_104</div>');
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: { role: 'assistant', content: '', tool_calls: [{
+      id: 'det_a', type: 'function', function: {
+        name: 'apply_edits',
+        arguments: JSON.stringify({ version: 'rwa-edit/1', edits: [{ find: 'DET_104', replace: 'STEP_1_104' }] }),
+      },
+    }] } }],
+  }),
+});
+await window.modify('det run 1');
+await new Promise(r => setTimeout(r, 100));
+const docA104 = await window.getDoc();
+
+await seedDoc('<div>DET_104</div>');
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: { role: 'assistant', content: '', tool_calls: [{
+      id: 'det_b', type: 'function', function: {
+        name: 'apply_edits',
+        arguments: JSON.stringify({ version: 'rwa-edit/1', edits: [{ find: 'DET_104', replace: 'STEP_1_104' }] }),
+      },
+    }] } }],
+  }),
+});
+await window.modify('det run 2');
+await new Promise(r => setTimeout(r, 100));
+const docB104 = await window.getDoc();
+check('104: identical seed + identical edit produces byte-equal result', docA104 === docB104);
+
+// Test 105: applyEdits and replaceDocument are directly callable on window.
+// This verifies the public API surface so a wrapper UI could call them
+// without going through modify().
+console.log('\n== Test 105: applyEdits/replaceDocument directly callable ==');
+await seedDoc('<div>DIRECT_105_A</div>');
+const cur105a = await window.getDoc();
+const result105a = await window.applyEdits(
+  { version: 'rwa-edit/1', edits: [{ find: 'DIRECT_105_A', replace: 'DIRECT_DONE_A' }] },
+  cur105a
+);
+check('105a: applyEdits returns the modified doc directly', result105a.includes('DIRECT_DONE_A'));
+
+await seedDoc('<div>DIRECT_105_B</div>');
+const cur105b = await window.getDoc();
+const result105b = await window.replaceDocument(
+  { version: 'rwa-edit/1', doc: '<div>DIRECT_RD_NEW</div>', reason: 'direct rd test' },
+  cur105b
+);
+check('105b: replaceDocument returns the new doc directly', result105b === '<div>DIRECT_RD_NEW</div>');
+
 console.log('\n== Summary ==');
 console.log(`pass: ${pass}, fail: ${fail}`);
 process.exit(fail > 0 ? 1 : 0);
