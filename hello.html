@@ -125,6 +125,10 @@ const idbPut = (s, v, k = RWA.KEY) => openDB().then(db => new Promise((res, rej)
   const r = db.transaction(s, 'readwrite').objectStore(s).put(v, k);
   r.onsuccess = () => res(); r.onerror = () => rej(r.error);
 }));
+const idbDel = (s, k = RWA.KEY) => openDB().then(db => new Promise((res, rej) => {
+  const r = db.transaction(s, 'readwrite').objectStore(s).delete(k);
+  r.onsuccess = () => res(); r.onerror = () => rej(r.error);
+}));
 
 async function getDoc() {
   let d = await idbGet(RWA.DOC);
@@ -613,7 +617,10 @@ async function modify(instr) {
       } catch {
         lastFailure = new RwaEditError('malformed_envelope', null, { message: 'invalid JSON arguments' });
         if (attemptsLeft > 0) {
-          messages.push({ role: 'assistant', content: msg.content || '', tool_calls: toolCalls });
+          // Echo only the consumed tool_call. If the model emits parallel calls
+          // we ignore the rest, and providers reject assistant messages whose
+          // tool_calls don't all have a paired tool_result on the next turn.
+          messages.push({ role: 'assistant', content: msg.content || '', tool_calls: [tc] });
           messages.push({ role: 'tool', tool_call_id: tc.id, content: failureToToolResult(lastFailure) });
         }
         continue;
@@ -627,7 +634,7 @@ async function modify(instr) {
         if (!(err instanceof RwaEditError)) throw err;
         lastFailure = err;
         if (attemptsLeft > 0) {
-          messages.push({ role: 'assistant', content: msg.content || '', tool_calls: toolCalls });
+          messages.push({ role: 'assistant', content: msg.content || '', tool_calls: [tc] });
           messages.push({ role: 'tool', tool_call_id: tc.id, content: failureToToolResult(err) });
         }
       }
@@ -653,6 +660,9 @@ async function modify(instr) {
 }
 
 async function undo() {
+  // ⌘Z must not race a ⌘K commit: modify() holds `cur` from before its fetch,
+  // and its commitDoc would clobber the doc/undo writes we make here.
+  if (modifyMutex) { setStatus('err', '✗ modify in progress'); return; }
   const p = await popUndo();
   if (!p) { setStatus('err', '✗ nothing to undo'); return; }
   await idbPut(RWA.DOC, p);
@@ -671,7 +681,12 @@ async function commit() {
         if (h) {
           let p = await h.queryPermission({ mode: 'readwrite' });
           if (p === 'prompt') p = await h.requestPermission({ mode: 'readwrite' });
-          if (p !== 'granted') throw new Error('permission denied');
+          if (p !== 'granted') {
+            // Stale or revoked handle — drop it so the next ⌘S re-prompts.
+            await idbDel(RWA.FSA).catch(() => {});
+            h = null;
+            throw new Error('permission denied — re-pick on next ⌘S');
+          }
         } else {
           h = await window.showSaveFilePicker({ suggestedName: RWA.FILE, types: [{ description: 'HTML', accept: { 'text/html': ['.html'] } }] });
           await idbPut(RWA.FSA, h);

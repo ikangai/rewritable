@@ -349,6 +349,124 @@ await window.modify('inject a frozen zone');
 await new Promise(r => setTimeout(r, 100));
 check('addition of new frozen zone rejected', (await window.getDoc()) === docBefore9);
 
+// Test 10: ⌘Z during in-flight ⌘K is rejected — regression for the silent-undo-clobber bug.
+// Without the modifyMutex check in undo(), a concurrent ⌘Z would pop+write rwa_doc,
+// then modify()'s commitDoc would clobber it on resolve.
+console.log('\n== Test 10: ⌘Z during in-flight ⌘K is rejected ==');
+let modifyFetchResolve;
+fetchHandler = () => new Promise(r => { modifyFetchResolve = r; });
+
+const readUndo = () => new Promise((res, rej) => {
+  window.openDB().then(db => {
+    const r = db.transaction('rwa_undo').objectStore('rwa_undo').get('self');
+    r.onsuccess = () => res(r.result || []);
+    r.onerror = () => rej(r.error);
+  });
+});
+
+const docBefore10 = await window.getDoc();
+const undoBefore10 = await readUndo();
+
+const modify10 = window.modify('start a slow modify');
+// let modify() acquire the mutex and reach the awaited fetch
+await new Promise(r => setTimeout(r, 30));
+
+await window.undo();
+check('undo during modify: doc unchanged', (await window.getDoc()) === docBefore10);
+const undoDuring10 = await readUndo();
+check('undo during modify: undo stack unchanged', undoDuring10.length === undoBefore10.length);
+
+// release the fetch with a successful single-edit response so modify finishes cleanly
+modifyFetchResolve({
+  ok: true,
+  json: async () => ({
+    choices: [{
+      message: {
+        role: 'assistant', content: '',
+        tool_calls: [{
+          id: 'call_10', type: 'function',
+          function: {
+            name: 'apply_edits',
+            arguments: JSON.stringify({
+              version: 'rwa-edit/1',
+              edits: [{ find: 'fresh document', replace: 'completed-after-undo-rejected' }],
+            }),
+          },
+        }],
+      },
+    }],
+  }),
+});
+await modify10;
+await new Promise(r => setTimeout(r, 50));
+check('modify completes after undo bailout', (await window.getDoc()).includes('completed-after-undo-rejected'));
+
+// Test 11: parallel tool_calls — only the consumed tc is echoed back on retry.
+// Without the fix, the assistant message echoed for retry contained ALL tool_calls
+// the model emitted, but only one had a paired tool_result — providers reject this.
+console.log('\n== Test 11: parallel tool_calls — only consumed tc echoed on retry ==');
+let parallelCallCount = 0;
+let parallelRetrySeen = false;
+fetchHandler = async (url, opts) => {
+  parallelCallCount++;
+  if (parallelCallCount === 1) {
+    // model returns TWO parallel tool_calls; runtime processes only [0]
+    return {
+      ok: true,
+      json: async () => ({
+        choices: [{
+          message: {
+            role: 'assistant', content: '',
+            tool_calls: [
+              { id: 'parallel_a', type: 'function', function: { name: 'apply_edits',
+                arguments: JSON.stringify({ version: 'rwa-edit/1',
+                  edits: [{ find: 'NOT_IN_DOC_ANCHOR', replace: 'X' }] }) } },
+              { id: 'parallel_b', type: 'function', function: { name: 'apply_edits',
+                arguments: JSON.stringify({ version: 'rwa-edit/1',
+                  edits: [{ find: 'completed-after-undo-rejected', replace: 'Y' }] }) } },
+            ],
+          },
+        }],
+      }),
+    };
+  }
+  const body = JSON.parse(opts.body);
+  const lastAssistant = [...body.messages].reverse().find(m => m.role === 'assistant');
+  check('retry assistant has exactly 1 tool_call', lastAssistant?.tool_calls?.length === 1);
+  check('retry tool_call id is the consumed one (parallel_a)', lastAssistant?.tool_calls?.[0]?.id === 'parallel_a');
+  parallelRetrySeen = true;
+  return {
+    ok: true,
+    json: async () => ({
+      choices: [{
+        message: {
+          role: 'assistant', content: '',
+          tool_calls: [{
+            id: 'after_retry', type: 'function',
+            function: {
+              name: 'apply_edits',
+              arguments: JSON.stringify({
+                version: 'rwa-edit/1',
+                edits: [{ find: 'completed-after-undo-rejected', replace: 'parallel-fixed' }],
+              }),
+            },
+          }],
+        },
+      }],
+    }),
+  };
+};
+await window.modify('parallel tool_calls test');
+await new Promise(r => setTimeout(r, 100));
+check('parallel: retry path was exercised', parallelRetrySeen);
+check('parallel: doc updated to retry result', (await window.getDoc()).includes('parallel-fixed'));
+
+// Note: fix #2 (FSA permission denial purges the stored handle) is not exercised here.
+// jsdom can't faithfully simulate FileSystemFileHandle: the structured-clone roundtrip
+// through IDB drops functions, so a fake handle's queryPermission becomes undefined and
+// the runtime hits a TypeError before reaching the new idbDel call. The fix is verified
+// by code inspection; integration coverage requires a real Chromium harness.
+
 console.log('\n== Summary ==');
 console.log(`pass: ${pass}, fail: ${fail}`);
 process.exit(fail > 0 ? 1 : 0);
