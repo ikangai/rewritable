@@ -2993,6 +2993,26 @@ check('91: rwa_hist store exists', db91.objectStoreNames.contains('rwa_hist'));
 check('91: rwa_fsa store exists', db91.objectStoreNames.contains('rwa_fsa'));
 check('91: rwa_doc uses out-of-line keys (keyPath===null)', db91.transaction('rwa_doc', 'readonly').objectStore('rwa_doc').keyPath === null);
 
+// Test 92: spec invariant — the agent never sees the bootstrap/runtime/
+// INLINE_DOC declaration. A regression that included the runtime in the
+// prompt would (a) waste tokens on every modify and (b) let the model
+// emit edits that touched the bootstrap — a critical fidelity violation.
+console.log('\n== Test 92: agent never sees bootstrap/runtime in prompt ==');
+await seedDoc('<div>CLEAN_DOC_92</div>');
+let prompt92 = null;
+fetchHandler = async (url, opts) => {
+  prompt92 = opts.body;
+  return ({ ok: true, json: async () => ({ choices: [{ message: { role: 'assistant', content: 'noop' } }] }) });
+};
+await window.modify('inspect prompt for runtime contamination');
+await new Promise(r => setTimeout(r, 100));
+check('92: prompt body does NOT contain rwa-bootstrap script id', !prompt92?.includes('rwa-bootstrap'));
+check('92: prompt body does NOT contain "async function modify"', !prompt92?.includes('async function modify'));
+check('92: prompt body does NOT contain "const INLINE_DOC" declaration', !prompt92?.includes('const INLINE_DOC'));
+check('92: prompt body does NOT contain DOC_UUID declaration', !prompt92?.includes('const DOC_UUID'));
+check('92: prompt body does NOT contain RWA_EDIT.RESERVED constant', !prompt92?.includes('RWA_EDIT.RESERVED'));
+check('92: prompt body does NOT contain extractFrozenZones function source', !prompt92?.includes('function extractFrozenZones'));
+
 console.log('\n== Summary ==');
 console.log(`pass: ${pass}, fail: ${fail}`);
 process.exit(fail > 0 ? 1 : 0);
