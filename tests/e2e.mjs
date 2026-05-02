@@ -2649,6 +2649,44 @@ check('76: tool_result count reflects 4 occurrences', firstHints76?.count === 4)
 check('76: hints array entries have pos/before/after structure', firstHints76?.hints?.[0] && 'pos' in firstHints76.hints[0] && 'before' in firstHints76.hints[0] && 'after' in firstHints76.hints[0]);
 check('76: hints capped at max=3 even when more matches exist', firstHints76?.hints?.length <= 3 && firstHints76?.hints?.length > 0);
 
+// Test 77: user prompt zone list shows "(none)" when the doc has no frozen zones.
+// A regression that listed ghost zone names would mislead the model and cause
+// it to avoid edits unnecessarily — silently shrinking edit fidelity coverage.
+console.log('\n== Test 77: user prompt (none) for zero zones ==');
+await seedDoc('<div>NO_ZONES_HERE_77</div>');
+let captured77 = null;
+fetchHandler = async (url, opts) => {
+  captured77 = JSON.parse(opts.body);
+  return ({
+    ok: true, json: async () => ({
+      choices: [{ message: { role: 'assistant', content: 'no edit' } }],
+    }),
+  });
+};
+await window.modify('inspect prompt for zero-zone doc');
+await new Promise(r => setTimeout(r, 100));
+const userMsg77 = captured77?.messages?.find(m => m.role === 'user')?.content;
+check('77: user message has "(none)" marker for zero frozen zones', userMsg77?.includes('(none)'));
+check('77: user message does not list any phantom zone names', !userMsg77?.includes('- '));
+
+// Test 78: user prompt lists all frozen zone names as bullet entries.
+console.log('\n== Test 78: user prompt lists all frozen zones ==');
+await seedDoc('<style>\n/* rwa:frozen:begin alpha78 */\n.x{}\n/* rwa:frozen:end alpha78 */\n/* rwa:frozen:begin beta78 */\n.y{}\n/* rwa:frozen:end beta78 */\n</style>\n<div>tail-78</div>');
+let captured78 = null;
+fetchHandler = async (url, opts) => {
+  captured78 = JSON.parse(opts.body);
+  return ({
+    ok: true, json: async () => ({
+      choices: [{ message: { role: 'assistant', content: 'no edit' } }],
+    }),
+  });
+};
+await window.modify('inspect prompt for two-zone doc');
+await new Promise(r => setTimeout(r, 100));
+const userMsg78 = captured78?.messages?.find(m => m.role === 'user')?.content;
+check('78: user message lists alpha78 zone bullet', userMsg78?.includes('- alpha78'));
+check('78: user message lists beta78 zone bullet', userMsg78?.includes('- beta78'));
+
 console.log('\n== Summary ==');
 console.log(`pass: ${pass}, fail: ${fail}`);
 process.exit(fail > 0 ? 1 : 0);
