@@ -3233,6 +3233,59 @@ await window.modify('envelope-level reason');
 await new Promise(r => setTimeout(r, 100));
 check('101: envelope.reason field on apply_edits accepted', (await window.getDoc()) === '<div>ENV_R_DONE</div>');
 
+// Tests 102a-c: edge case doc states.
+console.log('\n== Tests 102a-c: edge case doc states ==');
+
+// 102a: empty doc — any anchor is find_not_found.
+await seedDoc('');
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: { role: 'assistant', content: '', tool_calls: [{
+      id: 'em102', type: 'function', function: {
+        name: 'apply_edits',
+        arguments: JSON.stringify({ version: 'rwa-edit/1', edits: [{ find: 'never_in_empty', replace: 'X' }] }),
+      },
+    }] } }],
+  }),
+});
+const before102a = await window.getDoc();
+await window.modify('edit on empty doc');
+await new Promise(r => setTimeout(r, 200));
+check('102a: empty doc + missing anchor = find_not_found, doc unchanged', (await window.getDoc()) === before102a);
+
+// 102b: whitespace-only doc — anchor matching entire content replaces it.
+await seedDoc('   \n\n   ');
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: { role: 'assistant', content: '', tool_calls: [{
+      id: 'ws102', type: 'function', function: {
+        name: 'apply_edits',
+        arguments: JSON.stringify({ version: 'rwa-edit/1', edits: [{ find: '   \n\n   ', replace: 'NOW_HAS_CONTENT_102B' }] }),
+      },
+    }] } }],
+  }),
+});
+await window.modify('replace whitespace-only doc');
+await new Promise(r => setTimeout(r, 100));
+check('102b: whitespace-only doc replaced by full-doc anchor edit', (await window.getDoc()) === 'NOW_HAS_CONTENT_102B');
+
+// 102c: doc with HTML-significant characters preserved verbatim.
+await seedDoc('<div>q&amp;a &lt;/div&gt; ANCHOR_102C</div>');
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: { role: 'assistant', content: '', tool_calls: [{
+      id: 'sp102', type: 'function', function: {
+        name: 'apply_edits',
+        arguments: JSON.stringify({ version: 'rwa-edit/1', edits: [{ find: 'ANCHOR_102C', replace: 'REPLACED_102C' }] }),
+      },
+    }] } }],
+  }),
+});
+await window.modify('special chars + anchor edit');
+await new Promise(r => setTimeout(r, 100));
+const after102c = await window.getDoc();
+check('102c: special HTML chars (&amp;, &lt;) preserved verbatim across edit', after102c === '<div>q&amp;a &lt;/div&gt; REPLACED_102C</div>');
+
 console.log('\n== Summary ==');
 console.log(`pass: ${pass}, fail: ${fail}`);
 process.exit(fail > 0 ? 1 : 0);
