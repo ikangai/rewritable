@@ -2114,6 +2114,64 @@ await window.modify('mutate second zone');
 await new Promise(r => setTimeout(r, 200));
 check('59c: edit inside second zone (spacing) rejected', (await window.getDoc()) === before59c);
 
+// Tests 60a-b: response-shape edge cases. Runtime throws "empty response"
+// for missing choices/message; the outer try/catch leaves the doc unchanged.
+console.log('\n== Tests 60a-b: response shape edge cases ==');
+
+// 60a: empty choices array.
+fetchHandler = async () => ({
+  ok: true, json: async () => ({ choices: [] }),
+});
+const before60a = await window.getDoc();
+await window.modify('empty choices');
+await new Promise(r => setTimeout(r, 100));
+check('60a: empty choices array — doc unchanged', (await window.getDoc()) === before60a);
+
+// 60b: choice without message field.
+fetchHandler = async () => ({
+  ok: true, json: async () => ({ choices: [{}] }),
+});
+const before60b = await window.getDoc();
+await window.modify('choice missing message');
+await new Promise(r => setTimeout(r, 100));
+check('60b: choice without message — doc unchanged', (await window.getDoc()) === before60b);
+
+// Test 60c: hist envelope provenance — after a retry, the hist record must
+// contain the SUCCESSFUL attempt's envelope, not the failed one. Without
+// this, audit trail consumers would see anchors that never existed.
+console.log('\n== Test 60c: hist envelope from successful attempt ==');
+await seedDoc('<div>HIST_PROV_SEED</div>');
+let r60Calls = 0;
+fetchHandler = async () => {
+  r60Calls++;
+  if (r60Calls === 1) {
+    return { ok: true, json: async () => ({
+      choices: [{ message: { role: 'assistant', content: '', tool_calls: [{ id: 'r60_1', type: 'function', function: {
+        name: 'apply_edits',
+        arguments: JSON.stringify({ version: 'rwa-edit/1', edits: [{ find: 'NOT_PRESENT_60', replace: 'X' }] }),
+      } }] } }],
+    }) };
+  }
+  return { ok: true, json: async () => ({
+    choices: [{ message: { role: 'assistant', content: '', tool_calls: [{ id: 'r60_2', type: 'function', function: {
+      name: 'apply_edits',
+      arguments: JSON.stringify({ version: 'rwa-edit/1', edits: [{ find: 'HIST_PROV_SEED', replace: 'HIST_PROV_FINAL' }] }),
+    } }] } }],
+  }) };
+};
+await window.modify('retry then success');
+await new Promise(r => setTimeout(r, 200));
+const histProv = await new Promise((res, rej) => {
+  window.openDB().then(db => {
+    const r = db.transaction('rwa_hist').objectStore('rwa_hist').get('self');
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+  });
+});
+check('60c: hist envelope find = successful attempt anchor', histProv[0]?.envelope?.edits?.[0]?.find === 'HIST_PROV_SEED');
+check('60c: hist envelope replace = successful attempt replace', histProv[0]?.envelope?.edits?.[0]?.replace === 'HIST_PROV_FINAL');
+check('60c: hist envelope NOT contaminated with failed attempt anchor', histProv[0]?.envelope?.edits?.[0]?.find !== 'NOT_PRESENT_60');
+
 console.log('\n== Summary ==');
 console.log(`pass: ${pass}, fail: ${fail}`);
 process.exit(fail > 0 ? 1 : 0);
