@@ -2914,6 +2914,74 @@ check('88: body.model is a non-empty string', typeof body88?.model === 'string' 
 check('88: body.max_tokens is set to a generous value', typeof body88?.max_tokens === 'number' && body88.max_tokens >= 8000);
 check('88: body.messages = [system, user]', body88?.messages?.length === 2 && body88?.messages?.[0]?.role === 'system' && body88?.messages?.[1]?.role === 'user');
 
+// Test 89: multi-line find anchors. The runtime canonLF()s both sides so
+// anchors spanning newlines must match correctly. A bug treating newlines
+// as terminators would silently fail multi-line edits.
+console.log('\n== Test 89: multi-line anchor matching ==');
+await seedDoc('<p>line one</p>\n<p>line two ANCHOR_89</p>\n<p>line three</p>');
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: {
+      role: 'assistant', content: '',
+      tool_calls: [{ id: 'ml89', type: 'function', function: {
+        name: 'apply_edits',
+        arguments: JSON.stringify({ version: 'rwa-edit/1',
+          edits: [{ find: 'line one</p>\n<p>line two ANCHOR_89', replace: 'REPLACED_MULTILINE' }] }),
+      } }],
+    } }],
+  }),
+});
+await window.modify('multi-line anchor');
+await new Promise(r => setTimeout(r, 100));
+const after89 = await window.getDoc();
+check('89: multi-line anchor accepted and applied', after89.includes('REPLACED_MULTILINE'));
+check('89: surrounding lines preserved (line three)', after89.includes('<p>line three</p>'));
+check('89: doc shape preserved (single result, no leftover anchor)', !after89.includes('ANCHOR_89'));
+
+// Test 90: data-rwa-frozen element with nested children — full subtree
+// preservation. The snapshot uses outerHTML so deep mutations are caught.
+console.log('\n== Test 90: rich data-rwa-frozen element preservation ==');
+const richSeed = '<div data-rwa-frozen><h1>Title-90</h1><p>Para with <em>emphasis</em></p></div>\n<div>tail-90</div>';
+await seedDoc(richSeed);
+
+// 90a: edit outside rich frozen element allowed; subtree preserved.
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: {
+      role: 'assistant', content: '',
+      tool_calls: [{ id: 'rich90a', type: 'function', function: {
+        name: 'apply_edits',
+        arguments: JSON.stringify({ version: 'rwa-edit/1',
+          edits: [{ find: 'tail-90', replace: 'tail-90-CHANGED' }] }),
+      } }],
+    } }],
+  }),
+});
+await window.modify('edit outside rich frozen element');
+await new Promise(r => setTimeout(r, 100));
+const after90a = await window.getDoc();
+check('90a: rich frozen subtree preserved verbatim across outside edit', after90a.includes('<div data-rwa-frozen><h1>Title-90</h1><p>Para with <em>emphasis</em></p></div>'));
+check('90a: outside edit applied', after90a.includes('tail-90-CHANGED'));
+
+// 90b: edit modifying nested content inside rich frozen element rejected.
+await seedDoc(richSeed);
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: {
+      role: 'assistant', content: '',
+      tool_calls: [{ id: 'rich90b', type: 'function', function: {
+        name: 'apply_edits',
+        arguments: JSON.stringify({ version: 'rwa-edit/1',
+          edits: [{ find: '<em>emphasis</em>', replace: '<strong>boldened</strong>' }] }),
+      } }],
+    } }],
+  }),
+});
+const before90b = await window.getDoc();
+await window.modify('mutate nested em inside rich frozen');
+await new Promise(r => setTimeout(r, 200));
+check('90b: nested content tampering inside rich frozen element rejected', (await window.getDoc()) === before90b);
+
 console.log('\n== Summary ==');
 console.log(`pass: ${pass}, fail: ${fail}`);
 process.exit(fail > 0 ? 1 : 0);
