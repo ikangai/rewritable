@@ -1764,6 +1764,101 @@ await window.modify('whitespace-only arguments');
 await new Promise(r => setTimeout(r, 200));
 check('52b: tool_call with whitespace-only arguments rejected', (await window.getDoc()) === before52b);
 
+// Test 53: popUndo atomicity. Two concurrent undo() calls must each pop a
+// distinct entry — without the atomic read+write inside popUndo(), both
+// would observe the same stack snapshot and double-pop the same entry,
+// leaving one entry orphaned. Regression for the "rapid ⌘Z" bug noted in
+// popUndo()'s comment.
+console.log('\n== Test 53: popUndo atomicity (rapid concurrent undo) ==');
+
+await new Promise((res, rej) => {
+  window.openDB().then(db => {
+    const r = db.transaction('rwa_undo', 'readwrite').objectStore('rwa_undo').put([], 'self');
+    r.onsuccess = res;
+    r.onerror = () => rej(r.error);
+  });
+});
+await seedDoc('<div>POPATOM_SEED</div>');
+
+// Per-modify handlers — using one shared handler with a userMsgs counter
+// always evaluates to 1 per fresh modify call (each modify builds messages
+// from scratch).
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: {
+      role: 'assistant', content: '',
+      tool_calls: [{ id: 'pa_m1', type: 'function', function: {
+        name: 'apply_edits',
+        arguments: JSON.stringify({ version: 'rwa-edit/1',
+          edits: [{ find: 'POPATOM_SEED', replace: 'POPATOM_S1' }] }),
+      } }],
+    } }],
+  }),
+});
+await window.modify('m1');
+await new Promise(r => setTimeout(r, 100));
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: {
+      role: 'assistant', content: '',
+      tool_calls: [{ id: 'pa_m2', type: 'function', function: {
+        name: 'apply_edits',
+        arguments: JSON.stringify({ version: 'rwa-edit/1',
+          edits: [{ find: 'POPATOM_S1', replace: 'POPATOM_S2' }] }),
+      } }],
+    } }],
+  }),
+});
+await window.modify('m2');
+await new Promise(r => setTimeout(r, 100));
+
+const stackBefore53 = await new Promise((res, rej) => {
+  window.openDB().then(db => {
+    const r = db.transaction('rwa_undo').objectStore('rwa_undo').get('self');
+    r.onsuccess = () => res(r.result || []);
+    r.onerror = () => rej(r.error);
+  });
+});
+check('53: setup — undo stack has 2 entries before concurrent pops', stackBefore53.length === 2);
+
+const u53_1 = window.undo();
+const u53_2 = window.undo();
+await Promise.all([u53_1, u53_2]);
+
+const stackAfter53 = await new Promise((res, rej) => {
+  window.openDB().then(db => {
+    const r = db.transaction('rwa_undo').objectStore('rwa_undo').get('self');
+    r.onsuccess = () => res(r.result || []);
+    r.onerror = () => rej(r.error);
+  });
+});
+check('53: 2 concurrent undos each popped a distinct entry (stack drained)', stackAfter53.length === 0);
+check('53: doc restored to original seed', (await window.getDoc()).includes('POPATOM_SEED'));
+
+// Test 54: no-op edit (find === replace) is a successful, byte-equal commit.
+// The runtime allows this — occ=1 passes uniqueness, splice produces the
+// identical string. It still pushes to undo and hist (as expected). Pin it
+// down so a future "skip no-op" optimization doesn't silently change the
+// hist record cadence.
+console.log('\n== Test 54: no-op edit (find === replace) ==');
+await seedDoc('<div>NOOP_SEED</div>');
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: {
+      role: 'assistant', content: '',
+      tool_calls: [{ id: 'noop', type: 'function', function: {
+        name: 'apply_edits',
+        arguments: JSON.stringify({ version: 'rwa-edit/1',
+          edits: [{ find: 'NOOP_SEED', replace: 'NOOP_SEED' }] }),
+      } }],
+    } }],
+  }),
+});
+const before54 = await window.getDoc();
+await window.modify('no-op edit');
+await new Promise(r => setTimeout(r, 100));
+check('54: no-op edit succeeds with doc byte-equal', (await window.getDoc()) === before54);
+
 console.log('\n== Summary ==');
 console.log(`pass: ${pass}, fail: ${fail}`);
 process.exit(fail > 0 ? 1 : 0);
