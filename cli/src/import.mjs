@@ -27,7 +27,12 @@ function convertMd(md) {
 function convertHtml(input) {
   const warnings = [];
 
-  let body = input.replace(/<!DOCTYPE[^>]*>/gi, '').replace(/<\/?html[^>]*>/gi, '');
+  // Strip HTML comments first. Without this, a comment like <!-- </head> -->
+  // would terminate the non-greedy head match prematurely and let head content
+  // leak into the body. Comments are dropped — acceptable for an offline import
+  // CLI; full preservation would require a real parser.
+  let body = input.replace(/<!--[\s\S]*?-->/g, '');
+  body = body.replace(/<!DOCTYPE[^>]*>/gi, '').replace(/<\/?html[^>]*>/gi, '');
 
   const headMatch = body.match(/<head[^>]*>([\s\S]*?)<\/head>/i);
   let headStyles = '';

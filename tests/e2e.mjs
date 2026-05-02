@@ -467,6 +467,64 @@ check('parallel: doc updated to retry result', (await window.getDoc()).includes(
 // the runtime hits a TypeError before reaching the new idbDel call. The fix is verified
 // by code inspection; integration coverage requires a real Chromium harness.
 
+// Test 12: replace_document with reserved id="rwa-doc-mount" is rejected.
+console.log('\n== Test 12: reserved id="rwa-doc-mount" rejected ==');
+fetchHandler = async () => ({
+  ok: true,
+  json: async () => ({
+    choices: [{
+      message: {
+        role: 'assistant', content: '',
+        tool_calls: [{
+          id: 'call_id_mount', type: 'function',
+          function: {
+            name: 'replace_document',
+            arguments: JSON.stringify({
+              version: 'rwa-edit/1',
+              doc: '<style>.x{color:red}</style>\n<div id="rwa-doc-mount">shadow mount</div>',
+              reason: 'try to shadow the runtime mount',
+            }),
+          },
+        }],
+      },
+    }],
+  }),
+});
+
+const docBefore12 = await window.getDoc();
+await window.modify('introduce a reserved mount id');
+await new Promise(r => setTimeout(r, 100));
+check('reserved-id replace_document rejected: doc unchanged', (await window.getDoc()) === docBefore12);
+
+// Test 13: replace_document with reserved [data-rwa-id] is rejected.
+console.log('\n== Test 13: reserved data-rwa-id rejected ==');
+fetchHandler = async () => ({
+  ok: true,
+  json: async () => ({
+    choices: [{
+      message: {
+        role: 'assistant', content: '',
+        tool_calls: [{
+          id: 'call_id_v2', type: 'function',
+          function: {
+            name: 'replace_document',
+            arguments: JSON.stringify({
+              version: 'rwa-edit/1',
+              doc: '<style>.x{color:red}</style>\n<section data-rwa-id="claim">v2 squat</section>',
+              reason: 'try to claim a v2-reserved attribute',
+            }),
+          },
+        }],
+      },
+    }],
+  }),
+});
+
+const docBefore13 = await window.getDoc();
+await window.modify('claim data-rwa-id');
+await new Promise(r => setTimeout(r, 100));
+check('reserved-attr replace_document rejected: doc unchanged', (await window.getDoc()) === docBefore13);
+
 console.log('\n== Summary ==');
 console.log(`pass: ${pass}, fail: ${fail}`);
 process.exit(fail > 0 ? 1 : 0);

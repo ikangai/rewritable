@@ -600,9 +600,25 @@ async function getDoc() {
   return d;
 }
 async function popUndo() {
-  const s = (await idbGet(RWA.UNDO)) || [];
-  if (!s.length) return null;
-  const v = s.pop(); await idbPut(RWA.UNDO, s); return v;
+  // Read+write in one tx: rapid ⌘Z keypresses would otherwise interleave the
+  // get and the put, both observe the same array, both pop the same entry,
+  // and the user would see only one undo for two presses.
+  const db = await openDB();
+  return new Promise((res, rej) => {
+    const tx = db.transaction(RWA.UNDO, 'readwrite');
+    const store = tx.objectStore(RWA.UNDO);
+    const r = store.get(RWA.KEY);
+    let v = null;
+    r.onsuccess = () => {
+      const s = r.result || [];
+      if (!s.length) return;
+      v = s.pop();
+      store.put(s, RWA.KEY);
+    };
+    tx.oncomplete = () => res(v);
+    tx.onerror = () => rej(tx.error || new Error('popUndo tx error'));
+    tx.onabort = () => rej(tx.error || new Error('popUndo tx aborted'));
+  });
 }
 // ─── Render ─────────────────────────────────────────────────────────
 function renderDoc(html) {
@@ -889,6 +905,16 @@ function snapshotsEqual(a, b) {
   return true;
 }
 
+// Reserved IDs/attributes the runtime owns. The render mount is #rwa-doc-mount
+// (CLAUDE.md §"Reserved namespaces"); data-rwa-id is reserved for v2. A doc
+// that introduces either name shadows the runtime's contract.
+function findReservedIdViolation(parsedDoc) {
+  if (!parsedDoc) return null;
+  if (parsedDoc.querySelector('#rwa-doc-mount')) return 'rwa-doc-mount';
+  if (parsedDoc.querySelector('[data-rwa-id]')) return 'data-rwa-id';
+  return null;
+}
+
 // ─── Commit (rwa-edit/1) ────────────────────────────────────────────
 // Single IDB transaction across rwa_doc, rwa_undo, rwa_hist. Reads happen
 // before the transaction (modifyMutex prevents concurrent writes). The
@@ -954,6 +980,9 @@ async function applyEdits(envelope, currentDocRaw) {
   if (!snapshotsEqual(originalAttrs, dataRwaFrozenSnapshot(parseResult.doc)))
     throw new RwaEditError('frozen_zone_corrupted');
 
+  const reservedId = findReservedIdViolation(parseResult.doc);
+  if (reservedId) throw new RwaEditError('reserved_id_used', null, { id: reservedId });
+
   if (work.length > RWA_EDIT.MAX_DOC) throw new RwaEditError('target_size_exceeded');
 
   await commitDoc(currentDoc, work, { ts: Date.now(), kind: 'edit_batch', envelope });
@@ -978,6 +1007,9 @@ async function replaceDocument(envelope, currentDocRaw) {
 
   if (!snapshotsEqual(originalAttrs, dataRwaFrozenSnapshot(parseResult.doc)))
     throw new RwaEditError('frozen_zone_corrupted');
+
+  const reservedId = findReservedIdViolation(parseResult.doc);
+  if (reservedId) throw new RwaEditError('reserved_id_used', null, { id: reservedId });
 
   if (newDoc.length > RWA_EDIT.MAX_DOC) throw new RwaEditError('target_size_exceeded');
 

@@ -2,6 +2,37 @@
 
 Notable changes to `re-write-able`. The container format is versioned in `re-write-able-spec.md`; the edit protocol in `rwa-edit-spec.md`. The CLI follows semver in `cli/package.json`.
 
+## 2026-05-02 — hardening (low-priority sweep): popUndo, applySeedSubs, HEAD, comment-resilient HTML import, reserved IDs
+
+A second pass at the LOW findings from the same bug hunt that produced the morning's HIGH/MEDIUM fixes. None of these are user-visible failures on the happy path; they tighten edge cases and defenses.
+
+### What changed
+
+- **`popUndo()` is now atomic** (seed). The read+write of `rwa_undo` runs in a single `readwrite` transaction, so two rapid `⌘Z` keypresses can no longer both observe the same array, both pop the same entry, and both write back the same shortened state. Previously: two presses, one undo. Now: two presses, two undos.
+- **`applySeedSubs` validates `<title>` and `RWA.FILE` match counts** (CLI). Until now only `DOC_UUID` was guarded; a future seed regression that removes or duplicates the title/FILE site would have silently no-oped. All three substitution sites now enforce exactly-one-match-or-throw.
+- **HEAD requests no longer return a body** (service). Per RFC 9110 §9.3.2. Refactored `send` into a per-request closure that observes `req.method === 'HEAD'` and ends the response with no body for HEAD.
+- **`rwa import` of HTML survives comment-embedded `</head>`** (CLI). HTML comments are stripped before head/body extraction, so a literal `<!-- </head> -->` in the head no longer truncates the head match and let head-only content (e.g. `<style>`) leak into the body. Comments themselves are dropped — acceptable for an offline import; full preservation would require a real parser.
+- **Reserved IDs cannot be introduced by `apply_edits` or `replace_document`** (seed). Both validators now reject any payload whose parsed DOM contains `#rwa-doc-mount` (the runtime's render mount, per CLAUDE.md "Reserved namespaces") or `[data-rwa-id]` (reserved for v2). Surfaces as `reserved_id_used` with the offending name in the structured payload.
+
+### What changed for the seed
+
+- New helper `findReservedIdViolation(parsedDoc)` returning the offending reserved name or null.
+- `applyEdits` and `replaceDocument` call it after `parseHtmlFragment` and before `commitDoc`.
+- `popUndo` rewritten as a single-transaction promise (no API change for callers).
+
+### What changed for testing
+
+- `tests/e2e.mjs` grows from 33 to 35 assertions:
+    - **Test 12:** `replace_document` with `<div id="rwa-doc-mount">` is rejected; doc unchanged.
+    - **Test 13:** `replace_document` with `[data-rwa-id]` is rejected; doc unchanged.
+- The atomic `popUndo` and the HTTP HEAD fix are not exercised in the harness (concurrency-shaped and HTTP-shaped, respectively); both are verified by inspection and by smoke. The applySeedSubs and convertHtml fixes are smoke-tested via `rwa new` and `rwa import` against a fixture HTML containing `<!-- </head> -->`.
+
+### Backward compatibility
+
+- IDB shape unchanged; existing containers continue to work.
+- `reserved_id_used` is a new failure code; no doc previously committed by the runtime would trip it (the doc-mount lives in the bootstrap, not in `INLINE_DOC`).
+- The bootstrap byte-identity invariant still holds within this release across seed/hello.html/spec.html.
+
 ## 2026-05-02 — hardening: undo race, FSA stale handle, parallel tool_calls
 
 Three correctness fixes on the rwa-edit/1 modify pathway, found by an autonomous bug-hunt over the runtime, CLI, service, and tests. All landed against the canonical seed and were regenerated into `hello.html` and `re-write-able-spec.html`. The container spec stays at v0.8 and the edit protocol stays at rwa-edit/1 (v1.4) — these are implementation corrections, not contract changes.

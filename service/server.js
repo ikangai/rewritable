@@ -30,26 +30,29 @@ const SECURITY_HEADERS = {
   'Referrer-Policy': 'no-referrer',
 };
 
-function send(res, status, headers, body) {
-  res.writeHead(status, { ...SECURITY_HEADERS, ...headers });
-  res.end(body);
-}
-
 const server = http.createServer((req, res) => {
-  if (req.method !== 'GET' && req.method !== 'HEAD') {
-    return send(res, 405, { 'Allow': 'GET, HEAD', 'Content-Type': 'text/plain' }, 'method not allowed\n');
+  // Per RFC 9110 §9.3.2: HEAD must return identical headers to GET but no body.
+  // Closure over `req.method` so every send() call honours this automatically.
+  const isHead = req.method === 'HEAD';
+  const send = (status, headers, body) => {
+    res.writeHead(status, { ...SECURITY_HEADERS, ...headers });
+    res.end(isHead ? undefined : body);
+  };
+
+  if (req.method !== 'GET' && !isHead) {
+    return send(405, { 'Allow': 'GET, HEAD', 'Content-Type': 'text/plain' }, 'method not allowed\n');
   }
 
   const url = req.url.split('?')[0];
 
   if (url === '/health') {
-    return send(res, 200, { 'Content-Type': 'text/plain' }, 'ok\n');
+    return send(200, { 'Content-Type': 'text/plain' }, 'ok\n');
   }
   if (url === '/') {
-    return send(res, 302, { 'Location': '/new' }, '');
+    return send(302, { 'Location': '/new' }, '');
   }
   if (url === '/new') {
-    return send(res, 200, {
+    return send(200, {
       'Content-Type': 'text/html; charset=utf-8',
       'Cache-Control': 'no-store',
     }, TRIGGER_HTML);
@@ -58,13 +61,13 @@ const server = http.createServer((req, res) => {
     const uuid = crypto.randomUUID();
     const body = SEED_TEMPLATE.replace(UUID_RE, `const DOC_UUID = '${uuid}';`);
     // no-store: each download has a unique UUID, caching defeats the isolation.
-    return send(res, 200, {
+    return send(200, {
       'Content-Type': 'text/html; charset=utf-8',
       'Content-Disposition': 'attachment; filename="rewritable.html"',
       'Cache-Control': 'no-store',
     }, body);
   }
-  send(res, 404, { 'Content-Type': 'text/plain' }, 'not found\n');
+  send(404, { 'Content-Type': 'text/plain' }, 'not found\n');
 });
 
 server.listen(PORT, () => {

@@ -16,9 +16,18 @@ const TITLE_RE = /<title>[^<]*<\/title>/;
 const FILE_RE = /(FILE\s*:\s*)'[^']*'/;
 
 export function applySeedSubs(seed, { uuid, title, fileMeta }) {
-  const uuidMatches = seed.match(new RegExp(UUID_RE.source, 'g')) || [];
-  if (uuidMatches.length !== 1) {
-    throw new Error(`seed must contain exactly one DOC_UUID line, found ${uuidMatches.length}`);
+  // All three substitution sites must appear exactly once. A regression in the
+  // seed (title removed, FILE renamed, etc.) would otherwise silently no-op
+  // and ship a CLI emitting partially-substituted containers.
+  for (const { re, label } of [
+    { re: UUID_RE, label: 'DOC_UUID' },
+    { re: TITLE_RE, label: '<title>' },
+    { re: FILE_RE, label: 'FILE:' },
+  ]) {
+    const matches = seed.match(new RegExp(re.source, 'g')) || [];
+    if (matches.length !== 1) {
+      throw new Error(`seed must contain exactly one ${label} line, found ${matches.length}`);
+    }
   }
   let out = seed.replace(UUID_RE, `const DOC_UUID = '${uuid}';`);
   if (title != null) out = out.replace(TITLE_RE, `<title>${escapeHtml(title)}</title>`);
