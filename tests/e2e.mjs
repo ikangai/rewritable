@@ -3013,6 +3013,94 @@ check('92: prompt body does NOT contain DOC_UUID declaration', !prompt92?.includ
 check('92: prompt body does NOT contain RWA_EDIT.RESERVED constant', !prompt92?.includes('RWA_EDIT.RESERVED'));
 check('92: prompt body does NOT contain extractFrozenZones function source', !prompt92?.includes('function extractFrozenZones'));
 
+// Test 93: hist timestamps strictly newest-first. Audit-trail consumers
+// rely on ts to order records; out-of-order or duplicate timestamps would
+// mislead any "show recent activity" UI.
+console.log('\n== Test 93: hist timestamps newest-first across modifies ==');
+await seedDoc('<div>TS_SEED_93</div>');
+await new Promise((res, rej) => {
+  window.openDB().then(db => {
+    const r = db.transaction('rwa_hist', 'readwrite').objectStore('rwa_hist').put([], 'self');
+    r.onsuccess = res;
+    r.onerror = () => rej(r.error);
+  });
+});
+
+const startTs93 = Date.now();
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: { role: 'assistant', content: '', tool_calls: [{
+      id: 'ts93_a', type: 'function', function: {
+        name: 'apply_edits',
+        arguments: JSON.stringify({ version: 'rwa-edit/1', edits: [{ find: 'TS_SEED_93', replace: 'TS_M1_93' }] }),
+      },
+    }] } }],
+  }),
+});
+await window.modify('ts93 m1');
+await new Promise(r => setTimeout(r, 60));
+
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: { role: 'assistant', content: '', tool_calls: [{
+      id: 'ts93_b', type: 'function', function: {
+        name: 'apply_edits',
+        arguments: JSON.stringify({ version: 'rwa-edit/1', edits: [{ find: 'TS_M1_93', replace: 'TS_M2_93' }] }),
+      },
+    }] } }],
+  }),
+});
+await window.modify('ts93 m2');
+await new Promise(r => setTimeout(r, 60));
+
+const histTS = await new Promise((res, rej) => {
+  window.openDB().then(db => {
+    const r = db.transaction('rwa_hist').objectStore('rwa_hist').get('self');
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+  });
+});
+check('93: at least 2 hist records present after 2 modifies', histTS.length >= 2);
+check('93: newest record (index 0) has ts >= older record (index 1)', histTS[0].ts >= histTS[1].ts);
+check('93: timestamps are within or after this test\'s startTs', histTS[0].ts >= startTs93);
+
+// Test 94: undo() restores BOTH the rwa_doc store and the render mount.
+console.log('\n== Test 94: undo restores doc and mount together ==');
+await seedDoc('<div>UM_SEED_94</div>');
+// Force a render of the seed via no-op modify, so mount reflects seed.
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: { role: 'assistant', content: '', tool_calls: [{
+      id: 'um94_seed', type: 'function', function: {
+        name: 'apply_edits',
+        arguments: JSON.stringify({ version: 'rwa-edit/1', edits: [{ find: 'UM_SEED_94', replace: 'UM_SEED_94' }] }),
+      },
+    }] } }],
+  }),
+});
+await window.modify('seed mount');
+await new Promise(r => setTimeout(r, 100));
+
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: { role: 'assistant', content: '', tool_calls: [{
+      id: 'um94_e', type: 'function', function: {
+        name: 'apply_edits',
+        arguments: JSON.stringify({ version: 'rwa-edit/1', edits: [{ find: 'UM_SEED_94', replace: 'UM_AFTER_94' }] }),
+      },
+    }] } }],
+  }),
+});
+await window.modify('mount-undo test');
+await new Promise(r => setTimeout(r, 100));
+const mountMod94 = window.document.getElementById('rwa-doc-mount').innerHTML;
+check('94: mount shows post-modify content (UM_AFTER_94)', mountMod94.includes('UM_AFTER_94'));
+
+await window.undo();
+await new Promise(r => setTimeout(r, 50));
+const mountUndo94 = window.document.getElementById('rwa-doc-mount').innerHTML;
+check('94: mount restored to UM_SEED_94 after undo', mountUndo94.includes('UM_SEED_94') && !mountUndo94.includes('UM_AFTER_94'));
+
 console.log('\n== Summary ==');
 console.log(`pass: ${pass}, fail: ${fail}`);
 process.exit(fail > 0 ? 1 : 0);
