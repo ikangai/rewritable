@@ -525,6 +525,66 @@ await window.modify('claim data-rwa-id');
 await new Promise(r => setTimeout(r, 100));
 check('reserved-attr replace_document rejected: doc unchanged', (await window.getDoc()) === docBefore13);
 
+// Test 14a: apply_edits cannot introduce a reserved id="rwa-doc-mount".
+// Tests 12-13 verify replace_document rejects reserved IDs; this verifies
+// that apply_edits enforces the same invariant via findReservedIdViolation
+// after the splice — a refactor that drops that check would silently let
+// the model shadow the runtime mount through a surgical anchor.
+console.log('\n== Test 14a: apply_edits cannot introduce id="rwa-doc-mount" ==');
+fetchHandler = async () => ({
+  ok: true,
+  json: async () => ({
+    choices: [{
+      message: {
+        role: 'assistant', content: '',
+        tool_calls: [{
+          id: 'call_aerm', type: 'function',
+          function: {
+            name: 'apply_edits',
+            arguments: JSON.stringify({
+              version: 'rwa-edit/1',
+              edits: [{ find: 'parallel-fixed', replace: '<span id="rwa-doc-mount">x</span>' }],
+            }),
+          },
+        }],
+      },
+    }],
+  }),
+});
+
+const docBefore14a = await window.getDoc();
+await window.modify('apply_edits introducing reserved mount id');
+await new Promise(r => setTimeout(r, 100));
+check('apply_edits with reserved id rejected: doc unchanged', (await window.getDoc()) === docBefore14a);
+
+// Test 14b: apply_edits cannot introduce data-rwa-id (v2 reserved attribute).
+console.log('\n== Test 14b: apply_edits cannot introduce data-rwa-id ==');
+fetchHandler = async () => ({
+  ok: true,
+  json: async () => ({
+    choices: [{
+      message: {
+        role: 'assistant', content: '',
+        tool_calls: [{
+          id: 'call_aev2', type: 'function',
+          function: {
+            name: 'apply_edits',
+            arguments: JSON.stringify({
+              version: 'rwa-edit/1',
+              edits: [{ find: 'parallel-fixed', replace: '<span data-rwa-id="claim">x</span>' }],
+            }),
+          },
+        }],
+      },
+    }],
+  }),
+});
+
+const docBefore14b = await window.getDoc();
+await window.modify('apply_edits introducing data-rwa-id');
+await new Promise(r => setTimeout(r, 100));
+check('apply_edits with data-rwa-id rejected: doc unchanged', (await window.getDoc()) === docBefore14b);
+
 // Test 14: replace string containing $& / $$ must be inserted literally.
 // String.prototype.replace honors $&, $$, $`, $' patterns even when the search
 // arg is a string — `work.replace('foo', '$$x$&y')` yields '$xfooy'. The runtime
