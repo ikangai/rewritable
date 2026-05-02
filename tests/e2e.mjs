@@ -2226,6 +2226,41 @@ await window.modify('cross-edit assembly of data-rwa-frozen attr');
 await new Promise(r => setTimeout(r, 200));
 check('62: cross-edit assembly of data-rwa-frozen rejected', (await window.getDoc()) === before62);
 
+// Test 63: user prompt structure — verify the agent contract.
+// The agent receives: system prompt, user message containing instruction +
+// frozen-zone names + the canonical doc, and the two tools. A regression
+// in any of these would silently change what the model sees.
+console.log('\n== Test 63: user prompt structure ==');
+await seedDoc(
+  '<style>\n' +
+  '/* rwa:frozen:begin myzone63 */\n' +
+  '.x{}\n' +
+  '/* rwa:frozen:end myzone63 */\n' +
+  '</style>\n' +
+  '<div>BODY63_UNIQUE</div>'
+);
+
+let capturedRequest = null;
+fetchHandler = async (url, opts) => {
+  capturedRequest = JSON.parse(opts.body);
+  return ({
+    ok: true, json: async () => ({
+      choices: [{ message: { role: 'assistant', content: 'no-op decline' } }],
+    }),
+  });
+};
+
+await window.modify('USER_INSTRUCTION_63');
+await new Promise(r => setTimeout(r, 100));
+
+const userMsg = capturedRequest?.messages?.find(m => m.role === 'user')?.content;
+check('63: user message includes doc body content', userMsg?.includes('<div>BODY63_UNIQUE</div>'));
+check('63: user message lists frozen zone name', userMsg?.includes('myzone63'));
+check('63: user message includes the user instruction', userMsg?.includes('USER_INSTRUCTION_63'));
+check('63: messages start with system prompt', capturedRequest?.messages?.[0]?.role === 'system');
+check('63: tools array (apply_edits + replace_document) passed', Array.isArray(capturedRequest?.tools) && capturedRequest.tools.length === 2);
+check('63: tool_choice is auto', capturedRequest?.tool_choice === 'auto');
+
 console.log('\n== Summary ==');
 console.log(`pass: ${pass}, fail: ${fail}`);
 process.exit(fail > 0 ? 1 : 0);
