@@ -2687,6 +2687,50 @@ const userMsg78 = captured78?.messages?.find(m => m.role === 'user')?.content;
 check('78: user message lists alpha78 zone bullet', userMsg78?.includes('- alpha78'));
 check('78: user message lists beta78 zone bullet', userMsg78?.includes('- beta78'));
 
+// Tests 79-80: whitespace-significant fidelity. <pre> content and replace
+// strings containing tabs/multiple spaces must round-trip byte-equally —
+// any whitespace coalescing during canonLF or splice would silently destroy
+// preformatted content.
+console.log('\n== Test 79: <pre> content whitespace preserved across edit ==');
+const preDoc79 = '<pre>\n  line  with  two  spaces\n\tand\ta\ttab\n  PRE_TARGET_79\n</pre>';
+await seedDoc(preDoc79);
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: {
+      role: 'assistant', content: '',
+      tool_calls: [{ id: 'pre79', type: 'function', function: {
+        name: 'apply_edits',
+        arguments: JSON.stringify({ version: 'rwa-edit/1',
+          edits: [{ find: 'PRE_TARGET_79', replace: 'PRE_REPLACED_79' }] }),
+      } }],
+    } }],
+  }),
+});
+await window.modify('edit inside <pre>');
+await new Promise(r => setTimeout(r, 100));
+const after79 = await window.getDoc();
+check('79: <pre> double-space content preserved exactly', after79 === '<pre>\n  line  with  two  spaces\n\tand\ta\ttab\n  PRE_REPLACED_79\n</pre>');
+
+console.log('\n== Test 80: replace with embedded tabs/spaces preserved verbatim ==');
+await seedDoc('<div>WS_ANCHOR_80</div>');
+const wsContent80 = '\t\tindented\twith\ttabs\n  and  multiple  spaces  ';
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: {
+      role: 'assistant', content: '',
+      tool_calls: [{ id: 'ws80', type: 'function', function: {
+        name: 'apply_edits',
+        arguments: JSON.stringify({ version: 'rwa-edit/1',
+          edits: [{ find: 'WS_ANCHOR_80', replace: wsContent80 }] }),
+      } }],
+    } }],
+  }),
+});
+await window.modify('whitespace-rich replace');
+await new Promise(r => setTimeout(r, 100));
+const after80 = await window.getDoc();
+check('80: replace string with tabs/multi-spaces preserved verbatim', after80 === '<div>' + wsContent80 + '</div>');
+
 console.log('\n== Summary ==');
 console.log(`pass: ${pass}, fail: ${fail}`);
 process.exit(fail > 0 ? 1 : 0);
