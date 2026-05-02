@@ -1429,6 +1429,94 @@ await window.modify('preserve zone, replace tail');
 await new Promise(r => setTimeout(r, 100));
 check('44d: replace_document with preserved zone allowed', (await window.getDoc()) === newDoc44d);
 
+// Tests 45a-c: data-rwa-frozen element-level preservation. The reserved-marker
+// check rejects literal "data-rwa-frozen" in find/replace, but the
+// element-snapshot check is what catches an edit whose anchor lands inside
+// a data-rwa-frozen element via inner content. These tests exercise that
+// post-apply snapshot diff.
+console.log('\n== Tests 45a-c: data-rwa-frozen element preservation ==');
+
+const seed45 = '<div data-rwa-frozen>FROZEN_ELEMENT_INNER</div>\n<div>outside-frozen-elem</div>';
+
+// 45a: edit anchored on inner content of frozen element -> rejected.
+await seedDoc(seed45);
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: {
+      role: 'assistant', content: '',
+      tool_calls: [{ id: 'fe45_a', type: 'function', function: {
+        name: 'apply_edits',
+        arguments: JSON.stringify({ version: 'rwa-edit/1',
+          edits: [{ find: 'FROZEN_ELEMENT_INNER', replace: 'TAMPERED_INNER' }] }),
+      } }],
+    } }],
+  }),
+});
+const before45a = await window.getDoc();
+await window.modify('mutate inside data-rwa-frozen element');
+await new Promise(r => setTimeout(r, 200));
+check('45a: apply_edits inside data-rwa-frozen element rejected', (await window.getDoc()) === before45a);
+
+// 45b: edit outside frozen element allowed; element preserved verbatim.
+await seedDoc(seed45);
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: {
+      role: 'assistant', content: '',
+      tool_calls: [{ id: 'fe45_b', type: 'function', function: {
+        name: 'apply_edits',
+        arguments: JSON.stringify({ version: 'rwa-edit/1',
+          edits: [{ find: 'outside-frozen-elem', replace: 'CHANGED_OUTSIDE_ELEM' }] }),
+      } }],
+    } }],
+  }),
+});
+await window.modify('mutate outside data-rwa-frozen element');
+await new Promise(r => setTimeout(r, 100));
+const docAfter45b = await window.getDoc();
+check('45b: apply_edits outside data-rwa-frozen element allowed', docAfter45b.includes('CHANGED_OUTSIDE_ELEM'));
+check('45b: frozen element preserved verbatim', docAfter45b.includes('<div data-rwa-frozen>FROZEN_ELEMENT_INNER</div>'));
+
+// Test 46: UNDO_CAP — undo stack capped at 10 entries; oldest dropped after >10 modifies.
+console.log('\n== Test 46: UNDO_CAP behavior ==');
+await seedDoc('<div>UNDO_CAP_SEED</div>');
+await new Promise((res, rej) => {
+  window.openDB().then(db => {
+    const r = db.transaction('rwa_undo', 'readwrite').objectStore('rwa_undo').put([], 'self');
+    r.onsuccess = res;
+    r.onerror = () => rej(r.error);
+  });
+});
+
+for (let i = 0; i < 12; i++) {
+  const findText = i === 0 ? 'UNDO_CAP_SEED' : `STEP_${i}`;
+  const replaceText = `STEP_${i+1}`;
+  fetchHandler = async () => ({
+    ok: true, json: async () => ({
+      choices: [{ message: {
+        role: 'assistant', content: '',
+        tool_calls: [{ id: 'cap_' + i, type: 'function', function: {
+          name: 'apply_edits',
+          arguments: JSON.stringify({ version: 'rwa-edit/1',
+            edits: [{ find: findText, replace: replaceText }] }),
+        } }],
+      } }],
+    }),
+  });
+  await window.modify('cap step ' + i);
+  await new Promise(r => setTimeout(r, 50));
+}
+
+const undoFinal = await new Promise((res, rej) => {
+  window.openDB().then(db => {
+    const r = db.transaction('rwa_undo').objectStore('rwa_undo').get('self');
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+  });
+});
+check('46: undo stack capped at UNDO_CAP=10 after 12 successful modifies', Array.isArray(undoFinal) && undoFinal.length === 10);
+check('46: oldest entries dropped (no UNDO_CAP_SEED in stack)', !undoFinal.some(d => d.includes('UNDO_CAP_SEED')));
+
 console.log('\n== Summary ==');
 console.log(`pass: ${pass}, fail: ${fail}`);
 process.exit(fail > 0 ? 1 : 0);
