@@ -1151,6 +1151,69 @@ for (const v of FZ_VARIANTS) {
   check(v.tag + ' frozen-zone form: zone inner preserved across allowed edit', docOutAfter.includes(v.insideFind));
 }
 
+// Tests 40a-c: structural-shape invariant. Test 4 covers the added <script>
+// case; here we cover the symmetric cases — added <style>, removed <script>,
+// removed <style>. Any of these would let the model surreptitiously
+// restructure the script/style boundary, which the rwa-edit/1 spec forbids.
+console.log('\n== Tests 40a-c: structural-shape invariant additions/removals ==');
+
+// 40a: adding a <style> via apply_edits is rejected.
+await seedDoc('<div>shape-anchor-add-style</div>');
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: {
+      role: 'assistant', content: '',
+      tool_calls: [{ id: 'sh_a', type: 'function', function: {
+        name: 'apply_edits',
+        arguments: JSON.stringify({ version: 'rwa-edit/1',
+          edits: [{ find: 'shape-anchor-add-style', replace: 'shape<style>.x{color:red}</style>' }] }),
+      } }],
+    } }],
+  }),
+});
+const before40a = await window.getDoc();
+await window.modify('add a style tag via apply_edits');
+await new Promise(r => setTimeout(r, 200));
+check('40a: added <style> via apply_edits rejected', (await window.getDoc()) === before40a);
+
+// 40b: removing a <script> via apply_edits is rejected.
+await seedDoc('<div>SHAPE_KEEP_B</div>\n<script>const X=1;</script>\n<div>tail-b</div>');
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: {
+      role: 'assistant', content: '',
+      tool_calls: [{ id: 'sh_b', type: 'function', function: {
+        name: 'apply_edits',
+        arguments: JSON.stringify({ version: 'rwa-edit/1',
+          edits: [{ find: '<script>const X=1;</script>\n', replace: '' }] }),
+      } }],
+    } }],
+  }),
+});
+const before40b = await window.getDoc();
+await window.modify('remove a script tag via apply_edits');
+await new Promise(r => setTimeout(r, 200));
+check('40b: removed <script> via apply_edits rejected', (await window.getDoc()) === before40b);
+
+// 40c: removing a <style> via apply_edits is rejected.
+await seedDoc('<style>.s{color:red}</style>\n<div>shape-keep-c</div>');
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: {
+      role: 'assistant', content: '',
+      tool_calls: [{ id: 'sh_c', type: 'function', function: {
+        name: 'apply_edits',
+        arguments: JSON.stringify({ version: 'rwa-edit/1',
+          edits: [{ find: '<style>.s{color:red}</style>\n', replace: '' }] }),
+      } }],
+    } }],
+  }),
+});
+const before40c = await window.getDoc();
+await window.modify('remove a style tag via apply_edits');
+await new Promise(r => setTimeout(r, 200));
+check('40c: removed <style> via apply_edits rejected', (await window.getDoc()) === before40c);
+
 console.log('\n== Summary ==');
 console.log(`pass: ${pass}, fail: ${fail}`);
 process.exit(fail > 0 ? 1 : 0);
