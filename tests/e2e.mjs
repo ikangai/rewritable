@@ -2982,6 +2982,17 @@ await window.modify('mutate nested em inside rich frozen');
 await new Promise(r => setTimeout(r, 200));
 check('90b: nested content tampering inside rich frozen element rejected', (await window.getDoc()) === before90b);
 
+// Test 91: openDB schema. The runtime expects rwa_doc, rwa_undo, rwa_hist,
+// rwa_fsa stores all using out-of-line keys (keyPath===null). A schema
+// drift would silently produce IDB errors during commitDoc and lose state.
+console.log('\n== Test 91: openDB schema (stores + key paths) ==');
+const db91 = await window.openDB();
+check('91: rwa_doc store exists', db91.objectStoreNames.contains('rwa_doc'));
+check('91: rwa_undo store exists', db91.objectStoreNames.contains('rwa_undo'));
+check('91: rwa_hist store exists', db91.objectStoreNames.contains('rwa_hist'));
+check('91: rwa_fsa store exists', db91.objectStoreNames.contains('rwa_fsa'));
+check('91: rwa_doc uses out-of-line keys (keyPath===null)', db91.transaction('rwa_doc', 'readonly').objectStore('rwa_doc').keyPath === null);
+
 console.log('\n== Summary ==');
 console.log(`pass: ${pass}, fail: ${fail}`);
 process.exit(fail > 0 ? 1 : 0);
