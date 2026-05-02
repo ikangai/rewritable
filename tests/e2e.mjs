@@ -1682,6 +1682,88 @@ await window.modify('change tail, preserve frozen elem');
 await new Promise(r => setTimeout(r, 100));
 check('50d: replace_document preserving frozen elem allowed', (await window.getDoc()) === newDoc50d);
 
+// Tests 51a-b: case-bypass defenses. The byte-level containsReservedMarker
+// check is case-sensitive, but HTML normalizes attribute names to lowercase
+// at parse time. So an upper-case "DATA-RWA-FROZEN" or "ID=" attribute slips
+// past the marker check, then must be caught by the post-parse snapshot
+// (frozen_zone_corrupted) or findReservedIdViolation. These tests verify the
+// depth-of-defense holds.
+console.log('\n== Tests 51a-b: case-bypass defense ==');
+
+await seedDoc('<div data-rwa-frozen>FE_BODY</div>\n<div>BYPASS_ANCHOR</div>');
+
+// 51a: uppercase DATA-RWA-FROZEN injection caught by snapshot count.
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: {
+      role: 'assistant', content: '',
+      tool_calls: [{ id: 'bp_a', type: 'function', function: {
+        name: 'apply_edits',
+        arguments: JSON.stringify({ version: 'rwa-edit/1',
+          edits: [{ find: 'BYPASS_ANCHOR', replace: '<span DATA-RWA-FROZEN>injected</span>' }] }),
+      } }],
+    } }],
+  }),
+});
+const before51a = await window.getDoc();
+await window.modify('uppercase data-rwa-frozen bypass');
+await new Promise(r => setTimeout(r, 200));
+check('51a: uppercase DATA-RWA-FROZEN injection rejected by snapshot', (await window.getDoc()) === before51a);
+
+// 51b: uppercase ID="rwa-doc-mount" caught by findReservedIdViolation.
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: {
+      role: 'assistant', content: '',
+      tool_calls: [{ id: 'bp_b', type: 'function', function: {
+        name: 'apply_edits',
+        arguments: JSON.stringify({ version: 'rwa-edit/1',
+          edits: [{ find: 'BYPASS_ANCHOR', replace: '<span ID="rwa-doc-mount">x</span>' }] }),
+      } }],
+    } }],
+  }),
+});
+const before51b = await window.getDoc();
+await window.modify('uppercase ID mount-shadow bypass');
+await new Promise(r => setTimeout(r, 200));
+check('51b: uppercase ID="rwa-doc-mount" rejected by findReservedIdViolation', (await window.getDoc()) === before51b);
+
+// Tests 52a-b: tool_call shape edge cases.
+console.log('\n== Tests 52a-b: tool_call shape edge cases ==');
+
+// 52a: tool_call with missing function field — runtime treats as unknown_tool
+// (tc.function?.name is undefined, falls through to the else branch).
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: {
+      role: 'assistant', content: '',
+      tool_calls: [{ id: 'tc_a', type: 'function' }],
+    } }],
+  }),
+});
+const before52a = await window.getDoc();
+await window.modify('missing function field');
+await new Promise(r => setTimeout(r, 200));
+check('52a: tool_call with missing function field rejected', (await window.getDoc()) === before52a);
+
+// 52b: tool_call with whitespace-only arguments — JSON.parse throws,
+// runtime catches and emits malformed_envelope.
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: {
+      role: 'assistant', content: '',
+      tool_calls: [{ id: 'tc_b', type: 'function', function: {
+        name: 'apply_edits',
+        arguments: '   ',
+      } }],
+    } }],
+  }),
+});
+const before52b = await window.getDoc();
+await window.modify('whitespace-only arguments');
+await new Promise(r => setTimeout(r, 200));
+check('52b: tool_call with whitespace-only arguments rejected', (await window.getDoc()) === before52b);
+
 console.log('\n== Summary ==');
 console.log(`pass: ${pass}, fail: ${fail}`);
 process.exit(fail > 0 ? 1 : 0);
