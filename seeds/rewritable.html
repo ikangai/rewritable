@@ -420,13 +420,25 @@ function parseHtmlFragment(doc) {
 
 function computeShape(parsedDoc) {
   if (!parsedDoc) return null;
+  const body = parsedDoc.body;
+  // Track the SET of distinct top-level tag types (not the multiset count) —
+  // splitting one <p> into two <p>s is a legitimate edit, but introducing a
+  // <section> alongside <div> is a structural shape change.
+  const topLevelTypes = body
+    ? [...new Set(Array.from(body.children).map(el => el.tagName.toLowerCase()))].sort().join(',')
+    : '';
   return {
     scripts: parsedDoc.querySelectorAll('script').length,
     styles: parsedDoc.querySelectorAll('style').length,
+    topLevelTypes,
   };
 }
 
-const shapesEqual = (a, b) => !!a && !!b && a.scripts === b.scripts && a.styles === b.styles;
+const shapesEqual = (a, b) =>
+  !!a && !!b &&
+  a.scripts === b.scripts &&
+  a.styles === b.styles &&
+  a.topLevelTypes === b.topLevelTypes;
 
 function dataRwaFrozenSnapshot(parsedDoc) {
   if (!parsedDoc) return [];
