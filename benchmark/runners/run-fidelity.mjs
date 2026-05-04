@@ -99,8 +99,8 @@ async function runOnce(scenario, modelName) {
     const editEnvelope = hist[0]?.kind === 'edit_batch' ? hist[0].envelope : null;
     const stats = getStats();
 
-    const success = scenario.success(result, fixture);
-    const stability = scenario.stability(fixture, result, editEnvelope);
+    const success = await scenario.success(result, fixture);
+    const stability = await scenario.stability(fixture, result, editEnvelope);
     return {
       ok: !modifyError,
       wall_ms,
