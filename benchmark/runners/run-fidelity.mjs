@@ -86,12 +86,13 @@ async function runOnce(scenario, modelName) {
     const wall_ms = Date.now() - t0;
 
     const result = await ctx.getDoc();
-    // The runtime wrote the setup as a replace_document into rwa_hist; the
-    // edit (if any) is on top.
+    // Newest-first: hist[0] is the edit (if any); hist[1] is the setup.
+    const hist = await ctx.getHistory();
+    const editEnvelope = hist[0]?.kind === 'edit_batch' ? hist[0].envelope : null;
     const stats = getStats();
 
     const success = scenario.success(result, fixture);
-    const stability = scenario.stability(fixture, result);
+    const stability = scenario.stability(fixture, result, editEnvelope);
     return {
       ok: !modifyError,
       wall_ms,

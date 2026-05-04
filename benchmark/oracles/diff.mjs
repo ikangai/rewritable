@@ -125,3 +125,37 @@ export function regionOfLiteral(doc, literal) {
   if (idx < 0) return null;
   return [idx, idx + literal.length];
 }
+
+/**
+ * Compute drift from an apply_edits envelope rather than a textual diff.
+ * When the model used apply_edits, the runtime guarantees that the only
+ * changes in the post-edit doc are the literal find/replace splices. The
+ * find spans (in fixture coordinates) ARE the changes — checking them
+ * against expectedRegions is exact and avoids single-hunk diff overshoot.
+ *
+ * @param {string} fixture
+ * @param {Array<{ find: string, replace: string }>} edits
+ * @param {Array<[number, number]>} expectedRegions — fixture coords
+ * @returns {{ drift_bytes: number, drift_ratio: number, total_bytes: number, spans: Array<[number, number] | null> }}
+ */
+export function computeDriftFromEdits(fixture, edits, expectedRegions = []) {
+  const A = canonLF(fixture);
+  // For non-overlapping edits whose finds were each unique in the pre-edit
+  // doc, looking each find up in the ORIGINAL fixture gives exact span
+  // coordinates without needing to track cumulative shift across reorderings.
+  // Edits whose find depends on a prior edit's replace (the SEQ pattern)
+  // won't match in fixture and report span=null — that's a degenerate case
+  // for fidelity scoring and we surface it rather than silently drift.
+  let driftBytes = 0;
+  const spans = [];
+  for (const edit of edits) {
+    const idxFix = A.indexOf(edit.find);
+    if (idxFix < 0) { spans.push(null); continue; }
+    const span = [idxFix, idxFix + edit.find.length];
+    spans.push(span);
+    const inRegion = expectedRegions.some(([lo, hi]) => span[0] >= lo && span[1] <= hi);
+    if (!inRegion) driftBytes += span[1] - span[0];
+  }
+  const drift_ratio = A.length > 0 ? driftBytes / A.length : 0;
+  return { drift_bytes: driftBytes, drift_ratio, total_bytes: A.length, spans };
+}
