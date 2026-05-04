@@ -18,7 +18,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import * as harness from './harness.mjs';
-import { stubModel, openRouterModel, modelToFetch } from './model.mjs';
+import { stubModel, openRouterModel, baselineModel, modelToFetch } from './model.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SCENARIOS_DIR = path.resolve(__dirname, '..', 'scenarios', 'fidelity');
@@ -65,6 +65,13 @@ function selectModel(modelName, scenario) {
       throw new Error(`scenario ${scenario.id} has no stub() — cannot run with model=stub`);
     }
     return scenario.stub();
+  }
+  if (modelName === 'baseline') {
+    // Use the scenario's declared baselineDoc if present; otherwise fall
+    // back to running the stub (no comparison signal — same envelope).
+    if (typeof scenario.baselineDoc === 'string') return baselineModel(scenario.baselineDoc);
+    if (typeof scenario.stub === 'function') return scenario.stub();
+    throw new Error(`scenario ${scenario.id} has neither baselineDoc nor stub`);
   }
   // Real model paths — RWA_OPENROUTER_KEY required.
   return openRouterModel({ model: modelName });

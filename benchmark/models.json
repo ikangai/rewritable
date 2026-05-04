@@ -1,0 +1,14 @@
+{
+  "_comment": "Reference model classes per spec §10. Edit to point at your provider's catalog. Falls back to 'stub' if RWA_OPENROUTER_KEY is unset.",
+  "frontier": "anthropic/claude-opus-4-7",
+  "mid": "anthropic/claude-sonnet-4-6",
+  "small": "anthropic/claude-haiku-4-5",
+  "_alternatives": {
+    "openai_frontier": "openai/gpt-5",
+    "openai_mid": "openai/gpt-5-mini",
+    "openai_small": "openai/gpt-5-nano",
+    "google_frontier": "google/gemini-3-pro-preview",
+    "google_mid": "google/gemini-3-flash-preview",
+    "google_small": "google/gemini-3-flash-lite-preview"
+  }
+}

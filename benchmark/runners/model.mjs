@@ -93,6 +93,39 @@ export function modelToFetch(model) {
 }
 
 /**
+ * Wholesale-rewrite "baseline" model — emulates the v0.x pre-rwa-edit/1
+ * path where the agent rewrites the entire document each time. Used to
+ * compute ΔS/ΔT vs rwa-edit/1 (the spec §6.1 headline).
+ *
+ * Behavior: takes a per-scenario `baselineDoc` (the "ideal" wholesale
+ * rewrite) and emits replace_document with that doc. Scenarios that wish
+ * to participate in baseline comparison declare their own baselineDoc.
+ *
+ * If a scenario has no baselineDoc, baselineModel falls back to the same
+ * stub the rwa-edit/1 model would emit — this is fine for scenarios where
+ * the edit and the wholesale rewrite are equivalent (rare).
+ *
+ * @param {string} baselineDoc — the doc the v0.x model would output
+ */
+export function baselineModel(baselineDoc) {
+  return async (messages, tools) => ({
+    tool_calls: [{
+      id: 'baseline_1',
+      type: 'function',
+      function: {
+        name: 'replace_document',
+        arguments: JSON.stringify({ version: 'rwa-edit/1', doc: baselineDoc, reason: 'v0.x wholesale rewrite (baseline)' }),
+      },
+    }],
+    usage: {
+      prompt_tokens: Math.ceil((messages.reduce((acc, m) => acc + (typeof m.content === 'string' ? m.content.length : 0), 0)) / 4),
+      completion_tokens: Math.ceil(baselineDoc.length / 4),
+      total_tokens: 0,
+    },
+  });
+}
+
+/**
  * Real OpenRouter model — placeholder. Activate by setting
  * RWA_OPENROUTER_KEY in the environment and `model` in opts.
  *

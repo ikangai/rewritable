@@ -8,6 +8,9 @@
     "conformance": "node runners/run-conformance.mjs",
     "fidelity": "node runners/run-fidelity.mjs",
     "fidelity:stub": "node runners/run-fidelity.mjs stub",
+    "fidelity:baseline": "node runners/run-fidelity.mjs baseline",
+    "calibrate": "node runners/calibrate.mjs",
+    "multimodel": "node runners/multimodel.mjs",
     "test": "node runners/run-conformance.mjs",
     "test:oracles": "node oracles/diff.test.mjs && node oracles/selector.test.mjs"
   },
