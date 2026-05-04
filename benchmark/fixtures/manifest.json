@@ -1,6 +1,6 @@
 {
-  "version": "fixtures-v1-alpha",
-  "note": "Initial benchmark fixture set — minimal subset of spec v1.3 §12 catalog. Only article-medium/clean is shipped at present; lived-in/messy variants and other templates are deferred.",
+  "version": "fixtures-v1.1",
+  "note": "Spec §12 catalog. Per scenario, the spec calls for 15 templates × 3 wear levels = 45 files. The benchmark today ships a smaller curated subset; many scenarios use inline fixtureContent declared in their .mjs file rather than a tracked .html.",
   "fixtures": [
     {
       "id": "article-medium/clean",
@@ -10,6 +10,84 @@
       "language": "en",
       "license": "CC0-1.0",
       "provenance": "hand-authored for benchmark v1.3"
+    },
+    {
+      "id": "article-medium/clean-rich",
+      "path": "templates/article-medium/clean-rich.html",
+      "wear_level": "clean",
+      "template": "article-medium",
+      "language": "en",
+      "license": "CC0-1.0",
+      "provenance": "hand-authored — adds inline elements, anchors, counted list",
+      "features": { "has_inline_strong_em": true, "has_internal_anchor": true, "has_counted_list": true }
+    },
+    {
+      "id": "article-medium/lived-in",
+      "path": "templates/article-medium/lived-in.html",
+      "wear_level": "lived-in",
+      "template": "article-medium",
+      "language": "en",
+      "license": "CC0-1.0",
+      "provenance": "hand-authored — wear-level perturbations per spec §12.3",
+      "perturbations": ["one TODO comment", "one redundant comment", "naming inconsistency: email_sub vs email-sub", "details summary indented 4-space"]
+    },
+    {
+      "id": "article-medium/messy",
+      "path": "templates/article-medium/messy.html",
+      "wear_level": "messy",
+      "template": "article-medium",
+      "language": "en",
+      "license": "CC0-1.0",
+      "provenance": "hand-authored — heavier wear per spec §12.3",
+      "perturbations": ["3 TODOs (one stale)", "mixed indentation (tab+2sp+4sp)", "duplicated CSS rule for .callout", "inline style overriding class color", "double class attribute on callout p", "commented-out HTML block"]
+    },
+    {
+      "id": "article-short/clean",
+      "path": "templates/article-short/clean.html",
+      "wear_level": "clean",
+      "template": "article-short",
+      "language": "en",
+      "license": "CC0-1.0"
+    },
+    {
+      "id": "arabic-rtl/clean",
+      "path": "templates/arabic-rtl/clean.html",
+      "wear_level": "clean",
+      "template": "arabic-rtl",
+      "language": "ar",
+      "license": "CC0-1.0",
+      "features": { "rtl": true }
+    },
+    {
+      "id": "japanese-cjk/clean",
+      "path": "templates/japanese-cjk/clean.html",
+      "wear_level": "clean",
+      "template": "japanese-cjk",
+      "language": "ja",
+      "license": "CC0-1.0",
+      "features": { "no_word_boundaries": true }
+    },
+    {
+      "id": "mixed-line-endings/clean",
+      "path": "templates/mixed-line-endings/clean.html",
+      "wear_level": "clean",
+      "template": "mixed-line-endings",
+      "language": "en",
+      "license": "CC0-1.0",
+      "features": { "mixed_crlf_lf": true }
     }
-  ]
+  ],
+  "_deferred_templates": [
+    "article-long (5000 words; anchor-uniqueness stress)",
+    "form-tax-return (30 fields)",
+    "spreadsheet-budget (chart + SUM)",
+    "slide-deck (12 slides)",
+    "letter-invitation (recipient name 3x)",
+    "clock-realtime (setInterval-driven)",
+    "press-release",
+    "tutorial-rwa (literal rwa:frozen:begin in prose)",
+    "unicode-heavy",
+    "mixed-script (en+zh+gr)"
+  ],
+  "_deferred_wear_levels": "lived-in and messy variants of all templates beyond article-medium"
 }
