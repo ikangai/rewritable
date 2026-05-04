@@ -132,8 +132,8 @@ export function baselineModel(baselineDoc) {
  * @param {{ model: string, apiKey?: string, baseUrl?: string }} opts
  */
 export function openRouterModel(opts = {}) {
-  const apiKey = opts.apiKey || process.env.RWA_OPENROUTER_KEY;
-  if (!apiKey) throw new Error('openRouterModel: RWA_OPENROUTER_KEY not set');
+  const apiKey = opts.apiKey || process.env.RWA_OPENROUTER_KEY || process.env.OPENROUTER_API_KEY;
+  if (!apiKey) throw new Error('openRouterModel: neither RWA_OPENROUTER_KEY nor OPENROUTER_API_KEY set');
   const baseUrl = opts.baseUrl || 'https://openrouter.ai/api/v1';
   const model = opts.model || 'google/gemini-3-flash-preview';
   return async (messages, tools) => {
