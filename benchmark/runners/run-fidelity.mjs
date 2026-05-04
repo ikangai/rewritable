@@ -80,29 +80,43 @@ async function runOnce(scenario, modelName) {
     // fixture setup, all of which need to be settable for fidelity tests).
     await ctx.setDoc(fixture);
 
-    const model = selectModel(modelName, scenario);
-    const { handler, getStats } = modelToFetch(model);
-    ctx.setFetchHandler(handler);
+    let success, stability;
+    let wall_ms = 0, stats = { tokens_in: 0, tokens_out: 0, tokens_total: 0, fetch_calls: 0 };
+    let result = fixture;
+    let editEnvelope = null;
 
-    const t0 = Date.now();
-    let modifyError = null;
-    try {
-      await ctx.modify(scenario.prompt);
-    } catch (err) {
-      modifyError = err;
+    if (typeof scenario.customRun === 'function' && typeof scenario.scoreAfterCustom === 'function') {
+      const t0 = Date.now();
+      const out = await scenario.customRun({ ctx, fixture });
+      wall_ms = Date.now() - t0;
+      result = await ctx.getDoc();
+      const scored = scenario.scoreAfterCustom(out, fixture, result);
+      success = scored.successResult;
+      stability = scored.stabilityResult;
+    } else {
+      const model = selectModel(modelName, scenario);
+      const { handler, getStats } = modelToFetch(model);
+      ctx.setFetchHandler(handler);
+
+      const t0 = Date.now();
+      try {
+        await ctx.modify(scenario.prompt);
+      } catch (err) {
+        // modify rejections (e.g. concurrent_modify) fall through; success
+        // oracle decides whether that's expected.
+      }
+      wall_ms = Date.now() - t0;
+
+      result = await ctx.getDoc();
+      const hist = await ctx.getHistory();
+      editEnvelope = hist[0]?.kind === 'edit_batch' ? hist[0].envelope : null;
+      stats = getStats();
+
+      success = await scenario.success(result, fixture);
+      stability = await scenario.stability(fixture, result, editEnvelope);
     }
-    const wall_ms = Date.now() - t0;
-
-    const result = await ctx.getDoc();
-    // Newest-first: hist[0] is the edit (if any); hist[1] is the setup.
-    const hist = await ctx.getHistory();
-    const editEnvelope = hist[0]?.kind === 'edit_batch' ? hist[0].envelope : null;
-    const stats = getStats();
-
-    const success = await scenario.success(result, fixture);
-    const stability = await scenario.stability(fixture, result, editEnvelope);
     return {
-      ok: !modifyError,
+      ok: true,
       wall_ms,
       tokens_in: stats.tokens_in,
       tokens_out: stats.tokens_out,
@@ -113,7 +127,6 @@ async function runOnce(scenario, modelName) {
       drift_ratio: stability.drift_ratio,
       success_detail: success,
       stability_detail: stability,
-      error: modifyError ? { code: modifyError.code, message: modifyError.message } : null,
     };
   } finally {
     ctx.dispose();
