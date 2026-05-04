@@ -229,10 +229,22 @@ function buildUI() {
   pal.onclick = e => { if (e.target === pal) closePal(); };
   inp.oninput = () => { go.disabled = !inp.value.trim(); };
   inp.onkeydown = e => {
-    if (e.key === 'Enter' && !e.shiftKey && inp.value.trim()) { e.preventDefault(); modify(inp.value.trim()); }
+    if (e.key === 'Enter' && !e.shiftKey && inp.value.trim()) {
+      e.preventDefault();
+      modify(inp.value.trim()).catch(err => {
+        // concurrent_modify is already surfaced via setPalSt; suppress the
+        // unhandled rejection. Any other throw is a programming error.
+        if (err?.code !== 'concurrent_modify') console.error(err);
+      });
+    }
     if (e.key === 'Escape') closePal();
   };
-  go.onclick = () => inp.value.trim() && modify(inp.value.trim());
+  go.onclick = () => {
+    if (!inp.value.trim()) return;
+    modify(inp.value.trim()).catch(err => {
+      if (err?.code !== 'concurrent_modify') console.error(err);
+    });
+  };
 }
 const setStatus = (cls, msg) => { const e = document.getElementById('rwa-st-status'); if (e) { e.className = 'rwa-st-btn ' + (cls || ''); e.textContent = msg; } };
 const setPalSt = (cls, msg) => { const e = document.getElementById('rwa-pal-st'); if (e) { e.className = cls || ''; e.textContent = msg; } };
@@ -624,7 +636,7 @@ async function modify(instr) {
 
   if (modifyMutex) {
     setPalSt('err', '✗ another modify in progress');
-    return;
+    throw new RwaEditError('concurrent_modify');
   }
   modifyMutex = true;
 

@@ -1231,14 +1231,21 @@ check('41a: modify without api key leaves doc unchanged', (await window.getDoc()
 check('41a: modify without api key issues no fetch', fetchCalled41a === false);
 window.sessionStorage.setItem('rwa_apikey', savedKey41 || 'test-key');
 
-// 41b: modify-while-modify-in-flight — mutex rejects the second call cleanly.
+// 41b: modify-while-modify-in-flight — mutex rejects the second call with
+// a structured concurrent_modify RwaEditError (spec §10).
 let inFlightResolve41 = null;
 let inFlightFetches41 = 0;
 fetchHandler = () => { inFlightFetches41++; return new Promise(r => { inFlightResolve41 = r; }); };
 const m1_41 = window.modify('first slow modify');
 await new Promise(r => setTimeout(r, 30));
-await window.modify('second concurrent modify');
-check('41b: concurrent modify rejected — only the first fetch issued', inFlightFetches41 === 1);
+let secondCode41 = null;
+try {
+  await window.modify('second concurrent modify');
+} catch (err) {
+  secondCode41 = err?.code;
+}
+check('41b: concurrent modify rejected with code=concurrent_modify', secondCode41 === 'concurrent_modify');
+check('41b: concurrent modify did not issue a second fetch', inFlightFetches41 === 1);
 // Release first cleanly: model returns a text-only "decline" so no commit happens.
 inFlightResolve41({
   ok: true, json: async () => ({
