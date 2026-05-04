@@ -51,6 +51,14 @@ function loadFixture(name) {
   return fs.readFileSync(p, 'utf8').replace(/\r\n/g, '\n');
 }
 
+function resolveFixture(scenario) {
+  if (typeof scenario.fixtureContent === 'string') {
+    return scenario.fixtureContent.replace(/\r\n/g, '\n');
+  }
+  if (typeof scenario.fixture === 'string') return loadFixture(scenario.fixture);
+  throw new Error(`scenario ${scenario.id}: must declare fixture or fixtureContent`);
+}
+
 function selectModel(modelName, scenario) {
   if (modelName === 'stub') {
     if (typeof scenario.stub !== 'function') {
@@ -65,12 +73,12 @@ function selectModel(modelName, scenario) {
 async function runOnce(scenario, modelName) {
   const ctx = await harness.fresh();
   try {
-    const fixture = loadFixture(scenario.fixture);
-    // Setup: install the fixture as the doc.
-    await ctx.replaceDocument(
-      { version: 'rwa-edit/1', doc: fixture, reason: `fidelity setup: ${scenario.id}` },
-      await ctx.getDoc(),
-    );
+    const fixture = resolveFixture(scenario);
+    // Setup: write fixture directly to IDB. Bypasses runtime validation
+    // (replaceDocument forbids introducing frozen zones, structural shape
+    // changes vs the seed default, etc. — none of which matter for
+    // fixture setup, all of which need to be settable for fidelity tests).
+    await ctx.setDoc(fixture);
 
     const model = selectModel(modelName, scenario);
     const { handler, getStats } = modelToFetch(model);

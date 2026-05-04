@@ -112,6 +112,13 @@ export async function fresh(opts = {}) {
     getDoc: () => window.getDoc(),
     getHistory: () => readIDBStore(window, 'rwa_hist'),
     getUndoStack: () => readIDBStore(window, 'rwa_undo'),
+    // Bypasses runtime validation — for fixture-setup paths only. After
+    // writing to IDB, re-renders the doc into #rwa-doc-mount so the live
+    // DOM mirrors IDB state for any subsequent runtime-behavior tests.
+    async setDoc(text) {
+      await writeIDBStore(window, 'rwa_doc', text);
+      if (typeof window.renderDoc === 'function') window.renderDoc(text);
+    },
     setFetchHandler(h) { fetchHandler = h; },
     bootstrapErrors: () => errors.slice(),
     readSeedBytes: () => SEED_HTML,
@@ -145,6 +152,29 @@ function readIDBStore(window, storeName) {
         // rwa_hist and rwa_undo are arrays stored under key 'self'
         resolve(Array.isArray(v) ? v : (v == null ? [] : [v]));
       };
+    };
+  });
+}
+
+// Write directly to IDB store — bypasses runtime validation. Used for
+// fixture setup (loading docs with frozen zones, etc. that
+// replaceDocument would refuse). Pairs with window.renderDoc(text) to
+// keep the live DOM in sync with the new IDB doc state.
+function writeIDBStore(window, storeName, value, key = 'self') {
+  return new Promise((resolve, reject) => {
+    const dbName = 'rwa_00000000-0000-0000-0000-000000000000';
+    const req = window.indexedDB.open(dbName);
+    req.onerror = () => reject(req.error);
+    req.onsuccess = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(storeName)) {
+        db.close();
+        return reject(new Error(`store ${storeName} not present in DB`));
+      }
+      const tx = db.transaction(storeName, 'readwrite');
+      const r = tx.objectStore(storeName).put(value, key);
+      r.onerror = () => { db.close(); reject(r.error); };
+      r.onsuccess = () => { db.close(); resolve(); };
     };
   });
 }
