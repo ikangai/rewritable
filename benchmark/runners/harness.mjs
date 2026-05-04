@@ -23,23 +23,17 @@ export const SEED_PATH = SEED;
 export const SEED_BYTES = SEED_HTML;
 
 // Re-import fake-indexeddb fresh per harness.fresh() so each scenario gets
-// an isolated database. Top-level imports share a single instance, which
-// would let one scenario's commit leak into the next.
-async function freshIDB() {
-  // Append a cache-buster to bypass Node's module cache.
-  const u = new URL('fake-indexeddb');
-  // `node --import` resolution with import() doesn't honor query strings
-  // for ESM, so we instead rely on the package having its own internal
-  // factory pattern. fake-indexeddb v6 exports a fresh-store FDBFactory.
-  const mod = await import('fake-indexeddb');
-  // FDBFactory: each `new mod.IDBFactory()` is a fresh database namespace.
-  // The default exported `indexedDB` is shared. Construct a fresh one.
-  const FDBFactory = mod.IDBFactory || mod.default?.IDBFactory;
+// an isolated database. The default-exported `indexedDB` is shared across
+// all importers, which would let one scenario's commit leak into the next.
+// fake-indexeddb v6's `IDBFactory` constructor produces a fresh instance.
+import * as fakeIDB from 'fake-indexeddb';
+
+function freshIDB() {
+  const FDBFactory = fakeIDB.IDBFactory || fakeIDB.default?.IDBFactory;
   if (FDBFactory) {
-    return { indexedDB: new FDBFactory(), IDBKeyRange: mod.IDBKeyRange };
+    return { indexedDB: new FDBFactory(), IDBKeyRange: fakeIDB.IDBKeyRange };
   }
-  // Fallback: shared instance (older fake-indexeddb).
-  return { indexedDB: mod.indexedDB, IDBKeyRange: mod.IDBKeyRange };
+  return { indexedDB: fakeIDB.indexedDB, IDBKeyRange: fakeIDB.IDBKeyRange };
 }
 
 /**
@@ -53,7 +47,7 @@ async function freshIDB() {
  * @returns {Promise<Context>}
  */
 export async function fresh(opts = {}) {
-  const { indexedDB, IDBKeyRange } = await freshIDB();
+  const { indexedDB, IDBKeyRange } = freshIDB();
   const virtualConsole = new VirtualConsole();
   const errors = [];
   virtualConsole.on('jsdomError', e => {
