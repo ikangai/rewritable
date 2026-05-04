@@ -57,7 +57,22 @@ function convertHtml(input) {
   return { html: headStyles + body, warnings };
 }
 
+function looksLikeCsv(text) {
+  const probe = Papa.parse(text, { preview: 2, skipEmptyLines: true, header: false });
+  if (probe.errors.length > 0) return false;
+  if (probe.data.length === 0) return false;
+  const cols = probe.data[0].length;
+  if (cols < 2) return false;
+  if (probe.data.length === 2 && probe.data[1].length !== cols) return false;
+  return true;
+}
+
 function convertCsv(text) {
+  if (!looksLikeCsv(text)) {
+    const e = new Error('csv probe failed: input does not look like CSV (need ≥2 columns with consistent column count)');
+    e.exitCode = 2;
+    throw e;
+  }
   // skipEmptyLines drops trailing blank rows that csv exporters often emit.
   // header:false because we own the first-row-as-thead split and want raw rows.
   const result = Papa.parse(text, { skipEmptyLines: true, header: false });

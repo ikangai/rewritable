@@ -110,8 +110,21 @@ function replaceInlineDoc(seed, newDoc) {
   return seed.slice(0, cs) + escapeTL(newDoc) + seed.slice(i);
 }
 
-// PORTED FROM cli/src/import.mjs (convertCsv) — keep in sync with the CLI.
+// PORTED FROM cli/src/import.mjs (convertCsv, looksLikeCsv) — keep in sync with the CLI.
+function looksLikeCsv(text) {
+  const probe = Papa.parse(text, { preview: 2, skipEmptyLines: true, header: false });
+  if (probe.errors.length > 0) return false;
+  if (probe.data.length === 0) return false;
+  const cols = probe.data[0].length;
+  if (cols < 2) return false;
+  if (probe.data.length === 2 && probe.data[1].length !== cols) return false;
+  return true;
+}
+
 function convertCsv(text) {
+  if (!looksLikeCsv(text)) {
+    throw new Error('csv probe failed: input does not look like CSV (need ≥2 columns with consistent column count)');
+  }
   const result = Papa.parse(text, { skipEmptyLines: true, header: false });
   // Errors are kept as warnings; Papa is lenient and produces partial data,
   // matching the CLI's behavior where parse errors don't abort the import.
