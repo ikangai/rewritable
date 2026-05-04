@@ -1,8 +1,8 @@
-# Benchmark state — full v1.3 coverage
+# Benchmark state — full v1.3 coverage, all-green
 
-**Conformance: 42 / 42** | **Fidelity: 80 / 80 scenarios wired (78 pass, 2 documented runtime gaps)** | **tests/e2e.mjs: 266 / 266** | **Oracle self-tests: 16 / 16** | **Calibration: PASSED** (FID-01 v1 T=2 vs baseline T=0, drift_ratio 0× vs 0.94)
+**Conformance: 42 / 42** | **Fidelity: 80 / 80 (all S=2 / T=2 / drift=0 with stub)** | **tests/e2e.mjs: 266 / 266** | **Oracle self-tests: 16 / 16** | **Calibration: PASSED** (FID-01 v1 T=2 vs baseline T=0, drift_ratio 0× vs 0.94)
 
-This file replaces the earlier "9 fidelity scenarios scaffolded" report. As of the third autoresearch-loop completion, the benchmark covers the entire v1.3 spec surface — every scenario in §4 (fidelity, 80) and §5b (conformance, 42), the operational instrumentation in §2.4, the calibration gate in §9, the multi-model orchestration scaffold in §6.4, and a curated subset of the §12 fixture catalog.
+This file replaces the earlier "9 fidelity scenarios scaffolded" report. The benchmark now covers the entire v1.3 spec surface — every scenario in §4 (fidelity, 80) and §5b (conformance, 42), the operational instrumentation in §2.4, the calibration gate in §9, the multi-model orchestration scaffold in §6.4, and a curated subset of the §12 fixture catalog. Every spec-vs-runtime gap surfaced by the suite has been closed in `seeds/rewritable.html`.
 
 ## Coverage by category (spec v1.3 §4 + §5b)
 
@@ -30,7 +30,7 @@ This file replaces the earlier "9 fidelity scenarios scaffolded" report. As of t
 | ID identity | 6 | 6 | 6 | ids, aria, label-for, frozen zones |
 | CONT content | 7 | 7 | 7 | Counts, footnotes, totals, dual units, TOC, cross-refs, templates |
 | DATA embedded data | 6 | 6 | 6 | JSON, CSV, SVG, code blocks, regex, textarea |
-| APP application state | 6 | 4 | 6 | **APP-01 + APP-02 fail (renderDoc gap)** |
+| APP application state | 6 | 6 | 6 | renderDoc now preserves id-keyed form state |
 | BULK bulk ops | 4 | 4 | 4 | Translation tool-trace, mass refactor |
 | ROB robustness | 8 | 8 | 8 | Edge anchors, locale, unicode, decline |
 | INTL internationalization | 7 | 7 | 7 | RTL, CJK, mixed-script, locale numbers |
@@ -40,41 +40,19 @@ This file replaces the earlier "9 fidelity scenarios scaffolded" report. As of t
 | DEG degradation | 3 | 3 | 3 | 20-edit sequence, reproducibility, save round-trip |
 
 **Headline numbers (stub model, N=1-3 per scenario):**
-- Overall mean S = 1.95 (78 perfect + 2 zero / 80)
+- Overall mean S = 2.00 (80 / 80 perfect)
 - Overall mean T = 2.00
 - Median drift_ratio = 0.0000
 
-The two `S=0` scenarios are real runtime gaps documented below.
+## Runtime fixes that landed during this loop
 
-## Documented runtime gaps
+All in `seeds/rewritable.html`. Each fix was guarded by `tests/e2e.mjs` (no regressions) and verified against the relevant benchmark scenarios:
 
-Surfaced by the benchmark; would each require small runtime changes to close. All are in the same family — the runtime's `renderDoc(html)` calls `mount.innerHTML = html` which destroys form state. Closing them needs a render-side capture/restore step.
-
-### APP-01 — form `<input>` value persistence
-
-The runtime's `renderDoc` replaces `innerHTML`, throwing away `input.value` set by the user. The spec expects the value to persist across an unrelated edit. Fix sketch:
-
-```js
-function renderDoc(html) {
-  const m = document.getElementById('rwa-doc-mount');
-  // Capture form values before the destructive replacement.
-  const captured = {};
-  m.querySelectorAll('input,textarea,select').forEach(el => {
-    if (el.id) captured[el.id] = el.value;
-  });
-  m.innerHTML = html;
-  // ... script-replacement dance ...
-  // Restore captured values to elements with matching ids.
-  for (const [id, val] of Object.entries(captured)) {
-    const el = m.querySelector('#' + CSS.escape(id));
-    if (el && 'value' in el) el.value = val;
-  }
-}
-```
-
-### APP-02 — `<details open>` persistence
-
-Same root cause, same fix family — capture `open` state of `<details>` elements by id before innerHTML replacement, restore after.
+1. **`computeShape` distinct top-level types** — set-based, allows splitting `<p>` while rejecting `<section>` introduction. Catches CONFORM-11.
+2. **Token-level `<script>`/`<style>` balance** — catches the truncated-script case where the HTML5 parser auto-closes silently. Catches CONFORM-10.
+3. **`concurrent_modify` structured throw** — `modify()` now throws `RwaEditError('concurrent_modify')` instead of returning `undefined` after a UI flash. Catches CONFORM-14 + FAIL-05.
+4. **UTF-16 well-formedness** — `String.prototype.isWellFormed()` validation on every find/replace/doc/reason. Catches EDGE-05.
+5. **renderDoc id-keyed form state preservation** — captures `<input>`/`<textarea>`/`<select>` values + `<details open>` by id before innerHTML replacement, restores after. Catches APP-01 + APP-02.
 
 ## Orchestration runners
 
@@ -129,12 +107,12 @@ RWA_OPENROUTER_KEY=sk-or-... node runners/run-fidelity.mjs anthropic/claude-sonn
 
 Final stdout of each runner ends with the metric (passing count or aggregate) on its own line — the autoresearch loop's keep/discard signal.
 
-## What remains (additive, no spec gaps)
+## What remains (purely additive — no spec or runtime gaps)
 
-- **Fixture catalog completion**: 7 of the 15 spec §12.4 templates not yet represented (article-long, form-tax-return, spreadsheet-budget, slide-deck, letter-invitation, clock-realtime, press-release, tutorial-rwa, unicode-heavy, mixed-script). Lived-in/messy variants exist only for article-medium. Each is a ~1-2KB hand-authored HTML file.
+- **Fixture catalog completion**: ~7 of the 15 spec §12.4 templates not yet represented (article-long, form-tax-return, spreadsheet-budget, slide-deck, letter-invitation, clock-realtime, press-release, tutorial-rwa, unicode-heavy, mixed-script). Lived-in/messy variants exist only for article-medium. Each is a small hand-authored HTML file.
 - **Per-scenario `baselineDoc`**: only FID-01 has one today. The other 79 need one each to participate in calibration / baseline subtraction. Mechanical — write what the v0.x model would have output.
 - **Multi-model real runs**: `multimodel.mjs` iterates models but is meaningful only with a real OpenRouter key. The orchestration is wired up.
 - **Per-§6.5 production-ready thresholds**: `mean S ≥ 1.7`, `mean T ≥ 1.8`, `median drift ≤ 0.005`, `DEG-01 mean T ≥ 1.5` etc. — gating script not yet automated; the data is in `results/fidelity.tsv` so a small script can compute pass/fail.
 - **Correlation study (spec §11)**: human review of mechanical scores for 20 scenarios. Out of scope for any agent-only loop.
 
-The runtime-fix work (APP-01/02) is the only non-additive item — it requires changes to `seeds/rewritable.html`. The other items are purely benchmark expansion.
+All five items are purely additive. None require runtime changes. The benchmark mechanics are complete: oracles, runners, calibration, multi-model orchestration, all 122 scenarios from spec §4 + §5b.
