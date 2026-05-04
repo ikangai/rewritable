@@ -9,7 +9,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `re-write-able-spec.html` — worked-example reference: the spec itself rendered as a re-writeable document. Bootstrap regenerated from `seeds/rewritable.html`.
 - `hello.html` — minimal base variant: a one-line "hello world" wrapped in the canonical bootstrap. Bootstrap regenerated from `seeds/rewritable.html`.
 - `seeds/rewritable.html` — **canonical bootstrap seed**. Both the service and the CLI read this to emit fresh containers. Has a nil-UUID sentinel that is substituted at emit time.
-- `service/` — Node HTTP service that hands out fresh containers via `/new`. Build context is the **repo root** (so it can `COPY seeds/`); see `service/Dockerfile` and `service/docker-compose*.yml`.
+- `service/` — Node HTTP service that hands out fresh containers via `/new` and converts user-supplied markdown into a container via `/import` (browser-side conversion against the same seed endpoint). Build context is the **repo root** (so it can `COPY seeds/`); see `service/Dockerfile` and `service/docker-compose*.yml`.
 - `cli/` — `rwa` npm package (the CLI). `rwa new` emits a fresh container; `rwa import <file>` converts md/html/txt into one. Reads the canonical seed in dev; ships its own bundled copy on `npm publish` via the `prepublishOnly` hook.
 - `tests/` — end-to-end harness for the rwa-edit/1 modify pathway. Loads the seed in jsdom with stubbed fetch + fake-indexeddb and exercises every scenario in `rwa-edit-spec.md`. Run via `cd tests && npm install && npm test`.
 - `README.md` — short pitch
@@ -124,3 +124,10 @@ iOS Safari evicts IndexedDB aggressively after inactivity or storage pressure. T
 - The CLI mirrors three pieces of bootstrap-side logic: `escapeTL` (the template-literal escape), the INLINE_DOC backtick-walk, and the DOC_UUID substitution regex. If any of those change in `seeds/rewritable.html`, mirror the change in `cli/src/seed.mjs`.
 - `rwa import` ordering: apply seed-level substitutions (DOC_UUID/title/FILE) on the pristine seed first, *then* drop the imported content into INLINE_DOC. Doing it in the other order causes the `DOC_UUID` substitution to falsely match content the user imported (e.g. when importing another rwa file).
 - HTML import keeps `<script>` tags intentionally (rwa documents can be interactive per the spec) and prints a stderr `note:` warning. Don't strip them silently.
+
+## Conventions when editing the service (`service/`)
+
+- The service is zero-dependency Node `http`. Don't add npm deps. Static assets are read once at startup from `service/public/`; updating them requires a rebuild.
+- `/import` is the browser-side counterpart to `rwa import`. Conversion (markdown → HTML) and the seed splice happen entirely in the user's browser; the server only serves the static page and the existing `/rewritable.html` (which already substitutes a fresh `DOC_UUID`). Don't move conversion to the server — the offline/no-upload property is intentional.
+- `service/public/import.html` ports three pieces of `cli/src/seed.mjs` logic: `escapeTL`, the INLINE_DOC backtick-walk, and the TITLE/FILE substitutions (it does **not** mirror the DOC_UUID substitution — that's server-side via `/rewritable.html`). If any of those change in `seeds/rewritable.html` or `cli/src/seed.mjs`, mirror the change here too.
+- `marked` is loaded from cdnjs with a pinned version + SRI hash. Bumping the version means recomputing the SRI: `curl -sL https://cdnjs.cloudflare.com/ajax/libs/marked/<ver>/marked.min.js | openssl dgst -sha512 -binary | openssl base64 -A`. Don't float the version — a CDN compromise on a floating reference would ship malicious code into freshly imported containers.

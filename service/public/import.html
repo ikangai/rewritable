@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>import — re-writeable</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    display: flex; align-items: center; justify-content: center;
+    background: #0a0a0a; color: #e5e5e5;
+  }
+  main { width: min(36rem, 90vw); padding: 2rem; text-align: center; }
+  h1 { font-size: 1.5rem; font-weight: 400; margin: 0 0 1.5rem; }
+  .drop {
+    border: 1px dashed #444; border-radius: 8px;
+    padding: 2.5rem 1.5rem; cursor: pointer;
+    transition: border-color .15s, background .15s;
+    color: #b8b8b8;
+  }
+  .drop:hover, .drop.over { border-color: #b8ff57; background: #111; color: #e5e5e5; }
+  .drop.busy { opacity: .6; cursor: progress; }
+  .drop label { color: #b8ff57; cursor: inherit; text-decoration: underline; }
+  .status { min-height: 1.25rem; margin: 1rem 0 0; font-size: .9rem; opacity: .8; }
+  .status.error { color: #ff5757; opacity: 1; }
+  .status.ok { color: #b8ff57; opacity: 1; }
+  .nav { margin-top: 2rem; font-size: .85rem; opacity: .6; }
+  .nav a { color: inherit; }
+</style>
+</head>
+<body>
+<main>
+  <h1>import a markdown file</h1>
+  <div id="drop" class="drop" role="button" tabindex="0">
+    drop a <code>.md</code> file here, or <label for="picker">choose one</label>
+    <input id="picker" type="file" accept=".md,.markdown,text/markdown" hidden>
+  </div>
+  <p id="status" class="status"></p>
+  <p class="nav"><a href="/new">start with a blank container instead</a></p>
+</main>
+<!-- marked version pinned to match cli/package.json (`marked@^14.1.x`). When
+     the CLI's marked dep is bumped, bump this version + SRI together so the
+     browser-side import stays byte-equivalent to `rwa import`. SRI:
+     curl -sL https://cdnjs.cloudflare.com/ajax/libs/marked/<ver>/marked.min.js | openssl dgst -sha512 -binary | openssl base64 -A -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/14.1.4/marked.min.js"
+        integrity="sha512-oUb+v+OGnC4ls/U+74UExKiWPxg/0M1AW6WGR94XFExsapAwqFRWwG1uds2YO/k38mAaai62SKhsMQHbIYX5Rw=="
+        crossorigin="anonymous"
+        onerror="document.getElementById('status').textContent='marked failed to load — check your connection';document.getElementById('status').className='status error';document.getElementById('drop').classList.add('busy');"></script>
+<script>
+'use strict';
+
+// PORTED FROM cli/src/seed.mjs and cli/src/commands.mjs — keep in sync.
+// The CLI is the source of truth for the splice algorithm; this file mirrors
+// it in the browser. If seeds/rewritable.html grows a new substitution site or
+// the INLINE_DOC marker shape changes, update both places.
+
+const TITLE_RE = /<title>[^<]*<\/title>/;
+const FILE_RE = /(FILE\s*:\s*)'[^']*'/;
+const INLINE_DOC_MARKER = 'const INLINE_DOC = `';
+
+const escapeHtml = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+const escapeJsString = s => s.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+const canonLF = s => s == null ? '' : String(s).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+const escapeTL = s => canonLF(s)
+  .replace(/\\/g, '\\\\')
+  .replace(/`/g, '\\`')
+  .replace(/\$\{/g, '\\${')
+  .replace(/<\/script/gi, '<\\/script');
+
+function titleFromBasename(basename) {
+  return basename
+    .replace(/[-_]+/g, ' ')
+    .split(' ')
+    .filter(Boolean)
+    .map(w => w[0].toUpperCase() + w.slice(1))
+    .join(' ') || 'Untitled';
+}
+
+function applyTitleAndFileSubs(seed, { title, fileMeta }) {
+  for (const { re, label } of [
+    { re: TITLE_RE, label: '<title>' },
+    { re: FILE_RE, label: 'FILE:' },
+  ]) {
+    const matches = seed.match(new RegExp(re.source, 'g')) || [];
+    if (matches.length !== 1) {
+      throw new Error(`seed must contain exactly one ${label} line, found ${matches.length}`);
+    }
+  }
+  let out = seed.replace(TITLE_RE, `<title>${escapeHtml(title)}</title>`);
+  out = out.replace(FILE_RE, (_m, prefix) => `${prefix}'${escapeJsString(fileMeta)}'`);
+  return out;
+}
+
+function replaceInlineDoc(seed, newDoc) {
+  const start = seed.indexOf(INLINE_DOC_MARKER);
+  if (start < 0) throw new Error('cannot locate INLINE_DOC marker in seed');
+  const cs = start + INLINE_DOC_MARKER.length;
+  let i = cs;
+  while (i < seed.length) {
+    if (seed[i] === '\\') { i += 2; continue; }
+    if (seed[i] === '`') break;
+    i++;
+  }
+  if (i >= seed.length) throw new Error('unterminated INLINE_DOC literal in seed');
+  return seed.slice(0, cs) + escapeTL(newDoc) + seed.slice(i);
+}
+
+// --- UI wiring ---
+
+const dropEl = document.getElementById('drop');
+const pickerEl = document.getElementById('picker');
+const statusEl = document.getElementById('status');
+
+function setStatus(msg, kind) {
+  statusEl.textContent = msg || '';
+  statusEl.className = 'status' + (kind ? ' ' + kind : '');
+}
+function showError(msg) { setStatus(msg, 'error'); dropEl.classList.remove('busy'); }
+
+function triggerDownload(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  // Revoke after a tick so the click has time to register.
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+async function handleFile(file) {
+  if (!file) return;
+  const ext = (file.name.split('.').pop() || '').toLowerCase();
+  if (ext !== 'md' && ext !== 'markdown') {
+    return showError(`unsupported format: .${ext || '(none)'} (only .md / .markdown for now)`);
+  }
+  if (typeof marked === 'undefined') {
+    return showError('marked is not loaded — cannot convert');
+  }
+  dropEl.classList.add('busy');
+  setStatus('converting…');
+  try {
+    const text = await file.text();
+    if (!text.trim()) return showError('file is empty');
+    // marked.parse can be sync or return a Promise depending on options;
+    // await handles both safely.
+    const parsed = await marked.parse(text, { gfm: true, breaks: false });
+    const html = `<article>\n${String(parsed).trim()}\n</article>`;
+    const seedRes = await fetch('/rewritable.html', { cache: 'no-store' });
+    if (!seedRes.ok) return showError(`could not fetch seed (${seedRes.status})`);
+    const seed = await seedRes.text();
+    const baseName = file.name.replace(/\.(md|markdown)$/i, '');
+    const outName = `${baseName}.html`;
+    const title = titleFromBasename(baseName);
+    const subbed = applyTitleAndFileSubs(seed, { title, fileMeta: outName });
+    const result = replaceInlineDoc(subbed, html);
+    triggerDownload(new Blob([result], { type: 'text/html' }), outName);
+    setStatus(`downloaded ${outName}`, 'ok');
+  } catch (err) {
+    showError(err && err.message ? err.message : String(err));
+  } finally {
+    dropEl.classList.remove('busy');
+  }
+}
+
+dropEl.addEventListener('click', () => pickerEl.click());
+dropEl.addEventListener('keydown', e => {
+  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pickerEl.click(); }
+});
+pickerEl.addEventListener('change', () => {
+  if (pickerEl.files && pickerEl.files[0]) handleFile(pickerEl.files[0]);
+  pickerEl.value = '';
+});
+['dragenter', 'dragover'].forEach(evt => dropEl.addEventListener(evt, e => {
+  e.preventDefault(); dropEl.classList.add('over');
+}));
+['dragleave', 'drop'].forEach(evt => dropEl.addEventListener(evt, e => {
+  e.preventDefault(); dropEl.classList.remove('over');
+}));
+dropEl.addEventListener('drop', e => {
+  if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]) {
+    handleFile(e.dataTransfer.files[0]);
+  }
+});
+</script>
+</body>
+</html>

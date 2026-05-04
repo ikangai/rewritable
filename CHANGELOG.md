@@ -2,6 +2,48 @@
 
 Notable changes to `re-write-able`. The container format is versioned in `re-write-able-spec.md`; the edit protocol in `rwa-edit-spec.md`. The CLI follows semver in `cli/package.json`.
 
+## 2026-05-04 — `/import` endpoint: browser-side markdown import on the hosted service
+
+The hosted service grows a sibling to `/new`. Visit `rewritable.ikangai.com/import`, drop a `.md` file, get back a re-writeable container with the markdown rendered into `INLINE_DOC` — no install, no upload.
+
+### What changed for users
+
+- **New page `/import`** (service). A drop zone + file picker that accepts `.md` / `.markdown`, converts client-side via `marked` (GFM enabled), and downloads a fresh container with a server-issued `DOC_UUID` and a filename-derived `<title>`.
+- **`/new` carries a cross-link** to `/import`, and `/import` links back to `/new`. Both pages stay self-contained.
+- **The file never leaves your machine.** Conversion runs in the browser; the server only serves the static page and the existing `/rewritable.html` (which already mints fresh UUIDs).
+
+### What changed for the service
+
+- `service/server.js` adds a single `/import` route (six-line addition) returning a static `service/public/import.html`. The `isHead` closure handles `HEAD /import` for free.
+- `service/public/import.html` is a single self-contained page (~150 lines incl. styling). It loads `marked@14.1.4` from cdnjs with a pinned **SRI hash** (`sha512-oUb+v+OGnC4ls...`). The version is aligned with `cli/package.json`'s resolved `marked` so `/import` and `rwa import` produce byte-identical output.
+- The conversion module ports three pieces of `cli/src/seed.mjs` and `commands.mjs` logic — `escapeTL` + LF canonicalization, the `INLINE_DOC` backtick-walk, and `<title>` / `FILE:` substitution. The CLI remains the source of truth; the browser is the mirror. **`DOC_UUID` substitution is not ported** — the server's `/rewritable.html` endpoint already substitutes a fresh UUID before the seed reaches the browser.
+- Zero new server-side dependencies. No multipart parsing, no upload size limits, no `marked` on the server.
+- `service/public/new.html` gains one anchor: `<p><a href="/import">import an existing markdown file instead</a></p>`.
+
+### What changed for documentation
+
+- `CLAUDE.md` grows a "Conventions when editing the service (`service/`)" section: the zero-dep rule, the keep-conversion-client-side rule, the import.html ↔ cli/src/seed.mjs mirror clause, and the SRI bump procedure.
+- `docs/plans/2026-05-04-server-import-design.md` records the design (decisions, alternatives weighed, error surfaces, test strategy, future work for HTML/TXT/CSV).
+
+### What changed for testing
+
+- No new automated harness — the change is six lines of server route plumbing plus a static page. Verification is layered:
+    - **Syntax checks:** `node --check` on `server.js`; `vm.createScript` on the inline browser script.
+    - **Smoke tests** against a running server: `/health`, `/`, `/new`, `/import`, `HEAD /import`, `/rewritable.html`, and `/nonexistent` all return correct status, headers, and content.
+    - **Byte-equivalence check (load-bearing):** with the canonical seed, a stable `DOC_UUID`, and a fixture markdown that exercises the gnarly cases (literal backticks, `${...}`, code blocks, blockquotes — the inputs that exercise `escapeTL`), `rwa import` and the browser-simulated `/import` produce byte-identical 37 529-byte outputs. This is the test that gates correctness; promoting it to an automated jsdom check is queued.
+- Manual browser test: dropped a real `.md` into `localhost:8083/import` against the rebuilt Docker container; download fired, opening the resulting `.html` in Chromium showed the expected `<article>` and ⌘K reached the agent. The bootstrap is intact.
+
+### Backward compatibility
+
+- `/import` is a strict addition. `/new`, `/rewritable.html`, `/health`, and the `/` redirect are unchanged.
+- No new environment variables, no migrations. Build → push → restart. Rollback = previous image.
+- Bumping `marked` later requires recomputing the SRI hash and updating `import.html`; the procedure is documented in `CLAUDE.md`.
+
+### Future work (not in this change)
+
+- TXT import (trivial port of `convertTxt` from `cli/src/import.mjs`), then CSV import (new ground — the CLI doesn't support it), then HTML import (with a visible script-tag warning before download).
+- Automated jsdom test that diffs `/import` browser output against `rwa import` for a fixture set.
+
 ## 2026-05-02 — hardening (low-priority sweep): popUndo, applySeedSubs, HEAD, comment-resilient HTML import, reserved IDs
 
 A second pass at the LOW findings from the same bug hunt that produced the morning's HIGH/MEDIUM fixes. None of these are user-visible failures on the happy path; they tighten edge cases and defenses.

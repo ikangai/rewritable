@@ -14,6 +14,7 @@
   main { text-align: center; padding: 2rem; }
   h1 { font-size: 1.5rem; font-weight: 400; margin: 0 0 .5rem; }
   p  { margin: 0; opacity: .7; font-size: .9rem; }
+  p + p { margin-top: 1rem; }
   a  { color: inherit; }
 </style>
 </head>
@@ -21,6 +22,7 @@
 <main>
   <h1>thank you for downloading</h1>
   <p>if your download did not start, <a id="dl" href="/rewritable.html" download="rewritable.html">click here</a>.</p>
+  <p><a href="/import">import an existing markdown file instead</a></p>
 </main>
 <script>document.getElementById('dl').click();</script>
 </body>

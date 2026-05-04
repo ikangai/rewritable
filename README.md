@@ -48,7 +48,8 @@ npx rwa import notes.md     # → ./notes.html  (md/html/txt supported)
 
 ```sh
 # Service — hosted
-curl -O https://rewritable.ikangai.com/rewritable.html
+curl -O https://rewritable.ikangai.com/rewritable.html         # blank container
+open    https://rewritable.ikangai.com/import                  # browser: drop a .md file
 ```
 
 Or hand-craft: copy `seeds/rewritable.html`, replace the nil `DOC_UUID` with a fresh `crypto.randomUUID()`, save.

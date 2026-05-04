@@ -11,6 +11,7 @@ const SEEDS_DIR = path.join(__dirname, '..', 'seeds');
 
 // Read static assets once at startup. Updates require restart (rebuild+redeploy).
 const TRIGGER_HTML = fs.readFileSync(path.join(PUBLIC_DIR, 'new.html'));
+const IMPORT_HTML = fs.readFileSync(path.join(PUBLIC_DIR, 'import.html'));
 const SEED_TEMPLATE = fs.readFileSync(path.join(SEEDS_DIR, 'rewritable.html'), 'utf8');
 
 // Per-container UUID injection. The seed ships with a placeholder DOC_UUID;
@@ -56,6 +57,12 @@ const server = http.createServer((req, res) => {
       'Content-Type': 'text/html; charset=utf-8',
       'Cache-Control': 'no-store',
     }, TRIGGER_HTML);
+  }
+  if (url === '/import') {
+    return send(200, {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'no-store',
+    }, IMPORT_HTML);
   }
   if (url === '/rewritable.html') {
     const uuid = crypto.randomUUID();
