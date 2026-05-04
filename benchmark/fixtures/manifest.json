@@ -1,0 +1,15 @@
+{
+  "version": "fixtures-v1-alpha",
+  "note": "Initial benchmark fixture set — minimal subset of spec v1.3 §12 catalog. Only article-medium/clean is shipped at present; lived-in/messy variants and other templates are deferred.",
+  "fixtures": [
+    {
+      "id": "article-medium/clean",
+      "path": "templates/article-medium/clean.html",
+      "wear_level": "clean",
+      "template": "article-medium",
+      "language": "en",
+      "license": "CC0-1.0",
+      "provenance": "hand-authored for benchmark v1.3"
+    }
+  ]
+}

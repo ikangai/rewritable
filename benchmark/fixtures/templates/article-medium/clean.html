@@ -1,0 +1,30 @@
+<article>
+<h1>How distributed systems handle partial failure</h1>
+<p>The first paragraph establishes context for the document. When a system spans multiple machines, any single component can fail at any moment, and the surrounding software must respond predictably.</p>
+<p>The second paragraph contains a typo: it says "thier" instead of "their". A correct edit changes only this paragraph and leaves the surrounding ones byte-identical.</p>
+<p>The third paragraph concludes the section with a summary. Distributed systems force engineers to reason about partial state, retries, and idempotence in ways that single-machine programs avoid.</p>
+<h2>Strategies for failure handling</h2>
+<table>
+<thead><tr><th>Strategy</th><th>Failure mode</th><th>Recovery time</th></tr></thead>
+<tbody>
+<tr><td>Bulkhead</td><td>Resource exhaustion</td><td>Seconds</td></tr>
+<tr><td>Circuit breaker</td><td>Cascading timeout</td><td>Milliseconds</td></tr>
+<tr><td>Retry with jitter</td><td>Transient network</td><td>Variable</td></tr>
+</tbody>
+</table>
+<h2>Implementation example</h2>
+<pre><code class="language-python">def call_with_breaker(target, *args):
+    if breaker.is_open():
+        raise CircuitOpen()
+    try:
+        return target(*args)
+    except TransientError as e:
+        breaker.record_failure(e)
+        raise</code></pre>
+<details>
+<summary>Why this matters in practice</summary>
+<p>Real systems aggregate these patterns. A web service might wrap a downstream call in a circuit breaker, sit it inside a bulkhead with a bounded thread pool, and add retry-with-jitter on the calling side.</p>
+</details>
+<p class="callout">A subscribe form is included to test form-state preservation under unrelated edits.</p>
+<form><label for="email-sub">Email</label><input id="email-sub" type="email" name="email"></form>
+</article>
