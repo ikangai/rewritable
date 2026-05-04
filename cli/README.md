@@ -42,6 +42,7 @@ Output defaults to `<input-basename>.html` in the input's directory. Conversion 
 | Flag | Effect |
 |---|---|
 | `--force`, `-f` | overwrite the destination if it exists |
+| `--open`, `-o` | open the resulting file in the default app |
 | `--version` | print version |
 | `--help`, `-h` | usage |
 

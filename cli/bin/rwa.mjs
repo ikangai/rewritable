@@ -11,6 +11,7 @@ Usage:
 
 Flags:
   --force, -f    overwrite the destination if it exists
+  --open, -o     open the resulting file in the default app
   --version      print version and exit
   --help, -h     this help
 
@@ -33,16 +34,17 @@ const verb = args[0];
     }
     const rest = args.slice(1);
     const force = rest.includes('--force') || rest.includes('-f');
+    const open = rest.includes('--open') || rest.includes('-o');
     const positional = rest.filter(a => !a.startsWith('-'));
     if (verb === 'new') {
-      await newCmd({ outPath: positional[0], force });
+      await newCmd({ outPath: positional[0], force, open });
     } else if (verb === 'import') {
       if (!positional[0]) {
         console.error('rwa import: missing <input> argument');
         process.exitCode = 2;
         return;
       }
-      await importCmd({ inputPath: positional[0], outPath: positional[1], force });
+      await importCmd({ inputPath: positional[0], outPath: positional[1], force, open });
     } else {
       console.error(`rwa: unknown verb "${verb}". Try --help.`);
       process.exitCode = 2;

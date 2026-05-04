@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
 
 import { loadSeed, applySeedSubs, replaceInlineDoc } from './seed.mjs';
@@ -53,7 +54,23 @@ function rel(p) {
   return r || p;
 }
 
-export async function newCmd({ outPath, force }) {
+function openFile(target) {
+  let cmd, args;
+  if (process.platform === 'darwin') {
+    cmd = 'open'; args = [target];
+  } else if (process.platform === 'win32') {
+    cmd = 'cmd'; args = ['/c', 'start', '""', target];
+  } else {
+    cmd = 'xdg-open'; args = [target];
+  }
+  const child = spawn(cmd, args, { detached: true, stdio: 'ignore' });
+  child.on('error', err => {
+    console.error(`note: could not open file (${err.code || err.message})`);
+  });
+  child.unref();
+}
+
+export async function newCmd({ outPath, force, open }) {
   const out = path.resolve(outPath || './rewritable.html');
   await ensureWritable(out, force);
   const seed = await loadSeed(SEED_CANDIDATES);
@@ -66,9 +83,10 @@ export async function newCmd({ outPath, force }) {
   });
   await fs.writeFile(out, result, 'utf8');
   console.log(`wrote ${rel(out)}`);
+  if (open) openFile(out);
 }
 
-export async function importCmd({ inputPath, outPath, force }) {
+export async function importCmd({ inputPath, outPath, force, open }) {
   const input = path.resolve(inputPath);
   const inputDir = path.dirname(input);
   const inputBasename = path.basename(input, path.extname(input));
@@ -97,4 +115,5 @@ export async function importCmd({ inputPath, outPath, force }) {
   const result = replaceInlineDoc(subbed, html);
   await fs.writeFile(out, result, 'utf8');
   console.log(`wrote ${rel(out)}`);
+  if (open) openFile(out);
 }
