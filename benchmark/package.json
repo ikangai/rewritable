@@ -1,0 +1,15 @@
+{
+  "name": "rwa-benchmark",
+  "version": "1.3.0",
+  "private": true,
+  "type": "module",
+  "description": "rwa-edit fidelity benchmark v1.3 — conformance + fidelity harness for seeds/rewritable.html.",
+  "scripts": {
+    "conformance": "node runners/run-conformance.mjs",
+    "test": "node runners/run-conformance.mjs"
+  },
+  "dependencies": {
+    "fake-indexeddb": "^6.0.0",
+    "jsdom": "^25.0.0"
+  }
+}
