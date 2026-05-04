@@ -418,6 +418,26 @@ function parseHtmlFragment(doc) {
   }
 }
 
+// Token-level balance check for <script> and <style>. The HTML parser
+// auto-closes these silently at EOF when the closing tag is missing, so a
+// post-parse shape check can pass while the doc has actually been
+// corrupted (a lone `<script>` swallows all following markup as text).
+// We catch this by counting raw tokens in the doc string.
+function tagBalance(doc) {
+  const opens = {
+    script: (doc.match(/<script\b/gi) || []).length,
+    style: (doc.match(/<style\b/gi) || []).length,
+  };
+  const closes = {
+    script: (doc.match(/<\/script\s*>/gi) || []).length,
+    style: (doc.match(/<\/style\s*>/gi) || []).length,
+  };
+  for (const tag of ['script', 'style']) {
+    if (opens[tag] !== closes[tag]) return { tag, opens: opens[tag], closes: closes[tag] };
+  }
+  return null;
+}
+
 function computeShape(parsedDoc) {
   if (!parsedDoc) return null;
   const body = parsedDoc.body;
@@ -528,6 +548,10 @@ async function applyEdits(envelope, currentDocRaw) {
   const newShape = computeShape(parseResult.doc);
   if (!shapesEqual(originalShape, newShape))
     throw new RwaEditError('structural_shape_changed', null, { shape_before: originalShape, shape_after: newShape });
+
+  const imbalance = tagBalance(work);
+  if (imbalance && !tagBalance(currentDoc))
+    throw new RwaEditError('structural_shape_changed', null, { tag_imbalance: imbalance });
 
   if (!snapshotsEqual(originalAttrs, dataRwaFrozenSnapshot(parseResult.doc)))
     throw new RwaEditError('frozen_zone_corrupted');
