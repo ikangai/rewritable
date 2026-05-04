@@ -1,0 +1,203 @@
+== rwa-edit fidelity — 80 scenario(s) discovered (model=moonshotai/kimi-k2.6) ==
+
+  [APP-01] form input.value persists across unrelated edit (EXPECTED-FAIL: runtime's renderDoc destroys input state) (N=1) 22
+        meanS=2.00  meanT=2.00  drift_ratio=0.0000  tokens_med=0  wall_ms_med=11
+  [APP-02] <details open> state persists across edit (EXPECTED-FAIL on current runtime) (N=1) 22
+        meanS=2.00  meanT=2.00  drift_ratio=0.0000  tokens_med=0  wall_ms_med=5
+  [APP-03] counter in localStorage persists across edit (script re-reads on render) (N=1) 22
+        meanS=2.00  meanT=2.00  drift_ratio=0.0000  tokens_med=0  wall_ms_med=56
+  [APP-04] module-scope counter resets across edit (expected behavior per spec; score 2 on clean reset) (N=1) 22
+        meanS=2.00  meanT=2.00  drift_ratio=0.0000  tokens_med=0  wall_ms_med=58
+  [APP-05] event listener rebinds via renderDoc script-replacement; post-edit click fires (N=1) 22
+        meanS=2.00  meanT=2.00  drift_ratio=0.0000  tokens_med=0  wall_ms_med=81
+  [APP-06] inline <script> with load-time side effects re-runs on renderDoc (N=1) 22
+        meanS=2.00  meanT=2.00  drift_ratio=0.0000  tokens_med=0  wall_ms_med=110
+  [BULK-01] translate to French via apply_edits per text node; structure byte-identical (N=3) 22 22 22
+        meanS=2.00  meanT=2.00  drift_ratio=0.0000  tokens_med=1241  wall_ms_med=27248
+  [BULK-02] translate prose to French; <pre><code> Python remains English byte-identical (N=3) 10 12 12
+        meanS=1.00  meanT=1.33  drift_ratio=0.0000  tokens_med=3998  wall_ms_med=97287
+  [BULK-03] mass class rename via replace_document (correct tool choice for 40-site change) (N=3) 22 02 22
+        meanS=1.33  meanT=2.00  drift_ratio=0.0000  tokens_med=1898  wall_ms_med=41406
+  [BULK-04] wholesale redesign via replace_document; frozen zone bytes preserved (N=3) 12 12 12
+        meanS=1.00  meanT=2.00  drift_ratio=0.0000  tokens_med=2787  wall_ms_med=134329
+  [CONT-01] add 6th list item AND update "Five reasons" → "Six reasons" coupling (N=3) 22 20 20
+        meanS=2.00  meanT=0.67  drift_ratio=0.0409  tokens_med=1615  wall_ms_med=47595
+  [CONT-02] insert a new footnote between [1] and [2]; subsequent numbering renumbers (N=3) 22 00 22
+        meanS=1.33  meanT=1.33  drift_ratio=0.0000  tokens_med=3899  wall_ms_med=131137
+  [CONT-03] add line item C=15; total updates 30 → 45 (N=3) 22 22 22
+        meanS=2.00  meanT=2.00  drift_ratio=0.0000  tokens_med=1383  wall_ms_med=57554
+  [CONT-04] edit kg to 5.0; lbs updates to 11.0 (2.205 lb/kg) (N=3) 22 22 22
+        meanS=2.00  meanT=2.00  drift_ratio=0.0000  tokens_med=1040  wall_ms_med=27497
+  [CONT-05] rename section 3 heading + matching TOC entry; href unchanged (N=3) 22 00 22
+        meanS=1.33  meanT=1.33  drift_ratio=0.0000  tokens_med=3939  wall_ms_med=38137
+  [CONT-06] insert new section between 3 and 4; cross-ref renumbers to "section 5" (N=3) 00 00 22
+        meanS=0.67  meanT=0.67  drift_ratio=1.0000  tokens_med=0  wall_ms_med=240013
+  [CONT-07] rewrite middle paragraph; {{name}} and {{invoice_id}} placeholders preserved (N=3) 20 20 20
+        meanS=2.00  meanT=0.00  drift_ratio=0.2880  tokens_med=1098  wall_ms_med=17985
+  [DATA-01] add Q4 row to embedded JSON; schema preserved (N=3) 22 22 22
+        meanS=2.00  meanT=2.00  drift_ratio=0.0000  tokens_med=1293  wall_ms_med=21939
+  [DATA-02] append a CSV row; columns unchanged (N=3) 22 22 22
+        meanS=2.00  meanT=2.00  drift_ratio=0.0000  tokens_med=1093  wall_ms_med=26004
+  [DATA-03] edit path d attribute; <defs> gradient + ref preserved (N=3) 22 22 22
+        meanS=2.00  meanT=2.00  drift_ratio=0.0000  tokens_med=1075  wall_ms_med=8034
+  [DATA-04] translate prose to French; <pre><code> Python block byte-identical (N=3) 22 22 20
+        meanS=2.00  meanT=1.33  drift_ratio=0.0000  tokens_med=1092  wall_ms_med=28080
+  [DATA-05] edit unrelated prose; regex/escape region byte-identical (N=3) 22 20 20
+        meanS=2.00  meanT=0.67  drift_ratio=0.2123  tokens_med=1052  wall_ms_med=9251
+  [DATA-06] edit prose; <textarea> default content byte-identical (N=3) 20 20 22
+        meanS=2.00  meanT=0.67  drift_ratio=0.2518  tokens_med=994  wall_ms_med=19256
+  [DEG-01] 20-edit sequence; cumulative drift contained within declared regions (N=1) 10
+        meanS=1.00  meanT=0.00  drift_ratio=1.0000  tokens_med=1443  wall_ms_med=32108
+  [DEG-02] two independent runs of DEG-01; endpoints byte-identical (reproducibility) (N=1) 22
+        meanS=2.00  meanT=2.00  drift_ratio=0.0000  tokens_med=0  wall_ms_med=301
+  [DEG-03] edit → buildFile → INLINE_DOC LF-only; idempotent rebuild (N=1) 22
+        meanS=2.00  meanT=2.00  drift_ratio=0.0000  tokens_med=0  wall_ms_med=8
+  [FAIL-01] find_not_unique tool_result payload includes count and hints (N=3) 02 02 02
+        meanS=0.00  meanT=2.00  drift_ratio=0.0000  tokens_med=3906  wall_ms_med=64451
+  [FAIL-02] replace containing reserved marker → frozen_zone_violation (N=3) 02 02 02
+        meanS=0.00  meanT=2.00  drift_ratio=0.0000  tokens_med=3585  wall_ms_med=160589
+  [FAIL-03] three consecutive failures; doc unchanged, no commit, no silent escalation (N=3) 00 00 22
+        meanS=0.67  meanT=0.67  drift_ratio=1.0000  tokens_med=1193  wall_ms_med=30775
+  [FAIL-04] after retry exhaustion: no silent replace_document escalation in audit log (N=3) 00 00 00
+        meanS=0.00  meanT=0.00  drift_ratio=1.0000  tokens_med=1098  wall_ms_med=25168
+  [FAIL-05] second modify() while first is in flight → concurrent_modify before round-trip (N=3) 22 22 22
+        meanS=2.00  meanT=2.00  drift_ratio=0.0000  tokens_med=0  wall_ms_med=53
+  [FAIL-06] structural_shape_changed payload contains shape_before/after; model retries with replace_document (N=3) 02 02 02
+        meanS=0.00  meanT=2.00  drift_ratio=0.0000  tokens_med=1790  wall_ms_med=43190
+  [FAIL-07] turn 1 ambiguous → turn 2 disambiguated → success; happy path of multi-turn (N=3) 22 00 00
+        meanS=0.67  meanT=0.67  drift_ratio=1.0000  tokens_med=4830  wall_ms_med=240019
+  [FAIL-08] model returns prose only (no tool_use); runtime exits cleanly, no commit (N=3) 00 22 22
+        meanS=1.33  meanT=1.33  drift_ratio=0.0000  tokens_med=922  wall_ms_med=22241
+  [FAIL-09] mixed-failure retry: find_not_unique → frozen_zone_violation → success (N=3) 02 00 00
+        meanS=0.00  meanT=0.67  drift_ratio=0.0417  tokens_med=2597  wall_ms_med=85554
+  [FID-01] single-character typo fix — surrounding doc byte-identical (N=3) 22 22 12
+        meanS=1.67  meanT=2.00  drift_ratio=0.0000  tokens_med=1547  wall_ms_med=28152
+  [FID-02] paragraph-level edit — surrounding paragraphs byte-identical (N=3) 12 12 12
+        meanS=1.00  meanT=2.00  drift_ratio=0.0000  tokens_med=2261  wall_ms_med=38639
+  [FID-03] attribute-only change — class augmentation, surrounding markup byte-identical (N=3) 22 22 22
+        meanS=2.00  meanT=2.00  drift_ratio=0.0000  tokens_med=1383  wall_ms_med=6241
+  [FID-04] mid-document insertion — new <tr> in strategy table, siblings preserved (N=3) 22 22 22
+        meanS=2.00  meanT=2.00  drift_ratio=0.0000  tokens_med=1814  wall_ms_med=35955
+  [FID-05] mid-document deletion — remove Circuit breaker row, siblings preserved (N=3) 20 12 22
+        meanS=1.67  meanT=1.33  drift_ratio=0.0000  tokens_med=4657  wall_ms_med=127379
+  [FID-06] multi-edit batch — rename heading, add row, fix typo (3 edits, all land) (N=3) 20 20 20
+        meanS=2.00  meanT=0.00  drift_ratio=0.0170  tokens_med=2193  wall_ms_med=28936
+  [GENRE-01] rename fieldset legend; 30 input id/label-for pairings preserved (N=3) 20 22 20
+        meanS=2.00  meanT=0.67  drift_ratio=0.0192  tokens_med=1719  wall_ms_med=4334
+  [GENRE-02] edit cell B5 from 450 to 600; total recomputes 1530 → 1680 (N=3) 22 20 22
+        meanS=2.00  meanT=1.33  drift_ratio=0.0000  tokens_med=1380  wall_ms_med=33372
+  [GENRE-03] edit slide 4 content; other 11 slides + counter byte-identical (N=3) 12 12 10
+        meanS=1.00  meanT=1.33  drift_ratio=0.0000  tokens_med=1574  wall_ms_med=20168
+  [GENRE-04] change recipient name in all three places consistently (N=3) 20 20 20
+        meanS=2.00  meanT=0.00  drift_ratio=0.5862  tokens_med=1482  wall_ms_med=38931
+  [GENRE-05] edit clock CSS color; clock element + script preserved (N=3) 22 22 22
+        meanS=2.00  meanT=2.00  drift_ratio=0.0000  tokens_med=980  wall_ms_med=9684
+  [GENRE-06] update one body stat; date/contact/boilerplate byte-identical (N=3) 22 22 22
+        meanS=2.00  meanT=2.00  drift_ratio=0.0000  tokens_med=2202  wall_ms_med=76755
+  [ID-01] edit body text; section ids byte-identical (N=3) 22 22 20
+        meanS=2.00  meanT=1.33  drift_ratio=0.0000  tokens_med=1229  wall_ms_med=43557
+  [ID-02] rename heading; aria-labelledby reference still resolves (N=3) 22 20 20
+        meanS=2.00  meanT=0.67  drift_ratio=0.2308  tokens_med=1019  wall_ms_med=29800
+  [ID-03] rename H2 visible text, id="sec-clocks" preserved, anchor link still resolves (N=3) 12 22 22
+        meanS=1.67  meanT=2.00  drift_ratio=0.0000  tokens_med=1170  wall_ms_med=19444
+  [ID-04] layout edit elsewhere; label/input id pairing intact (N=3) 20 20 20
+        meanS=2.00  meanT=0.00  drift_ratio=1.0000  tokens_med=1319  wall_ms_med=32048
+  [ID-05] edit one card body; .task-card class + style rule preserved (N=3) 20 20 20
+        meanS=2.00  meanT=0.00  drift_ratio=0.1411  tokens_med=1566  wall_ms_med=45346
+  [ID-06] edit near a frozen zone; zone bytes byte-identical (weight 2) (N=3) 10 10 10
+        meanS=1.00  meanT=0.00  drift_ratio=0.2472  tokens_med=1161  wall_ms_med=29663
+  [INTERACT-01] kanban state in localStorage persists across edit; card C still in "doing" (N=1) 22
+        meanS=2.00  meanT=2.00  drift_ratio=0.0000  tokens_med=0  wall_ms_med=62
+  [INTERACT-02] Ctrl+B keyboard shortcut still fires after edit (script re-attached listener) (N=1) 22
+        meanS=2.00  meanT=2.00  drift_ratio=0.0000  tokens_med=0  wall_ms_med=81
+  [INTERACT-03] open <dialog>: behavior across edit is observable (closes; documented) (N=1) 22
+        meanS=2.00  meanT=2.00  drift_ratio=0.0000  tokens_med=0  wall_ms_med=56
+  [INTERACT-04] scroll position behavior is consistent across edits (jsdom-best-effort) (N=1) 22
+        meanS=2.00  meanT=2.00  drift_ratio=0.0000  tokens_med=0  wall_ms_med=58
+  [INTERACT-05] wizard step in localStorage persists across edit (N=1) 22
+        meanS=2.00  meanT=2.00  drift_ratio=0.0000  tokens_med=0  wall_ms_med=58
+  [INTERACT-06] module-scope wizard state resets to step 1 across edit (expected per spec) (N=1) 22
+        meanS=2.00  meanT=2.00  drift_ratio=0.0000  tokens_med=0  wall_ms_med=60
+  [INTL-01] edit one Arabic paragraph; dir="rtl" + surrounding paragraphs byte-identical (N=3) 10 10 10
+        meanS=1.00  meanT=0.00  drift_ratio=0.3333  tokens_med=1582  wall_ms_med=51653
+  [INTL-02] edit Hebrew sentence; English brand "Acme Corp" preserved; second paragraph byte-identical (N=3) 20 20 20
+        meanS=2.00  meanT=0.00  drift_ratio=0.5302  tokens_med=1873  wall_ms_med=47567
+  [INTL-03] edit one Japanese paragraph; CJK boundaries respected; siblings byte-identical (N=3) 10 10 10
+        meanS=1.00  meanT=0.00  drift_ratio=0.3551  tokens_med=1228  wall_ms_med=17078
+  [INTL-04] edit only the English paragraph; Chinese and Greek byte-identical (N=3) 20 20 20
+        meanS=2.00  meanT=0.00  drift_ratio=0.3417  tokens_med=1449  wall_ms_med=39678
+  [INTL-05] change first amount + matching prose count consistently (N=3) 22 22 12
+        meanS=1.67  meanT=2.00  drift_ratio=0.0000  tokens_med=1685  wall_ms_med=36178
+  [INTL-06] edit Arabic prose; <code dir="ltr"> block byte-identical, dir boundaries preserved (N=3) 20 20 20
+        meanS=2.00  meanT=0.00  drift_ratio=0.7325  tokens_med=2339  wall_ms_med=81176
+  [INTL-07] translate to Japanese via apply_edits; structure preserved; lang attribute updated (N=3) 12 12 02
+        meanS=0.67  meanT=2.00  drift_ratio=0.0000  tokens_med=1470  wall_ms_med=32672
+  [PRES-01] edit prose in section 2; @page rules + page-break-before survive (N=3) 22 22 12
+        meanS=1.67  meanT=2.00  drift_ratio=0.0000  tokens_med=1674  wall_ms_med=66447
+  [PRES-02] edit body content; @page margin-box header/footer text byte-identical (N=3) Error: Could not parse CSS stylesheet
+    at exports.createStylesheet (/Users/martintreiber/Documents/Development/rewritable/benchmark/node_modules/jsdom/lib/jsdom/living/helpers/stylesheets.js:37:21)
+    at HTMLStyleElementImpl._updateAStyleBlock (/Users/martintreiber/Documents/Development/rewritable/benchmark/node_modules/jsdom/lib/jsdom/living/nodes/HTMLStyleElement-impl.js:68:5)
+    at HTMLStyleElementImpl._poppedOffStackOfOpenElements (/Users/martintreiber/Documents/Development/rewritable/benchmark/node_modules/jsdom/lib/jsdom/living/nodes/HTMLStyleElement-impl.js:42:10)
+    at JSDOMParse5Adapter.onItemPop (/Users/martintreiber/Documents/Development/rewritable/benchmark/node_modules/jsdom/lib/jsdom/browser/parser/html.js:175:43)
+    at Parser.onItemPop (/Users/martintreiber/Documents/Development/rewritable/benchmark/node_modules/parse5/dist/cjs/parser/index.js:176:90)
+    at OpenElementStack.pop (/Users/martintreiber/Documents/Development/rewritable/benchmark/node_modules/parse5/dist/cjs/parser/open-element-stack.js:83:22)
+    at endTagInText (/Users/martintreiber/Documents/Development/rewritable/benchmark/node_modules/parse5/dist/cjs/parser/index.js:2353:20)
+    at Parser._endTagOutsideForeignContent (/Users/martintreiber/Documents/Development/rewritable/benchmark/node_modules/parse5/dist/cjs/parser/index.js:992:17)
+    at Parser.onEndTag (/Users/martintreiber/Documents/Development/rewritable/benchmark/node_modules/parse5/dist/cjs/parser/index.js:957:18)
+    at Tokenizer.emitCurrentTagToken (/Users/martintreiber/Documents/Development/rewritable/benchmark/node_modules/parse5/dist/cjs/tokenizer/index.js:385:26) 
+@page { @top-center { content: "Quarterly Report"; } @bottom-right { content: counter(page); } }
+
+10 Error: Could not parse CSS stylesheet
+    at exports.createStylesheet (/Users/martintreiber/Documents/Development/rewritable/benchmark/node_modules/jsdom/lib/jsdom/living/helpers/stylesheets.js:37:21)
+    at HTMLStyleElementImpl._updateAStyleBlock (/Users/martintreiber/Documents/Development/rewritable/benchmark/node_modules/jsdom/lib/jsdom/living/nodes/HTMLStyleElement-impl.js:68:5)
+    at HTMLStyleElementImpl._poppedOffStackOfOpenElements (/Users/martintreiber/Documents/Development/rewritable/benchmark/node_modules/jsdom/lib/jsdom/living/nodes/HTMLStyleElement-impl.js:42:10)
+    at JSDOMParse5Adapter.onItemPop (/Users/martintreiber/Documents/Development/rewritable/benchmark/node_modules/jsdom/lib/jsdom/browser/parser/html.js:175:43)
+    at Parser.onItemPop (/Users/martintreiber/Documents/Development/rewritable/benchmark/node_modules/parse5/dist/cjs/parser/index.js:176:90)
+    at OpenElementStack.pop (/Users/martintreiber/Documents/Development/rewritable/benchmark/node_modules/parse5/dist/cjs/parser/open-element-stack.js:83:22)
+    at endTagInText (/Users/martintreiber/Documents/Development/rewritable/benchmark/node_modules/parse5/dist/cjs/parser/index.js:2353:20)
+    at Parser._endTagOutsideForeignContent (/Users/martintreiber/Documents/Development/rewritable/benchmark/node_modules/parse5/dist/cjs/parser/index.js:992:17)
+    at Parser.onEndTag (/Users/martintreiber/Documents/Development/rewritable/benchmark/node_modules/parse5/dist/cjs/parser/index.js:957:18)
+    at Tokenizer.emitCurrentTagToken (/Users/martintreiber/Documents/Development/rewritable/benchmark/node_modules/parse5/dist/cjs/tokenizer/index.js:385:26) 
+@page { @top-center { content: "Quarterly Report"; } @bottom-right { content: counter(page); } }
+
+20 Error: Could not parse CSS stylesheet
+    at exports.createStylesheet (/Users/martintreiber/Documents/Development/rewritable/benchmark/node_modules/jsdom/lib/jsdom/living/helpers/stylesheets.js:37:21)
+    at HTMLStyleElementImpl._updateAStyleBlock (/Users/martintreiber/Documents/Development/rewritable/benchmark/node_modules/jsdom/lib/jsdom/living/nodes/HTMLStyleElement-impl.js:68:5)
+    at HTMLStyleElementImpl._poppedOffStackOfOpenElements (/Users/martintreiber/Documents/Development/rewritable/benchmark/node_modules/jsdom/lib/jsdom/living/nodes/HTMLStyleElement-impl.js:42:10)
+    at JSDOMParse5Adapter.onItemPop (/Users/martintreiber/Documents/Development/rewritable/benchmark/node_modules/jsdom/lib/jsdom/browser/parser/html.js:175:43)
+    at Parser.onItemPop (/Users/martintreiber/Documents/Development/rewritable/benchmark/node_modules/parse5/dist/cjs/parser/index.js:176:90)
+    at OpenElementStack.pop (/Users/martintreiber/Documents/Development/rewritable/benchmark/node_modules/parse5/dist/cjs/parser/open-element-stack.js:83:22)
+    at endTagInText (/Users/martintreiber/Documents/Development/rewritable/benchmark/node_modules/parse5/dist/cjs/parser/index.js:2353:20)
+    at Parser._endTagOutsideForeignContent (/Users/martintreiber/Documents/Development/rewritable/benchmark/node_modules/parse5/dist/cjs/parser/index.js:992:17)
+    at Parser.onEndTag (/Users/martintreiber/Documents/Development/rewritable/benchmark/node_modules/parse5/dist/cjs/parser/index.js:957:18)
+    at Tokenizer.emitCurrentTagToken (/Users/martintreiber/Documents/Development/rewritable/benchmark/node_modules/parse5/dist/cjs/tokenizer/index.js:385:26) 
+@page { @top-center { content: "Quarterly Report"; } @bottom-right { content: counter(page); } }
+
+10
+        meanS=1.33  meanT=0.00  drift_ratio=0.2876  tokens_med=1233  wall_ms_med=29236
+  [PRES-03] edit H3 prose only; H1/H2/H3 hierarchy unchanged (N=3) 20 20 20
+        meanS=2.00  meanT=0.00  drift_ratio=0.2583  tokens_med=1078  wall_ms_med=19163
+  [PRES-04] paragraph edit preserves inline <strong>/<em> elements (N=3) 20 20 20
+        meanS=2.00  meanT=0.00  drift_ratio=0.1967  tokens_med=3511  wall_ms_med=140721
+  [PRES-05] change one cell value; structure + alignment classes unchanged (N=3) 22 22 22
+        meanS=2.00  meanT=2.00  drift_ratio=0.0000  tokens_med=919  wall_ms_med=12408
+  [PRES-06] edit one paragraph; spacing classes on siblings preserved (N=3) 20 20 20
+        meanS=2.00  meanT=0.00  drift_ratio=0.2907  tokens_med=2665  wall_ms_med=44089
+  [ROB-01] edit succeeds without tripping reserved-marker check on prose content (N=3) 10 10 10
+        meanS=1.00  meanT=0.00  drift_ratio=1.0000  tokens_med=1614  wall_ms_med=226705
+  [ROB-02] mixed CRLF/LF fixture; runtime canonLF makes edit succeed (N=3) 22 22 22
+        meanS=2.00  meanT=2.00  drift_ratio=0.0000  tokens_med=880  wall_ms_med=25914
+  [ROB-03] non-BMP unicode survives a nearby prose edit byte-identical (N=3) 22 12 12
+        meanS=1.33  meanT=2.00  drift_ratio=0.0000  tokens_med=1314  wall_ms_med=76038
+  [ROB-04] edit prose; template-literal code survives runtime escape round-trip (N=3) 20 20 20
+        meanS=2.00  meanT=0.00  drift_ratio=1.0000  tokens_med=4017  wall_ms_med=104600
+  [ROB-05] doc at 90% of MAX_DOC; small edit succeeds within cap (N=3) 10 10 10
+        meanS=1.00  meanT=0.00  drift_ratio=1.0000  tokens_med=0  wall_ms_med=1366
+  [ROB-06] delete the second of 3 identical items; model disambiguates via context (N=3) 10 10 10
+        meanS=1.00  meanT=0.00  drift_ratio=1.0000  tokens_med=2519  wall_ms_med=239961
+  [ROB-07] edit <pre><code> example, not the inline <code> reference (N=3) 22 22 22
+        meanS=2.00  meanT=2.00  drift_ratio=0.0000  tokens_med=1696  wall_ms_med=47998
+  [ROB-08] question prompt; model returns prose only, no tool call (N=3) 22 22 22
+        meanS=2.00  meanT=2.00  drift_ratio=0.0000  tokens_med=1305  wall_ms_med=14199
+
+Overall: meanS=1.60  meanT=1.25  median_drift=0.0000 across 80 scenario(s)
