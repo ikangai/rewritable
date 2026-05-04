@@ -136,20 +136,32 @@ export function openRouterModel(opts = {}) {
   if (!apiKey) throw new Error('openRouterModel: neither RWA_OPENROUTER_KEY nor OPENROUTER_API_KEY set');
   const baseUrl = opts.baseUrl || 'https://openrouter.ai/api/v1';
   const model = opts.model || 'google/gemini-3-flash-preview';
+  // Per-call timeout — bounds a hung provider response. Default 240s is well
+  // above the longest legitimate call observed (kimi-k2.6 hit ~156s on a
+  // reasoning-heavy scenario) but short enough to fail one run cleanly
+  // rather than wedge an entire bench.
+  const timeoutMs = opts.timeoutMs ?? 240_000;
   return async (messages, tools) => {
-    const r = await fetch(baseUrl + '/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer ' + apiKey,
-        'HTTP-Referer': 'https://github.com/ikangai/rewritable',
-        'X-Title': 'rwa-edit-bench',
-      },
-      body: JSON.stringify({ model, max_tokens: 32000, messages, tools, tool_choice: 'auto' }),
-    });
-    if (!r.ok) throw new Error(`OpenRouter ${r.status}: ${r.statusText}`);
-    const data = await r.json();
-    const msg = data.choices?.[0]?.message;
-    return { tool_calls: msg?.tool_calls || [], usage: data.usage || {} };
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(new Error(`OpenRouter call exceeded ${timeoutMs}ms`)), timeoutMs);
+    try {
+      const r = await fetch(baseUrl + '/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer ' + apiKey,
+          'HTTP-Referer': 'https://github.com/ikangai/rewritable',
+          'X-Title': 'rwa-edit-bench',
+        },
+        body: JSON.stringify({ model, max_tokens: 32000, messages, tools, tool_choice: 'auto' }),
+        signal: ctrl.signal,
+      });
+      if (!r.ok) throw new Error(`OpenRouter ${r.status}: ${r.statusText}`);
+      const data = await r.json();
+      const msg = data.choices?.[0]?.message;
+      return { tool_calls: msg?.tool_calls || [], usage: data.usage || {} };
+    } finally {
+      clearTimeout(timer);
+    }
   };
 }
