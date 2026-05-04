@@ -159,6 +159,16 @@ async function popUndo() {
 // ─── Render ─────────────────────────────────────────────────────────
 function renderDoc(html) {
   const m = document.getElementById('rwa-doc-mount');
+  // Capture id-keyed form state so user-entered values survive an unrelated
+  // edit (the doc gets re-rendered via innerHTML, which would otherwise
+  // destroy them). Spec/benchmark APP-01/APP-02. Only id-keyed elements
+  // round-trip — anonymous inputs are inherently unmappable across renders.
+  const captured = new Map();
+  m.querySelectorAll('input,textarea,select,details').forEach(el => {
+    if (!el.id) return;
+    if (el.tagName === 'DETAILS') captured.set(el.id, { kind: 'details', open: el.open });
+    else captured.set(el.id, { kind: 'value', value: el.value });
+  });
   m.innerHTML = html;
   m.querySelectorAll('script').forEach(o => {
     const s = document.createElement('script');
@@ -166,6 +176,12 @@ function renderDoc(html) {
     s.textContent = o.textContent;
     o.parentNode.replaceChild(s, o);
   });
+  for (const [id, snap] of captured) {
+    const el = m.querySelector('#' + (typeof CSS !== 'undefined' && CSS.escape ? CSS.escape(id) : id));
+    if (!el) continue;
+    if (snap.kind === 'details' && el.tagName === 'DETAILS') el.open = snap.open;
+    else if (snap.kind === 'value' && 'value' in el) el.value = snap.value;
+  }
 }
 
 // ─── File rebuild ───────────────────────────────────────────────────

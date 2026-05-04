@@ -3,7 +3,7 @@
 
 import { stubModel, modelToFetch } from '../../runners/model.mjs';
 
-const FIXTURE = `<details>
+const FIXTURE = `<details id="more-info">
 <summary>Toggle</summary>
 <p>Hidden by default.</p>
 </details>
@@ -19,14 +19,14 @@ export default {
   prompt: 'Edit prose.',
   stub: () => stubModel([{}]),
   customRun: async ({ ctx }) => {
-    const det = ctx.window.document.querySelector('details');
+    const det = ctx.window.document.getElementById('more-info');
     if (det) det.open = true;
 
     const model = stubModel([{ name: 'apply_edits', envelope: { version: 'rwa-edit/1', edits: [{ find: 'EDIT_PROSE Initial.', replace: 'Updated.' }] } }]);
     ctx.setFetchHandler(modelToFetch(model).handler);
     await ctx.modify('edit prose');
 
-    const detAfter = ctx.window.document.querySelector('details');
+    const detAfter = ctx.window.document.getElementById('more-info');
     return { stillOpen: detAfter?.hasAttribute('open') || detAfter?.open === true };
   },
   scoreAfterCustom: (out) => ({
