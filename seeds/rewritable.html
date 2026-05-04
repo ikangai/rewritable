@@ -519,9 +519,21 @@ async function commitDoc(currentDoc, newDoc, histRecord) {
 }
 
 // ─── apply_edits / replace_document ─────────────────────────────────
+// UTF-16 well-formedness — JS strings can hold lone surrogates which become
+// U+FFFD on UTF-8 encoding (file write, fetch body, etc.) and silently
+// corrupt downstream byte-equality checks. Spec §10: malformed_envelope.
+// String.prototype.isWellFormed is ES2024 (Node 22+, Chromium 124+); guard
+// for older runtimes by treating absence as "no check available."
+const isWellFormed = (s) => typeof s !== 'string' || typeof s.isWellFormed !== 'function' || s.isWellFormed();
+
 async function applyEdits(envelope, currentDocRaw) {
   if (envelope?.version !== 'rwa-edit/1') throw new RwaEditError('version_unsupported');
   if (!Array.isArray(envelope.edits) || envelope.edits.length === 0) throw new RwaEditError('malformed_envelope');
+  for (let i = 0; i < envelope.edits.length; i++) {
+    const e = envelope.edits[i] || {};
+    if (!isWellFormed(e.find) || !isWellFormed(e.replace))
+      throw new RwaEditError('malformed_envelope', i, { reason: 'lone_surrogate' });
+  }
 
   const currentDoc = canonLF(currentDocRaw);
   const originalFrozen = extractFrozenZones(currentDoc);
@@ -581,6 +593,8 @@ async function replaceDocument(envelope, currentDocRaw) {
   if (envelope?.version !== 'rwa-edit/1') throw new RwaEditError('version_unsupported');
   if (typeof envelope.doc !== 'string' || typeof envelope.reason !== 'string' || !envelope.reason)
     throw new RwaEditError('malformed_envelope');
+  if (!isWellFormed(envelope.doc) || !isWellFormed(envelope.reason))
+    throw new RwaEditError('malformed_envelope', null, { reason: 'lone_surrogate' });
 
   const currentDoc = canonLF(currentDocRaw);
   const newDoc = canonLF(envelope.doc);
