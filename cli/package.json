@@ -16,7 +16,8 @@
     "node": ">=18"
   },
   "dependencies": {
-    "marked": "^14.1.0"
+    "marked": "^14.1.0",
+    "papaparse": "^5.4.1"
   },
   "scripts": {
     "prepublishOnly": "mkdir -p seeds && cp ../seeds/rewritable.html seeds/rewritable.html"

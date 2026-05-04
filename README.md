@@ -43,13 +43,13 @@ Three ways, all produce the same self-contained `.html`:
 ```sh
 # CLI — offline, npm
 npx rwa new                 # → ./rewritable.html
-npx rwa import notes.md     # → ./notes.html  (md/html/txt supported)
+npx rwa import notes.md     # → ./notes.html  (md/html/csv/txt supported)
 ```
 
 ```sh
 # Service — hosted
 curl -O https://rewritable.ikangai.com/rewritable.html         # blank container
-open    https://rewritable.ikangai.com/import                  # browser: drop a .md file
+open    https://rewritable.ikangai.com/import                  # browser: drop a .md or .csv file
 ```
 
 Or hand-craft: copy `seeds/rewritable.html`, replace the nil `DOC_UUID` with a fresh `crypto.randomUUID()`, save.

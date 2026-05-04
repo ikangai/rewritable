@@ -1,4 +1,5 @@
 import { marked } from 'marked';
+import Papa from 'papaparse';
 
 export async function convert(ext, content) {
   switch (ext) {
@@ -8,11 +9,13 @@ export async function convert(ext, content) {
     case 'html':
     case 'htm':
       return convertHtml(content);
+    case 'csv':
+      return convertCsv(content);
     case 'txt':
     case '':
       return convertTxt(content);
     default: {
-      const e = new Error(`unsupported format: .${ext} (supported: .md, .markdown, .html, .htm, .txt)`);
+      const e = new Error(`unsupported format: .${ext} (supported: .md, .markdown, .html, .htm, .csv, .txt)`);
       e.exitCode = 2;
       throw e;
     }
@@ -52,6 +55,27 @@ function convertHtml(input) {
   }
 
   return { html: headStyles + body, warnings };
+}
+
+function convertCsv(text) {
+  // skipEmptyLines drops trailing blank rows that csv exporters often emit.
+  // header:false because we own the first-row-as-thead split and want raw rows.
+  const result = Papa.parse(text, { skipEmptyLines: true, header: false });
+  const warnings = result.errors.map(e => {
+    const where = e.row != null ? ` (row ${e.row + 1})` : '';
+    return `csv parse: ${e.message}${where}`;
+  });
+  const rows = result.data;
+  if (rows.length === 0) {
+    return { html: '<article>\n</article>', warnings };
+  }
+  const escape = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const [header, ...body] = rows;
+  const thead = `<thead>\n<tr>${header.map(c => `<th>${escape(c)}</th>`).join('')}</tr>\n</thead>`;
+  const tbody = body.length === 0
+    ? ''
+    : `\n<tbody>\n${body.map(row => `<tr>${row.map(c => `<td>${escape(c)}</td>`).join('')}</tr>`).join('\n')}\n</tbody>`;
+  return { html: `<article>\n<table>\n${thead}${tbody}\n</table>\n</article>`, warnings };
 }
 
 function convertTxt(text) {

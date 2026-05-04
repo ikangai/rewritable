@@ -2,6 +2,48 @@
 
 Notable changes to `re-write-able`. The container format is versioned in `re-write-able-spec.md`; the edit protocol in `rwa-edit-spec.md`. The CLI follows semver in `cli/package.json`.
 
+## 2026-05-04 — CSV import (CLI + service)
+
+`rwa import data.csv` and `rewritable.ikangai.com/import` accept CSV. The first row becomes `<thead>`, remaining rows `<tbody>`; every cell is HTML-escaped. Parses RFC 4180 — quoted commas, embedded newlines, escaped quotes, BOM — via PapaParse.
+
+### What changed for users
+
+- **`rwa import data.csv` is supported** by the CLI. Output is `<article><table>…</table></article>` wrapped in the seed.
+- **`/import` accepts `.csv` alongside `.md`/`.markdown`** in the browser. Same drop zone, same flow.
+- Parse warnings (e.g. malformed trailing quote) print to stderr (CLI) or are silently kept (browser, matching the CLI's "lenient" semantics — the result is still produced).
+
+### What changed for the CLI
+
+- `cli/src/import.mjs` gains `convertCsv()`. The `convert(ext, content)` switch grows a `case 'csv'` branch and the unsupported-format error message lists `.csv`.
+- `cli/package.json` adds `papaparse@^5.4.1` (pinned to match cdnjs's latest, so the browser path can stay byte-equivalent).
+- `cli/README.md` documents the CSV branch.
+
+### What changed for the service
+
+- `service/public/import.html` loads `papaparse@5.4.1` from cdnjs with a pinned **SRI hash** (`sha512-dfX5uYVXzyU8…`) alongside the existing pinned `marked`.
+- `convertCsv` is a verbatim port of the CLI's; the file picker accepts `.csv,text/csv`; the handler dispatches on extension; the basename-stripping regex covers `.csv`.
+- No new server-side code — the conversion stays in the browser.
+
+### What changed for documentation
+
+- `README.md` and `cli/README.md` mention CSV.
+- `CLAUDE.md` extends the service conventions: `convertCsv` is now part of the CLI ↔ browser mirror, and the SRI-bump procedure covers both libraries.
+
+### What changed for testing
+
+- **Byte-equivalence test (load-bearing):** with the canonical seed, a stable `DOC_UUID`, and a fixture exercising RFC 4180 edge cases (quoted commas, embedded newlines, escaped quotes), `rwa import` and the browser-simulated `/import` produce byte-identical 37 422-byte outputs. A second fixture covering BOM + HTML-special chars in cells (`<script>`, `&amp;`, `<b>bold</b>`) also matches byte-for-byte at 37 347 bytes; cells are correctly HTML-escaped (no script can inject from a CSV cell).
+- Manual: rebuilt the local Docker container, dropped both fixtures into `localhost:8083/import`, downloaded files opened in Chromium, table rendered, ⌘K still reached the agent.
+
+### Backward compatibility
+
+- Strict addition. Existing `rwa import .md/.html/.txt` paths are untouched.
+- New CLI dependency: `papaparse`. `npm i -g rewritable` will pull it transitively; no opt-in needed.
+- Bumping `papaparse` later requires recomputing the SRI hash and updating both `cli/package.json` and `service/public/import.html`; the procedure is documented in `CLAUDE.md`.
+
+### Known limitations
+
+- The imported `<table>` ships unstyled. The seed's stylesheet doesn't define table CSS, so a freshly imported CSV renders with default browser table styling against the dark body background — readable but plain. Users can prompt the agent (⌘K "make this table readable" / "add zebra striping") to style it. This matches how md tables behave on the existing path; adding default table CSS would be a separate decision affecting both paths.
+
 ## 2026-05-04 — `/import` endpoint: browser-side markdown import on the hosted service
 
 The hosted service grows a sibling to `/new`. Visit `rewritable.ikangai.com/import`, drop a `.md` file, get back a re-writeable container with the markdown rendered into `INLINE_DOC` — no install, no upload.

@@ -31,22 +31,26 @@
 </head>
 <body>
 <main>
-  <h1>import a markdown file</h1>
+  <h1>import a file</h1>
   <div id="drop" class="drop" role="button" tabindex="0">
-    drop a <code>.md</code> file here, or <label for="picker">choose one</label>
-    <input id="picker" type="file" accept=".md,.markdown,text/markdown" hidden>
+    drop a <code>.md</code> or <code>.csv</code> file here, or <label for="picker">choose one</label>
+    <input id="picker" type="file" accept=".md,.markdown,text/markdown,.csv,text/csv" hidden>
   </div>
   <p id="status" class="status"></p>
   <p class="nav"><a href="/new">start with a blank container instead</a></p>
 </main>
-<!-- marked version pinned to match cli/package.json (`marked@^14.1.x`). When
-     the CLI's marked dep is bumped, bump this version + SRI together so the
-     browser-side import stays byte-equivalent to `rwa import`. SRI:
-     curl -sL https://cdnjs.cloudflare.com/ajax/libs/marked/<ver>/marked.min.js | openssl dgst -sha512 -binary | openssl base64 -A -->
+<!-- marked + papaparse versions pinned to match cli/package.json's resolved
+     versions. When the CLI's deps are bumped, bump these tags + SRI together
+     so /import stays byte-equivalent to `rwa import`. SRI recipe:
+     curl -sL https://cdnjs.cloudflare.com/ajax/libs/<lib>/<ver>/<file>.min.js | openssl dgst -sha512 -binary | openssl base64 -A -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/14.1.4/marked.min.js"
         integrity="sha512-oUb+v+OGnC4ls/U+74UExKiWPxg/0M1AW6WGR94XFExsapAwqFRWwG1uds2YO/k38mAaai62SKhsMQHbIYX5Rw=="
         crossorigin="anonymous"
         onerror="document.getElementById('status').textContent='marked failed to load — check your connection';document.getElementById('status').className='status error';document.getElementById('drop').classList.add('busy');"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"
+        integrity="sha512-dfX5uYVXzyU8+KHqj8bjo7UkOdg18PaOtpa48djpNbZHwExddghZ+ZmzWT06R5v6NSk3ZUfsH6FNEDepLx9hPQ=="
+        crossorigin="anonymous"
+        onerror="document.getElementById('status').textContent='papaparse failed to load — check your connection';document.getElementById('status').className='status error';document.getElementById('drop').classList.add('busy');"></script>
 <script>
 'use strict';
 
@@ -106,6 +110,24 @@ function replaceInlineDoc(seed, newDoc) {
   return seed.slice(0, cs) + escapeTL(newDoc) + seed.slice(i);
 }
 
+// PORTED FROM cli/src/import.mjs (convertCsv) — keep in sync with the CLI.
+function convertCsv(text) {
+  const result = Papa.parse(text, { skipEmptyLines: true, header: false });
+  // Errors are kept as warnings; Papa is lenient and produces partial data,
+  // matching the CLI's behavior where parse errors don't abort the import.
+  const rows = result.data;
+  if (rows.length === 0) {
+    return '<article>\n</article>';
+  }
+  const escape = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const [header, ...body] = rows;
+  const thead = `<thead>\n<tr>${header.map(c => `<th>${escape(c)}</th>`).join('')}</tr>\n</thead>`;
+  const tbody = body.length === 0
+    ? ''
+    : `\n<tbody>\n${body.map(row => `<tr>${row.map(c => `<td>${escape(c)}</td>`).join('')}</tr>`).join('\n')}\n</tbody>`;
+  return `<article>\n<table>\n${thead}${tbody}\n</table>\n</article>`;
+}
+
 // --- UI wiring ---
 
 const dropEl = document.getElementById('drop');
@@ -133,25 +155,35 @@ function triggerDownload(blob, filename) {
 async function handleFile(file) {
   if (!file) return;
   const ext = (file.name.split('.').pop() || '').toLowerCase();
-  if (ext !== 'md' && ext !== 'markdown') {
-    return showError(`unsupported format: .${ext || '(none)'} (only .md / .markdown for now)`);
+  const isMd = ext === 'md' || ext === 'markdown';
+  const isCsv = ext === 'csv';
+  if (!isMd && !isCsv) {
+    return showError(`unsupported format: .${ext || '(none)'} (only .md / .markdown / .csv for now)`);
   }
-  if (typeof marked === 'undefined') {
+  if (isMd && typeof marked === 'undefined') {
     return showError('marked is not loaded — cannot convert');
+  }
+  if (isCsv && typeof Papa === 'undefined') {
+    return showError('papaparse is not loaded — cannot convert');
   }
   dropEl.classList.add('busy');
   setStatus('converting…');
   try {
     const text = await file.text();
     if (!text.trim()) return showError('file is empty');
-    // marked.parse can be sync or return a Promise depending on options;
-    // await handles both safely.
-    const parsed = await marked.parse(text, { gfm: true, breaks: false });
-    const html = `<article>\n${String(parsed).trim()}\n</article>`;
+    let html;
+    if (isMd) {
+      // marked.parse can be sync or return a Promise depending on options;
+      // await handles both safely.
+      const parsed = await marked.parse(text, { gfm: true, breaks: false });
+      html = `<article>\n${String(parsed).trim()}\n</article>`;
+    } else {
+      html = convertCsv(text);
+    }
     const seedRes = await fetch('/rewritable.html', { cache: 'no-store' });
     if (!seedRes.ok) return showError(`could not fetch seed (${seedRes.status})`);
     const seed = await seedRes.text();
-    const baseName = file.name.replace(/\.(md|markdown)$/i, '');
+    const baseName = file.name.replace(/\.(md|markdown|csv)$/i, '');
     const outName = `${baseName}.html`;
     const title = titleFromBasename(baseName);
     const subbed = applyTitleAndFileSubs(seed, { title, fileMeta: outName });
