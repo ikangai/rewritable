@@ -623,6 +623,16 @@ async function popUndo() {
 // ─── Render ─────────────────────────────────────────────────────────
 function renderDoc(html) {
   const m = document.getElementById('rwa-doc-mount');
+  // Capture id-keyed form state so user-entered values survive an unrelated
+  // edit (the doc gets re-rendered via innerHTML, which would otherwise
+  // destroy them). Spec/benchmark APP-01/APP-02. Only id-keyed elements
+  // round-trip — anonymous inputs are inherently unmappable across renders.
+  const captured = new Map();
+  m.querySelectorAll('input,textarea,select,details').forEach(el => {
+    if (!el.id) return;
+    if (el.tagName === 'DETAILS') captured.set(el.id, { kind: 'details', open: el.open });
+    else captured.set(el.id, { kind: 'value', value: el.value });
+  });
   m.innerHTML = html;
   m.querySelectorAll('script').forEach(o => {
     const s = document.createElement('script');
@@ -630,6 +640,12 @@ function renderDoc(html) {
     s.textContent = o.textContent;
     o.parentNode.replaceChild(s, o);
   });
+  for (const [id, snap] of captured) {
+    const el = m.querySelector('#' + (typeof CSS !== 'undefined' && CSS.escape ? CSS.escape(id) : id));
+    if (!el) continue;
+    if (snap.kind === 'details' && el.tagName === 'DETAILS') el.open = snap.open;
+    else if (snap.kind === 'value' && 'value' in el) el.value = snap.value;
+  }
 }
 
 // ─── File rebuild ───────────────────────────────────────────────────
@@ -693,10 +709,22 @@ function buildUI() {
   pal.onclick = e => { if (e.target === pal) closePal(); };
   inp.oninput = () => { go.disabled = !inp.value.trim(); };
   inp.onkeydown = e => {
-    if (e.key === 'Enter' && !e.shiftKey && inp.value.trim()) { e.preventDefault(); modify(inp.value.trim()); }
+    if (e.key === 'Enter' && !e.shiftKey && inp.value.trim()) {
+      e.preventDefault();
+      modify(inp.value.trim()).catch(err => {
+        // concurrent_modify is already surfaced via setPalSt; suppress the
+        // unhandled rejection. Any other throw is a programming error.
+        if (err?.code !== 'concurrent_modify') console.error(err);
+      });
+    }
     if (e.key === 'Escape') closePal();
   };
-  go.onclick = () => inp.value.trim() && modify(inp.value.trim());
+  go.onclick = () => {
+    if (!inp.value.trim()) return;
+    modify(inp.value.trim()).catch(err => {
+      if (err?.code !== 'concurrent_modify') console.error(err);
+    });
+  };
 }
 const setStatus = (cls, msg) => { const e = document.getElementById('rwa-st-status'); if (e) { e.className = 'rwa-st-btn ' + (cls || ''); e.textContent = msg; } };
 const setPalSt = (cls, msg) => { const e = document.getElementById('rwa-pal-st'); if (e) { e.className = cls || ''; e.textContent = msg; } };
@@ -711,9 +739,20 @@ const closePal = () => { document.getElementById('rwa-pal').classList.remove('op
 
 const SYSTEM_PROMPT = `You are editing a rewritable HTML document. Apply the user's request as a small set of surgical edits via tool calls.
 
-You have two tools:
-  • apply_edits — preferred. Submit (find, replace) pairs. Each find must be a non-empty literal substring that appears exactly once in the doc.
+You have three tools:
+  • apply_dsl_plan — preferred for STRUCTURAL transforms. Submit a sequence of typed ops (replace, insert, delete, set_attr) compiled deterministically to anchored edits. The runtime guarantees bytes outside change regions stay byte-identical. Use for: insert/delete elements, mass rename, wrap/unwrap, change a class or attribute, reorder.
+  • apply_edits — preferred for CONTENT transforms. Submit (find, replace) pairs. Each find must be a non-empty literal substring that appears exactly once in the doc. Use for: prose rewrites, value updates, fine-grained text changes, translations, typo fixes.
   • replace_document — escape hatch. Use only for scaffolding a fresh document, or when the user explicitly asked for a wholesale redesign.
+
+Preference: structural change → apply_dsl_plan. Content change → apply_edits. Wholesale redesign → replace_document. The two surgical tools cover different kinds of work; pick the one that fits the change.
+
+Rules for apply_dsl_plan:
+  • version is "rwa-edit-dsl/1". ops is a non-empty array.
+  • Each op is one of: replace { find, replace, region?, all? }, insert { content, after | before }, delete { target }, set_attr { anchor, attr, value }, replace_document { doc, reason } (sole-op only).
+  • Anchors and find/target/anchor strings must be uniquely locatable in the doc (extend with surrounding context if not).
+  • set_attr.anchor MUST start with < and end BEFORE the closing > of the target element's opening tag (e.g. \`<p class="callout"\` — no trailing >). The compiler reads up to the next > to determine the full opening tag.
+  • For repeated patterns (e.g. wrap each card in a section), emit one op per match with disambiguating context, OR use replace with all=true.
+  • Frozen zones are off-limits — see below.
 
 Rules for apply_edits:
   • Copy anchors from the doc verbatim. Do not retype them.
@@ -725,13 +764,77 @@ Rules for apply_edits:
 
 Rules for replace_document:
   • Frozen-zone marker pairs and data-rwa-frozen elements must appear in the new doc with byte-identical content. They are author-declared invariants.
-  • Provide a reason explaining why apply_edits was not appropriate.
+  • Provide a reason explaining why a smaller tool was not appropriate.
 
 If the user's input is itself substantial content (a long block of prose, an outline, a list of items), they want it rendered into the document, not summarized. When no surgical anchor exists for substantial content insertion, use replace_document.
 
 Always call a tool. Respond with text-only only when you genuinely need to ask for clarification before editing.`;
 
 const TOOL_SCHEMAS = [
+  {
+    type: 'function',
+    function: {
+      name: 'apply_dsl_plan',
+      description: 'Apply a structural transform plan. A small DSL of named ops (replace/insert/delete/set_attr) compiled deterministically to apply_edits. Prefer for structural work — bytes outside change regions stay byte-identical by construction. Frozen zones (rwa:frozen markers and data-rwa-frozen elements) are off-limits.',
+      parameters: {
+        type: 'object',
+        required: ['version', 'ops'],
+        properties: {
+          version: { type: 'string', enum: ['rwa-edit-dsl/1'] },
+          ops: {
+            type: 'array', minItems: 1,
+            items: {
+              oneOf: [
+                {
+                  type: 'object', required: ['op', 'find', 'replace'],
+                  properties: {
+                    op: { const: 'replace' },
+                    find: { type: 'string' },
+                    replace: { type: 'string' },
+                    region: { type: 'string' },
+                    all: { type: 'boolean' }
+                  }
+                },
+                {
+                  type: 'object', required: ['op', 'content'],
+                  properties: {
+                    op: { const: 'insert' },
+                    content: { type: 'string' },
+                    after: { type: 'string' },
+                    before: { type: 'string' }
+                  }
+                },
+                {
+                  type: 'object', required: ['op', 'target'],
+                  properties: {
+                    op: { const: 'delete' },
+                    target: { type: 'string' }
+                  }
+                },
+                {
+                  type: 'object', required: ['op', 'anchor', 'attr', 'value'],
+                  properties: {
+                    op: { const: 'set_attr' },
+                    anchor: { type: 'string' },
+                    attr: { type: 'string' },
+                    value: { type: 'string' }
+                  }
+                },
+                {
+                  type: 'object', required: ['op', 'doc', 'reason'],
+                  properties: {
+                    op: { const: 'replace_document' },
+                    doc: { type: 'string' },
+                    reason: { type: 'string' }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    }
+  },
   {
     type: 'function',
     function: {
@@ -882,15 +985,47 @@ function parseHtmlFragment(doc) {
   }
 }
 
+// Token-level balance check for <script> and <style>. The HTML parser
+// auto-closes these silently at EOF when the closing tag is missing, so a
+// post-parse shape check can pass while the doc has actually been
+// corrupted (a lone `<script>` swallows all following markup as text).
+// We catch this by counting raw tokens in the doc string.
+function tagBalance(doc) {
+  const opens = {
+    script: (doc.match(/<script\b/gi) || []).length,
+    style: (doc.match(/<style\b/gi) || []).length,
+  };
+  const closes = {
+    script: (doc.match(/<\/script\s*>/gi) || []).length,
+    style: (doc.match(/<\/style\s*>/gi) || []).length,
+  };
+  for (const tag of ['script', 'style']) {
+    if (opens[tag] !== closes[tag]) return { tag, opens: opens[tag], closes: closes[tag] };
+  }
+  return null;
+}
+
 function computeShape(parsedDoc) {
   if (!parsedDoc) return null;
+  const body = parsedDoc.body;
+  // Track the SET of distinct top-level tag types (not the multiset count) —
+  // splitting one <p> into two <p>s is a legitimate edit, but introducing a
+  // <section> alongside <div> is a structural shape change.
+  const topLevelTypes = body
+    ? [...new Set(Array.from(body.children).map(el => el.tagName.toLowerCase()))].sort().join(',')
+    : '';
   return {
     scripts: parsedDoc.querySelectorAll('script').length,
     styles: parsedDoc.querySelectorAll('style').length,
+    topLevelTypes,
   };
 }
 
-const shapesEqual = (a, b) => !!a && !!b && a.scripts === b.scripts && a.styles === b.styles;
+const shapesEqual = (a, b) =>
+  !!a && !!b &&
+  a.scripts === b.scripts &&
+  a.styles === b.styles &&
+  a.topLevelTypes === b.topLevelTypes;
 
 function dataRwaFrozenSnapshot(parsedDoc) {
   if (!parsedDoc) return [];
@@ -939,9 +1074,21 @@ async function commitDoc(currentDoc, newDoc, histRecord) {
 }
 
 // ─── apply_edits / replace_document ─────────────────────────────────
+// UTF-16 well-formedness — JS strings can hold lone surrogates which become
+// U+FFFD on UTF-8 encoding (file write, fetch body, etc.) and silently
+// corrupt downstream byte-equality checks. Spec §10: malformed_envelope.
+// String.prototype.isWellFormed is ES2024 (Node 22+, Chromium 124+); guard
+// for older runtimes by treating absence as "no check available."
+const isWellFormed = (s) => typeof s !== 'string' || typeof s.isWellFormed !== 'function' || s.isWellFormed();
+
 async function applyEdits(envelope, currentDocRaw) {
   if (envelope?.version !== 'rwa-edit/1') throw new RwaEditError('version_unsupported');
   if (!Array.isArray(envelope.edits) || envelope.edits.length === 0) throw new RwaEditError('malformed_envelope');
+  for (let i = 0; i < envelope.edits.length; i++) {
+    const e = envelope.edits[i] || {};
+    if (!isWellFormed(e.find) || !isWellFormed(e.replace))
+      throw new RwaEditError('malformed_envelope', i, { reason: 'lone_surrogate' });
+  }
 
   const currentDoc = canonLF(currentDocRaw);
   const originalFrozen = extractFrozenZones(currentDoc);
@@ -963,7 +1110,11 @@ async function applyEdits(envelope, currentDocRaw) {
     const occ = countOccurrences(work, find);
     if (occ === 0) throw new RwaEditError('find_not_found', i);
     if (occ > 1) throw new RwaEditError('find_not_unique', i, { count: occ, hints: nearbySnippets(work, find) });
-    work = work.replace(find, replace);
+    // Slice-based splice — String.prototype.replace honors $&, $$, $`, $' patterns
+    // even when the search arg is a literal string, mangling replacements like
+    // "$$amount" → "$amount". Splicing preserves the model's bytes verbatim.
+    const idx = work.indexOf(find);
+    work = work.slice(0, idx) + replace + work.slice(idx + find.length);
   }
 
   const newFrozen = extractFrozenZones(work);
@@ -976,6 +1127,10 @@ async function applyEdits(envelope, currentDocRaw) {
   const newShape = computeShape(parseResult.doc);
   if (!shapesEqual(originalShape, newShape))
     throw new RwaEditError('structural_shape_changed', null, { shape_before: originalShape, shape_after: newShape });
+
+  const imbalance = tagBalance(work);
+  if (imbalance && !tagBalance(currentDoc))
+    throw new RwaEditError('structural_shape_changed', null, { tag_imbalance: imbalance });
 
   if (!snapshotsEqual(originalAttrs, dataRwaFrozenSnapshot(parseResult.doc)))
     throw new RwaEditError('frozen_zone_corrupted');
@@ -993,6 +1148,8 @@ async function replaceDocument(envelope, currentDocRaw) {
   if (envelope?.version !== 'rwa-edit/1') throw new RwaEditError('version_unsupported');
   if (typeof envelope.doc !== 'string' || typeof envelope.reason !== 'string' || !envelope.reason)
     throw new RwaEditError('malformed_envelope');
+  if (!isWellFormed(envelope.doc) || !isWellFormed(envelope.reason))
+    throw new RwaEditError('malformed_envelope', null, { reason: 'lone_surrogate' });
 
   const currentDoc = canonLF(currentDocRaw);
   const newDoc = canonLF(envelope.doc);
@@ -1015,6 +1172,192 @@ async function replaceDocument(envelope, currentDocRaw) {
 
   await commitDoc(currentDoc, newDoc, { ts: Date.now(), kind: 'replace_document', reason: envelope.reason });
   return newDoc;
+}
+
+// ─── apply_dsl_plan compiler (rwa-edit-dsl/1) ──────────────────────
+// Sugar over apply_edits: a small fixed vocabulary of structural transforms
+// that compile down to apply_edits / replace_document envelopes. The DSL
+// parser is the trust boundary; compiled output flows through applyEdits /
+// replaceDocument above so all rwa-edit/1 invariants (frozen zones, shape,
+// reserved markers) still hold. Spec: rwa-edit-dsl-spec.md.
+//
+// Empirically motivated: gemini-3.1-pro-preview meanT jumped from 0.88
+// (apply_edits direct) to 1.44 (apply_dsl_plan + compile) across 89
+// fidelity scenarios — biggest gains on paste (0.22→2.00), mixed
+// (0.00→0.89), and content (0.76→1.33).
+const DSL_VERSION = 'rwa-edit-dsl/1';
+
+function compileDslPlan(plan, doc) {
+  if (!plan || typeof plan !== 'object')
+    throw new RwaEditError('malformed_envelope', null, { reason: 'plan must be an object' });
+  if (plan.version !== DSL_VERSION)
+    throw new RwaEditError('version_unsupported');
+  if (!Array.isArray(plan.ops) || plan.ops.length === 0)
+    throw new RwaEditError('malformed_envelope', null, { reason: 'plan.ops must be a non-empty array' });
+
+  // replace_document op is a sole-op escape — must be the only op in the plan.
+  if (plan.ops.some(op => op?.op === 'replace_document')) {
+    if (plan.ops.length !== 1)
+      throw new RwaEditError('malformed_envelope', null, { reason: 'replace_document must be the sole op' });
+    const op = plan.ops[0];
+    if (typeof op.doc !== 'string' || typeof op.reason !== 'string')
+      throw new RwaEditError('malformed_envelope', 0, { reason: 'replace_document requires doc and reason' });
+    return { tool: 'replace_document', envelope: { version: 'rwa-edit/1', doc: op.doc, reason: op.reason } };
+  }
+
+  // Apply each op against an evolving in-memory shadow so subsequent ops'
+  // anchors resolve against the post-prior-op state, mirroring the runtime's
+  // sequential apply_edits semantics.
+  let shadow = canonLF(doc);
+  const edits = [];
+  for (let i = 0; i < plan.ops.length; i++) {
+    const op = plan.ops[i];
+    if (!op || typeof op !== 'object' || typeof op.op !== 'string')
+      throw new RwaEditError('malformed_envelope', i, { reason: 'op must have a string `op` field' });
+    let opEdits;
+    switch (op.op) {
+      case 'replace':  opEdits = compileDslReplace(op, shadow, i); break;
+      case 'insert':   opEdits = compileDslInsert(op, shadow, i); break;
+      case 'delete':   opEdits = compileDslDelete(op, shadow, i); break;
+      case 'set_attr': opEdits = compileDslSetAttr(op, shadow, i); break;
+      default: throw new RwaEditError('malformed_envelope', i, { reason: 'unknown op: ' + op.op });
+    }
+    for (const e of opEdits) {
+      const idx = shadow.indexOf(e.find);
+      if (idx < 0)
+        throw new RwaEditError('malformed_envelope', i, { reason: 'compiler shadow drift: emitted edit no longer matches' });
+      if (shadow.indexOf(e.find, idx + 1) >= 0)
+        throw new RwaEditError('malformed_envelope', i, { reason: 'compiler shadow drift: emitted edit ambiguous' });
+      shadow = shadow.slice(0, idx) + e.replace + shadow.slice(idx + e.find.length);
+      edits.push(e);
+    }
+  }
+  return { tool: 'apply_edits', envelope: { version: 'rwa-edit/1', edits } };
+}
+
+function dslAllOccurrences(haystack, needle) {
+  const out = [];
+  if (!needle.length) return out;
+  let from = 0;
+  while (true) {
+    const idx = haystack.indexOf(needle, from);
+    if (idx < 0) break;
+    out.push(idx);
+    from = idx + 1;
+  }
+  return out;
+}
+
+function compileDslReplace(op, doc, opIndex) {
+  if (typeof op.find !== 'string' || typeof op.replace !== 'string')
+    throw new RwaEditError('malformed_envelope', opIndex, { reason: 'replace requires find and replace strings' });
+  let windowStart = 0, windowEnd = doc.length;
+  if (typeof op.region === 'string') {
+    const occs = dslAllOccurrences(doc, op.region);
+    if (!occs.length) throw new RwaEditError('malformed_envelope', opIndex, { reason: 'region not found' });
+    if (occs.length > 1) throw new RwaEditError('malformed_envelope', opIndex, { reason: 'region not unique' });
+    windowStart = occs[0]; windowEnd = occs[0] + op.region.length;
+  }
+  const window = doc.slice(windowStart, windowEnd);
+  const localOccs = dslAllOccurrences(window, op.find);
+  if (!localOccs.length) throw new RwaEditError('malformed_envelope', opIndex, { reason: 'find has zero matches in window' });
+  if (!op.all && localOccs.length > 1)
+    throw new RwaEditError('malformed_envelope', opIndex, { reason: 'find non-unique in window with all=false' });
+
+  if (!op.all) {
+    const globalOccs = dslAllOccurrences(doc, op.find);
+    if (globalOccs.length === 1) return [{ find: op.find, replace: op.replace }];
+    return [contextualizeDslEdit(doc, windowStart + localOccs[0], op.find, op.replace, opIndex)];
+  }
+  return localOccs.map(localStart => contextualizeDslEdit(doc, windowStart + localStart, op.find, op.replace, opIndex));
+}
+
+function contextualizeDslEdit(doc, absStart, find, replace, opIndex) {
+  const findEnd = absStart + find.length;
+  let pre = 0, post = 0;
+  const MAX = 200;
+  while (true) {
+    const ctxFind = doc.slice(absStart - pre, findEnd + post);
+    if (dslAllOccurrences(doc, ctxFind).length === 1) {
+      const ctxReplace = doc.slice(absStart - pre, absStart) + replace + doc.slice(findEnd, findEnd + post);
+      return { find: ctxFind, replace: ctxReplace };
+    }
+    if (pre >= MAX && post >= MAX)
+      throw new RwaEditError('malformed_envelope', opIndex, { reason: 'unable to disambiguate within ' + MAX + ' chars' });
+    if (post <= pre && findEnd + post < doc.length) post++;
+    else if (absStart - pre > 0) pre++;
+    else post++;
+  }
+}
+
+function compileDslInsert(op, doc, opIndex) {
+  if (typeof op.content !== 'string')
+    throw new RwaEditError('malformed_envelope', opIndex, { reason: 'insert requires content string' });
+  const positionalCount = (typeof op.after === 'string' ? 1 : 0) + (typeof op.before === 'string' ? 1 : 0);
+  if (positionalCount !== 1)
+    throw new RwaEditError('malformed_envelope', opIndex, { reason: 'insert requires exactly one of after or before' });
+  const anchor = typeof op.after === 'string' ? op.after : op.before;
+  const occs = dslAllOccurrences(doc, anchor);
+  if (!occs.length) throw new RwaEditError('malformed_envelope', opIndex, { reason: 'insert anchor not found' });
+  if (occs.length > 1) throw new RwaEditError('malformed_envelope', opIndex, { reason: 'insert anchor not unique' });
+  if (typeof op.after === 'string') return [{ find: anchor, replace: anchor + op.content }];
+  return [{ find: anchor, replace: op.content + anchor }];
+}
+
+function compileDslDelete(op, doc, opIndex) {
+  if (typeof op.target !== 'string')
+    throw new RwaEditError('malformed_envelope', opIndex, { reason: 'delete requires target string' });
+  const occs = dslAllOccurrences(doc, op.target);
+  if (!occs.length) throw new RwaEditError('malformed_envelope', opIndex, { reason: 'delete target not found' });
+  if (occs.length > 1) throw new RwaEditError('malformed_envelope', opIndex, { reason: 'delete target not unique' });
+  return [{ find: op.target, replace: '' }];
+}
+
+function compileDslSetAttr(op, doc, opIndex) {
+  if (typeof op.anchor !== 'string' || typeof op.attr !== 'string' || typeof op.value !== 'string')
+    throw new RwaEditError('malformed_envelope', opIndex, { reason: 'set_attr requires anchor, attr, value strings' });
+  if (!op.anchor.startsWith('<') || op.anchor.endsWith('>'))
+    throw new RwaEditError('malformed_envelope', opIndex, { reason: 'set_attr.anchor must start with < and end before >' });
+  const occs = dslAllOccurrences(doc, op.anchor);
+  if (!occs.length) throw new RwaEditError('malformed_envelope', opIndex, { reason: 'set_attr.anchor not found' });
+  if (occs.length > 1) throw new RwaEditError('malformed_envelope', opIndex, { reason: 'set_attr.anchor not unique' });
+  const closeIdx = doc.indexOf('>', occs[0] + op.anchor.length);
+  if (closeIdx < 0) throw new RwaEditError('malformed_envelope', opIndex, { reason: 'no `>` after set_attr.anchor' });
+  const fullTag = doc.slice(occs[0], closeIdx + 1);
+  const escapedValue = op.value.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+  const existing = findAttrInTag(fullTag, op.attr);
+  const newTag = existing
+    ? fullTag.slice(0, existing[0]) + op.attr + '="' + escapedValue + '"' + fullTag.slice(existing[1])
+    : fullTag.slice(0, -1) + ' ' + op.attr + '="' + escapedValue + '">';
+  return [{ find: fullTag, replace: newTag }];
+}
+
+// Locate `attrName` inside a parsed opening tag, returning [start, end) byte
+// offsets within the tag of the full `name="value"` (or `name='...'`,
+// `name=value`, or boolean `name`) substring. Respects quote state to avoid
+// matching attribute substrings inside another attribute's value.
+function findAttrInTag(tag, attrName) {
+  const nameMatch = tag.match(/^<\/?([a-zA-Z][a-zA-Z0-9_-]*)/);
+  if (!nameMatch) return null;
+  let i = nameMatch[0].length;
+  while (i < tag.length - 1) {
+    while (i < tag.length && /\s/.test(tag[i])) i++;
+    if (i >= tag.length || tag[i] === '>' || tag[i] === '/') break;
+    const attrStart = i;
+    let nameEnd = i;
+    while (nameEnd < tag.length && !/[\s=>/]/.test(tag[nameEnd])) nameEnd++;
+    const name = tag.slice(attrStart, nameEnd);
+    i = nameEnd;
+    let attrEnd = nameEnd;
+    if (tag[i] === '=') {
+      i++;
+      if (tag[i] === '"') { const c = tag.indexOf('"', i + 1); if (c < 0) return null; attrEnd = c + 1; i = attrEnd; }
+      else if (tag[i] === "'") { const c = tag.indexOf("'", i + 1); if (c < 0) return null; attrEnd = c + 1; i = attrEnd; }
+      else { while (i < tag.length && !/[\s>]/.test(tag[i])) i++; attrEnd = i; }
+    }
+    if (name === attrName) return [attrStart, attrEnd];
+  }
+  return null;
 }
 
 // ─── Modify lifecycle (rwa-edit/1) ──────────────────────────────────
@@ -1048,7 +1391,7 @@ async function modify(instr) {
 
   if (modifyMutex) {
     setPalSt('err', '✗ another modify in progress');
-    return;
+    throw new RwaEditError('concurrent_modify');
   }
   modifyMutex = true;
 
@@ -1123,7 +1466,13 @@ async function modify(instr) {
       }
 
       try {
-        if (fnName === 'apply_edits') newDoc = await applyEdits(envelope, cur);
+        if (fnName === 'apply_dsl_plan') {
+          const compiled = compileDslPlan(envelope, cur);
+          if (compiled.tool === 'apply_edits') newDoc = await applyEdits(compiled.envelope, cur);
+          else if (compiled.tool === 'replace_document') newDoc = await replaceDocument(compiled.envelope, cur);
+          else throw new RwaEditError('unknown_tool', null, { name: compiled.tool });
+        }
+        else if (fnName === 'apply_edits') newDoc = await applyEdits(envelope, cur);
         else if (fnName === 'replace_document') newDoc = await replaceDocument(envelope, cur);
         else throw new RwaEditError('unknown_tool', null, { name: fnName });
       } catch (err) {

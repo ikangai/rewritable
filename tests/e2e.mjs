@@ -2265,7 +2265,7 @@ check('63: user message includes doc body content', userMsg?.includes('<div>BODY
 check('63: user message lists frozen zone name', userMsg?.includes('myzone63'));
 check('63: user message includes the user instruction', userMsg?.includes('USER_INSTRUCTION_63'));
 check('63: messages start with system prompt', capturedRequest?.messages?.[0]?.role === 'system');
-check('63: tools array (apply_edits + replace_document) passed', Array.isArray(capturedRequest?.tools) && capturedRequest.tools.length === 2);
+check('63: tools array (apply_dsl_plan + apply_edits + replace_document) passed', Array.isArray(capturedRequest?.tools) && capturedRequest.tools.length === 3);
 check('63: tool_choice is auto', capturedRequest?.tool_choice === 'auto');
 
 // Tests 64-67: edit position / consumption edge cases.
@@ -3572,6 +3572,86 @@ const after114 = await window.getDoc();
 check('114: SVG content preserved verbatim', after114.includes('<svg width="10" height="10"><circle cx="5" cy="5" r="4"/></svg>'));
 check('114: MathML content preserved verbatim', after114.includes('<math><mi>x</mi></math>'));
 check('114: edit applied alongside foreign-content preservation', after114.includes('SM_DONE_114'));
+
+// Test 115a: apply_dsl_plan multi-op plan compiles + applies through the
+// runtime, hist records an edit_batch record (DSL compiles to apply_edits).
+console.log('\n== Test 115a: apply_dsl_plan multi-op (insert + set_attr) ==');
+await seedDoc('<article>\n<p class="lead">Lead paragraph.</p>\n<div id="anchor115a">ANCHOR_115A</div>\n</article>');
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: { role: 'assistant', content: '', tool_calls: [{
+      id: 'dsl115a', type: 'function', function: {
+        name: 'apply_dsl_plan',
+        arguments: JSON.stringify({
+          version: 'rwa-edit-dsl/1',
+          ops: [
+            { op: 'insert', after: 'ANCHOR_115A', content: ' INSERTED' },
+            { op: 'set_attr', anchor: '<p class="lead"', attr: 'class', value: 'lead emphasis' },
+          ],
+        }),
+      },
+    }] } }],
+  }),
+});
+await window.modify('exercise apply_dsl_plan');
+await new Promise(r => setTimeout(r, 100));
+const after115a = await window.getDoc();
+check('115a: insert op applied (content present)', after115a.includes('ANCHOR_115A INSERTED'));
+check('115a: set_attr op applied (class augmented)', after115a.includes('<p class="lead emphasis">'));
+check('115a: original lead text preserved', after115a.includes('Lead paragraph.'));
+const hist115a = await new Promise((res, rej) => {
+  window.openDB().then(db => {
+    const r = db.transaction('rwa_hist').objectStore('rwa_hist').get('self');
+    r.onsuccess = () => res(r.result || []);
+    r.onerror = () => rej(r.error);
+  });
+});
+check('115a: hist records single edit_batch (DSL compiles to apply_edits)', hist115a.length >= 1 && hist115a[0]?.kind === 'edit_batch');
+check('115a: hist envelope has both compiled edits', Array.isArray(hist115a[0]?.envelope?.edits) && hist115a[0].envelope.edits.length === 2);
+
+// Test 115b: apply_dsl_plan with non-unique anchor → compile fails →
+// failure relayed via tool_result → model retries with fixed plan → success.
+console.log('\n== Test 115b: apply_dsl_plan compile failure + retry ==');
+await seedDoc('<ul>\n<li>Buy bread</li>\n<li>Buy bread</li>\n<li>Buy bread</li>\n</ul>');
+let fetchCount115b = 0;
+let receivedToolResult115b = null;
+fetchHandler = async (url, opts) => {
+  fetchCount115b++;
+  const body = JSON.parse(opts.body);
+  if (fetchCount115b === 1) {
+    return { ok: true, json: async () => ({
+      choices: [{ message: { role: 'assistant', content: '', tool_calls: [{
+        id: 'dsl115b1', type: 'function', function: {
+          name: 'apply_dsl_plan',
+          arguments: JSON.stringify({
+            version: 'rwa-edit-dsl/1',
+            ops: [{ op: 'delete', target: '<li>Buy bread</li>' }],
+          }),
+        },
+      }] } }],
+    }) };
+  }
+  // Second call: capture the tool_result feedback, then submit a corrected plan.
+  receivedToolResult115b = body.messages.find(m => m.role === 'tool')?.content;
+  return { ok: true, json: async () => ({
+    choices: [{ message: { role: 'assistant', content: '', tool_calls: [{
+      id: 'dsl115b2', type: 'function', function: {
+        name: 'apply_dsl_plan',
+        arguments: JSON.stringify({
+          version: 'rwa-edit-dsl/1',
+          ops: [{ op: 'replace', find: '<li>Buy bread</li>\n<li>Buy bread</li>\n<li>Buy bread</li>', replace: '<li>Buy bread</li>\n<li>Buy bread</li>' }],
+        }),
+      },
+    }] } }],
+  }) };
+};
+await window.modify('delete one bread');
+await new Promise(r => setTimeout(r, 100));
+const after115b = await window.getDoc();
+check('115b: 2 retry round-trips occurred', fetchCount115b === 2);
+check('115b: tool_result on retry surfaces a code', typeof receivedToolResult115b === 'string' && receivedToolResult115b.includes('"code"'));
+const liCount115b = (after115b.match(/<li>Buy bread<\/li>/g) || []).length;
+check('115b: 2 of 3 list items remain after corrected plan', liCount115b === 2);
 
 console.log('\n== Summary ==');
 console.log(`pass: ${pass}, fail: ${fail}`);
