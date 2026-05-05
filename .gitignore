@@ -3,4 +3,5 @@ autoresearch-results.tsv
 debug/
 node_modules/
 cli/seeds/
+.worktrees/
 
