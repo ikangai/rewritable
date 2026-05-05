@@ -11,6 +11,7 @@ const NEW_ROW = '<tr><td>Backpressure</td><td>Buffer overflow</td><td>Variable</
 export default {
   id: 'FID-06',
   category: 'FID',
+  tag: 'mixed',
   description: 'multi-edit batch — rename heading, add row, fix typo (3 edits, all land)',
   weight: 2,
   N: 3,

@@ -27,6 +27,7 @@ ${fields.join('\n')}
 export default {
   id: 'GENRE-01',
   category: 'GENRE',
+  tag: 'content',
   description: 'rename fieldset legend; 30 input id/label-for pairings preserved',
   weight: 1,
   N: 3,

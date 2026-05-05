@@ -15,6 +15,7 @@ const FIXTURE = `<article>
 export default {
   id: 'ROB-03',
   category: 'ROB',
+  tag: 'content',
   description: 'non-BMP unicode survives a nearby prose edit byte-identical',
   weight: 1,
   N: 3,

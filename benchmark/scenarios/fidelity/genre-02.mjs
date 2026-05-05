@@ -18,6 +18,7 @@ const FIXTURE = `<table id="budget">
 export default {
   id: 'GENRE-02',
   category: 'GENRE',
+  tag: 'content',
   description: 'edit cell B5 from 450 to 600; total recomputes 1530 → 1680',
   weight: 1,
   N: 3,

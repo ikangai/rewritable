@@ -7,8 +7,8 @@
     "openai_frontier": "openai/gpt-5",
     "openai_mid": "openai/gpt-5-mini",
     "openai_small": "openai/gpt-5-nano",
-    "google_frontier": "google/gemini-3-pro-preview",
+    "google_frontier": "google/gemini-3.1-pro-preview",
     "google_mid": "google/gemini-3-flash-preview",
-    "google_small": "google/gemini-3-flash-lite-preview"
+    "google_small": "google/gemini-3.1-flash-lite-preview"
   }
 }

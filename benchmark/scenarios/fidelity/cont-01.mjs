@@ -12,6 +12,7 @@ const NEW_LI = '<li>Reason six: virtualized cloud time</li>';
 export default {
   id: 'CONT-01',
   category: 'CONT',
+  tag: 'mixed',
   description: 'add 6th list item AND update "Five reasons" → "Six reasons" coupling',
   weight: 1,
   N: 3,

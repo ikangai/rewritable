@@ -16,6 +16,7 @@ const FIXTURE = `<style>
 export default {
   id: 'PRES-02',
   category: 'PRES',
+  tag: 'content',
   description: 'edit body content; @page margin-box header/footer text byte-identical',
   weight: 1,
   N: 3,

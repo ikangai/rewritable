@@ -15,6 +15,7 @@ const FIXTURE = `<article>
 export default {
   id: 'ROB-07',
   category: 'ROB',
+  tag: 'content',
   description: 'edit <pre><code> example, not the inline <code> reference',
   weight: 1,
   N: 3,

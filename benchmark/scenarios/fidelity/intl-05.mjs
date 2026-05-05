@@ -15,6 +15,7 @@ const FIXTURE = `<article lang="de">
 export default {
   id: 'INTL-05',
   category: 'INTL',
+  tag: 'content',
   description: 'change first amount + matching prose count consistently',
   weight: 1,
   N: 3,

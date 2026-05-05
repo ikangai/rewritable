@@ -14,6 +14,7 @@ const FIXTURE = `<article><p class="pad">${PADDING}</p><p>ANCHOR_EDIT_ROB05 Init
 export default {
   id: 'ROB-05',
   category: 'ROB',
+  tag: 'content',
   description: 'doc at 90% of MAX_DOC; small edit succeeds within cap',
   weight: 1,
   N: 3,

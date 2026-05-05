@@ -16,6 +16,7 @@ document.addEventListener('keydown', e => {
 export default {
   id: 'INTERACT-02',
   category: 'INTERACT',
+  tag: 'content',
   description: 'Ctrl+B keyboard shortcut still fires after edit (script re-attached listener)',
   weight: 1,
   N: 1,

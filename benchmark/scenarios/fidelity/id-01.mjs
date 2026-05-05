@@ -14,6 +14,7 @@ const FIXTURE = `<article>
 export default {
   id: 'ID-01',
   category: 'ID',
+  tag: 'content',
   description: 'edit body text; section ids byte-identical',
   weight: 1,
   N: 3,

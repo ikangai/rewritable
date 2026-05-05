@@ -20,6 +20,7 @@ ${slides.join('\n')}
 export default {
   id: 'GENRE-03',
   category: 'GENRE',
+  tag: 'content',
   description: 'edit slide 4 content; other 11 slides + counter byte-identical',
   weight: 1,
   N: 3,

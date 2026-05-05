@@ -22,6 +22,7 @@ const FIXTURE = `<div id="ctr">--</div>
 export default {
   id: 'APP-04',
   category: 'APP',
+  tag: 'content',
   description: 'module-scope counter resets across edit (expected behavior per spec; score 2 on clean reset)',
   weight: 1,
   N: 1,

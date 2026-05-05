@@ -13,6 +13,7 @@ const FIXTURE = `<article>
 export default {
   id: 'ID-02',
   category: 'ID',
+  tag: 'content',
   description: 'rename heading; aria-labelledby reference still resolves',
   weight: 1,
   N: 3,

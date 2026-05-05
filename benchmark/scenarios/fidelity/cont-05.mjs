@@ -19,6 +19,7 @@ const FIXTURE = `<nav class="toc">
 export default {
   id: 'CONT-05',
   category: 'CONT',
+  tag: 'content',
   description: 'rename section 3 heading + matching TOC entry; href unchanged',
   weight: 1,
   N: 3,

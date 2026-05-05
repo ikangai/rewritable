@@ -20,6 +20,7 @@ let captured = null;
 export default {
   id: 'FAIL-01',
   category: 'FAIL',
+  tag: 'failure_mode',
   description: 'find_not_unique tool_result payload includes count and hints',
   weight: 1,
   N: 3,

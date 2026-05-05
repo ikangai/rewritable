@@ -14,6 +14,7 @@ const FIXTURE = `<article dir="rtl" lang="he">
 export default {
   id: 'INTL-02',
   category: 'INTL',
+  tag: 'content',
   description: 'edit Hebrew sentence; English brand "Acme Corp" preserved; second paragraph byte-identical',
   weight: 1,
   N: 3,

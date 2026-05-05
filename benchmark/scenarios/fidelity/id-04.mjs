@@ -14,6 +14,7 @@ const FIXTURE = `<form>
 export default {
   id: 'ID-04',
   category: 'ID',
+  tag: 'content',
   description: 'layout edit elsewhere; label/input id pairing intact',
   weight: 1,
   N: 3,

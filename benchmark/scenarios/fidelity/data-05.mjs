@@ -14,6 +14,7 @@ const greeting = "Hello, \\"world\\"";</code></pre>
 export default {
   id: 'DATA-05',
   category: 'DATA',
+  tag: 'content',
   description: 'edit unrelated prose; regex/escape region byte-identical',
   weight: 1,
   N: 3,

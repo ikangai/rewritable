@@ -25,6 +25,7 @@ const FIXTURE = `<div id="board">
 export default {
   id: 'INTERACT-01',
   category: 'INTERACT',
+  tag: 'content',
   description: 'kanban state in localStorage persists across edit; card C still in "doing"',
   weight: 1,
   N: 1,

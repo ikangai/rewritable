@@ -16,6 +16,7 @@ const FIXTURE = `<article id="doc">
 export default {
   id: 'BULK-01',
   category: 'BULK',
+  tag: 'content',
   description: 'translate to French via apply_edits per text node; structure byte-identical',
   weight: 1,
   N: 3,

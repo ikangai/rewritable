@@ -10,6 +10,7 @@ const NEW_ROW = '<tr><td>Backpressure</td><td>Buffer overflow</td><td>Variable</
 export default {
   id: 'FID-04',
   category: 'FID',
+  tag: 'structural_regular',
   description: 'mid-document insertion — new <tr> in strategy table, siblings preserved',
   weight: 2,
   N: 3,
@@ -28,6 +29,10 @@ export default {
       },
     },
   ]),
+  expectedDslPlan: {
+    version: 'rwa-edit-dsl/1',
+    ops: [{ op: 'insert', after: '<tr><td>Bulkhead</td><td>Resource exhaustion</td><td>Seconds</td></tr>\n', content: NEW_ROW + '\n' }],
+  },
 
   success: (doc) => runSelectorOracle(doc, [
     { fn: (d) => d.querySelectorAll('tbody tr').length === 4, label: '4 tbody rows' },

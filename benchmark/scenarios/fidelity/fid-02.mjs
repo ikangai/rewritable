@@ -12,6 +12,7 @@ const NEW_P2 = 'The second paragraph has been rewritten cleanly: it now states "
 export default {
   id: 'FID-02',
   category: 'FID',
+  tag: 'content',
   description: 'paragraph-level edit — surrounding paragraphs byte-identical',
   weight: 2,
   N: 3,

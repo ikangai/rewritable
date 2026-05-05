@@ -14,6 +14,7 @@ const FIXTURE = `<article>
 export default {
   id: 'ROB-08',
   category: 'ROB',
+  tag: 'failure_mode',
   description: 'question prompt; model returns prose only, no tool call',
   weight: 1,
   N: 3,

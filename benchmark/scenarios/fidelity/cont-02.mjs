@@ -17,6 +17,7 @@ const FIXTURE = `<article>
 export default {
   id: 'CONT-02',
   category: 'CONT',
+  tag: 'mixed',
   description: 'insert a new footnote between [1] and [2]; subsequent numbering renumbers',
   weight: 1,
   N: 3,

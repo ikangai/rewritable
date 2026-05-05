@@ -13,6 +13,7 @@ document.getElementById('loaded-flag').textContent = 'loaded-' + window.__app_lo
 export default {
   id: 'APP-06',
   category: 'APP',
+  tag: 'content',
   description: 'inline <script> with load-time side effects re-runs on renderDoc',
   weight: 1,
   N: 1,

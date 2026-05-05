@@ -67,6 +67,7 @@ export function stubModel(turns) {
  */
 export function modelToFetch(model) {
   let totalInput = 0, totalOutput = 0, calls = 0;
+  const toolCounts = Object.create(null);
   const handler = async (url, opts) => {
     calls++;
     const body = typeof opts?.body === 'string' ? JSON.parse(opts.body) : {};
@@ -74,6 +75,10 @@ export function modelToFetch(model) {
     if (result.usage) {
       totalInput += result.usage.prompt_tokens || 0;
       totalOutput += result.usage.completion_tokens || 0;
+    }
+    for (const tc of result.tool_calls || []) {
+      const name = tc.function?.name || 'unknown';
+      toolCounts[name] = (toolCounts[name] || 0) + 1;
     }
     return {
       ok: true,
@@ -88,6 +93,7 @@ export function modelToFetch(model) {
     tokens_in: totalInput,
     tokens_out: totalOutput,
     tokens_total: totalInput + totalOutput,
+    tool_counts: { ...toolCounts },
   });
   return { handler, getStats };
 }

@@ -14,6 +14,7 @@ const FIXTURE = `<article>
 export default {
   id: 'CONT-07',
   category: 'CONT',
+  tag: 'content',
   description: 'rewrite middle paragraph; {{name}} and {{invoice_id}} placeholders preserved',
   weight: 1,
   N: 3,

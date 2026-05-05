@@ -17,6 +17,7 @@ const FIXTURE = `<article>
 export default {
   id: 'ROB-06',
   category: 'ROB',
+  tag: 'structural_regular',
   description: 'delete the second of 3 identical items; model disambiguates via context',
   weight: 1,
   N: 3,
@@ -32,6 +33,14 @@ export default {
       }] },
     },
   ]),
+  expectedDslPlan: {
+    version: 'rwa-edit-dsl/1',
+    ops: [{
+      op: 'replace',
+      find: '<li>Buy bread</li>\n<li>Buy bread</li>\n<li>Buy bread</li>',
+      replace: '<li>Buy bread</li>\n<li>Buy bread</li>',
+    }],
+  },
   success: (doc) => runSelectorOracle(doc, [
     { fn: (d) => d.querySelectorAll('li').length === 2, label: '2 items remain' },
     { fn: (d) => Array.from(d.querySelectorAll('li')).every(li => li.textContent === 'Buy bread'), label: 'remaining items both Buy bread' },

@@ -15,6 +15,7 @@ const FIXTURE = `<div id="wizard"></div>
 export default {
   id: 'INTERACT-05',
   category: 'INTERACT',
+  tag: 'content',
   description: 'wizard step in localStorage persists across edit',
   weight: 1,
   N: 1,

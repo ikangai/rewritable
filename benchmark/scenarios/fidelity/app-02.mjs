@@ -12,6 +12,7 @@ const FIXTURE = `<details id="more-info">
 export default {
   id: 'APP-02',
   category: 'APP',
+  tag: 'content',
   description: '<details open> state persists across edit (EXPECTED-FAIL on current runtime)',
   weight: 1,
   N: 1,

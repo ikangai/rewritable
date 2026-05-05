@@ -9,6 +9,7 @@ import { computeDriftFromEdits, regionOfLiteral, discretizeStability } from '../
 export default {
   id: 'ID-03',
   category: 'ID',
+  tag: 'content',
   description: 'rename H2 visible text, id="sec-clocks" preserved, anchor link still resolves',
   weight: 1,
   N: 3,

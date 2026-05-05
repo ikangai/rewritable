@@ -16,6 +16,7 @@ const FIXTURE = `<table>
 export default {
   id: 'CONT-03',
   category: 'CONT',
+  tag: 'mixed',
   description: 'add line item C=15; total updates 30 → 45',
   weight: 1,
   N: 3,

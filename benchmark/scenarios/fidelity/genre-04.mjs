@@ -19,6 +19,7 @@ const FIXTURE = `<article class="invitation">
 export default {
   id: 'GENRE-04',
   category: 'GENRE',
+  tag: 'structural_regular',
   description: 'change recipient name in all three places consistently',
   weight: 1,
   N: 3,
@@ -34,6 +35,14 @@ export default {
       ] },
     },
   ]),
+  expectedDslPlan: {
+    version: 'rwa-edit-dsl/1',
+    ops: [
+      { op: 'replace', find: 'For: <span class="name">Riya Kapoor</span>', replace: 'For: <span class="name">Priya Sharma</span>' },
+      { op: 'replace', find: 'Dear <span class="name">Riya Kapoor</span>,', replace: 'Dear <span class="name">Priya Sharma</span>,' },
+      { op: 'replace', find: 'We hope to see you, <span class="name">Riya Kapoor</span>,', replace: 'We hope to see you, <span class="name">Priya Sharma</span>,' },
+    ],
+  },
   success: (doc) => runSelectorOracle(doc, [
     { fn: (d) => Array.from(d.querySelectorAll('span.name')).every(s => s.textContent === 'Priya Sharma'), label: 'all three names updated' },
     { fn: (d) => !d.body.textContent.includes('Riya Kapoor'), label: 'no leftover old name' },

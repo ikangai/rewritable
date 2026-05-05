@@ -18,6 +18,7 @@ const FIXTURE = `<div id="wizard">unset</div>
 export default {
   id: 'INTERACT-06',
   category: 'INTERACT',
+  tag: 'content',
   description: 'module-scope wizard state resets to step 1 across edit (expected per spec)',
   weight: 1,
   N: 1,

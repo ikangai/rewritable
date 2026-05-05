@@ -15,6 +15,7 @@ const FIXTURE = `<style>
 export default {
   id: 'ID-05',
   category: 'ID',
+  tag: 'content',
   description: 'edit one card body; .task-card class + style rule preserved',
   weight: 1,
   N: 3,

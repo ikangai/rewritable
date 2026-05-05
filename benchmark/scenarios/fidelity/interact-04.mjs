@@ -11,6 +11,7 @@ const FIXTURE = `<div style="height: 5000px;">long content</div>
 export default {
   id: 'INTERACT-04',
   category: 'INTERACT',
+  tag: 'content',
   description: 'scroll position behavior is consistent across edits (jsdom-best-effort)',
   weight: 1,
   N: 1,

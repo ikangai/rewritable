@@ -15,6 +15,7 @@ const FIXTURE = `<article lang="en">
 export default {
   id: 'INTL-07',
   category: 'INTL',
+  tag: 'mixed',
   description: 'translate to Japanese via apply_edits; structure preserved; lang attribute updated',
   weight: 1,
   N: 3,

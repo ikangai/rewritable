@@ -10,6 +10,7 @@ const FIXTURE = `<article><p>EDIT_ME Initial.</p></article>`;
 export default {
   id: 'FAIL-04',
   category: 'FAIL',
+  tag: 'failure_mode',
   description: 'after retry exhaustion: no silent replace_document escalation in audit log',
   weight: 1,
   N: 3,

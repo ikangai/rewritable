@@ -17,6 +17,7 @@ const FIXTURE = `<article>
 export default {
   id: 'PRES-03',
   category: 'PRES',
+  tag: 'content',
   description: 'edit H3 prose only; H1/H2/H3 hierarchy unchanged',
   weight: 1,
   N: 3,

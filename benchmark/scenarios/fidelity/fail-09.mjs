@@ -17,6 +17,7 @@ const FIXTURE = `<article>
 export default {
   id: 'FAIL-09',
   category: 'FAIL',
+  tag: 'failure_mode',
   description: 'mixed-failure retry: find_not_unique → frozen_zone_violation → success',
   weight: 1,
   N: 3,

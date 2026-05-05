@@ -15,6 +15,7 @@ const FIXTURE = `<article>
 export default {
   id: 'ROB-01',
   category: 'ROB',
+  tag: 'content',
   description: 'edit succeeds without tripping reserved-marker check on prose content',
   weight: 1,
   N: 3,

@@ -25,6 +25,7 @@ h1 { page-break-before: always; }
 export default {
   id: 'PRES-01',
   category: 'PRES',
+  tag: 'content',
   description: 'edit prose in section 2; @page rules + page-break-before survive',
   weight: 1,
   N: 3,

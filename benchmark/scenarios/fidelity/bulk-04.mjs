@@ -21,6 +21,7 @@ const NEW_DOC = `<style>${FROZEN_ZONE}</style>
 export default {
   id: 'BULK-04',
   category: 'BULK',
+  tag: 'structural_irregular',
   description: 'wholesale redesign via replace_document; frozen zone bytes preserved',
   weight: 1,
   N: 3,
@@ -32,6 +33,10 @@ export default {
       envelope: { version: 'rwa-edit/1', doc: NEW_DOC, reason: 'wholesale redesign' },
     },
   ]),
+  expectedDslPlan: {
+    version: 'rwa-edit-dsl/1',
+    ops: [{ op: 'replace_document', doc: NEW_DOC, reason: 'wholesale redesign' }],
+  },
   success: (doc) => runSelectorOracle(doc, [
     { selector: 'main.new-design header h1', textEquals: 'New design', label: 'new structure' },
     { fn: (d) => (d.querySelector('style')?.textContent || '').includes('--accent: #b8ff57'), label: 'frozen zone inner preserved' },

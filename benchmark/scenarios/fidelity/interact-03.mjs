@@ -10,6 +10,7 @@ const FIXTURE = `<dialog id="dlg" open><p>Modal content</p></dialog>
 export default {
   id: 'INTERACT-03',
   category: 'INTERACT',
+  tag: 'content',
   description: 'open <dialog>: behavior across edit is observable (closes; documented)',
   weight: 1,
   N: 1,

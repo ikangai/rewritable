@@ -8,6 +8,7 @@ import { computeDrift, regionOfLiteral, discretizeStability } from '../../oracle
 export default {
   id: 'FID-03',
   category: 'FID',
+  tag: 'structural_regular',
   description: 'attribute-only change — class augmentation, surrounding markup byte-identical',
   weight: 2,
   N: 3,
@@ -23,6 +24,10 @@ export default {
       },
     },
   ]),
+  expectedDslPlan: {
+    version: 'rwa-edit-dsl/1',
+    ops: [{ op: 'set_attr', anchor: '<p class="callout"', attr: 'class', value: 'callout important' }],
+  },
 
   success: (doc) => runSelectorOracle(doc, [
     { selector: 'p.callout.important', label: 'p has both classes' },

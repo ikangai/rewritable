@@ -11,6 +11,7 @@ const FIXTURE = `<article><p>FIXTURE</p></article>`;
 export default {
   id: 'FAIL-05',
   category: 'FAIL',
+  tag: 'failure_mode',
   description: 'second modify() while first is in flight → concurrent_modify before round-trip',
   weight: 1,
   N: 3,

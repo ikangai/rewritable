@@ -15,6 +15,7 @@ const FIXTURE = `<article>
 export default {
   id: 'FAIL-07',
   category: 'FAIL',
+  tag: 'failure_mode',
   description: 'turn 1 ambiguous → turn 2 disambiguated → success; happy path of multi-turn',
   weight: 1,
   N: 3,

@@ -9,6 +9,7 @@ const FIXTURE = `<article><p>EDIT_ME Initial.</p></article>`;
 export default {
   id: 'FAIL-03',
   category: 'FAIL',
+  tag: 'failure_mode',
   description: 'three consecutive failures; doc unchanged, no commit, no silent escalation',
   weight: 1,
   N: 3,

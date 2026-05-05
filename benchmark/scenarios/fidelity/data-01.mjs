@@ -11,6 +11,7 @@ const FIXTURE = `<script type="application/json" id="quarters">{"rows":[{"q":"Q1
 export default {
   id: 'DATA-01',
   category: 'DATA',
+  tag: 'structural_regular',
   description: 'add Q4 row to embedded JSON; schema preserved',
   weight: 1,
   N: 3,
@@ -22,6 +23,10 @@ export default {
       replace: '{"q":"Q3","v":150},{"q":"Q4","v":250}]}',
     }] } },
   ]),
+  expectedDslPlan: {
+    version: 'rwa-edit-dsl/1',
+    ops: [{ op: 'insert', after: '{"q":"Q3","v":150}', content: ',{"q":"Q4","v":250}' }],
+  },
   success: (doc) => runSelectorOracle(doc, [
     { fn: (d) => {
       const txt = d.querySelector('#quarters')?.textContent;

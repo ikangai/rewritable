@@ -10,6 +10,7 @@ let captured = null;
 export default {
   id: 'FAIL-02',
   category: 'FAIL',
+  tag: 'failure_mode',
   description: 'replace containing reserved marker → frozen_zone_violation',
   weight: 1,
   N: 3,

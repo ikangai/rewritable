@@ -24,6 +24,7 @@ function buildEdits() {
 export default {
   id: 'DEG-01',
   category: 'DEG',
+  tag: 'drift',
   description: '20-edit sequence; cumulative drift contained within declared regions',
   weight: 3,
   N: 1,  // deterministic with stub; for real model bump to 10

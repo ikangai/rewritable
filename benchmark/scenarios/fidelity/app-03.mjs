@@ -19,6 +19,7 @@ const FIXTURE = `<div id="counter">--</div>
 export default {
   id: 'APP-03',
   category: 'APP',
+  tag: 'content',
   description: 'counter in localStorage persists across edit (script re-reads on render)',
   weight: 1,
   N: 1,

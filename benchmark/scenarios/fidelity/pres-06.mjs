@@ -14,6 +14,7 @@ const FIXTURE = `<div class="text-center mt-4">
 export default {
   id: 'PRES-06',
   category: 'PRES',
+  tag: 'content',
   description: 'edit one paragraph; spacing classes on siblings preserved',
   weight: 1,
   N: 3,

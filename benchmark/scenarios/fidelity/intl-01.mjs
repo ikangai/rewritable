@@ -14,6 +14,7 @@ const FIXTURE = `<article dir="rtl" lang="ar">
 export default {
   id: 'INTL-01',
   category: 'INTL',
+  tag: 'content',
   description: 'edit one Arabic paragraph; dir="rtl" + surrounding paragraphs byte-identical',
   weight: 1,
   N: 3,

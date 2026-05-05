@@ -17,6 +17,7 @@ ${CODE_BLOCK}
 export default {
   id: 'DATA-04',
   category: 'DATA',
+  tag: 'content',
   description: 'translate prose to French; <pre><code> Python block byte-identical',
   weight: 1,
   N: 3,

@@ -10,6 +10,7 @@ const FIXTURE = `<article><p class="weight">weight: 2.4 kg (5.3 lbs)</p></articl
 export default {
   id: 'CONT-04',
   category: 'CONT',
+  tag: 'content',
   description: 'edit kg to 5.0; lbs updates to 11.0 (2.205 lb/kg)',
   weight: 1,
   N: 3,

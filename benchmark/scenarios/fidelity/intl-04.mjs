@@ -15,6 +15,7 @@ const FIXTURE = `<article>
 export default {
   id: 'INTL-04',
   category: 'INTL',
+  tag: 'content',
   description: 'edit only the English paragraph; Chinese and Greek byte-identical',
   weight: 1,
   N: 3,

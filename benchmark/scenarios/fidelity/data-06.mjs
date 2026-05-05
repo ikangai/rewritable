@@ -15,6 +15,7 @@ const FIXTURE = `<article>
 export default {
   id: 'DATA-06',
   category: 'DATA',
+  tag: 'content',
   description: 'edit prose; <textarea> default content byte-identical',
   weight: 1,
   N: 3,

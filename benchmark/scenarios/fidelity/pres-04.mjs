@@ -11,6 +11,7 @@ const NEW_P3 = 'This third paragraph has <strong>bold word</strong> in the middl
 export default {
   id: 'PRES-04',
   category: 'PRES',
+  tag: 'content',
   description: 'paragraph edit preserves inline <strong>/<em> elements',
   weight: 1,
   N: 3,

@@ -14,6 +14,7 @@ const FIXTURE = `<article lang="ja">
 export default {
   id: 'INTL-03',
   category: 'INTL',
+  tag: 'content',
   description: 'edit one Japanese paragraph; CJK boundaries respected; siblings byte-identical',
   weight: 1,
   N: 3,

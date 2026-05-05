@@ -16,6 +16,7 @@ const FIXTURE = `<table>
 export default {
   id: 'PRES-05',
   category: 'PRES',
+  tag: 'content',
   description: 'change one cell value; structure + alignment classes unchanged',
   weight: 1,
   N: 3,

@@ -13,6 +13,7 @@ const FIXTURE = `<svg viewBox="0 0 100 100">
 export default {
   id: 'DATA-03',
   category: 'DATA',
+  tag: 'content',
   description: 'edit path d attribute; <defs> gradient + ref preserved',
   weight: 1,
   N: 3,

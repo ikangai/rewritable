@@ -14,6 +14,7 @@ const FIXTURE = `<form>
 export default {
   id: 'APP-01',
   category: 'APP',
+  tag: 'content',
   description: 'form input.value persists across unrelated edit (EXPECTED-FAIL: runtime\'s renderDoc destroys input state)',
   weight: 1,
   N: 1,

@@ -23,6 +23,7 @@ function buildAfter() {
 export default {
   id: 'BULK-03',
   category: 'BULK',
+  tag: 'structural_regular',
   description: 'mass class rename via replace_document (correct tool choice for 40-site change)',
   weight: 1,
   N: 3,
@@ -34,6 +35,10 @@ export default {
       envelope: { version: 'rwa-edit/1', doc: buildAfter(), reason: 'class rename across 40 sites' },
     },
   ]),
+  expectedDslPlan: {
+    version: 'rwa-edit-dsl/1',
+    ops: [{ op: 'replace_document', doc: buildAfter(), reason: 'class rename across 40 sites' }],
+  },
   success: (doc) => runSelectorOracle(doc, [
     { fn: (d) => d.querySelectorAll('.new-class').length === 40, label: '40 elements renamed' },
     { fn: (d) => d.querySelectorAll('.old-class').length === 0, label: 'no leftover old class' },

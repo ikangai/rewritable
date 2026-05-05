@@ -8,6 +8,7 @@ import { computeDrift, regionOfLiteral, discretizeStability } from '../../oracle
 export default {
   id: 'FID-01',
   category: 'FID',
+  tag: 'content',
   description: 'single-character typo fix — surrounding doc byte-identical',
   weight: 2,
   N: 3,

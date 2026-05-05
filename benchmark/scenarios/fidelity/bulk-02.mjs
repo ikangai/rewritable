@@ -15,6 +15,7 @@ const FIXTURE = `<article>
 export default {
   id: 'BULK-02',
   category: 'BULK',
+  tag: 'content',
   description: 'translate prose to French; <pre><code> Python remains English byte-identical',
   weight: 1,
   N: 3,

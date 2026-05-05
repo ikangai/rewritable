@@ -8,6 +8,7 @@ import { computeDriftFromEdits, regionOfLiteral, discretizeStability } from '../
 export default {
   id: 'FID-05',
   category: 'FID',
+  tag: 'structural_regular',
   description: 'mid-document deletion — remove Circuit breaker row, siblings preserved',
   weight: 2,
   N: 3,
@@ -26,6 +27,10 @@ export default {
       },
     },
   ]),
+  expectedDslPlan: {
+    version: 'rwa-edit-dsl/1',
+    ops: [{ op: 'delete', target: '<tr><td>Circuit breaker</td><td>Cascading timeout</td><td>Milliseconds</td></tr>\n' }],
+  },
 
   success: (doc) => runSelectorOracle(doc, [
     { fn: (d) => d.querySelectorAll('tbody tr').length === 2, label: '2 rows remaining' },

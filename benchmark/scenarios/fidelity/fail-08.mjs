@@ -6,6 +6,7 @@ const FIXTURE = `<article><p>FIXTURE</p></article>`;
 export default {
   id: 'FAIL-08',
   category: 'FAIL',
+  tag: 'failure_mode',
   description: 'model returns prose only (no tool_use); runtime exits cleanly, no commit',
   weight: 1,
   N: 3,

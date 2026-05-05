@@ -16,6 +16,7 @@ document.getElementById('btn').addEventListener('click', () => {
 export default {
   id: 'APP-05',
   category: 'APP',
+  tag: 'content',
   description: 'event listener rebinds via renderDoc script-replacement; post-edit click fires',
   weight: 1,
   N: 1,

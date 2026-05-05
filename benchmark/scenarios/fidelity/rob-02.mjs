@@ -11,6 +11,7 @@ const FIXTURE = '<article>\r\n<p>line one</p>\r\n<p>EDIT_ANCHOR</p>\n<p>line thr
 export default {
   id: 'ROB-02',
   category: 'ROB',
+  tag: 'content',
   description: 'mixed CRLF/LF fixture; runtime canonLF makes edit succeed',
   weight: 1,
   N: 3,

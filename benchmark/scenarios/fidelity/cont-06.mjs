@@ -17,6 +17,7 @@ const FIXTURE = `<article>
 export default {
   id: 'CONT-06',
   category: 'CONT',
+  tag: 'mixed',
   description: 'insert new section between 3 and 4; cross-ref renumbers to "section 5"',
   weight: 1,
   N: 3,

@@ -21,6 +21,7 @@ const FIXTURE = `<style>#clock { color: #b8ff57; font: 32px monospace; }</style>
 export default {
   id: 'GENRE-05',
   category: 'GENRE',
+  tag: 'content',
   description: 'edit clock CSS color; clock element + script preserved',
   weight: 1,
   N: 3,

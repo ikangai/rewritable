@@ -17,6 +17,7 @@ const x = \\\`\${1 + 1}\\\`;</code></pre>
 export default {
   id: 'ROB-04',
   category: 'ROB',
+  tag: 'content',
   description: 'edit prose; template-literal code survives runtime escape round-trip',
   weight: 1,
   N: 3,

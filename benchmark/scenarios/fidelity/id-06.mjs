@@ -19,6 +19,7 @@ const FIXTURE = `<style>
 export default {
   id: 'ID-06',
   category: 'ID',
+  tag: 'content',
   description: 'edit near a frozen zone; zone bytes byte-identical (weight 2)',
   weight: 2,
   N: 3,

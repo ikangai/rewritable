@@ -19,6 +19,7 @@ function buildEdits() {
 export default {
   id: 'DEG-02',
   category: 'DEG',
+  tag: 'drift',
   description: 'two independent runs of DEG-01; endpoints byte-identical (reproducibility)',
   weight: 3,
   N: 1,

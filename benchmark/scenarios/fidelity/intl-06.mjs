@@ -13,6 +13,7 @@ const FIXTURE = `<article dir="rtl" lang="ar">
 export default {
   id: 'INTL-06',
   category: 'INTL',
+  tag: 'content',
   description: 'edit Arabic prose; <code dir="ltr"> block byte-identical, dir boundaries preserved',
   weight: 1,
   N: 3,

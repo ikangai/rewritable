@@ -12,6 +12,7 @@ beta,2,active</pre>`;
 export default {
   id: 'DATA-02',
   category: 'DATA',
+  tag: 'structural_regular',
   description: 'append a CSV row; columns unchanged',
   weight: 1,
   N: 3,
@@ -23,6 +24,10 @@ export default {
       replace: 'beta,2,active\ngamma,3,inactive</pre>',
     }] } },
   ]),
+  expectedDslPlan: {
+    version: 'rwa-edit-dsl/1',
+    ops: [{ op: 'insert', after: 'beta,2,active', content: '\ngamma,3,inactive' }],
+  },
   success: (doc) => runSelectorOracle(doc, [
     { fn: (d) => {
       const txt = d.querySelector('#csv')?.textContent || '';

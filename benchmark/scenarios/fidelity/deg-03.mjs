@@ -13,6 +13,7 @@ const FIXTURE = `<article><p>EDIT_1 first.</p><p>EDIT_2 second.</p></article>`;
 export default {
   id: 'DEG-03',
   category: 'DEG',
+  tag: 'runtime',
   description: 'edit → buildFile → INLINE_DOC LF-only; idempotent rebuild',
   weight: 3,
   N: 1,

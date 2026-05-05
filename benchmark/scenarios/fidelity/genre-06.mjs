@@ -19,6 +19,7 @@ const FIXTURE = `<article class="press-release">
 export default {
   id: 'GENRE-06',
   category: 'GENRE',
+  tag: 'content',
   description: 'update one body stat; date/contact/boilerplate byte-identical',
   weight: 1,
   N: 3,
