@@ -1,6 +1,84 @@
 # Changelog
 
-Notable changes to `re-write-able`. The container format is versioned in `re-write-able-spec.md`; the edit protocol in `rwa-edit-spec.md`. The CLI follows semver in `cli/package.json`.
+Notable changes to `re-write-able`. The container format is versioned in `re-write-able-spec.md`; the edit protocol in `rwa-edit-spec.md`; the structural-transform DSL in `rwa-edit-dsl-spec.md`. The CLI follows semver in `cli/package.json`.
+
+## 2026-05-05 — DSL structural-transform tool (rwa-edit-dsl/1) shipped in runtime
+
+The runtime gains a third tool, `apply_dsl_plan`, that takes a small typed DSL of structural transforms (`replace`, `insert`, `delete`, `set_attr`, plus a `replace_document` escape) and compiles them deterministically to `apply_edits` envelopes. Sugar on top of rwa-edit/1 — `apply_edits` and `replace_document` semantics are unchanged. The DSL parser is the trust boundary; compiled output flows through the existing `applyEdits` / `replaceDocument` paths so all rwa-edit/1 invariants (frozen zones, structural shape, reserved markers) still hold.
+
+### What changed for users
+
+- **The system prompt has been rewritten** with an explicit structural-vs-content split and a paste-verbatim rule. Even agents that never pick the new tool benefit: gemini-3.1-pro-preview's paste meanT jumped 0.22 → 1.78 on the same `apply_edits` path.
+- **A third tool surface is available** to agents that prefer DSL: `replace`, `insert`, `delete`, `set_attr` ops, plus the same `replace_document` escape under a different envelope shape.
+- **DSL plans share the audit log with `apply_edits`.** Both land as `kind: 'edit_batch'` in `rwa_hist` (DSL plans flatten to their compiled form before the audit record is written).
+
+### What changed for the runtime
+
+- `seeds/rewritable.html` gains an inline `compileDslPlan` block (~150 lines) that mirrors `benchmark/oracles/dsl-compiler.mjs`. The compiler runs each op against an in-memory shadow doc and emits a single sequential `apply_edits` envelope (or one `replace_document` envelope for the sole-op escape), then dispatches through the existing apply paths.
+- `TOOL_SCHEMAS` grows a third entry for `apply_dsl_plan` with a `oneOf` op switch covering all five op shapes.
+- `SYSTEM_PROMPT` is rewritten — three-tool description, structural-vs-content preference, plus rules sections per tool.
+- The dispatch in `modify()` adds an `apply_dsl_plan` branch that calls `compileDslPlan` and routes the result. Compile errors are reported as `RwaEditError('malformed_envelope', i, { reason: ... })` — the existing failure shape — and flow through `failureToToolResult` → `tool_result` → retry up to 3 times.
+
+### What changed for the references
+
+- `hello.html` and `re-write-able-spec.html` regenerated from the new seed. Each preserves its own `DOC_UUID` and `INLINE_DOC` body; the bootstrap mirrors the seed.
+
+### What changed for the benchmark
+
+- `rwa-edit-dsl/1` is specified in `rwa-edit-dsl-spec.md`. v0.1, sole-source.
+- `benchmark/oracles/dsl-compiler.mjs` ports the same compile-down semantics for offline use.
+- `benchmark/runners/run-fidelity-dsl.mjs` is a new round-trip oracle (`npm run fidelity:dsl`): feeds each scenario's `expectedDslPlan` to the compiler, applies both the stub envelope and the compiled envelope to the fixture, and asserts byte-equal output. **12/12 expressible scenarios pass.**
+- `benchmark/runners/dsl-mode.mjs` and `benchmark/runners/hybrid-mode.mjs` are real-model runners exploring the DSL-only and supervisor+worker architectures. Surfaced as `node runners/run-fidelity.mjs <model> dsl` and `... hybrid` modes.
+- 89 fidelity scenarios get a `tag` field for the architecture-comparison axis (`structural_regular`, `structural_irregular`, `content`, `mixed`, `paste`, `failure_mode`, `drift`, `runtime`).
+- 9 new scenarios fill gaps the May 2026 inventory pass surfaced: PASTE-01..03 (Python code, CSV, 400-word prose excerpt), IRREG-01..03 (swap-by-content, sort-by-date, multi-card move), STRUCT-01..03 (wrap_each, for_each_match, chained insert+set_attr).
+- `benchmark/runners/model.mjs` instruments per-tool call counts so smoke runs can tell which tool the model picked per tag.
+- `benchmark/models.json` typo fixes — gemini IDs corrected from `gemini-3-...` to `gemini-3.1-...`.
+
+### What changed for testing
+
+- `tests/e2e.mjs` test 63 updated for 3 tools (was hardcoded to 2).
+- New tests **115a** (multi-op DSL plan: insert + set_attr round-trips through `modify()`, hist records single `edit_batch` with 2 compiled edits) and **115b** (DSL compile failure on non-unique anchor surfaces tool_result with code; model retries with corrected plan; succeeds). **274/274 e2e scenarios pass.**
+- **42/42 conformance scenarios pass** against the modified seed.
+
+### What changed for documentation
+
+- `rwa-edit-dsl-spec.md` v0.1 — initial draft. §12 captures the production-runtime smoke results.
+- `CLAUDE.md` updated: repository contents, rewrite-loop description (three tools), agent-contract section, three-site-alignment convention for DSL changes (spec ↔ runtime ↔ benchmark compiler).
+- `README.md` mentions the DSL as part of the agent contract; adds `rwa-edit-dsl-spec.md` to the spec list.
+
+### Backward compatibility
+
+- **Strict addition.** `apply_edits` and `replace_document` envelope shapes and semantics are unchanged. Existing agents continue to work.
+- **`rwa_hist` schema unchanged.** DSL plans flatten to `kind: 'edit_batch'`; consumers cannot distinguish whether an `edit_batch` came from `apply_edits` directly or from a compiled `apply_dsl_plan`.
+- **No new IDB stores, OPFS paths, or HTML markers.** Reserved namespaces unchanged.
+- **No CLI or service changes.** Both handle the seed bytes opaquely; no DSL-aware logic needed at those layers. The CLI's bundled `cli/seeds/rewritable.html` regenerates on the next `npm publish` from the canonical seed.
+
+### Empirical observations (2026-05-05 production-runtime smoke)
+
+Two real-model smoke runs against the modified seed via `ctx.modify` (89 scenarios, three tools available, model picks freely):
+
+| metric | gemini-3.1-pro-preview | gemini-3.1-flash-lite-preview |
+|---|---|---|
+| Overall meanS | 1.73 | 1.57 |
+| Overall meanT | 1.02 | 1.24 |
+| `apply_dsl_plan` adoption (across all model calls) | **0.8 %** (2 / 244) | **~70 %** on structural; 0 % on content |
+
+For comparison, the May 2026 apply_edits-only baselines: pro overall meanT=0.88, lite overall meanT=1.35.
+
+Two findings the data forced:
+
+- **Pro almost never picks `apply_dsl_plan`** when given the choice. The system prompt's "preferred for STRUCTURAL transforms" guidance is a nudge that the model overrides — most likely because str_replace-shaped tools dominate training data.
+- **Most of pro's stability gain comes from the new prompt structure**, not from tool adoption. Paste meanT 0.22 → 1.78 on the same `apply_edits` path; structural_regular 1.27 → 1.76. The "render substantial paste verbatim" rule and the structural-vs-content split do the work.
+
+Lite adopts the DSL freely but sees no net stability win (1.35 → 1.24 — slight regression). Lite was already byte-conservative on raw `apply_edits`; the DSL adds prompt-overhead and minor compile-down anchor widening without offsetting discipline gain.
+
+The May 2026 forced-DSL ceiling (pro meanT=1.44) doesn't reproduce in production because pro doesn't adopt the tool. Full empirical writeup in `rwa-edit-dsl-spec.md` §12.
+
+### Known limitations
+
+- **Strong-model adoption is low.** Pro-class models override the prompt's preference and rarely pick `apply_dsl_plan` (~1 %). The architectural prediction "DSL ships → pro reaches meanT=1.44" was conditional on adoption that doesn't happen freely. Tightening the prompt or a runtime-level DSL-only mode could unlock it but neither is in v0.1.
+- **The system prompt grew significantly.** Three tools, op schemas, and per-tool rules add ~1500 tokens to every modify request. Cost goes up modestly — flash-lite tok_in went 918 → 4402 on structural_regular. Acceptable for the fidelity gain but worth monitoring.
+- **No DSL-only mode.** A runtime flag that disables `apply_edits` for structural intent would force agents into the DSL but isn't shipped. See `rwa-edit-dsl-spec.md` §12 for the open questions list.
 
 ## 2026-05-04 — CSV import (CLI + service)
 
