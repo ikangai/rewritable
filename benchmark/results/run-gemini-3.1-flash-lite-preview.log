@@ -1,0 +1,233 @@
+== rwa-edit fidelity — 89 scenario(s) discovered (model=google/gemini-3.1-flash-lite-preview) ==
+
+  [APP-01] form input.value persists across unrelated edit (EXPECTED-FAIL: runtime's renderDoc destroys input state) (N=1) 22
+        meanS=2.00  meanT=2.00  drift=0.0000  tok=0/0 (in/out)  wall=16ms
+  [APP-02] <details open> state persists across edit (EXPECTED-FAIL on current runtime) (N=1) 22
+        meanS=2.00  meanT=2.00  drift=0.0000  tok=0/0 (in/out)  wall=10ms
+  [APP-03] counter in localStorage persists across edit (script re-reads on render) (N=1) 22
+        meanS=2.00  meanT=2.00  drift=0.0000  tok=0/0 (in/out)  wall=61ms
+  [APP-04] module-scope counter resets across edit (expected behavior per spec; score 2 on clean reset) (N=1) 22
+        meanS=2.00  meanT=2.00  drift=0.0000  tok=0/0 (in/out)  wall=61ms
+  [APP-05] event listener rebinds via renderDoc script-replacement; post-edit click fires (N=1) 22
+        meanS=2.00  meanT=2.00  drift=0.0000  tok=0/0 (in/out)  wall=83ms
+  [APP-06] inline <script> with load-time side effects re-runs on renderDoc (N=1) 22
+        meanS=2.00  meanT=2.00  drift=0.0000  tok=0/0 (in/out)  wall=111ms
+  [BULK-01] translate to French via apply_edits per text node; structure byte-identical (N=3) 12 12 12
+        meanS=1.00  meanT=2.00  drift=0.0000  tok=892/173 (in/out)  wall=1240ms
+  [BULK-02] translate prose to French; <pre><code> Python remains English byte-identical (N=3) 10 10 10
+        meanS=1.00  meanT=0.00  drift=0.5167  tok=887/123 (in/out)  wall=984ms
+  [BULK-03] mass class rename via replace_document (correct tool choice for 40-site change) (N=3) 22 22 22
+        meanS=2.00  meanT=2.00  drift=0.0000  tok=1400/638 (in/out)  wall=2247ms
+  [BULK-04] wholesale redesign via replace_document; frozen zone bytes preserved (N=3) 12 12 12
+        meanS=1.00  meanT=2.00  drift=0.0000  tok=893/168 (in/out)  wall=1211ms
+  [CONT-01] add 6th list item AND update "Five reasons" → "Six reasons" coupling (N=3) 20 20 20
+        meanS=2.00  meanT=0.00  drift=0.0740  tok=1054/130 (in/out)  wall=1114ms
+  [CONT-02] insert a new footnote between [1] and [2]; subsequent numbering renumbers (N=3) 20 20 20
+        meanS=2.00  meanT=0.00  drift=0.8305  tok=927/190 (in/out)  wall=1172ms
+  [CONT-03] add line item C=15; total updates 30 → 45 (N=3) 22 20 20
+        meanS=2.00  meanT=0.67  drift=0.5631  tok=895/149 (in/out)  wall=1074ms
+  [CONT-04] edit kg to 5.0; lbs updates to 11.0 (2.205 lb/kg) (N=3) 22 22 22
+        meanS=2.00  meanT=2.00  drift=0.0000  tok=863/75 (in/out)  wall=933ms
+  [CONT-05] rename section 3 heading + matching TOC entry; href unchanged (N=3) 20 20 20
+        meanS=2.00  meanT=0.00  drift=0.1861  tok=928/137 (in/out)  wall=1021ms
+  [CONT-06] insert new section between 3 and 4; cross-ref renumbers to "section 5" (N=3) 20 20 20
+        meanS=2.00  meanT=0.00  drift=0.2864  tok=930/185 (in/out)  wall=1245ms
+  [CONT-07] rewrite middle paragraph; {{name}} and {{invoice_id}} placeholders preserved (N=3) 20 20 20
+        meanS=2.00  meanT=0.00  drift=0.2880  tok=869/85 (in/out)  wall=960ms
+  [DATA-01] add Q4 row to embedded JSON; schema preserved (N=3) 22 22 22
+        meanS=2.00  meanT=2.00  drift=0.0000  tok=881/91 (in/out)  wall=932ms
+  [DATA-02] append a CSV row; columns unchanged (N=3) 22 22 22
+        meanS=2.00  meanT=2.00  drift=0.0000  tok=842/58 (in/out)  wall=842ms
+  [DATA-03] edit path d attribute; <defs> gradient + ref preserved (N=3) 22 12 12
+        meanS=1.33  meanT=2.00  drift=0.0000  tok=929/101 (in/out)  wall=903ms
+  [DATA-04] translate prose to French; <pre><code> Python block byte-identical (N=3) 22 22 22
+        meanS=2.00  meanT=2.00  drift=0.0000  tok=885/62 (in/out)  wall=828ms
+  [DATA-05] edit unrelated prose; regex/escape region byte-identical (N=3) 20 20 20
+        meanS=2.00  meanT=0.00  drift=0.2123  tok=867/80 (in/out)  wall=838ms
+  [DATA-06] edit prose; <textarea> default content byte-identical (N=3) 20 20 20
+        meanS=2.00  meanT=0.00  drift=0.2518  tok=862/82 (in/out)  wall=900ms
+  [DEG-01] 20-edit sequence; cumulative drift contained within declared regions (N=1) 12
+        meanS=1.00  meanT=2.00  drift=0.0000  tok=1204/546 (in/out)  wall=1939ms
+  [DEG-02] two independent runs of DEG-01; endpoints byte-identical (reproducibility) (N=1) 22
+        meanS=2.00  meanT=2.00  drift=0.0000  tok=0/0 (in/out)  wall=271ms
+  [DEG-03] edit → buildFile → INLINE_DOC LF-only; idempotent rebuild (N=1) 22
+        meanS=2.00  meanT=2.00  drift=0.0000  tok=0/0 (in/out)  wall=7ms
+  [FAIL-01] find_not_unique tool_result payload includes count and hints (N=3) 02 02 02
+        meanS=0.00  meanT=2.00  drift=0.0000  tok=828/66 (in/out)  wall=901ms
+  [FAIL-02] replace containing reserved marker → frozen_zone_violation (N=3) 02 02 02
+        meanS=0.00  meanT=2.00  drift=0.0000  tok=1770/116 (in/out)  wall=1626ms
+  [FAIL-03] three consecutive failures; doc unchanged, no commit, no silent escalation (N=3) 00 00 00
+        meanS=0.00  meanT=0.00  drift=1.0000  tok=822/63 (in/out)  wall=921ms
+  [FAIL-04] after retry exhaustion: no silent replace_document escalation in audit log (N=3) 00 00 00
+        meanS=0.00  meanT=0.00  drift=1.0000  tok=825/71 (in/out)  wall=823ms
+  [FAIL-05] second modify() while first is in flight → concurrent_modify before round-trip (N=3) 22 22 22
+        meanS=2.00  meanT=2.00  drift=0.0000  tok=0/0 (in/out)  wall=53ms
+  [FAIL-06] structural_shape_changed payload contains shape_before/after; model retries with replace_document (N=3) 02 02 02
+        meanS=0.00  meanT=2.00  drift=0.0000  tok=838/77 (in/out)  wall=897ms
+  [FAIL-07] turn 1 ambiguous → turn 2 disambiguated → success; happy path of multi-turn (N=3) 22 22 22
+        meanS=2.00  meanT=2.00  drift=0.0000  tok=828/65 (in/out)  wall=885ms
+  [FAIL-08] model returns prose only (no tool_use); runtime exits cleanly, no commit (N=3) 00 00 00
+        meanS=0.00  meanT=0.00  drift=1.0000  tok=817/58 (in/out)  wall=891ms
+  [FAIL-09] mixed-failure retry: find_not_unique → frozen_zone_violation → success (N=3) 00 00 00
+        meanS=0.00  meanT=0.00  drift=0.3854  tok=848/77 (in/out)  wall=888ms
+  [FID-01] single-character typo fix — surrounding doc byte-identical (N=3) 22 22 22
+        meanS=2.00  meanT=2.00  drift=0.0000  tok=1234/119 (in/out)  wall=1006ms
+  [FID-02] paragraph-level edit — surrounding paragraphs byte-identical (N=3) 12 12 12
+        meanS=1.00  meanT=2.00  drift=0.0000  tok=1243/126 (in/out)  wall=1064ms
+  [FID-03] attribute-only change — class augmentation, surrounding markup byte-identical (N=3) 22 22 22
+        meanS=2.00  meanT=2.00  drift=0.0000  tok=1241/85 (in/out)  wall=907ms
+  [FID-04] mid-document insertion — new <tr> in strategy table, siblings preserved (N=3) 22 22 22
+        meanS=2.00  meanT=2.00  drift=0.0000  tok=1250/122 (in/out)  wall=1031ms
+  [FID-05] mid-document deletion — remove Circuit breaker row, siblings preserved (N=3) 22 22 22
+        meanS=2.00  meanT=2.00  drift=0.0000  tok=1235/66 (in/out)  wall=887ms
+  [FID-06] multi-edit batch — rename heading, add row, fix typo (3 edits, all land) (N=3) 10 20 20
+        meanS=1.67  meanT=0.00  drift=0.1110  tok=1272/237 (in/out)  wall=1315ms
+  [GENRE-01] rename fieldset legend; 30 input id/label-for pairings preserved (N=3) 20 20 22
+        meanS=2.00  meanT=0.67  drift=0.0192  tok=1820/63 (in/out)  wall=766ms
+  [GENRE-02] edit cell B5 from 450 to 600; total recomputes 1530 → 1680 (N=3) 20 20 20
+        meanS=2.00  meanT=0.00  drift=0.1609  tok=957/116 (in/out)  wall=976ms
+  [GENRE-03] edit slide 4 content; other 11 slides + counter byte-identical (N=3) 12 12 12
+        meanS=1.00  meanT=2.00  drift=0.0000  tok=1222/66 (in/out)  wall=833ms
+  [GENRE-04] change recipient name in all three places consistently (N=3) 20 20 20
+        meanS=2.00  meanT=0.00  drift=0.8552  tok=915/200 (in/out)  wall=1201ms
+  [GENRE-05] edit clock CSS color; clock element + script preserved (N=3) 20 20 20
+        meanS=2.00  meanT=0.00  drift=0.1733  tok=922/78 (in/out)  wall=1015ms
+  [GENRE-06] update one body stat; date/contact/boilerplate byte-identical (N=3) 20 20 20
+        meanS=2.00  meanT=0.00  drift=0.0329  tok=989/118 (in/out)  wall=1011ms
+  [ID-01] edit body text; section ids byte-identical (N=3) 20 20 20
+        meanS=2.00  meanT=0.00  drift=0.1685  tok=875/86 (in/out)  wall=994ms
+  [ID-02] rename heading; aria-labelledby reference still resolves (N=3) 22 22 22
+        meanS=2.00  meanT=2.00  drift=0.0000  tok=861/61 (in/out)  wall=851ms
+  [ID-03] rename H2 visible text, id="sec-clocks" preserved, anchor link still resolves (N=3) 22 22 22
+        meanS=2.00  meanT=2.00  drift=0.0000  tok=1050/81 (in/out)  wall=838ms
+  [ID-04] layout edit elsewhere; label/input id pairing intact (N=3) 22 20 22
+        meanS=2.00  meanT=1.33  drift=0.0000  tok=864/73 (in/out)  wall=856ms
+  [ID-05] edit one card body; .task-card class + style rule preserved (N=3) 22 20 22
+        meanS=2.00  meanT=1.33  drift=0.0000  tok=916/80 (in/out)  wall=936ms
+  [ID-06] edit near a frozen zone; zone bytes byte-identical (weight 2) (N=3) 10 12 10
+        meanS=1.00  meanT=0.67  drift=0.2472  tok=923/93 (in/out)  wall=1006ms
+  [INTERACT-01] kanban state in localStorage persists across edit; card C still in "doing" (N=1) 22
+        meanS=2.00  meanT=2.00  drift=0.0000  tok=0/0 (in/out)  wall=60ms
+  [INTERACT-02] Ctrl+B keyboard shortcut still fires after edit (script re-attached listener) (N=1) 22
+        meanS=2.00  meanT=2.00  drift=0.0000  tok=0/0 (in/out)  wall=80ms
+  [INTERACT-03] open <dialog>: behavior across edit is observable (closes; documented) (N=1) 22
+        meanS=2.00  meanT=2.00  drift=0.0000  tok=0/0 (in/out)  wall=56ms
+  [INTERACT-04] scroll position behavior is consistent across edits (jsdom-best-effort) (N=1) 22
+        meanS=2.00  meanT=2.00  drift=0.0000  tok=0/0 (in/out)  wall=57ms
+  [INTERACT-05] wizard step in localStorage persists across edit (N=1) 22
+        meanS=2.00  meanT=2.00  drift=0.0000  tok=0/0 (in/out)  wall=57ms
+  [INTERACT-06] module-scope wizard state resets to step 1 across edit (expected per spec) (N=1) 22
+        meanS=2.00  meanT=2.00  drift=0.0000  tok=0/0 (in/out)  wall=55ms
+  [INTL-01] edit one Arabic paragraph; dir="rtl" + surrounding paragraphs byte-identical (N=3) 12 10 10
+        meanS=1.00  meanT=0.67  drift=0.3333  tok=889/85 (in/out)  wall=1009ms
+  [INTL-02] edit Hebrew sentence; English brand "Acme Corp" preserved; second paragraph byte-identical (N=3) 22 22 22
+        meanS=2.00  meanT=2.00  drift=0.0000  tok=886/108 (in/out)  wall=952ms
+  [INTL-03] edit one Japanese paragraph; CJK boundaries respected; siblings byte-identical (N=3) 10 10 10
+        meanS=1.00  meanT=0.00  drift=0.3551  tok=894/96 (in/out)  wall=936ms
+  [INTL-04] edit only the English paragraph; Chinese and Greek byte-identical (N=3) 22 22 20
+        meanS=2.00  meanT=1.33  drift=0.0000  tok=900/61 (in/out)  wall=820ms
+  [INTL-05] change first amount + matching prose count consistently (N=3) 22 22 22
+        meanS=2.00  meanT=2.00  drift=0.0000  tok=953/98 (in/out)  wall=942ms
+  [INTL-06] edit Arabic prose; <code dir="ltr"> block byte-identical, dir boundaries preserved (N=3) 20 20 20
+        meanS=2.00  meanT=0.00  drift=0.2038  tok=880/143 (in/out)  wall=1044ms
+  [INTL-07] translate to Japanese via apply_edits; structure preserved; lang attribute updated (N=3) 12 12 12
+        meanS=1.00  meanT=2.00  drift=0.0000  tok=873/99 (in/out)  wall=916ms
+  [IRREG-01] swap two paragraphs identified by content; logical-clocks paragraph stays put (N=3) 22 22 22
+        meanS=2.00  meanT=2.00  drift=0.0000  tok=956/169 (in/out)  wall=1177ms
+  [IRREG-02] sort meeting list by data-date ascending; item bodies preserved (N=3) 22 20 20
+        meanS=2.00  meanT=0.67  drift=0.8632  tok=1067/344 (in/out)  wall=1358ms
+  [IRREG-03] move cards A, C, E from todo to doing; B, D stay in todo (N=3) 20 20 20
+        meanS=2.00  meanT=0.00  drift=0.6957  tok=1000/299 (in/out)  wall=1534ms
+  [PASTE-01] paste Python code block verbatim into pre/code; byte-identical preservation (N=3) 22 22 22
+        meanS=2.00  meanT=2.00  drift=0.0000  tok=1141/278 (in/out)  wall=1375ms
+  [PASTE-02] paste CSV verbatim into <pre>; whitespace and rows byte-identical (N=3) 12 12 22
+        meanS=1.33  meanT=2.00  drift=0.0000  tok=1127/272 (in/out)  wall=1492ms
+  [PASTE-03] paste 400-word prose excerpt verbatim; resist paraphrase/tightening (N=3) 10 12 12
+        meanS=1.00  meanT=1.33  drift=0.0000  tok=1260/425 (in/out)  wall=1769ms
+  [PRES-01] edit prose in section 2; @page rules + page-break-before survive (N=3) 12 12 22
+        meanS=1.33  meanT=2.00  drift=0.0000  tok=978/70 (in/out)  wall=948ms
+  [PRES-02] edit body content; @page margin-box header/footer text byte-identical (N=3) Error: Could not parse CSS stylesheet
+    at exports.createStylesheet (/Users/martintreiber/Documents/Development/rewritable/benchmark/node_modules/jsdom/lib/jsdom/living/helpers/stylesheets.js:37:21)
+    at HTMLStyleElementImpl._updateAStyleBlock (/Users/martintreiber/Documents/Development/rewritable/benchmark/node_modules/jsdom/lib/jsdom/living/nodes/HTMLStyleElement-impl.js:68:5)
+    at HTMLStyleElementImpl._poppedOffStackOfOpenElements (/Users/martintreiber/Documents/Development/rewritable/benchmark/node_modules/jsdom/lib/jsdom/living/nodes/HTMLStyleElement-impl.js:42:10)
+    at JSDOMParse5Adapter.onItemPop (/Users/martintreiber/Documents/Development/rewritable/benchmark/node_modules/jsdom/lib/jsdom/browser/parser/html.js:175:43)
+    at Parser.onItemPop (/Users/martintreiber/Documents/Development/rewritable/benchmark/node_modules/parse5/dist/cjs/parser/index.js:176:90)
+    at OpenElementStack.pop (/Users/martintreiber/Documents/Development/rewritable/benchmark/node_modules/parse5/dist/cjs/parser/open-element-stack.js:83:22)
+    at endTagInText (/Users/martintreiber/Documents/Development/rewritable/benchmark/node_modules/parse5/dist/cjs/parser/index.js:2353:20)
+    at Parser._endTagOutsideForeignContent (/Users/martintreiber/Documents/Development/rewritable/benchmark/node_modules/parse5/dist/cjs/parser/index.js:992:17)
+    at Parser.onEndTag (/Users/martintreiber/Documents/Development/rewritable/benchmark/node_modules/parse5/dist/cjs/parser/index.js:957:18)
+    at Tokenizer.emitCurrentTagToken (/Users/martintreiber/Documents/Development/rewritable/benchmark/node_modules/parse5/dist/cjs/tokenizer/index.js:385:26) 
+@page { @top-center { content: "Quarterly Report"; } @bottom-right { content: counter(page); } }
+
+12 Error: Could not parse CSS stylesheet
+    at exports.createStylesheet (/Users/martintreiber/Documents/Development/rewritable/benchmark/node_modules/jsdom/lib/jsdom/living/helpers/stylesheets.js:37:21)
+    at HTMLStyleElementImpl._updateAStyleBlock (/Users/martintreiber/Documents/Development/rewritable/benchmark/node_modules/jsdom/lib/jsdom/living/nodes/HTMLStyleElement-impl.js:68:5)
+    at HTMLStyleElementImpl._poppedOffStackOfOpenElements (/Users/martintreiber/Documents/Development/rewritable/benchmark/node_modules/jsdom/lib/jsdom/living/nodes/HTMLStyleElement-impl.js:42:10)
+    at JSDOMParse5Adapter.onItemPop (/Users/martintreiber/Documents/Development/rewritable/benchmark/node_modules/jsdom/lib/jsdom/browser/parser/html.js:175:43)
+    at Parser.onItemPop (/Users/martintreiber/Documents/Development/rewritable/benchmark/node_modules/parse5/dist/cjs/parser/index.js:176:90)
+    at OpenElementStack.pop (/Users/martintreiber/Documents/Development/rewritable/benchmark/node_modules/parse5/dist/cjs/parser/open-element-stack.js:83:22)
+    at endTagInText (/Users/martintreiber/Documents/Development/rewritable/benchmark/node_modules/parse5/dist/cjs/parser/index.js:2353:20)
+    at Parser._endTagOutsideForeignContent (/Users/martintreiber/Documents/Development/rewritable/benchmark/node_modules/parse5/dist/cjs/parser/index.js:992:17)
+    at Parser.onEndTag (/Users/martintreiber/Documents/Development/rewritable/benchmark/node_modules/parse5/dist/cjs/parser/index.js:957:18)
+    at Tokenizer.emitCurrentTagToken (/Users/martintreiber/Documents/Development/rewritable/benchmark/node_modules/parse5/dist/cjs/tokenizer/index.js:385:26) 
+@page { @top-center { content: "Quarterly Report"; } @bottom-right { content: counter(page); } }
+
+12 Error: Could not parse CSS stylesheet
+    at exports.createStylesheet (/Users/martintreiber/Documents/Development/rewritable/benchmark/node_modules/jsdom/lib/jsdom/living/helpers/stylesheets.js:37:21)
+    at HTMLStyleElementImpl._updateAStyleBlock (/Users/martintreiber/Documents/Development/rewritable/benchmark/node_modules/jsdom/lib/jsdom/living/nodes/HTMLStyleElement-impl.js:68:5)
+    at HTMLStyleElementImpl._poppedOffStackOfOpenElements (/Users/martintreiber/Documents/Development/rewritable/benchmark/node_modules/jsdom/lib/jsdom/living/nodes/HTMLStyleElement-impl.js:42:10)
+    at JSDOMParse5Adapter.onItemPop (/Users/martintreiber/Documents/Development/rewritable/benchmark/node_modules/jsdom/lib/jsdom/browser/parser/html.js:175:43)
+    at Parser.onItemPop (/Users/martintreiber/Documents/Development/rewritable/benchmark/node_modules/parse5/dist/cjs/parser/index.js:176:90)
+    at OpenElementStack.pop (/Users/martintreiber/Documents/Development/rewritable/benchmark/node_modules/parse5/dist/cjs/parser/open-element-stack.js:83:22)
+    at endTagInText (/Users/martintreiber/Documents/Development/rewritable/benchmark/node_modules/parse5/dist/cjs/parser/index.js:2353:20)
+    at Parser._endTagOutsideForeignContent (/Users/martintreiber/Documents/Development/rewritable/benchmark/node_modules/parse5/dist/cjs/parser/index.js:992:17)
+    at Parser.onEndTag (/Users/martintreiber/Documents/Development/rewritable/benchmark/node_modules/parse5/dist/cjs/parser/index.js:957:18)
+    at Tokenizer.emitCurrentTagToken (/Users/martintreiber/Documents/Development/rewritable/benchmark/node_modules/parse5/dist/cjs/tokenizer/index.js:385:26) 
+@page { @top-center { content: "Quarterly Report"; } @bottom-right { content: counter(page); } }
+
+10
+        meanS=1.00  meanT=1.33  drift=0.0000  tok=881/102 (in/out)  wall=964ms
+  [PRES-03] edit H3 prose only; H1/H2/H3 hierarchy unchanged (N=3) 22 20 22
+        meanS=2.00  meanT=1.33  drift=0.0000  tok=870/76 (in/out)  wall=961ms
+  [PRES-04] paragraph edit preserves inline <strong>/<em> elements (N=3) 22 22 22
+        meanS=2.00  meanT=2.00  drift=0.0000  tok=1052/108 (in/out)  wall=1016ms
+  [PRES-05] change one cell value; structure + alignment classes unchanged (N=3) 22 22 22
+        meanS=2.00  meanT=2.00  drift=0.0000  tok=908/59 (in/out)  wall=855ms
+  [PRES-06] edit one paragraph; spacing classes on siblings preserved (N=3) 22 22 22
+        meanS=2.00  meanT=2.00  drift=0.0000  tok=883/69 (in/out)  wall=856ms
+  [ROB-01] edit succeeds without tripping reserved-marker check on prose content (N=3) 10 10 10
+        meanS=1.00  meanT=0.00  drift=0.1878  tok=900/74 (in/out)  wall=937ms
+  [ROB-02] mixed CRLF/LF fixture; runtime canonLF makes edit succeed (N=3) 22 22 22
+        meanS=2.00  meanT=2.00  drift=0.0000  tok=845/42 (in/out)  wall=787ms
+  [ROB-03] non-BMP unicode survives a nearby prose edit byte-identical (N=3) 10 12 10
+        meanS=1.00  meanT=0.67  drift=0.4030  tok=872/76 (in/out)  wall=885ms
+  [ROB-04] edit prose; template-literal code survives runtime escape round-trip (N=3) 20 20 20
+        meanS=2.00  meanT=0.00  drift=0.2286  tok=869/77 (in/out)  wall=932ms
+  [ROB-05] doc at 90% of MAX_DOC; small edit succeeds within cap (N=3) 22 22 22
+        meanS=2.00  meanT=2.00  drift=0.0000  tok=116042/63 (in/out)  wall=3658ms
+  [ROB-06] delete the second of 3 identical items; model disambiguates via context (N=3) 22 22 22
+        meanS=2.00  meanT=2.00  drift=0.0000  tok=842/76 (in/out)  wall=952ms
+  [ROB-07] edit <pre><code> example, not the inline <code> reference (N=3) 22 22 22
+        meanS=2.00  meanT=2.00  drift=0.0000  tok=895/78 (in/out)  wall=946ms
+  [ROB-08] question prompt; model returns prose only, no tool call (N=3) 22 22 22
+        meanS=2.00  meanT=2.00  drift=0.0000  tok=847/26 (in/out)  wall=652ms
+  [STRUCT-01] wrap_each: wrap every .card in a <section>; ids and bodies preserved (N=3) 22 22 22
+        meanS=2.00  meanT=2.00  drift=0.0000  tok=921/155 (in/out)  wall=1077ms
+  [STRUCT-02] for_each_match: append <footer class="section-footer"> inside every <section> (N=3) 22 22 22
+        meanS=2.00  meanT=2.00  drift=0.0000  tok=918/236 (in/out)  wall=1301ms
+  [STRUCT-03] insert new row after Bulkhead AND set class="highlight" on its first cell (chained DSL) (N=3) 22 22 22
+        meanS=2.00  meanT=2.00  drift=0.0000  tok=909/96 (in/out)  wall=937ms
+
+Overall: meanS=1.66  meanT=1.35  median_drift=0.0000 across 89 scenario(s)
+
+By tag:
+  structural_regular     meanS=2.00  meanT=1.82  drift=0.0000  tok_in=918  tok_out=96  wall_med=952ms  wall_p95=1150ms  (N=11)
+  structural_irregular   meanS=1.75  meanT=1.17  drift=0.3479  tok_in=978  tok_out=234  wall_med=1285ms  wall_p95=1477ms  (N=4)
+  content                meanS=1.78  meanT=1.33  drift=0.0000  tok_in=884  tok_out=76  wall_med=918ms  wall_p95=951ms  (N=52)
+  mixed                  meanS=1.78  meanT=0.44  drift=0.1987  tok_in=929  tok_out=167  wall_med=1143ms  wall_p95=1210ms  (N=6)
+  paste                  meanS=1.44  meanT=1.78  drift=0.0000  tok_in=1141  tok_out=278  wall_med=1492ms  wall_p95=1646ms  (N=3)
+  failure_mode           meanS=0.60  meanT=1.20  drift=0.0000  tok_in=828  tok_out=66  wall_med=890ms  wall_p95=950ms  (N=10)
+  drift                  meanS=1.50  meanT=2.00  drift=0.0000  tok_in=602  tok_out=273  wall_med=1105ms  wall_p95=1105ms  (N=2)
+  runtime                meanS=2.00  meanT=2.00  drift=0.0000  tok_in=0  tok_out=0  wall_med=7ms  wall_p95=7ms  (N=1)
+
+Wrote /Users/martintreiber/Documents/Development/rewritable/benchmark/results/fidelity-summary.md

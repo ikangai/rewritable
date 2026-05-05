@@ -1,0 +1,42 @@
+== rwa-edit fidelity — 89 scenario(s) discovered (model=hybrid-pro+lite-r2, mode=hybrid) ==
+
+  [APP-01] form input.value persists across unrelated edit (EXPECTED-FAIL: runtime's renderDoc destroys input state) (N=1) 22
+        meanS=2.00  meanT=2.00  drift=0.0000  tok=0/0 (in/out)  wall=16ms
+  [APP-02] <details open> state persists across edit (EXPECTED-FAIL on current runtime) (N=1) 22
+        meanS=2.00  meanT=2.00  drift=0.0000  tok=0/0 (in/out)  wall=11ms
+  [APP-03] counter in localStorage persists across edit (script re-reads on render) (N=1) 22
+        meanS=2.00  meanT=2.00  drift=0.0000  tok=0/0 (in/out)  wall=59ms
+  [APP-04] module-scope counter resets across edit (expected behavior per spec; score 2 on clean reset) (N=1) 22
+        meanS=2.00  meanT=2.00  drift=0.0000  tok=0/0 (in/out)  wall=60ms
+  [APP-05] event listener rebinds via renderDoc script-replacement; post-edit click fires (N=1) 22
+        meanS=2.00  meanT=2.00  drift=0.0000  tok=0/0 (in/out)  wall=82ms
+  [APP-06] inline <script> with load-time side effects re-runs on renderDoc (N=1) 22
+        meanS=2.00  meanT=2.00  drift=0.0000  tok=0/0 (in/out)  wall=112ms
+  [BULK-01] translate to French via apply_edits per text node; structure byte-identical (N=3) 12 12 12
+        meanS=1.00  meanT=2.00  drift=0.0000  tok=1777/388 (in/out)  wall=5068ms
+  [BULK-02] translate prose to French; <pre><code> Python remains English byte-identical (N=3) 10 10 10
+        meanS=1.00  meanT=0.00  drift=0.5167  tok=1776/464 (in/out)  wall=5787ms
+  [BULK-03] mass class rename via replace_document (correct tool choice for 40-site change) (N=3) 22 22 12
+        meanS=1.67  meanT=2.00  drift=0.0000  tok=4545/3250 (in/out)  wall=29057ms
+  [BULK-04] wholesale redesign via replace_document; frozen zone bytes preserved (N=3) 12 12 12
+        meanS=1.00  meanT=2.00  drift=0.0000  tok=1626/1204 (in/out)  wall=16004ms
+  [CONT-01] add 6th list item AND update "Five reasons" → "Six reasons" coupling (N=3) 10 20 20
+        meanS=1.67  meanT=0.00  drift=0.0740  tok=2967/1090 (in/out)  wall=13093ms
+  [CONT-02] insert a new footnote between [1] and [2]; subsequent numbering renumbers (N=3) 22 22 10
+        meanS=1.67  meanT=1.33  drift=0.0000  tok=2639/5932 (in/out)  wall=47921ms
+  [CONT-03] add line item C=15; total updates 30 → 45 (N=3) 22 22 22
+        meanS=2.00  meanT=2.00  drift=0.0000  tok=2520/1318 (in/out)  wall=15314ms
+  [CONT-04] edit kg to 5.0; lbs updates to 11.0 (2.205 lb/kg) (N=3) 22 22 22
+        meanS=2.00  meanT=2.00  drift=0.0000  tok=1709/238 (in/out)  wall=5077ms
+  [CONT-05] rename section 3 heading + matching TOC entry; href unchanged (N=3) 20 20 20
+        meanS=2.00  meanT=0.00  drift=0.1861  tok=1844/665 (in/out)  wall=7254ms
+  [CONT-06] insert new section between 3 and 4; cross-ref renumbers to "section 5" (N=3) 20 20 20
+        meanS=2.00  meanT=0.00  drift=0.2864  tok=2615/2794 (in/out)  wall=29165ms
+  [CONT-07] rewrite middle paragraph; {{name}} and {{invoice_id}} placeholders preserved (N=3) 20 20 22
+        meanS=2.00  meanT=0.67  drift=0.2880  tok=1741/440 (in/out)  wall=6352ms
+  [DATA-01] add Q4 row to embedded JSON; schema preserved (N=3) 20 runner crashed: Error: OpenRouter 402: Payment Required
+    at file:///Users/martintreiber/Documents/Development/rewritable/benchmark/runners/model.mjs:159:24
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at async runHybridMode (file:///Users/martintreiber/Documents/Development/rewritable/benchmark/runners/hybrid-mode.mjs:114:19)
+    at async runOnce (file:///Users/martintreiber/Documents/Development/rewritable/benchmark/runners/run-fidelity.mjs:121:25)
+    at async main (file:///Users/martintreiber/Documents/Development/rewritable/benchmark/runners/run-fidelity.mjs:249:17)

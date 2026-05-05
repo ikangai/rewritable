@@ -1,0 +1,13 @@
+id	tag	pass	stub_tool	stub_edits	dsl_tool	dsl_edits	reason
+BULK-03	structural_regular	1	replace_document	-	replace_document	-	round-trip equal
+BULK-04	structural_irregular	1	replace_document	-	replace_document	-	round-trip equal
+DATA-01	structural_regular	1	apply_edits	1	apply_edits	1	round-trip equal
+DATA-02	structural_regular	1	apply_edits	1	apply_edits	1	round-trip equal
+FID-03	structural_regular	1	apply_edits	1	apply_edits	1	round-trip equal
+FID-04	structural_regular	1	apply_edits	1	apply_edits	1	round-trip equal
+FID-05	structural_regular	1	apply_edits	1	apply_edits	1	round-trip equal
+GENRE-04	structural_regular	1	apply_edits	3	apply_edits	3	round-trip equal
+ROB-06	structural_regular	1	apply_edits	1	apply_edits	1	round-trip equal
+STRUCT-01	structural_regular	1	apply_edits	3	apply_edits	3	round-trip equal
+STRUCT-02	structural_regular	1	apply_edits	3	apply_edits	3	round-trip equal
+STRUCT-03	structural_regular	1	apply_edits	1	apply_edits	1	round-trip equal
