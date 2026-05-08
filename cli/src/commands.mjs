@@ -6,6 +6,7 @@ import crypto from 'node:crypto';
 
 import { loadSeed, applySeedSubs, replaceInlineDoc } from './seed.mjs';
 import { convert } from './import.mjs';
+import { convertPdfViaVision } from './import-vision.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const packageRoot = path.dirname(here);
@@ -86,7 +87,7 @@ export async function newCmd({ outPath, force, open }) {
   if (open) openFile(out);
 }
 
-export async function importCmd({ inputPath, outPath, force, open }) {
+export async function importCmd({ inputPath, outPath, force, open, vision, model }) {
   const input = path.resolve(inputPath);
   const inputDir = path.dirname(input);
   const inputBasename = path.basename(input, path.extname(input));
@@ -97,7 +98,18 @@ export async function importCmd({ inputPath, outPath, force, open }) {
   // Buffer (not utf8 string) — docx and pdf are binary, and text formats
   // decode internally inside convert().
   const contents = await fs.readFile(input);
-  const { html, warnings } = await convert(ext, contents);
+  let html, warnings;
+  if (vision) {
+    if (ext !== 'pdf') {
+      const e = new Error(`--vision is currently only supported for .pdf (got .${ext})`);
+      e.exitCode = 2;
+      throw e;
+    }
+    console.error('note: vision: posting to openrouter…');
+    ({ html, warnings } = await convertPdfViaVision(contents, { model }));
+  } else {
+    ({ html, warnings } = await convert(ext, contents));
+  }
   for (const w of warnings) console.error(`note: ${w}`);
 
   const seed = await loadSeed(SEED_CANDIDATES);
