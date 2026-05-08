@@ -22,7 +22,8 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);min
 .rwa-set-row{display:flex;flex-direction:column;gap:4px;margin-bottom:10px;}
 .rwa-set-row:last-child{margin-bottom:0;}
 .rwa-set-row label{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:1.5px;text-transform:uppercase;color:var(--muted);}
-.rwa-set-row input{background:var(--bg);border:1px solid var(--b2);color:var(--text);font-family:'DM Mono',monospace;font-size:12px;padding:6px 9px;outline:none;border-radius:3px;}
+.rwa-set-row input,.rwa-set-row select{background:var(--bg);border:1px solid var(--b2);color:var(--text);font-family:'DM Mono',monospace;font-size:12px;padding:6px 9px;outline:none;border-radius:3px;}
+.rwa-set-row select{appearance:none;-webkit-appearance:none;cursor:pointer;}
 #rwa-pal{position:fixed;inset:0;display:none;align-items:flex-start;justify-content:center;padding-top:13vh;background:rgba(0,0,0,.6);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);z-index:99999;}
 #rwa-pal.open{display:flex;}
 #rwa-pal-box{width:min(540px,92vw);background:var(--surf);border:1px solid var(--b2);border-radius:8px;overflow:hidden;}
@@ -36,6 +37,16 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);min
 #rwa-pal-st{font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);}
 #rwa-pal-st.run{color:var(--blue);}#rwa-pal-st.ok{color:var(--accent);}#rwa-pal-st.err{color:var(--red);}
 .rwa-pal-hint{font-family:'DM Mono',monospace;font-size:10px;color:#363642;}
+@media print{
+  /* Hide all runtime chrome: status indicator, settings panel, command palette. */
+  #rwa-runtime{display:none!important;}
+  /* Print on a white page, not the dark surface. The imported document's own
+     scoped <style> defines its visual presentation; the container shouldn't
+     overlay its dark theme on top. */
+  body{background:#fff!important;color:#000!important;min-height:0!important;}
+  /* Let the document's own padding/margins control the page layout. */
+  #rwa-doc-mount{margin:0!important;padding:0!important;}
+}
 </style>
 </head>
 <body>
@@ -535,9 +546,16 @@ const RWA = {
   DB:'rwa_'+DOC_UUID, KEY:'self',
   DOC:'rwa_doc', UNDO:'rwa_undo', HIST:'rwa_hist', FSA:'rwa_fsa',
   UNDO_CAP:10, HIST_CAP:15,
-  K_API:'rwa_apikey', K_MODEL:'rwa_model',
+  K_API:'rwa_apikey', K_MODEL:'rwa_model', K_BACKEND:'rwa_backend',
   MODEL:'google/gemini-3-flash-preview',
   FILE:'re-write-able-spec.html',
+  // Optional alternative agent backend: a localhost CLI bridge
+  // (https://github.com/martintreiber/web_cli_bridge style) that runs
+  // arbitrary shell commands. When the user picks "bridge" in settings, ⌘K
+  // shells out to `claude -p` instead of calling OpenRouter directly. Free
+  // for users with a Claude subscription; the price is a per-call subprocess
+  // (~5-10s startup) and a single-shot agent loop (no mid-stream tool_calls).
+  BRIDGE_URL:'http://127.0.0.1:8765/run',
 };
 
 // LF canonicalization: doc text is stored, validated, and committed LF-only.
@@ -679,8 +697,9 @@ function buildUI() {
   <button class="rwa-st-btn pri" id="rwa-st-commit">⌘S</button>
 </div>
 <div id="rwa-set-panel">
-  <div class="rwa-set-row"><label>OpenRouter Key</label><input type="password" id="rwa-key" placeholder="sk-or-..." autocomplete="off"></div>
-  <div class="rwa-set-row"><label>Model</label><input type="text" id="rwa-model" autocomplete="off"></div>
+  <div class="rwa-set-row"><label>Backend</label><select id="rwa-backend"><option value="openrouter">OpenRouter (API key)</option><option value="bridge">Bridge (claude -p, localhost)</option></select></div>
+  <div class="rwa-set-row" id="rwa-set-row-key"><label>OpenRouter Key</label><input type="password" id="rwa-key" placeholder="sk-or-..." autocomplete="off"></div>
+  <div class="rwa-set-row" id="rwa-set-row-model"><label>Model</label><input type="text" id="rwa-model" autocomplete="off"></div>
 </div>
 <div id="rwa-pal">
   <div id="rwa-pal-box">
@@ -701,6 +720,19 @@ function buildUI() {
   m.value = sessionStorage.getItem(RWA.K_MODEL) || RWA.MODEL;
   k.oninput = e => sessionStorage.setItem(RWA.K_API, e.target.value.trim());
   m.oninput = e => sessionStorage.setItem(RWA.K_MODEL, e.target.value.trim() || RWA.MODEL);
+
+  const backendEl = document.getElementById('rwa-backend');
+  const syncBackendRows = () => {
+    const isOR = backendEl.value === 'openrouter';
+    document.getElementById('rwa-set-row-key').style.display = isOR ? '' : 'none';
+    document.getElementById('rwa-set-row-model').style.display = isOR ? '' : 'none';
+  };
+  backendEl.value = sessionStorage.getItem(RWA.K_BACKEND) || 'openrouter';
+  syncBackendRows();
+  backendEl.onchange = e => {
+    sessionStorage.setItem(RWA.K_BACKEND, e.target.value);
+    syncBackendRows();
+  };
 
   document.getElementById('rwa-st-cog').onclick = () => document.getElementById('rwa-set-panel').classList.toggle('open');
   document.getElementById('rwa-st-commit').onclick = commit;
@@ -1380,6 +1412,9 @@ function failureToToolResult(err) {
 }
 
 async function modify(instr) {
+  const backend = sessionStorage.getItem(RWA.K_BACKEND) || 'openrouter';
+  if (backend === 'bridge') return modifyViaBridge(instr);
+
   const key = sessionStorage.getItem(RWA.K_API);
   const model = sessionStorage.getItem(RWA.K_MODEL) || RWA.MODEL;
   if (!key) {
@@ -1502,6 +1537,126 @@ async function modify(instr) {
   } finally {
     modifyMutex = false;
   }
+}
+
+// ─── Bridge backend (claude -p via localhost shell) ────────────────
+//
+// Single-shot agent loop. claude -p has no mid-stream tool_calls (it's a
+// completion-style endpoint), so we ask it to emit a JSON envelope matching
+// one of the rwa-edit/1 tool schemas and dispatch it through the same
+// applyEdits/compileDslPlan/replaceDocument machinery the OpenRouter path
+// uses. No multi-turn retries — claude -p starts a fresh session each call.
+async function modifyViaBridge(instr) {
+  if (modifyMutex) {
+    setPalSt('err', '✗ another modify in progress');
+    throw new RwaEditError('concurrent_modify');
+  }
+  modifyMutex = true;
+  closePal();
+  setStatus('run', '⌘K running (bridge)');
+
+  try {
+    const cur = canonLF(await getDoc());
+    const frozenZones = extractFrozenZones(cur);
+
+    const prompt = SYSTEM_PROMPT + '\n\n' + buildUserPrompt(instr, cur, frozenZones) +
+      '\n\nThis backend is single-shot (no tool-calling protocol). Output ONLY a single JSON envelope as your last response, no markdown fences, no commentary, no preamble. The envelope MUST be one of these three exact shapes:\n\n' +
+      '{"tool":"apply_dsl_plan","envelope":{"version":"rwa-edit-dsl/1","ops":[/* per the rules above */]}}\n\n' +
+      '{"tool":"apply_edits","envelope":{"version":"rwa-edit/1","edits":[{"find":"...","replace":"..."}]}}\n\n' +
+      '{"tool":"replace_document","envelope":{"version":"rwa-edit/1","doc":"...","reason":"..."}}\n\n' +
+      'Pick the tool per the same preference rules: structural → apply_dsl_plan, content → apply_edits, wholesale → replace_document.';
+
+    // Encode the prompt as base64 to sidestep shell quoting (the doc may
+    // contain quotes, backticks, dollar signs, newlines — anything). The
+    // shell command decodes and pipes to claude -p's stdin via the
+    // text input mode.
+    const promptB64 = btoa(unescape(encodeURIComponent(prompt)));
+    const cmd = `echo '${promptB64}' | base64 -d | claude -p --output-format text --permission-mode bypassPermissions`;
+
+    let resp;
+    try {
+      resp = await fetch(RWA.BRIDGE_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ command: cmd }),
+      });
+    } catch (err) {
+      throw new Error('bridge unreachable at ' + RWA.BRIDGE_URL + ' — is web_cli_bridge running?');
+    }
+    if (!resp.ok) throw new Error('bridge http ' + resp.status);
+    const { stdout, stderr, exit_code } = await resp.json();
+    if (exit_code !== 0) {
+      const tail = (stderr || '').trim().split('\n').slice(-3).join('\n').slice(0, 300);
+      throw new Error('claude -p exited ' + exit_code + (tail ? ': ' + tail : ''));
+    }
+
+    const parsed = parseBridgeEnvelope(stdout);
+    if (!parsed) {
+      const preview = (stdout || '').trim().slice(0, 300);
+      throw new Error('bridge: model output did not contain a parseable JSON envelope. Preview: ' + preview);
+    }
+
+    let newDoc = null;
+    if (parsed.tool === 'apply_dsl_plan') {
+      const compiled = compileDslPlan(parsed.envelope, cur);
+      if (compiled.tool === 'apply_edits') newDoc = await applyEdits(compiled.envelope, cur);
+      else if (compiled.tool === 'replace_document') newDoc = await replaceDocument(compiled.envelope, cur);
+      else throw new RwaEditError('unknown_tool', null, { name: compiled.tool });
+    } else if (parsed.tool === 'apply_edits') {
+      newDoc = await applyEdits(parsed.envelope, cur);
+    } else if (parsed.tool === 'replace_document') {
+      newDoc = await replaceDocument(parsed.envelope, cur);
+    } else {
+      throw new RwaEditError('unknown_tool', null, { name: parsed.tool });
+    }
+
+    renderDoc(newDoc);
+    setDirty(true);
+    setStatus('ok', '✓ done');
+  } catch (e) {
+    if (e instanceof RwaEditError) {
+      setStatus('err', '✗ ' + e.code + (e.editIndex != null ? ' [edit ' + e.editIndex + ']' : ''));
+    } else {
+      setStatus('err', '✗ ' + e.message);
+    }
+    console.error(e);
+  } finally {
+    modifyMutex = false;
+  }
+}
+
+// Pull the first balanced top-level JSON object out of stdout. claude may
+// wrap output in stray text or markdown fences despite the prompt; walk
+// braces honoring strings + escapes to find the envelope.
+function parseBridgeEnvelope(text) {
+  if (typeof text !== 'string') return null;
+  // First strip ```json or ``` fences if the model emitted them.
+  const fenceStripped = text.replace(/```(?:json|html)?\s*/i, '').replace(/```\s*$/i, '');
+  const start = fenceStripped.indexOf('{');
+  if (start < 0) return null;
+  let depth = 0, inStr = false, escape = false;
+  for (let i = start; i < fenceStripped.length; i++) {
+    const ch = fenceStripped[i];
+    if (escape) { escape = false; continue; }
+    if (inStr) {
+      if (ch === '\\') escape = true;
+      else if (ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '"') { inStr = true; continue; }
+    if (ch === '{') depth++;
+    else if (ch === '}') {
+      depth--;
+      if (depth === 0) {
+        try {
+          const obj = JSON.parse(fenceStripped.slice(start, i + 1));
+          if (obj && typeof obj === 'object' && typeof obj.tool === 'string' && obj.envelope) return obj;
+          return null;
+        } catch (_) { return null; }
+      }
+    }
+  }
+  return null;
 }
 
 async function undo() {
