@@ -231,17 +231,28 @@ async function convertPdf(bytes) {
   };
 }
 
-// Group pdf.js text items into paragraph-shaped lines using y-coordinate
-// jumps. A small jump (within ~0.5× line height) keeps the same line; a large
-// jump (>1.5× line height) starts a new paragraph (emitted as an empty-string
-// separator). Returns an array of strings; '' marks a paragraph break.
+// Group pdf.js text items into paragraph-shaped lines.
+//
+// Two non-obvious problems this handles:
+// (1) Adjacent items inside a word: pdf.js returns text per font run, so a
+//     word like "Aufwände" comes out as ["Aufw", "ä", "nde"] when the umlaut
+//     glyph lives in a different font table from the ASCII letters. Joining
+//     with ' ' produces "Aufw ä nde" — wrong. We concat directly and only
+//     synthesize a space when there's a real positional x-gap.
+// (2) Stacked short lines: an address block (Name / Street / City) has small
+//     y-gaps that fit inside the within-paragraph threshold, so naive logic
+//     would join them into one paragraph "Name Street City". We additionally
+//     break paragraphs when the *previous* line ended significantly short of
+//     the page's typical right margin (a heuristic for "hard line break").
+//
+// Returns an array of strings; '' marks a paragraph break.
 function extractParagraphs(items) {
   if (!items || items.length === 0) return [];
-  // Each item: { str, transform: [a,b,c,d,e,f] }. transform[5] is y.
   const rows = items.map(it => ({
     str: it.str,
     y: it.transform ? it.transform[5] : 0,
     x: it.transform ? it.transform[4] : 0,
+    w: it.width || 0,
     h: it.height || (it.transform ? Math.abs(it.transform[3]) : 0) || 12,
   }));
   // Sort top-to-bottom (y desc in PDF coords), then left-to-right within a
@@ -263,19 +274,70 @@ function extractParagraphs(items) {
     }
   }
   if (cur) lines.push(cur);
-  // Render each line: sort parts left-to-right, join with single space.
-  const out = [];
-  let prevY = null, prevH = null;
-  for (const line of lines) {
+
+  // For each line: concat parts directly, inserting a synthetic space only
+  // when there's a real positional gap (previous part's right edge to next
+  // part's x). pdf.js often emits explicit space items (str=" ") with tiny
+  // width — those carry the space character themselves, so the position-gap
+  // check below typically sees ~0 distance when they're present and we don't
+  // double-space.
+  const rendered = lines.map(line => {
     line.parts.sort((a, b) => a.x - b.x);
-    const text = line.parts.map(p => p.str).join(' ').replace(/\s+/g, ' ').trim();
-    if (prevY != null) {
-      const gap = Math.abs(prevY - line.y);
-      if (gap > prevH * 1.5) out.push(''); // paragraph break
+    let text = '';
+    let prev = null;
+    for (const p of line.parts) {
+      if (prev) {
+        const gap = p.x - (prev.x + prev.w);
+        const lastChar = text.slice(-1);
+        const firstChar = p.str.charAt(0);
+        // Threshold of 2 user-space units catches inter-word gaps on body
+        // text without false-positives inside words. Skip if the boundary
+        // already has whitespace from either side.
+        if (gap > 2 && !/\s/.test(lastChar) && !/\s/.test(firstChar)) {
+          text += ' ';
+        }
+      }
+      text += p.str;
+      prev = p;
     }
-    if (text) out.push(text);
-    prevY = line.y;
-    prevH = line.h;
+    const left = line.parts.length ? Math.min(...line.parts.map(p => p.x)) : 0;
+    const right = line.parts.length
+      ? Math.max(...line.parts.map(p => p.x + p.w))
+      : 0;
+    return { text: text.replace(/\s+/g, ' ').trim(), y: line.y, h: line.h, left, right };
+  });
+
+  // The page's "typical right margin" — use the 90th-percentile right edge
+  // (more robust than max, which a stray header/page-number could inflate).
+  // Lines ending well short of this are likely hard line-breaks, not soft
+  // wraps to the right margin.
+  const sortedRights = rendered.filter(l => l.text).map(l => l.right).sort((a, b) => a - b);
+  const margin = sortedRights.length
+    ? sortedRights[Math.floor(sortedRights.length * 0.9)]
+    : 0;
+
+  const out = [];
+  let prev = null;
+  for (const line of rendered) {
+    if (!line.text) continue;  // pdfjs sometimes emits whitespace-only EOL stubs; ignore.
+    if (prev != null) {
+      const yGap = Math.abs(prev.y - line.y);
+      const yJump = yGap > prev.h * 1.5;
+      // Previous line ended significantly short of the page's right margin —
+      // that's the signature of a hard line-break (address line, table cell,
+      // bullet, sender block). Threshold of 1.5× line height (~1-2 chars)
+      // ignores end-of-line whitespace + small justification slop while still
+      // catching genuinely short lines. Soft wraps to the right margin are
+      // within ~few units and don't trigger.
+      const prevShortOfMargin = margin > 0 && (margin - prev.right) > prev.h * 1.5;
+      // Right-aligned blocks have a fixed right edge but varying left edge
+      // per line. A jump of more than a line-height in left position is a
+      // structural change, not text-flow continuation.
+      const leftJump = Math.abs(prev.left - line.left) > line.h;
+      if (yJump || prevShortOfMargin || leftJump) out.push('');
+    }
+    out.push(line.text);
+    prev = line;
   }
   return out;
 }

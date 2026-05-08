@@ -257,17 +257,17 @@ async function convertPdf(arrayBuffer) {
   };
 }
 
-// Mirror of cli/src/import.mjs extractParagraphs — same heuristic.
+// Mirror of cli/src/import.mjs extractParagraphs — see that file for the
+// rationale on the smart concat, margin-proximity, and left-jump rules.
 function extractParagraphs(items) {
   if (!items || items.length === 0) return [];
   const rows = items.map(it => ({
     str: it.str,
     y: it.transform ? it.transform[5] : 0,
     x: it.transform ? it.transform[4] : 0,
+    w: it.width || 0,
     h: it.height || (it.transform ? Math.abs(it.transform[3]) : 0) || 12,
   }));
-  // Sort top-to-bottom (y desc), then left-to-right. See cli/src/import.mjs
-  // for the rationale.
   rows.sort((a, b) => b.y - a.y || a.x - b.x);
   const lines = [];
   let cur = null;
@@ -281,18 +281,48 @@ function extractParagraphs(items) {
     }
   }
   if (cur) lines.push(cur);
-  const out = [];
-  let prevY = null, prevH = null;
-  for (const line of lines) {
+
+  const rendered = lines.map(line => {
     line.parts.sort((a, b) => a.x - b.x);
-    const text = line.parts.map(p => p.str).join(' ').replace(/\s+/g, ' ').trim();
-    if (prevY != null) {
-      const gap = Math.abs(prevY - line.y);
-      if (gap > prevH * 1.5) out.push('');
+    let text = '';
+    let prev = null;
+    for (const p of line.parts) {
+      if (prev) {
+        const gap = p.x - (prev.x + prev.w);
+        const lastChar = text.slice(-1);
+        const firstChar = p.str.charAt(0);
+        if (gap > 2 && !/\s/.test(lastChar) && !/\s/.test(firstChar)) {
+          text += ' ';
+        }
+      }
+      text += p.str;
+      prev = p;
     }
-    if (text) out.push(text);
-    prevY = line.y;
-    prevH = line.h;
+    const left = line.parts.length ? Math.min(...line.parts.map(p => p.x)) : 0;
+    const right = line.parts.length
+      ? Math.max(...line.parts.map(p => p.x + p.w))
+      : 0;
+    return { text: text.replace(/\s+/g, ' ').trim(), y: line.y, h: line.h, left, right };
+  });
+
+  const sortedRights = rendered.filter(l => l.text).map(l => l.right).sort((a, b) => a - b);
+  const margin = sortedRights.length
+    ? sortedRights[Math.floor(sortedRights.length * 0.9)]
+    : 0;
+
+  const out = [];
+  let prev = null;
+  for (const line of rendered) {
+    if (!line.text) continue;  // pdfjs sometimes emits whitespace-only EOL stubs; ignore.
+    if (prev != null) {
+      const yGap = Math.abs(prev.y - line.y);
+      const yJump = yGap > prev.h * 1.5;
+      const prevShortOfMargin = margin > 0 && (margin - prev.right) > prev.h * 1.5;
+      const leftJump = Math.abs(prev.left - line.left) > line.h;
+      if (yJump || prevShortOfMargin || leftJump) out.push('');
+    }
+    out.push(line.text);
+    prev = line;
   }
   return out;
 }
