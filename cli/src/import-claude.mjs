@@ -1,7 +1,13 @@
 import { spawn } from 'node:child_process';
+import { readFile } from 'node:fs/promises';
 import path from 'node:path';
+import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
 
 // PDF / docx → HTML by spawning the `claude` CLI in print mode.
+//
+// PDFs are processed in PARALLEL: split into page ranges, each chunk
+// handed to its own `claude -p` subprocess concurrently, then merged.
+// Long papers go from sequential N×t to roughly t×ceil(chunks/concurrency).
 //
 // Why: the user's machine has Anthropic's official `pdf` and `docx` skills
 // installed under ~/.claude/skills/. Those skills have rich Python tooling
@@ -18,11 +24,23 @@ import path from 'node:path';
 
 const SKILL_FOR_EXT = { pdf: 'pdf', docx: 'docx' };
 
-const PROMPT_TEMPLATE = (skill, filePath) => `Use the ${skill} skill to extract the content of ${filePath} and convert it to a single <article>...</article> element that VISUALLY MATCHES the original document as closely as possible when rendered in a browser.
+const DEFAULT_CHUNK_SIZE = 5;       // pages per chunk
+const DEFAULT_CONCURRENCY = 4;      // simultaneous claude -p subprocesses
+const DEFAULT_TIMEOUT_MS = 1_200_000; // 20 minutes per chunk
+
+const PROMPT_TEMPLATE = (skill, filePath, pageRange) => {
+  const rangeNote = pageRange
+    ? `\n\nIMPORTANT: Process ONLY pages ${pageRange.start} to ${pageRange.end} (inclusive) of the document. Use the pdf skill's page-range support (pypdf/pdfplumber accept page indices) to extract just that slice. Do not output content from any other pages. The full document is ${pageRange.totalPages} pages; this chunk is pages ${pageRange.start}-${pageRange.end}.`
+    : '';
+  const styleNote = pageRange && pageRange.start > 1
+    ? `\n\nIMPORTANT (chunk ${pageRange.start}-${pageRange.end}): omit the leading <style> and @page rules. Output ONLY the inner content of the .doc wrapper for these pages — start your output with the actual content elements (e.g., <h2>, <p>, <table>...) and end with the last content element. Do NOT include <article>, <style>, <div class="doc">, or </article>, </div>. Just the content of pages ${pageRange.start}-${pageRange.end}, ready to splice into a larger document. The first chunk handled the styling; later chunks contribute content only.`
+    : '';
+
+  return `Use the ${skill} skill to extract the content of ${filePath} and convert it to a single <article>...</article> element that VISUALLY MATCHES the original document as closely as possible when rendered in a browser.${rangeNote}${styleNote}
 
 The output will be embedded inside a re-writeable document container that has its own dark-theme CSS. Your <article> must include a leading scoped <style> block that defines its own visual appearance, so the container's theme does not bleed in.
 
-Required structure:
+Required structure (full-document or first-chunk only — see chunk note above):
 
 <article style="all: revert;">
   <style>
@@ -64,17 +82,20 @@ Content requirements:
 - No id attributes. Class names should be scoped under .doc to avoid collisions with the container.
 - Do not include <html>, <head>, <body>, or <!doctype>.
 
-Print ONLY the final <article>...</article> as your last response. No preamble, no markdown fences, no commentary.`;
+Print ONLY the final HTML as your last response. No preamble, no markdown fences, no commentary.`;
+};
 
 /**
  * @param {string} filePath  Absolute path to the file to import
  * @param {string} ext       Extension without dot ("pdf" or "docx")
  * @param {object} [opts]
  * @param {AbortSignal} [opts.signal]
- * @param {number} [opts.timeoutMs]  Wall-clock cap for the subprocess (default 20min)
+ * @param {number} [opts.timeoutMs]    Wall-clock cap PER CHUNK (default 20min)
+ * @param {number} [opts.chunkSize]    Pages per chunk for PDFs (default 5)
+ * @param {number} [opts.concurrency]  Max simultaneous subprocesses (default 4)
  * @returns {Promise<{ html: string, warnings: string[] }>}
  */
-export async function convertViaClaudeCli(filePath, ext, { signal, timeoutMs = 1_200_000 } = {}) {
+export async function convertViaClaudeCli(filePath, ext, opts = {}) {
   const skill = SKILL_FOR_EXT[ext];
   if (!skill) {
     const e = new Error(`--claude only supports .pdf and .docx (got .${ext})`);
@@ -82,7 +103,60 @@ export async function convertViaClaudeCli(filePath, ext, { signal, timeoutMs = 1
     throw e;
   }
 
-  const prompt = PROMPT_TEMPLATE(skill, filePath);
+  // docx isn't naturally page-chunkable (no fixed page boundaries inside the
+  // XML). Single call.
+  if (ext !== 'pdf') {
+    const stdout = await runClaude(filePath, PROMPT_TEMPLATE(skill, filePath, null), opts);
+    const html = extractArticle(stdout);
+    if (!html) {
+      const preview = stdout.trim().slice(0, 400);
+      const e = new Error(
+        `claude: output did not contain an <article> element. Output preview:\n${preview}`
+      );
+      e.exitCode = 2;
+      throw e;
+    }
+    return {
+      html,
+      warnings: [`claude: imported via \`claude -p\` (${skill} skill)`],
+    };
+  }
+
+  const totalPages = await getPdfPageCount(filePath);
+  const chunkSize = opts.chunkSize || DEFAULT_CHUNK_SIZE;
+  const concurrency = opts.concurrency || DEFAULT_CONCURRENCY;
+
+  const ranges = [];
+  for (let start = 1; start <= totalPages; start += chunkSize) {
+    const end = Math.min(start + chunkSize - 1, totalPages);
+    ranges.push({ start, end, totalPages });
+  }
+
+  console.error(
+    `note: claude: ${totalPages}-page PDF → ${ranges.length} chunk${ranges.length === 1 ? '' : 's'} of ≤${chunkSize} pages, ${Math.min(concurrency, ranges.length)} parallel`
+  );
+
+  const htmlChunks = await runWithConcurrency(ranges, concurrency, async (range, idx) => {
+    console.error(`note: claude: chunk ${idx + 1}/${ranges.length} (pages ${range.start}-${range.end}) starting…`);
+    const prompt = PROMPT_TEMPLATE(skill, filePath, range);
+    const html = await runClaude(filePath, prompt, opts);
+    console.error(`note: claude: chunk ${idx + 1}/${ranges.length} done`);
+    return html;
+  });
+
+  const merged = mergeChunks(htmlChunks);
+  return {
+    html: merged,
+    warnings: [
+      `claude: imported ${ranges.length} chunk${ranges.length === 1 ? '' : 's'} via parallel \`claude -p\` (${skill} skill)`,
+    ],
+  };
+}
+
+// Run a single `claude -p` invocation. Returns the extracted HTML for the
+// chunk (either a full <article> or content-only fragment depending on the
+// prompt's chunk hint).
+function runClaude(filePath, prompt, { signal, timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
   const args = [
     '-p',
     '--output-format', 'text',
@@ -128,23 +202,126 @@ export async function convertViaClaudeCli(filePath, ext, { signal, timeoutMs = 1
         e.exitCode = 2;
         return reject(e);
       }
-
-      const html = extractArticle(stdout);
-      if (!html) {
-        const preview = stdout.trim().slice(0, 400);
-        const e = new Error(
-          `claude: output did not contain an <article> element. Output preview:\n${preview}`
-        );
-        e.exitCode = 2;
-        return reject(e);
-      }
-
-      resolve({
-        html,
-        warnings: [`claude: imported via \`claude -p\` (${skill} skill)`],
-      });
+      // Output may be a full <article>...</article> (first chunk / single call)
+      // or just inner content (later chunks). Hand the full stdout to the
+      // merger; it knows how to extract either shape.
+      resolve(stdout);
     });
   });
+}
+
+// Bounded-concurrency parallel runner. Items are processed in input order
+// up to `concurrency` at a time. Order of `results[]` matches input order,
+// regardless of completion order.
+async function runWithConcurrency(items, concurrency, fn) {
+  const results = new Array(items.length);
+  let nextIdx = 0;
+  const worker = async () => {
+    while (true) {
+      const myIdx = nextIdx++;
+      if (myIdx >= items.length) break;
+      results[myIdx] = await fn(items[myIdx], myIdx);
+    }
+  };
+  const workers = Array.from({ length: Math.min(concurrency, items.length) }, worker);
+  await Promise.all(workers);
+  return results;
+}
+
+async function getPdfPageCount(filePath) {
+  const buf = await readFile(filePath);
+  const data = new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
+  let doc;
+  try {
+    doc = await pdfjs.getDocument({ data, isEvalSupported: false }).promise;
+  } catch (err) {
+    const e = new Error(`claude: failed to read PDF page count (${err && err.message ? err.message : String(err)})`);
+    e.exitCode = 2;
+    throw e;
+  }
+  const count = doc.numPages;
+  await doc.destroy().catch(() => {});
+  return count;
+}
+
+// Merge per-chunk HTML output into a single <article>. The first chunk's
+// output is treated as a full <article> with leading <style>/@page; later
+// chunks are content-only fragments (per their prompt). We:
+// 1. Extract the first chunk's full <article ...>...<style>...</style>...<div class="doc"> shell
+// 2. Append each later chunk's content fragments inside that .doc
+// 3. Close with </div></article>
+//
+// If a later chunk DID emit a full <article>+<style> (the model ignored the
+// chunk hint), strip its <article>/<style>/<div class="doc"> wrappers and
+// keep only its inner content.
+function mergeChunks(stdouts) {
+  if (stdouts.length === 1) {
+    const html = extractArticle(stdouts[0]);
+    if (!html) {
+      const preview = stdouts[0].trim().slice(0, 400);
+      const e = new Error(
+        `claude: output did not contain an <article> element. Output preview:\n${preview}`
+      );
+      e.exitCode = 2;
+      throw e;
+    }
+    return html;
+  }
+
+  const first = extractArticle(stdouts[0]);
+  if (!first) {
+    const preview = stdouts[0].trim().slice(0, 400);
+    const e = new Error(
+      `claude: first chunk output did not contain an <article> element. Output preview:\n${preview}`
+    );
+    e.exitCode = 2;
+    throw e;
+  }
+
+  // Find the .doc wrapper closing in the first chunk, so we can splice
+  // additional content before it. Prefer </div></article>; fall back to just
+  // </article> if no .doc wrapper exists.
+  const closingDocArticle = /<\/div>\s*<\/article>\s*$/i;
+  const closingArticleOnly = /<\/article>\s*$/i;
+  let prefix, suffix;
+  if (closingDocArticle.test(first)) {
+    prefix = first.replace(closingDocArticle, '');
+    suffix = '</div></article>';
+  } else if (closingArticleOnly.test(first)) {
+    prefix = first.replace(closingArticleOnly, '');
+    suffix = '</article>';
+  } else {
+    // Shouldn't happen — extractArticle guarantees </article>. Defensive.
+    prefix = first;
+    suffix = '';
+  }
+
+  const additional = stdouts.slice(1).map(stripChunkWrappers).filter(Boolean);
+  return [prefix, ...additional.map(c => '\n' + c), suffix].join('');
+}
+
+// Pull content out of a chunk's stdout. If the chunk emitted a full
+// <article>+<style>+<div class="doc">...</div></article> (because the model
+// ignored the "content-only" hint), strip those wrappers and the <style>.
+// Otherwise return the cleaned stdout (already content-only).
+function stripChunkWrappers(stdout) {
+  let body = stdout.trim();
+
+  // If wrapped in <article>...</article>, take only the inside.
+  const articleMatch = body.match(/<article(?:\s[^>]*)?>([\s\S]*)<\/article>/i);
+  if (articleMatch) body = articleMatch[1];
+
+  // Strip any <style>...</style> (we keep only the first chunk's styles).
+  body = body.replace(/<style(?:\s[^>]*)?>[\s\S]*?<\/style>/gi, '');
+
+  // Strip <div class="doc">...</div> wrapper if present.
+  const docMatch = body.match(/<div[^>]*class\s*=\s*["']doc["'][^>]*>([\s\S]*)<\/div>/i);
+  if (docMatch) body = docMatch[1];
+
+  // Strip stray markdown fences (some models add them despite the prompt).
+  body = body.replace(/^```(?:html)?\s*/i, '').replace(/\s*```\s*$/i, '');
+
+  return body.trim();
 }
 
 // Extract the outermost <article>...</article>. The agent's stdout might
