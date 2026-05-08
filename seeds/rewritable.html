@@ -36,6 +36,16 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);min
 #rwa-pal-st{font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);}
 #rwa-pal-st.run{color:var(--blue);}#rwa-pal-st.ok{color:var(--accent);}#rwa-pal-st.err{color:var(--red);}
 .rwa-pal-hint{font-family:'DM Mono',monospace;font-size:10px;color:#363642;}
+@media print{
+  /* Hide all runtime chrome: status indicator, settings panel, command palette. */
+  #rwa-runtime{display:none!important;}
+  /* Print on a white page, not the dark surface. The imported document's own
+     scoped <style> defines its visual presentation; the container shouldn't
+     overlay its dark theme on top. */
+  body{background:#fff!important;color:#000!important;min-height:0!important;}
+  /* Let the document's own padding/margins control the page layout. */
+  #rwa-doc-mount{margin:0!important;padding:0!important;}
+}
 </style>
 </head>
 <body>

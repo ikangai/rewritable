@@ -44,9 +44,17 @@ Style requirements (match the source PDF):
 - Font sizes — match the visual hierarchy (titles bigger, body smaller, footnotes smallest).
 - Text alignment — left, right, center, or justify, matching each block in the source.
 - Right-aligned blocks (sender addresses, dates) MUST remain right-aligned via CSS.
-- Padding/margins around sections that mirror the PDF's visual breathing room.
+- Padding/margins around sections that mirror the PDF's vertical density. Crucially, do NOT inflate vertical spacing — if the source fits on N pages, your output should fit on N pages when printed at the source paper size. Prefer tight margins (~0.5em-1em between blocks) over generous ones; a single-page invoice should remain a single-page invoice.
 - Tables — borders, cell padding, header weight, alternating rows or shading where the PDF has them.
 - Bold and italic where used, via <strong>/<em> (preferred) or font-weight/font-style in the scoped CSS.
+
+Print-fit requirements (REQUIRED for documents that match a paper size):
+- Include an @media print rule inside the scoped <style> block that:
+  * Removes any max-width constraint (so the doc fills the page width).
+  * Sets margin:0 / padding:0 on .doc so the printer's @page margin (default 0.5in) is the only outer margin.
+  * Optionally tightens block spacing further if the source page density is dense.
+  * Uses page-break-inside:avoid on tables, headers, and footer blocks so they don't split awkwardly across pages.
+- Add an @page rule with size matching the source (default A4 if uncertain): @page { size: A4; margin: 0.5in; }
 
 Content requirements:
 - Use semantic tags: <h1>-<h6>, <p>, <ul>/<ol>/<li>, <table>/<thead>/<tbody>/<tr>/<td>/<th>, <strong>/<em>, <a href="...">.
