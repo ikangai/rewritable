@@ -15,7 +15,7 @@ Flags:
   --version      print version and exit
   --help, -h     this help
 
-Supported import formats: .md, .markdown, .html, .htm, .txt
+Supported import formats: .md, .markdown, .html, .htm, .csv, .txt, .docx, .pdf
 `;
 
 const args = process.argv.slice(2);

@@ -16,8 +16,10 @@
     "node": ">=18"
   },
   "dependencies": {
+    "mammoth": "1.11.0",
     "marked": "^14.1.0",
-    "papaparse": "^5.4.1"
+    "papaparse": "^5.4.1",
+    "pdfjs-dist": "5.4.149"
   },
   "scripts": {
     "prepublishOnly": "mkdir -p seeds && cp ../seeds/rewritable.html seeds/rewritable.html"

@@ -94,7 +94,9 @@ export async function importCmd({ inputPath, outPath, force, open }) {
   await ensureWritable(out, force);
 
   const ext = path.extname(input).toLowerCase().replace(/^\./, '');
-  const contents = await fs.readFile(input, 'utf8');
+  // Buffer (not utf8 string) — docx and pdf are binary, and text formats
+  // decode internally inside convert().
+  const contents = await fs.readFile(input);
   const { html, warnings } = await convert(ext, contents);
   for (const w of warnings) console.error(`note: ${w}`);
 
