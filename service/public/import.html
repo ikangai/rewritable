@@ -33,15 +33,18 @@
 <main>
   <h1>import a file</h1>
   <div id="drop" class="drop" role="button" tabindex="0">
-    drop a <code>.md</code> or <code>.csv</code> file here, or <label for="picker">choose one</label>
-    <input id="picker" type="file" accept=".md,.markdown,text/markdown,.csv,text/csv" hidden>
+    drop a <code>.md</code>, <code>.csv</code>, <code>.docx</code>, or <code>.pdf</code> file here, or <label for="picker">choose one</label>
+    <input id="picker" type="file"
+           accept=".md,.markdown,text/markdown,.csv,text/csv,.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.pdf,application/pdf"
+           hidden>
   </div>
   <p id="status" class="status"></p>
   <p class="nav"><a href="/new">start with a blank container instead</a></p>
 </main>
-<!-- marked + papaparse versions pinned to match cli/package.json's resolved
-     versions. When the CLI's deps are bumped, bump these tags + SRI together
-     so /import stays byte-equivalent to `rwa import`. SRI recipe:
+<!-- marked + papaparse + mammoth + pdf.js versions pinned to match
+     cli/package.json's resolved versions. When the CLI's deps are bumped,
+     bump these tags + SRI together so /import stays byte-equivalent to
+     `rwa import`. SRI recipe:
      curl -sL https://cdnjs.cloudflare.com/ajax/libs/<lib>/<ver>/<file>.min.js | openssl dgst -sha512 -binary | openssl base64 -A -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/14.1.4/marked.min.js"
         integrity="sha512-oUb+v+OGnC4ls/U+74UExKiWPxg/0M1AW6WGR94XFExsapAwqFRWwG1uds2YO/k38mAaai62SKhsMQHbIYX5Rw=="
@@ -51,13 +54,31 @@
         integrity="sha512-dfX5uYVXzyU8+KHqj8bjo7UkOdg18PaOtpa48djpNbZHwExddghZ+ZmzWT06R5v6NSk3ZUfsH6FNEDepLx9hPQ=="
         crossorigin="anonymous"
         onerror="document.getElementById('status').textContent='papaparse failed to load — check your connection';document.getElementById('status').className='status error';document.getElementById('drop').classList.add('busy');"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.11.0/mammoth.browser.min.js"
+        integrity="sha512-Bpw1G70k1RT4pADRSajgVrcxVbAl0Ymw1UVr1EmeXxidZLp5MzAqkBx3zPK02UuvCnz4Ly7trvpJ1Zu/t2X1kQ=="
+        crossorigin="anonymous"
+        onerror="document.getElementById('status').textContent='mammoth failed to load — check your connection';document.getElementById('status').className='status error';document.getElementById('drop').classList.add('busy');"></script>
+<!-- pdf.js 5.x is ESM-only on cdnjs. Load via type="module" and attach to
+     window so the classic-script handler below can use it. The worker URL
+     must point at cdnjs too — pdfjs spawns a worker in the same origin as
+     the main script, so leaving workerSrc unset would 404 against the service. -->
+<script type="module"
+        integrity="sha512-54wsEqEFNC3gPwTKkiB4A+/xQXSJIcPnRIjz6Gg8JZ+H+2bthEcYOFCk978ogjyXYaivHJpL/flsKCyrO2lMRg=="
+        crossorigin="anonymous">
+  import * as pdfjs from 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/5.4.149/pdf.min.mjs';
+  pdfjs.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/5.4.149/pdf.worker.min.mjs';
+  window.pdfjs = pdfjs;
+  window.dispatchEvent(new Event('pdfjs-ready'));
+</script>
 <script>
 'use strict';
 
-// PORTED FROM cli/src/seed.mjs and cli/src/commands.mjs — keep in sync.
-// The CLI is the source of truth for the splice algorithm; this file mirrors
-// it in the browser. If seeds/rewritable.html grows a new substitution site or
-// the INLINE_DOC marker shape changes, update both places.
+// PORTED FROM cli/src/seed.mjs, cli/src/commands.mjs, and cli/src/import.mjs —
+// keep in sync. The CLI is the source of truth; this file mirrors splice +
+// converter logic in the browser. Four sites must stay aligned: the CLI
+// modules above plus seeds/rewritable.html (for the splice marker shape).
+// If the seed grows a new substitution site, the INLINE_DOC marker shape
+// changes, or any converter signature/heuristic shifts, update everywhere.
 
 const TITLE_RE = /<title>[^<]*<\/title>/;
 const FILE_RE = /(FILE\s*:\s*)'[^']*'/;
@@ -110,7 +131,6 @@ function replaceInlineDoc(seed, newDoc) {
   return seed.slice(0, cs) + escapeTL(newDoc) + seed.slice(i);
 }
 
-// PORTED FROM cli/src/import.mjs (convertCsv, looksLikeCsv) — keep in sync with the CLI.
 function looksLikeCsv(text) {
   const probe = Papa.parse(text, { preview: 2, skipEmptyLines: true, header: false });
   if (probe.errors.length > 0) return false;
@@ -130,7 +150,7 @@ function convertCsv(text) {
   // matching the CLI's behavior where parse errors don't abort the import.
   const rows = result.data;
   if (rows.length === 0) {
-    return '<article>\n</article>';
+    return { html: '<article>\n</article>', warnings: [] };
   }
   const escape = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const [header, ...body] = rows;
@@ -138,7 +158,101 @@ function convertCsv(text) {
   const tbody = body.length === 0
     ? ''
     : `\n<tbody>\n${body.map(row => `<tr>${row.map(c => `<td>${escape(c)}</td>`).join('')}</tr>`).join('\n')}\n</tbody>`;
-  return `<article>\n<table>\n${thead}${tbody}\n</table>\n</article>`;
+  return { html: `<article>\n<table>\n${thead}${tbody}\n</table>\n</article>`, warnings: [] };
+}
+
+async function convertDocx(arrayBuffer) {
+  let result;
+  try {
+    result = await mammoth.convertToHtml({ arrayBuffer });
+  } catch (err) {
+    throw new Error('docx: ' + (err && err.message ? err.message : String(err)));
+  }
+  const html = (result.value || '').trim();
+  if (!html) throw new Error('docx: produced empty document — input may be corrupt or empty');
+  const warnings = (result.messages || []).map(m => `docx: ${m.message}`);
+  return { html: `<article>\n${html}\n</article>`, warnings };
+}
+
+async function convertPdf(arrayBuffer) {
+  if (!window.pdfjs) throw new Error('pdf.js is not loaded yet — wait a moment and try again');
+  const data = new Uint8Array(arrayBuffer);
+  let doc;
+  try {
+    doc = await window.pdfjs.getDocument({ data, isEvalSupported: false }).promise;
+  } catch (err) {
+    if (err && err.name === 'PasswordException') {
+      throw new Error('pdf: file is password-protected');
+    }
+    throw new Error('pdf: ' + (err && err.message ? err.message : String(err)));
+  }
+  const escape = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const paragraphs = [];
+  for (let p = 1; p <= doc.numPages; p++) {
+    const page = await doc.getPage(p);
+    const tc = await page.getTextContent();
+    extractParagraphs(tc.items).forEach(line => paragraphs.push(line));
+    paragraphs.push(null);
+  }
+  await doc.destroy().catch(() => {});
+
+  const blocks = [];
+  let buf = [];
+  const flush = () => {
+    const joined = buf.join(' ').replace(/\s+/g, ' ').trim();
+    if (joined) blocks.push(`<p>${escape(joined)}</p>`);
+    buf = [];
+  };
+  for (const line of paragraphs) {
+    if (line === null || line === '') { flush(); continue; }
+    buf.push(line);
+  }
+  flush();
+
+  if (blocks.length === 0) {
+    throw new Error('pdf: no extractable text — this looks like a scanned/image PDF; OCR is not supported');
+  }
+  return {
+    html: `<article>\n${blocks.join('\n')}\n</article>`,
+    warnings: ['pdf: layout reconstructed by heuristics — review headings/lists manually'],
+  };
+}
+
+// Mirror of cli/src/import.mjs extractParagraphs — same heuristic.
+function extractParagraphs(items) {
+  if (!items || items.length === 0) return [];
+  const rows = items.map(it => ({
+    str: it.str,
+    y: it.transform ? it.transform[5] : 0,
+    x: it.transform ? it.transform[4] : 0,
+    h: it.height || (it.transform ? Math.abs(it.transform[3]) : 0) || 12,
+  }));
+  const lines = [];
+  let cur = null;
+  for (const r of rows) {
+    if (cur && Math.abs(r.y - cur.y) <= cur.h * 0.5) {
+      cur.parts.push(r);
+      cur.y = (cur.y + r.y) / 2;
+    } else {
+      if (cur) lines.push(cur);
+      cur = { y: r.y, h: r.h, parts: [r] };
+    }
+  }
+  if (cur) lines.push(cur);
+  const out = [];
+  let prevY = null, prevH = null;
+  for (const line of lines) {
+    line.parts.sort((a, b) => a.x - b.x);
+    const text = line.parts.map(p => p.str).join(' ').replace(/\s+/g, ' ').trim();
+    if (prevY != null) {
+      const gap = Math.abs(prevY - line.y);
+      if (gap > prevH * 1.5) out.push('');
+    }
+    if (text) out.push(text);
+    prevY = line.y;
+    prevH = line.h;
+  }
+  return out;
 }
 
 // --- UI wiring ---
@@ -165,44 +279,61 @@ function triggerDownload(blob, filename) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+const TEXTUAL = new Set(['md', 'markdown', 'csv']);
+const BINARY = new Set(['docx', 'pdf']);
+
 async function handleFile(file) {
   if (!file) return;
   const ext = (file.name.split('.').pop() || '').toLowerCase();
-  const isMd = ext === 'md' || ext === 'markdown';
-  const isCsv = ext === 'csv';
-  if (!isMd && !isCsv) {
-    return showError(`unsupported format: .${ext || '(none)'} (only .md / .markdown / .csv for now)`);
+  if (!TEXTUAL.has(ext) && !BINARY.has(ext)) {
+    return showError(`unsupported format: .${ext || '(none)'} (only .md / .markdown / .csv / .docx / .pdf)`);
   }
-  if (isMd && typeof marked === 'undefined') {
+  if ((ext === 'md' || ext === 'markdown') && typeof marked === 'undefined') {
     return showError('marked is not loaded — cannot convert');
   }
-  if (isCsv && typeof Papa === 'undefined') {
+  if (ext === 'csv' && typeof Papa === 'undefined') {
     return showError('papaparse is not loaded — cannot convert');
+  }
+  if (ext === 'docx' && typeof mammoth === 'undefined') {
+    return showError('mammoth is not loaded — cannot convert');
+  }
+  if (ext === 'pdf' && !window.pdfjs) {
+    return showError('pdf.js is not loaded — cannot convert');
   }
   dropEl.classList.add('busy');
   setStatus('converting…');
   try {
-    const text = await file.text();
-    if (!text.trim()) return showError('file is empty');
-    let html;
-    if (isMd) {
+    let html, warnings = [];
+    if (ext === 'md' || ext === 'markdown') {
+      const text = await file.text();
+      if (!text.trim()) return showError('file is empty');
       // marked.parse can be sync or return a Promise depending on options;
       // await handles both safely.
       const parsed = await marked.parse(text, { gfm: true, breaks: false });
       html = `<article>\n${String(parsed).trim()}\n</article>`;
-    } else {
-      html = convertCsv(text);
+    } else if (ext === 'csv') {
+      const text = await file.text();
+      if (!text.trim()) return showError('file is empty');
+      ({ html, warnings } = convertCsv(text));
+    } else if (ext === 'docx') {
+      const buf = await file.arrayBuffer();
+      ({ html, warnings } = await convertDocx(buf));
+    } else if (ext === 'pdf') {
+      const buf = await file.arrayBuffer();
+      ({ html, warnings } = await convertPdf(buf));
     }
+    for (const w of warnings) console.warn(w);
     const seedRes = await fetch('/rewritable.html', { cache: 'no-store' });
     if (!seedRes.ok) return showError(`could not fetch seed (${seedRes.status})`);
     const seed = await seedRes.text();
-    const baseName = file.name.replace(/\.(md|markdown|csv)$/i, '');
+    const baseName = file.name.replace(/\.(md|markdown|csv|docx|pdf)$/i, '');
     const outName = `${baseName}.html`;
     const title = titleFromBasename(baseName);
     const subbed = applyTitleAndFileSubs(seed, { title, fileMeta: outName });
     const result = replaceInlineDoc(subbed, html);
     triggerDownload(new Blob([result], { type: 'text/html' }), outName);
-    setStatus(`downloaded ${outName}`, 'ok');
+    const suffix = warnings.length ? ` (${warnings.length} note${warnings.length === 1 ? '' : 's'} — see console)` : '';
+    setStatus(`downloaded ${outName}${suffix}`, 'ok');
   } catch (err) {
     showError(err && err.message ? err.message : String(err));
   } finally {
