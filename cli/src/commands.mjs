@@ -7,6 +7,7 @@ import crypto from 'node:crypto';
 import { loadSeed, applySeedSubs, replaceInlineDoc } from './seed.mjs';
 import { convert } from './import.mjs';
 import { convertPdfViaVision } from './import-vision.mjs';
+import { convertViaClaudeCli } from './import-claude.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const packageRoot = path.dirname(here);
@@ -87,7 +88,12 @@ export async function newCmd({ outPath, force, open }) {
   if (open) openFile(out);
 }
 
-export async function importCmd({ inputPath, outPath, force, open, vision, model }) {
+export async function importCmd({ inputPath, outPath, force, open, vision, claude, model }) {
+  if (vision && claude) {
+    const e = new Error('--vision and --claude are mutually exclusive');
+    e.exitCode = 2;
+    throw e;
+  }
   const input = path.resolve(inputPath);
   const inputDir = path.dirname(input);
   const inputBasename = path.basename(input, path.extname(input));
@@ -95,9 +101,6 @@ export async function importCmd({ inputPath, outPath, force, open, vision, model
   await ensureWritable(out, force);
 
   const ext = path.extname(input).toLowerCase().replace(/^\./, '');
-  // Buffer (not utf8 string) — docx and pdf are binary, and text formats
-  // decode internally inside convert().
-  const contents = await fs.readFile(input);
   let html, warnings;
   if (vision) {
     if (ext !== 'pdf') {
@@ -106,8 +109,17 @@ export async function importCmd({ inputPath, outPath, force, open, vision, model
       throw e;
     }
     console.error('note: vision: posting to openrouter…');
+    // Buffer for HTTP base64 encoding.
+    const contents = await fs.readFile(input);
     ({ html, warnings } = await convertPdfViaVision(contents, { model }));
+  } else if (claude) {
+    console.error('note: claude: spawning `claude -p`…');
+    // Pass the path; the skill reads the file itself via its own tools.
+    ({ html, warnings } = await convertViaClaudeCli(input, ext));
   } else {
+    // Buffer (not utf8 string) — docx and pdf are binary, and text formats
+    // decode internally inside convert().
+    const contents = await fs.readFile(input);
     ({ html, warnings } = await convert(ext, contents));
   }
   for (const w of warnings) console.error(`note: ${w}`);
