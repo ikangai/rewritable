@@ -71,10 +71,10 @@ Print ONLY the final <article>...</article> as your last response. No preamble, 
  * @param {string} ext       Extension without dot ("pdf" or "docx")
  * @param {object} [opts]
  * @param {AbortSignal} [opts.signal]
- * @param {number} [opts.timeoutMs]  Wall-clock cap for the subprocess (default 5min)
+ * @param {number} [opts.timeoutMs]  Wall-clock cap for the subprocess (default 20min)
  * @returns {Promise<{ html: string, warnings: string[] }>}
  */
-export async function convertViaClaudeCli(filePath, ext, { signal, timeoutMs = 300_000 } = {}) {
+export async function convertViaClaudeCli(filePath, ext, { signal, timeoutMs = 1_200_000 } = {}) {
   const skill = SKILL_FOR_EXT[ext];
   if (!skill) {
     const e = new Error(`--claude only supports .pdf and .docx (got .${ext})`);

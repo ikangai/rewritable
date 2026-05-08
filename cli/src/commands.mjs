@@ -88,7 +88,7 @@ export async function newCmd({ outPath, force, open }) {
   if (open) openFile(out);
 }
 
-export async function importCmd({ inputPath, outPath, force, open, vision, claude, model }) {
+export async function importCmd({ inputPath, outPath, force, open, vision, claude, model, timeoutSec }) {
   if (vision && claude) {
     const e = new Error('--vision and --claude are mutually exclusive');
     e.exitCode = 2;
@@ -115,7 +115,8 @@ export async function importCmd({ inputPath, outPath, force, open, vision, claud
   } else if (claude) {
     console.error('note: claude: spawning `claude -p`…');
     // Pass the path; the skill reads the file itself via its own tools.
-    ({ html, warnings } = await convertViaClaudeCli(input, ext));
+    const claudeOpts = timeoutSec ? { timeoutMs: timeoutSec * 1000 } : {};
+    ({ html, warnings } = await convertViaClaudeCli(input, ext, claudeOpts));
   } else {
     // Buffer (not utf8 string) — docx and pdf are binary, and text formats
     // decode internally inside convert().

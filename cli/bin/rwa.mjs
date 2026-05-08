@@ -25,6 +25,9 @@ Flags:
                  files you trust.
   --model <id>   (with --vision) override the OpenRouter model id.
                  Default: google/gemini-3-flash-preview.
+  --timeout <s>  (with --claude) wall-clock cap for the subprocess in
+                 seconds. Default: 1200 (20 minutes). Long academic
+                 papers may need more.
   --version      print version and exit
   --help, -h     this help
 
@@ -50,10 +53,17 @@ const verb = args[0];
     const open = rest.includes('--open') || rest.includes('-o');
     const vision = rest.includes('--vision');
     const claude = rest.includes('--claude');
-    // --model takes a value: find the index, then take the next arg.
+    // --model and --timeout take a value: find the index, then take the next arg.
     const modelIdx = rest.indexOf('--model');
     const model = modelIdx >= 0 ? rest[modelIdx + 1] : undefined;
-    const positional = rest.filter((a, i) => !a.startsWith('-') && rest[i - 1] !== '--model');
+    const timeoutIdx = rest.indexOf('--timeout');
+    const timeoutSec = timeoutIdx >= 0 ? Number(rest[timeoutIdx + 1]) : undefined;
+    if (timeoutIdx >= 0 && (!Number.isFinite(timeoutSec) || timeoutSec <= 0)) {
+      console.error(`rwa: --timeout requires a positive number of seconds (got "${rest[timeoutIdx + 1]}")`);
+      process.exitCode = 2;
+      return;
+    }
+    const positional = rest.filter((a, i) => !a.startsWith('-') && rest[i - 1] !== '--model' && rest[i - 1] !== '--timeout');
     if (verb === 'new') {
       await newCmd({ outPath: positional[0], force, open });
     } else if (verb === 'import') {
@@ -62,7 +72,7 @@ const verb = args[0];
         process.exitCode = 2;
         return;
       }
-      await importCmd({ inputPath: positional[0], outPath: positional[1], force, open, vision, claude, model });
+      await importCmd({ inputPath: positional[0], outPath: positional[1], force, open, vision, claude, model, timeoutSec });
     } else {
       console.error(`rwa: unknown verb "${verb}". Try --help.`);
       process.exitCode = 2;
