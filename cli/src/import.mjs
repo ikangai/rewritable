@@ -128,14 +128,54 @@ async function convertDocx(bytes) {
     e.exitCode = 2;
     throw e;
   }
-  const html = (result.value || '').trim();
-  if (!html) {
+  const raw = (result.value || '').trim();
+  if (!raw) {
     const e = new Error('docx: produced empty document — input may be corrupt or empty');
     e.exitCode = 2;
     throw e;
   }
-  const warnings = (result.messages || []).map(m => `docx: ${m.message}`);
+  const { html, skipped } = sanitizeMammothUrls(raw);
+  const warnings = [
+    ...skipped.map(s => `docx: ${s}`),
+    ...(result.messages || []).map(m => `docx: ${m.message}`),
+  ];
   return { html: `<article>\n${html}\n</article>`, warnings };
+}
+
+// Mammoth doesn't filter URL schemes — a docx with a `javascript:` hyperlink
+// would land in the imported document and execute on click (stored XSS in the
+// downloaded rwa container). Strip unsafe schemes from href/src and replace
+// with `#`. Mammoth's HTML writer always uses double-quoted attributes and
+// escapes &, ", <, > inside values, so a regex match against `attr="..."` is
+// sufficient — no quote-escape ambiguity to worry about.
+const _SAFE_HREF_SCHEMES = new Set(['http', 'https', 'mailto', 'tel']);
+function _attrIsSafe(attr, val) {
+  const m = val.match(/^\s*([a-z][a-z0-9+.\-]*):/i);
+  if (!m) return true; // no scheme: relative URL, fragment, or path
+  const proto = m[1].toLowerCase();
+  if (_SAFE_HREF_SCHEMES.has(proto)) return true;
+  // Mammoth embeds images as data:image/...;base64,... — allow that one
+  // narrow shape on src only. A docx that lies about its image content-type
+  // could produce data:text/html in src; img doesn't execute scripts there,
+  // so it's a UX issue (broken image) not a security issue.
+  if (attr === 'src' && proto === 'data' && /^\s*data:image\//i.test(val)) return true;
+  return false;
+}
+function sanitizeMammothUrls(html) {
+  const skipped = [];
+  const stripAttr = (attr) => (full, val) => {
+    if (_attrIsSafe(attr, val)) return full;
+    const m = val.match(/^\s*([a-z][a-z0-9+.\-]*):/i);
+    const scheme = m ? m[1].toLowerCase() : 'unknown';
+    skipped.push(`stripped unsafe ${attr} (scheme: ${scheme}:)`);
+    return `${attr}="#"`;
+  };
+  return {
+    html: html
+      .replace(/href="([^"]*)"/g, stripAttr('href'))
+      .replace(/src="([^"]*)"/g, stripAttr('src')),
+    skipped,
+  };
 }
 
 async function convertPdf(bytes) {
@@ -145,7 +185,7 @@ async function convertPdf(bytes) {
   const data = new Uint8Array(src.buffer, src.byteOffset, src.byteLength);
   let doc;
   try {
-    doc = await pdfjs.getDocument({ data, isEvalSupported: false, useSystemFonts: true }).promise;
+    doc = await pdfjs.getDocument({ data, isEvalSupported: false }).promise;
   } catch (err) {
     const name = err && err.name;
     if (name === 'PasswordException') {
@@ -204,6 +244,12 @@ function extractParagraphs(items) {
     x: it.transform ? it.transform[4] : 0,
     h: it.height || (it.transform ? Math.abs(it.transform[3]) : 0) || 12,
   }));
+  // Sort top-to-bottom (y desc in PDF coords), then left-to-right within a
+  // row. pdfjs's content-stream order is reading order for well-tagged
+  // single-column PDFs, but for multi-column or absolutely-positioned layouts
+  // it interleaves visually-separate lines; sorting first makes the same-y
+  // grouping below tolerant of that.
+  rows.sort((a, b) => b.y - a.y || a.x - b.x);
   // Group into visual lines by y (within half a line height).
   const lines = [];
   let cur = null;

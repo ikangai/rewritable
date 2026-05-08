@@ -14,6 +14,16 @@ const TRIGGER_HTML = fs.readFileSync(path.join(PUBLIC_DIR, 'new.html'));
 const IMPORT_HTML = fs.readFileSync(path.join(PUBLIC_DIR, 'import.html'));
 const SEED_TEMPLATE = fs.readFileSync(path.join(SEEDS_DIR, 'rewritable.html'), 'utf8');
 
+// pdf.js is self-hosted (not loaded from cdnjs) because the inline
+// `<script type="module">` import doesn't validate SRI on the imported URL —
+// integrity= only fires for `<script src=>`. Serving same-origin removes the
+// CDN-trust dependency entirely. Files are copied from cli/node_modules/
+// pdfjs-dist/build/ at the matching version; bumping the CLI's pdfjs-dist
+// version means re-copying these files (and updating cdnjs SRI for the other
+// libs that DO load via classic script).
+const PDFJS_MAIN = fs.readFileSync(path.join(PUBLIC_DIR, 'pdf', 'pdf.min.mjs'));
+const PDFJS_WORKER = fs.readFileSync(path.join(PUBLIC_DIR, 'pdf', 'pdf.worker.min.mjs'));
+
 // Per-container UUID injection. The seed ships with a placeholder DOC_UUID;
 // every download gets a fresh randomUUID() substituted in. Without this, two
 // downloads on the same machine would share state under file:// (the v0.7
@@ -63,6 +73,18 @@ const server = http.createServer((req, res) => {
       'Content-Type': 'text/html; charset=utf-8',
       'Cache-Control': 'no-store',
     }, IMPORT_HTML);
+  }
+  if (url === '/pdf/pdf.min.mjs') {
+    return send(200, {
+      'Content-Type': 'text/javascript; charset=utf-8',
+      'Cache-Control': 'public, max-age=3600',
+    }, PDFJS_MAIN);
+  }
+  if (url === '/pdf/pdf.worker.min.mjs') {
+    return send(200, {
+      'Content-Type': 'text/javascript; charset=utf-8',
+      'Cache-Control': 'public, max-age=3600',
+    }, PDFJS_WORKER);
   }
   if (url === '/rewritable.html') {
     const uuid = crypto.randomUUID();

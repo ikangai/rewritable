@@ -58,17 +58,23 @@
         integrity="sha512-Bpw1G70k1RT4pADRSajgVrcxVbAl0Ymw1UVr1EmeXxidZLp5MzAqkBx3zPK02UuvCnz4Ly7trvpJ1Zu/t2X1kQ=="
         crossorigin="anonymous"
         onerror="document.getElementById('status').textContent='mammoth failed to load — check your connection';document.getElementById('status').className='status error';document.getElementById('drop').classList.add('busy');"></script>
-<!-- pdf.js 5.x is ESM-only on cdnjs. Load via type="module" and attach to
-     window so the classic-script handler below can use it. The worker URL
-     must point at cdnjs too — pdfjs spawns a worker in the same origin as
-     the main script, so leaving workerSrc unset would 404 against the service. -->
-<script type="module"
-        integrity="sha512-54wsEqEFNC3gPwTKkiB4A+/xQXSJIcPnRIjz6Gg8JZ+H+2bthEcYOFCk978ogjyXYaivHJpL/flsKCyrO2lMRg=="
-        crossorigin="anonymous">
-  import * as pdfjs from 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/5.4.149/pdf.min.mjs';
-  pdfjs.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/5.4.149/pdf.worker.min.mjs';
-  window.pdfjs = pdfjs;
-  window.dispatchEvent(new Event('pdfjs-ready'));
+<!-- pdf.js 5.x is ESM-only on cdnjs. SRI on `<script type="module">` does NOT
+     validate the URL the inline body imports — it only validates the script's
+     own body, which is empty here. So we self-host pdf.js (same-origin, served
+     from /pdf/) instead of trusting cdnjs. Bumping the CLI's pdfjs-dist
+     version means re-copying service/public/pdf/{pdf.min.mjs,pdf.worker.min.mjs}
+     from cli/node_modules/pdfjs-dist/build/. The worker file URL is set on
+     GlobalWorkerOptions so pdfjs spawns it from the same origin. -->
+<script type="module">
+  try {
+    const pdfjs = await import('/pdf/pdf.min.mjs');
+    pdfjs.GlobalWorkerOptions.workerSrc = '/pdf/pdf.worker.min.mjs';
+    window.pdfjs = pdfjs;
+  } catch (err) {
+    const s = document.getElementById('status');
+    s.textContent = 'pdf.js failed to load — ' + (err && err.message ? err.message : 'unknown error');
+    s.className = 'status error';
+  }
 </script>
 <script>
 'use strict';
@@ -168,10 +174,43 @@ async function convertDocx(arrayBuffer) {
   } catch (err) {
     throw new Error('docx: ' + (err && err.message ? err.message : String(err)));
   }
-  const html = (result.value || '').trim();
-  if (!html) throw new Error('docx: produced empty document — input may be corrupt or empty');
-  const warnings = (result.messages || []).map(m => `docx: ${m.message}`);
+  const raw = (result.value || '').trim();
+  if (!raw) throw new Error('docx: produced empty document — input may be corrupt or empty');
+  const { html, skipped } = sanitizeMammothUrls(raw);
+  const warnings = [
+    ...skipped.map(s => `docx: ${s}`),
+    ...(result.messages || []).map(m => `docx: ${m.message}`),
+  ];
   return { html: `<article>\n${html}\n</article>`, warnings };
+}
+
+// Mammoth doesn't filter URL schemes — a docx with a `javascript:` hyperlink
+// would land in the imported document and execute on click (stored XSS in the
+// downloaded rwa container). Mirror of cli/src/import.mjs sanitizeMammothUrls.
+const _SAFE_HREF_SCHEMES = new Set(['http', 'https', 'mailto', 'tel']);
+function _attrIsSafe(attr, val) {
+  const m = val.match(/^\s*([a-z][a-z0-9+.\-]*):/i);
+  if (!m) return true;
+  const proto = m[1].toLowerCase();
+  if (_SAFE_HREF_SCHEMES.has(proto)) return true;
+  if (attr === 'src' && proto === 'data' && /^\s*data:image\//i.test(val)) return true;
+  return false;
+}
+function sanitizeMammothUrls(html) {
+  const skipped = [];
+  const stripAttr = (attr) => (full, val) => {
+    if (_attrIsSafe(attr, val)) return full;
+    const m = val.match(/^\s*([a-z][a-z0-9+.\-]*):/i);
+    const scheme = m ? m[1].toLowerCase() : 'unknown';
+    skipped.push(`stripped unsafe ${attr} (scheme: ${scheme}:)`);
+    return `${attr}="#"`;
+  };
+  return {
+    html: html
+      .replace(/href="([^"]*)"/g, stripAttr('href'))
+      .replace(/src="([^"]*)"/g, stripAttr('src')),
+    skipped,
+  };
 }
 
 async function convertPdf(arrayBuffer) {
@@ -227,6 +266,9 @@ function extractParagraphs(items) {
     x: it.transform ? it.transform[4] : 0,
     h: it.height || (it.transform ? Math.abs(it.transform[3]) : 0) || 12,
   }));
+  // Sort top-to-bottom (y desc), then left-to-right. See cli/src/import.mjs
+  // for the rationale.
+  rows.sort((a, b) => b.y - a.y || a.x - b.x);
   const lines = [];
   let cur = null;
   for (const r of rows) {
