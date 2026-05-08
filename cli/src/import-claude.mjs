@@ -18,17 +18,45 @@ import path from 'node:path';
 
 const SKILL_FOR_EXT = { pdf: 'pdf', docx: 'docx' };
 
-const PROMPT_TEMPLATE = (skill, filePath) => `Use the ${skill} skill to extract the content of ${filePath} and convert it to a single <article>...</article> element of clean semantic HTML for embedding in a re-writeable document container.
+const PROMPT_TEMPLATE = (skill, filePath) => `Use the ${skill} skill to extract the content of ${filePath} and convert it to a single <article>...</article> element that VISUALLY MATCHES the original document as closely as possible when rendered in a browser.
 
-Output requirements:
-- Output ONLY the <article> element. No preamble, no markdown code fences, no commentary.
-- Use semantic tags: <h1>-<h6> for headings, <p> for paragraphs, <ul>/<ol>/<li> for lists, <table>/<thead>/<tbody>/<tr>/<td>/<th> for tables, <strong>/<em> for emphasis, <a href="..."> for links.
-- Preserve text content exactly. Do not summarize, paraphrase, or reword.
-- Reconstruct multi-column layouts and tables faithfully.
-- No <script>, <style>, class, or id attributes. No <img> tags (this container is text-focused; if an image carries information, describe it briefly in a <p>).
+The output will be embedded inside a re-writeable document container that has its own dark-theme CSS. Your <article> must include a leading scoped <style> block that defines its own visual appearance, so the container's theme does not bleed in.
+
+Required structure:
+
+<article style="all: revert;">
+  <style>
+    /* Scope every rule to .doc to avoid leaking into the container.
+       Use 'all: revert' or explicit resets to neutralize the container's theme. */
+    .doc { background: ...; color: ...; font-family: ...; padding: ...; max-width: ...; margin: 0 auto; }
+    .doc h1, .doc h2, .doc p, .doc table, .doc th, .doc td { ... }
+    /* etc. */
+  </style>
+  <div class="doc">
+    ... actual content ...
+  </div>
+</article>
+
+Style requirements (match the source PDF):
+- Background color (usually white #ffffff for printed documents).
+- Text color (usually black #000000 or near-black).
+- Font family — pick a generic match: invoices and letters use sans-serif (Helvetica, Arial, system-ui); academic/literary uses serif (Georgia, Times New Roman); monospaced text uses monospace.
+- Font sizes — match the visual hierarchy (titles bigger, body smaller, footnotes smallest).
+- Text alignment — left, right, center, or justify, matching each block in the source.
+- Right-aligned blocks (sender addresses, dates) MUST remain right-aligned via CSS.
+- Padding/margins around sections that mirror the PDF's visual breathing room.
+- Tables — borders, cell padding, header weight, alternating rows or shading where the PDF has them.
+- Bold and italic where used, via <strong>/<em> (preferred) or font-weight/font-style in the scoped CSS.
+
+Content requirements:
+- Use semantic tags: <h1>-<h6>, <p>, <ul>/<ol>/<li>, <table>/<thead>/<tbody>/<tr>/<td>/<th>, <strong>/<em>, <a href="...">.
+- Preserve text exactly. Do not summarize, paraphrase, or reword.
+- Reconstruct multi-column layouts as the source has them: side-by-side blocks via CSS flex/grid in your scoped styles, or as table cells if that fits better.
+- No <img> tags. No <script>. No external resources (no @import, no <link>, no Google Fonts URLs — only system or generic font families).
+- No id attributes. Class names should be scoped under .doc to avoid collisions with the container.
 - Do not include <html>, <head>, <body>, or <!doctype>.
 
-Print the final <article>...</article> as your last response. Nothing else.`;
+Print ONLY the final <article>...</article> as your last response. No preamble, no markdown fences, no commentary.`;
 
 /**
  * @param {string} filePath  Absolute path to the file to import
