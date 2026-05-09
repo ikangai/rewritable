@@ -1561,7 +1561,7 @@ const histFinal = await new Promise((res, rej) => {
     r.onerror = () => rej(r.error);
   });
 });
-check('47: hist capped at HIST_CAP=15 after 17 successful modifies', Array.isArray(histFinal) && histFinal.length === 15);
+check('47: hist grows by 17 (well under HIST_CAP=1000)', Array.isArray(histFinal) && histFinal.length === 17);
 
 // Test 48: CRLF in find/replace canonicalized to LF before splice.
 // The runtime stores docs as LF-canonical; model output may emit CRLF.
@@ -3502,7 +3502,7 @@ const histAfterPos = await new Promise((res, rej) => {
   });
 });
 check('110: doc updated to expected post-edit text', (await window.getDoc()).includes('POS_110_DONE'));
-check('110: hist either grew by 1 OR hit HIST_CAP=15', histAfterPos.length === histLenBefore + 1 || histAfterPos.length === 15);
+check('110: hist either grew by 1 OR hit HIST_CAP=1000', histAfterPos.length === histLenBefore + 1 || histAfterPos.length === 1000);
 
 // Test 111: edit[1] anchors on text consumed by edit[0] -> find_not_found
 // at edit_index 1; whole batch rejected (atomicity). Common real-world
