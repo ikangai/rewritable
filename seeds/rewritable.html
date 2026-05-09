@@ -684,7 +684,7 @@ window.maskRawTextAndComments = maskRawTextAndComments; // expose for tests
 // every commit path eventually re-renders, so wiring there gives us implicit
 // rebuild on commit, undo, and bootstrap restore without scattering calls.
 let sourceMap = null;
-let currentDocCache = null;
+let currentDocCache = null; // consumed by Task 1.5+ anchor resolution
 function setSourceMap(doc) {
   currentDocCache = doc;
   sourceMap = buildSourcePositionMap(doc);
@@ -703,7 +703,12 @@ async function __setDocForTest(d) {
   });
   renderDoc(d);
 }
-window.__setDocForTest = __setDocForTest;
+// Test seam: only exposed under jsdom (the tests/ harness).
+// In real browsers this binding stays internal — a script inside INLINE_DOC
+// could otherwise call __setDocForTest('') to wipe the doc with no undo.
+if (typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent)) {
+  window.__setDocForTest = __setDocForTest;
+}
 
 // Token-level balance check for <script> and <style>. The HTML parser
 // auto-closes these silently at EOF when the closing tag is missing, so a
