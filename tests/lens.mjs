@@ -365,5 +365,15 @@ check('anchor on BLOCKQUOTE still wraps in <p>',
 check('HTML special chars are escaped',
   window.wrapDirectText('a < b & c > d', null) === '<p>a &lt; b &amp; c &gt; d</p>');
 
+console.log('\n== Test L3.2: resolveEofAnchor ==');
+{
+  await window.__setDocForTest('<p>First.</p>\n<p>Last.</p>');
+  const eof = window.resolveEofAnchor();
+  check('EOF anchor finds last anchorable block',
+    eof.find === '<p>Last.</p>');
+  check('EOF replacePrefix is empty (unique)', eof.replacePrefix === '');
+  check('EOF replaceSuffix is empty (unique)', eof.replaceSuffix === '');
+}
+
 console.log(`\n${pass} pass, ${fail} fail`);
 process.exit(fail > 0 ? 1 : 0);

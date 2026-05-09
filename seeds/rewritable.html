@@ -769,6 +769,20 @@ function resolveAnchorFind(entry) {
 }
 window.resolveAnchorFind = resolveAnchorFind;
 
+// rwa-lens/1: EOF anchor resolution. Returns resolveAnchorFind for the last
+// anchorable block in the source-position map. Locked blocks are excluded
+// (Task 8.3 wires the skip).
+function resolveEofAnchor() {
+  const map = sourceMap;
+  if (!map || map.length === 0) return null;
+  for (let i = map.length - 1; i >= 0; i--) {
+    // Phase 8 will add: if (isWithinLockedRange(map[i].start, map[i].end)) continue;
+    return resolveAnchorFind(map[i]);
+  }
+  return null;
+}
+window.resolveEofAnchor = resolveEofAnchor;
+
 // rwa-lens/1: wrap direct text per spec §5.3 wrapping table.
 function wrapDirectText(text, anchorTag) {
   const wrapper = (anchorTag === 'LI') ? 'li' : 'p';
