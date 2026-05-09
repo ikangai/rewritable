@@ -58,6 +58,8 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);min
 #rwa-lens-hist-panel .rwa-hist-surface{background:var(--b2);color:var(--text);padding:1px 6px;border-radius:8px;font-size:9px;letter-spacing:.5px;text-transform:uppercase;}
 #rwa-lens-hist-panel .rwa-hist-instr{color:var(--text);word-wrap:break-word;}
 #rwa-lens-hist-panel .rwa-hist-empty{color:var(--muted);font-style:italic;padding:12px 0;}
+#rwa-lens[data-busy="true"]::after{content:'⏳';position:absolute;top:8px;right:40px;font-size:14px;opacity:.7;animation:rwa-lens-pulse 1.2s ease-in-out infinite;}
+@keyframes rwa-lens-pulse{0%,100%{opacity:.4;}50%{opacity:.9;}}
 .rwa-lens-toast{position:fixed;bottom:80px;left:16px;background:var(--surf);color:var(--text);padding:8px 12px;border-radius:4px;z-index:11;font-size:13px;font-family:'DM Mono',monospace;border:1px solid var(--b2);}
 [data-rwa-anchored]{outline:2px solid var(--accent);outline-offset:2px;}
 .rwa-locked{position:relative;background:rgba(255,87,87,0.04);border-left:3px solid var(--red);padding-left:8px;}
@@ -1340,6 +1342,9 @@ async function runAnchoredCommand(anchor, instruction) {
     throw new RwaEditError('concurrent_modify');
   }
   modifyMutex = true;
+  // Task 11.1: visible busy indicator on the lens during in-flight commands.
+  const lensBusy = document.getElementById('rwa-lens');
+  if (lensBusy) lensBusy.dataset.busy = 'true';
   setStatus('run', '⌘K running');
   try {
     const { target, context } = buildAnchoredContextWindow(anchor);
@@ -1391,6 +1396,7 @@ async function runAnchoredCommand(anchor, instruction) {
     console.error(e);
   } finally {
     modifyMutex = false;
+    if (lensBusy) lensBusy.dataset.busy = 'false';
   }
 }
 function synthesizeAnchoredInsert(anchor, text) {
