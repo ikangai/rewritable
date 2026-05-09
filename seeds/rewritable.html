@@ -774,6 +774,52 @@ function lockedRangesIn(doc) {
   }
   return out;
 }
+// rwa-lens/1: marker-form frozen-zone byte ranges (spec §7 coverage check).
+// Mirrors extractFrozenZones (~L586) but returns [start, end] source-byte
+// ranges including the marker fences themselves — markers are unique
+// substrings and their byte content is invariant, so the fences are part of
+// the protected range. Used by replaceDocument's class-lock coverage check
+// to verify .rwa-locked ranges are entirely contained within marker zones.
+function markerZoneRangesIn(doc) {
+  if (!doc) return [];
+  const out = [];
+  // Comment-fence markers: <!-- rwa:frozen:begin <name> --> ... <!-- rwa:frozen:end <name> -->
+  // Same regex shape as extractFrozenZones; record byte ranges instead of inner text.
+  const beginRe = /(<!--|\/\*|\/\/)\s*rwa:frozen:begin\s+([A-Za-z0-9_-]+)\s*(-->|\*\/|(?=\r?\n|$))/g;
+  let m;
+  while ((m = beginRe.exec(doc)) !== null) {
+    const opener = m[1];
+    const name = m[2];
+    const startOfBegin = m.index;
+    let innerStart = m.index + m[0].length;
+    if (opener === '//') {
+      while (innerStart < doc.length && doc[innerStart] !== '\n') innerStart++;
+      if (innerStart < doc.length) innerStart++;
+    }
+    let endRe;
+    if (opener === '<!--') {
+      endRe = new RegExp('<!--\\s*rwa:frozen:end\\s+' + escapeRegex(name) + '\\s*-->', 'g');
+    } else if (opener === '/*') {
+      endRe = new RegExp('\\/\\*\\s*rwa:frozen:end\\s+' + escapeRegex(name) + '\\s*\\*\\/', 'g');
+    } else {
+      endRe = new RegExp('\\/\\/\\s*rwa:frozen:end\\s+' + escapeRegex(name) + '(?=\\r?\\n|$)', 'g');
+    }
+    endRe.lastIndex = innerStart;
+    const e = endRe.exec(doc);
+    if (!e) continue; // unterminated — skip
+    const endOfEnd = e.index + e[0].length;
+    out.push([startOfBegin, endOfEnd]);
+  }
+  // data-rwa-frozen elements: scan for opening tags carrying that attribute.
+  const fzAttr = /<([a-zA-Z][a-zA-Z0-9]*)\b[^>]*\bdata-rwa-frozen\b[^>]*>/g;
+  while ((m = fzAttr.exec(doc)) !== null) {
+    const tag = m[1];
+    const start = m.index;
+    const end = findCloseTagEnd(doc, tag, m.index + m[0].length);
+    if (end > 0) out.push([start, end]);
+  }
+  return out;
+}
 function rebuildLockedRanges(doc) {
   lockedRanges = lockedRangesIn(doc);
 }
@@ -1524,6 +1570,24 @@ async function replaceDocument(envelope, currentDocRaw) {
 
   const currentDoc = canonLF(currentDocRaw);
   const newDoc = canonLF(envelope.doc);
+
+  // rwa-lens/1: class-declared lock coverage check (spec §7).
+  // A bare .rwa-locked block in the current doc cannot survive a wholesale
+  // rewrite — the wrapper can be reshaped, attribute-mutated, or just
+  // dropped. Locks are only safe under replace_document if their source
+  // range is entirely contained within a marker-form frozen zone (markers
+  // wrap or equal the lock — NOT the inverse). Markers nested inside a
+  // .rwa-locked wrapper preserve only their inner content, so the wrapper
+  // itself remains mutable; that pattern fails coverage too.
+  const lockRanges = lockedRangesIn(currentDoc);
+  const markerRanges = markerZoneRangesIn(currentDoc);
+  for (const [ls, le] of lockRanges) {
+    const covered = markerRanges.some(([ms, me]) => ms <= ls && le <= me);
+    if (!covered) {
+      throw new RwaEditError('class_lock_uncovered', null, { lockRange: [ls, le] });
+    }
+  }
+
   const originalFrozen = extractFrozenZones(currentDoc);
   const originalAttrs = dataRwaFrozenSnapshot(parseHtmlFragment(currentDoc).doc);
 

@@ -761,5 +761,50 @@ console.log('\n== Test L8.4b: adjacent insertion (find ends where lock begins) i
   check('adjacent insertion accepted', threw === false);
 }
 
+console.log('\n== Test L8.5a: replace_document rejected on bare class-locked doc ==');
+{
+  await window.__setDocForTest('<section class="rwa-locked"><p>Legal.</p></section>\n<p>Free.</p>');
+  const env = { version: 'rwa-edit/1', doc: '<p>Wholesale rewrite.</p>', reason: 'test' };
+  let threw = false;
+  let code = '';
+  try {
+    await window.replaceDocument(env, await window.getDoc());
+  } catch (e) { threw = true; code = e?.code || ''; }
+  check('replace_document threw for bare class-locked doc', threw === true);
+  check('error code mentions class lock or coverage',
+    /class.lock|coverage|class_lock|frozen/i.test(code));
+}
+
+console.log('\n== Test L8.5b: marker-wrapping coexistence allows replace_document ==');
+{
+  // .rwa-locked range entirely contained within a marker-form frozen zone.
+  const doc = '<!-- rwa:frozen:begin legal -->\n<section class="rwa-locked"><p>Legal.</p></section>\n<!-- rwa:frozen:end legal -->\n<p>Free.</p>';
+  await window.__setDocForTest(doc);
+  // The new doc must include the locked content byte-identically (rwa-edit/1 §6 rule 3).
+  const newDoc = '<!-- rwa:frozen:begin legal -->\n<section class="rwa-locked"><p>Legal.</p></section>\n<!-- rwa:frozen:end legal -->\n<p>Rewritten.</p>';
+  const env = { version: 'rwa-edit/1', doc: newDoc, reason: 'test' };
+  let threw = false;
+  try {
+    await window.replaceDocument(env, await window.getDoc());
+  } catch (e) { threw = true; }
+  check('replace_document accepted with marker coexistence', threw === false);
+}
+
+console.log('\n== Test L8.5c: marker nested INSIDE class wrapper does NOT satisfy coverage ==');
+{
+  const doc = '<section class="rwa-locked"><!-- rwa:frozen:begin inner -->\n<p>Inner.</p>\n<!-- rwa:frozen:end inner --></section>';
+  await window.__setDocForTest(doc);
+  // Even with a wholesale rewrite that preserves the inner markers byte-identically:
+  const newDoc = doc; // identical, but rule should still trigger
+  const env = { version: 'rwa-edit/1', doc: newDoc, reason: 'test' };
+  let threw = false;
+  let code = '';
+  try {
+    await window.replaceDocument(env, await window.getDoc());
+  } catch (e) { threw = true; code = e?.code || ''; }
+  check('inverse-nesting pattern still rejects replace_document', threw === true);
+  check('error mentions class lock', /class.lock|class_lock/i.test(code));
+}
+
 console.log(`\n${pass} pass, ${fail} fail`);
 process.exit(fail > 0 ? 1 : 0);
