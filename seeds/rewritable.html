@@ -42,7 +42,10 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);min
 #rwa-lens-input{width:100%;resize:none;background:transparent;border:0;color:inherit;font:inherit;outline:none;min-height:1.5em;font-family:'DM Sans',sans-serif;font-size:14px;}
 #rwa-lens-input::placeholder{color:#363642;}
 #rwa-lens-badge{display:inline-flex;gap:4px;align-items:center;background:var(--b2);padding:2px 8px;border-radius:12px;font-size:12px;align-self:flex-start;font-family:'DM Mono',monospace;color:var(--text);}
+#rwa-lens-badge button{background:transparent;border:0;color:inherit;cursor:pointer;font:inherit;padding:0 0 0 4px;line-height:1;}
+#rwa-lens-badge button:hover{color:var(--accent);}
 #rwa-lens-hint{font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);}
+[data-rwa-anchored]{outline:2px solid var(--accent);outline-offset:2px;}
 @media print{
   /* Hide all runtime chrome: status indicator, settings panel, command palette. */
   #rwa-runtime{display:none!important;}
@@ -200,6 +203,14 @@ async function popUndo() {
 // ─── Render ─────────────────────────────────────────────────────────
 function renderDoc(html) {
   const m = document.getElementById('rwa-doc-mount');
+  // rwa-lens/1: if the lens has been re-parented into the mount (anchored
+  // state in Task 5.2), release it before we wipe innerHTML — otherwise the
+  // lens DOM disappears with the mount's children, leaving stale lensState.
+  // The source map is about to rebuild, so the held entry is invalid anyway.
+  if (typeof releaseAnchor === 'function') {
+    const lens = document.getElementById('rwa-lens');
+    if (lens && m.contains(lens)) releaseAnchor();
+  }
   // Capture id-keyed form state so user-entered values survive an unrelated
   // edit (the doc gets re-rendered via innerHTML, which would otherwise
   // destroy them). Spec/benchmark APP-01/APP-02. Only id-keyed elements
@@ -357,6 +368,15 @@ function buildUI() {
     const v = lensInput.value;
     const isCommand = v.startsWith('/') && !v.startsWith('\\/');
     lensEl.dataset.mode = isCommand ? 'command' : 'text';
+  });
+
+  // rwa-lens/1: Esc releases the anchor when one is held. Listener is on
+  // `window` so Esc anywhere works (including with focus outside the lens
+  // input — e.g. on the doc itself after a click).
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && lensState.anchor !== null) {
+      releaseAnchor();
+    }
   });
 }
 const setStatus = (cls, msg) => { const e = document.getElementById('rwa-st-status'); if (e) { e.className = 'rwa-st-btn ' + (cls || ''); e.textContent = msg; } };
@@ -856,14 +876,98 @@ function anchorableOrdinal(root, target) {
   return found;
 }
 
+// Reverse of anchorableOrdinal: given a sourceMap entry, walk the live mount
+// in document order (outer-wins) and return the live node at the same ordinal.
+// The sourceMap's entry.node refs point into a throwaway DOMParser doc, so we
+// can't follow them — but ordinal position is stable across the two walks.
+function liveNodeForEntry(entry) {
+  const map = sourceMap;
+  if (!map || !entry) return null;
+  const ord = map.indexOf(entry);
+  if (ord < 0) return null;
+  const mount = document.getElementById('rwa-doc-mount');
+  if (!mount) return null;
+  let i = 0;
+  let found = null;
+  (function walk(el) {
+    for (const child of el.children) {
+      if (found) return;
+      if (ANCHORABLE_TAGS.has(child.tagName)) {
+        if (i === ord) { found = child; return; }
+        i++;
+      } else {
+        walk(child);
+      }
+    }
+  })(mount);
+  return found;
+}
+
 function anchorTo(entry) {
   lensState.anchor = entry;
   const lens = document.getElementById('rwa-lens');
-  if (lens) lens.dataset.state = 'anchored';
-  // Phase 5.2 wires visuals (badge, reposition, highlight).
+  if (!lens) return;
+  lens.dataset.state = 'anchored';
+  // Move lens to sit just after the anchored block's live node, if findable.
+  const liveNode = liveNodeForEntry(entry);
+  if (liveNode && liveNode.parentNode) {
+    liveNode.parentNode.insertBefore(lens, liveNode.nextSibling);
+  }
+  // Badge: "anchored on <tag>" + an X close button.
+  const badge = lens.querySelector('#rwa-lens-badge');
+  if (badge) {
+    badge.hidden = false;
+    badge.textContent = '';
+    const tagSpan = document.createElement('span');
+    tagSpan.textContent = `anchored on ${entry.tag.toLowerCase()} `;
+    badge.appendChild(tagSpan);
+    const x = document.createElement('button');
+    x.type = 'button';
+    x.textContent = '✕';
+    x.setAttribute('aria-label', 'release anchor');
+    x.addEventListener('click', releaseAnchor);
+    badge.appendChild(x);
+  }
+  // Visual highlight on the live block.
+  if (lensState._highlighted) lensState._highlighted.removeAttribute('data-rwa-anchored');
+  if (liveNode) {
+    liveNode.setAttribute('data-rwa-anchored', '');
+    lensState._highlighted = liveNode;
+  } else {
+    lensState._highlighted = null;
+  }
+  // Placeholder shift — what the user can do here.
+  const input = lens.querySelector('#rwa-lens-input');
+  if (input) input.placeholder = 'insert after this block, or /edit it';
 }
+
+// Releases an anchored lens back to its docked default position.
+// Called by the badge X button and by the global Esc keydown handler.
+function releaseAnchor() {
+  const lens = document.getElementById('rwa-lens');
+  if (!lens) return;
+  // Move lens back to its docked position. The default mount is direct child
+  // of body (CSS uses position:fixed; bottom:0 to dock it). Re-appending to
+  // body is sufficient for layout and matches the harness expectation.
+  document.body.appendChild(lens);
+  lens.dataset.state = 'default';
+  const badge = lens.querySelector('#rwa-lens-badge');
+  if (badge) {
+    badge.hidden = true;
+    badge.textContent = '';
+  }
+  if (lensState._highlighted) {
+    lensState._highlighted.removeAttribute('data-rwa-anchored');
+    lensState._highlighted = null;
+  }
+  lensState.anchor = null;
+  const input = lens.querySelector('#rwa-lens-input');
+  if (input) input.placeholder = 'Write, or describe what you want.';
+}
+window.releaseAnchor = releaseAnchor;
 if (typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent)) {
   window.__handleMountClick = handleMountClick;
+  window.__liveNodeForEntry = liveNodeForEntry;
 }
 
 // rwa-lens/1: submit dispatcher. Routes (state × mode) → envelope/agent path.

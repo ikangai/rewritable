@@ -489,5 +489,27 @@ console.log('\n== Test L5.1c: click on lens itself is not anchor ==');
   check('clicking lens does not anchor', window.__lensState.anchor === null);
 }
 
+console.log('\n== Test L5.2: badge shown when anchored, hidden in default ==');
+{
+  await window.__setDocForTest('<p>One.</p>');
+  // Initial state
+  window.__lensState.anchor = null;
+  window.document.getElementById('rwa-lens').dataset.state = 'default';
+  window.document.getElementById('rwa-lens-badge').hidden = true;
+
+  // Click to anchor.
+  window.document.querySelector('p').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  const badge = window.document.getElementById('rwa-lens-badge');
+  check('badge shown when anchored', badge.hidden === false);
+  check('badge contains text identifying tag', /p|paragraph/i.test(badge.textContent || ''));
+
+  // Esc releases.
+  window.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  check('badge hidden after release', badge.hidden === true);
+  check('lens state default after release',
+    window.document.getElementById('rwa-lens').dataset.state === 'default');
+  check('anchor cleared', window.__lensState.anchor === null);
+}
+
 console.log(`\n${pass} pass, ${fail} fail`);
 process.exit(fail > 0 ? 1 : 0);
