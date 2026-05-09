@@ -45,6 +45,7 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);min
 #rwa-lens-badge button{background:transparent;border:0;color:inherit;cursor:pointer;font:inherit;padding:0 0 0 4px;line-height:1;}
 #rwa-lens-badge button:hover{color:var(--accent);}
 #rwa-lens-hint{font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);}
+.rwa-lens-toast{position:fixed;bottom:80px;left:16px;background:var(--surf);color:var(--text);padding:8px 12px;border-radius:4px;z-index:11;font-size:13px;font-family:'DM Mono',monospace;border:1px solid var(--b2);}
 [data-rwa-anchored]{outline:2px solid var(--accent);outline-offset:2px;}
 @media print{
   /* Hide all runtime chrome: status indicator, settings panel, command palette. */
@@ -1111,12 +1112,51 @@ async function callAgentSingleShot(prompt) {
   return (msg?.content || '').trim();
 }
 
+// rwa-lens/1: post-commit anchor behavior (spec §5.4).
+// Three branches based on the agent's response shape:
+//   1. Single anchorable block → re-anchor on the new block at the same source-start.
+//   2. Multiple anchorable blocks → release with affordance (the lens can no longer
+//      point at "this block" because the response replaced it with several).
+//   3. Empty (or no anchorable elements after parse) → release without affordance
+//      (the user explicitly asked for deletion, no surprise to surface).
+function handlePostCommitAnchor(response, prevAnchor) {
+  const parsed = new DOMParser().parseFromString(`<body>${response}</body>`, 'text/html');
+  const tops = Array.from(parsed.body.children).filter(el => ANCHORABLE_TAGS.has(el.tagName));
+  if (tops.length === 0) {
+    // Empty (or no anchorable elements) → release without affordance.
+    releaseAnchor();
+    return;
+  }
+  if (tops.length === 1) {
+    // Single anchorable block → re-anchor on the new entry at the prevAnchor.start position.
+    const newEntry = sourceMap ? sourceMap.find(m => m.start === prevAnchor.start) : null;
+    if (newEntry) anchorTo(newEntry);
+    else releaseAnchor();
+    return;
+  }
+  // Multi-block → release with affordance.
+  releaseAnchor();
+  showAffordance('anchor released — response was multi-block');
+}
+
+// rwa-lens/1: ephemeral toast for surfacing post-commit affordances.
+// Used by handlePostCommitAnchor's multi-block branch to explain why the
+// lens is no longer anchored. Auto-removes after 3 seconds.
+function showAffordance(text) {
+  const el = document.createElement('div');
+  el.className = 'rwa-lens-toast';
+  el.textContent = text;
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 3000);
+}
+
 // rwa-lens/1: anchored slash command runner (spec §7).
 // Build the bounded context, prompt the agent for a replacement block, validate
 // the response shape, synthesize an apply_edits envelope (anchored find +
-// prefix/suffix from resolveAnchorFind), commit through applyEdits, and re-anchor
-// the lens onto the same source-start. Up to 3 retries with structured failure
-// context appended to the prompt. No silent escalation to replace_document.
+// prefix/suffix from resolveAnchorFind), commit through applyEdits, and apply
+// the spec §5.4 post-commit anchor behavior (re-anchor / release-with-affordance /
+// release). Up to 3 retries with structured failure context appended to the
+// prompt. No silent escalation to replace_document.
 async function runAnchoredCommand(anchor, instruction) {
   if (modifyMutex) {
     setStatus('err', '✗ another modify in progress');
@@ -1146,21 +1186,15 @@ async function runAnchoredCommand(anchor, instruction) {
         }],
         reason: `lens: ${instruction}`,
       };
-      // Capture pre-commit anchor's start offset for post-commit re-anchor lookup.
-      // A find/replace splice at the same source offset preserves the anchor's
-      // start position; we use it as the stable handle across the commit.
-      const prevAnchorStart = anchor.start;
       try {
         const result = await applyEdits(envelope, await getDoc());
         renderDoc(result);
-        // Task 7.5 will refine post-commit anchor behavior. For now, re-anchor
-        // by start-offset lookup (stable for find/replace splices at the same
-        // offset) so the lens stays on the rewritten block.
-        const newEntry = sourceMap ? sourceMap.find(m => m.start === prevAnchorStart) : null;
-        if (newEntry) anchorTo(newEntry);
-        // If the new entry can't be found, renderDoc has already cleared the
-        // anchor via releaseAnchor (lens lives inside the mount), so the lens
-        // is back in its docked default — nothing else to do.
+        // Spec §5.4 post-commit anchor branches: single → re-anchor on new
+        // block; multi → release with affordance; empty → release silently.
+        // The pre-commit anchor (with its start offset) is the stable handle
+        // for the single-block re-anchor lookup, since find/replace splices
+        // at the same source offset preserve the start position.
+        handlePostCommitAnchor(response, anchor);
         setStatus('ok', '✓ done');
         return;
       } catch (err) {

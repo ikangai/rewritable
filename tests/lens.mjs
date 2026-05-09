@@ -638,5 +638,57 @@ console.log('\n== Test L7.4: e2e anchored slash command ==');
   check('original removed', !doc.includes('<p>Original.</p>'));
 }
 
+console.log('\n== Test L7.5: post-commit anchor branches ==');
+
+// Branch 1: Single block → re-anchor on the new block.
+{
+  await window.__setDocForTest('<p>Original.</p>');
+  delete window.__synthesizeAndCommit;
+  window.document.querySelector('p').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  fetchHandler = async () => ({ ok: true, json: async () => ({
+    choices: [{ message: { role: 'assistant', content: '<p>Tightened.</p>' }}]
+  })});
+  await window.submitLens('/tighten');
+  await new Promise(r => setTimeout(r, 200));
+  check('still anchored after single-block reply',
+    window.__lensState.anchor !== null);
+  const doc1 = await window.getDoc();
+  check('anchor points to new <p> with new content',
+    window.__lensState.anchor && doc1.slice(window.__lensState.anchor.start, window.__lensState.anchor.end).includes('Tightened.'));
+}
+
+// Branch 2: Multi-block → release.
+{
+  await window.__setDocForTest('<p>Solo.</p>');
+  delete window.__synthesizeAndCommit;
+  window.document.querySelector('p').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  fetchHandler = async () => ({ ok: true, json: async () => ({
+    choices: [{ message: { role: 'assistant', content: '<p>One.</p>\n<p>Two.</p>' }}]
+  })});
+  await window.submitLens('/expand');
+  await new Promise(r => setTimeout(r, 200));
+  check('anchor released on multi-block reply',
+    window.__lensState.anchor === null);
+  check('lens state default after multi-block release',
+    window.document.getElementById('rwa-lens').dataset.state === 'default');
+}
+
+// Branch 3: Empty response → release without affordance.
+{
+  await window.__setDocForTest('<p>To delete.</p>\n<p>Keep.</p>');
+  delete window.__synthesizeAndCommit;
+  window.document.querySelectorAll('p')[0].dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  fetchHandler = async () => ({ ok: true, json: async () => ({
+    choices: [{ message: { role: 'assistant', content: '' }}]
+  })});
+  await window.submitLens('/delete this');
+  await new Promise(r => setTimeout(r, 200));
+  check('anchor released on empty reply',
+    window.__lensState.anchor === null);
+  const doc3 = await window.getDoc();
+  check('first paragraph removed', !doc3.includes('To delete.'));
+  check('second paragraph preserved', doc3.includes('Keep.'));
+}
+
 console.log(`\n${pass} pass, ${fail} fail`);
 process.exit(fail > 0 ? 1 : 0);
