@@ -1002,8 +1002,21 @@ async function runAnchoredCommand(anchor, instr) {
   console.warn('rwa-lens: runAnchoredCommand stub — Phase 7 not implemented');
 }
 function synthesizeAnchoredInsert(anchor, text) {
-  console.warn('rwa-lens: synthesizeAnchoredInsert stub — Phase 6 not implemented');
-  return null;
+  const find = resolveAnchorFind(anchor);
+  if (!find) return null;
+  const wrapped = wrapDirectText(text, anchor.tag);
+  return {
+    version: 'rwa-edit/1',
+    edits: [{
+      find: find.find,
+      replace: find.find + '\n' + wrapped,
+      reason: 'lens: anchored direct-text insert',
+    }],
+    reason: 'lens: insert after anchor',
+  };
+}
+if (typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent)) {
+  window.__synthesizeAnchoredInsert = synthesizeAnchoredInsert;
 }
 function synthesizeDefaultAppend(text) {
   const eof = resolveEofAnchor();

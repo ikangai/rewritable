@@ -511,5 +511,18 @@ console.log('\n== Test L5.2: badge shown when anchored, hidden in default ==');
   check('anchor cleared', window.__lensState.anchor === null);
 }
 
+console.log('\n== Test L6.1: synthesizeAnchoredInsert ==');
+{
+  await window.__setDocForTest('<p>First.</p>\n<p>Second.</p>');
+  const map = window.getSourceMap();
+  const env = window.__synthesizeAnchoredInsert(map[0], 'New between.');
+  check('envelope is rwa-edit/1', env.version === 'rwa-edit/1');
+  check('envelope has 1 edit', env.edits.length === 1);
+  check('find equals first paragraph source',
+    env.edits[0].find === '<p>First.</p>');
+  check('replace inserts after first paragraph',
+    env.edits[0].replace === '<p>First.</p>\n<p>New between.</p>');
+}
+
 console.log(`\n${pass} pass, ${fail} fail`);
 process.exit(fail > 0 ? 1 : 0);
