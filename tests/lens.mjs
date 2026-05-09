@@ -806,5 +806,21 @@ console.log('\n== Test L8.5c: marker nested INSIDE class wrapper does NOT satisf
   check('error mentions class lock', /class.lock|class_lock/i.test(code));
 }
 
+console.log('\n== Test L8.7: prompt names .rwa-locked blocks ==');
+{
+  const doc = '<!-- rwa:frozen:begin x -->...<!-- rwa:frozen:end x -->\n<section class="rwa-locked"><p>Locked.</p></section>';
+  const frozen = window.extractFrozenZones ? window.extractFrozenZones(doc) : [];
+  const prompt = window.buildUserPrompt('any', doc, frozen);
+  check('prompt mentions .rwa-locked or class-declared in some form',
+    /rwa-locked|class.declared|class-declared/i.test(prompt));
+  // Stronger check: a dedicated mention must appear OUTSIDE the embedded <DOC>
+  // body, otherwise the agent only "sees" the lock as a side-effect of the
+  // class attribute being copied into the doc verbatim.
+  const docIdx = prompt.indexOf('<DOC>');
+  const head = docIdx >= 0 ? prompt.slice(0, docIdx) : prompt;
+  check('lock annotation appears in prompt header (before <DOC>)',
+    /rwa-locked|class.declared|class-declared/i.test(head));
+}
+
 console.log(`\n${pass} pass, ${fail} fail`);
 process.exit(fail > 0 ? 1 : 0);

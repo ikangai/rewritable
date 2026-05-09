@@ -421,6 +421,7 @@ Rules for apply_edits:
 
 Rules for replace_document:
   • Frozen-zone marker pairs and data-rwa-frozen elements must appear in the new doc with byte-identical content. They are author-declared invariants.
+  • If the doc carries class-declared locked regions (.rwa-locked) that are NOT entirely covered by marker-form frozen zones, replace_document will be rejected. In that case, prefer apply_edits or apply_dsl_plan. The user message lists any such regions.
   • Provide a reason explaining why a smaller tool was not appropriate.
 
 If the user's input is itself substantial content (a long block of prose, an outline, a list of items), they want it rendered into the document, not summarized. When no surgical anchor exists for substantial content insertion, use replace_document.
@@ -1804,8 +1805,25 @@ function buildUserPrompt(instr, doc, frozenZones) {
   const fzText = frozenZones.length === 0
     ? '(none)'
     : frozenZones.map(z => '- ' + z.name + (z.error ? ' [' + z.error + ']' : '')).join('\n');
+  // rwa-lens/1 §7: enumerate class-declared locks alongside marker frozen zones.
+  // Each item shows the wrapper tag plus a compact preview so the agent can
+  // identify the region without scanning the entire doc.
+  const lockRanges = lockedRangesIn(doc);
+  let lockSection = '';
+  if (lockRanges.length > 0) {
+    const items = lockRanges.map(([s, e]) => {
+      const slice = doc.slice(s, e);
+      const tagMatch = slice.match(/^<([a-zA-Z][a-zA-Z0-9]*)/);
+      const tag = tagMatch ? tagMatch[1] : '?';
+      const preview = slice.replace(/\s+/g, ' ').slice(0, 80);
+      return '- <' + tag + ' class="rwa-locked">: ' + preview + (slice.length > 80 ? '...' : '');
+    }).join('\n');
+    lockSection = '\n\nClass-declared locked regions (rwa-lens/1 §7) — also off-limits:\n' + items +
+      '\n\nNote: replace_document is unavailable on documents containing class-declared locks not entirely covered by marker-form frozen zones. Prefer apply_edits or apply_dsl_plan.';
+  }
   return 'User request:\n' + instr +
     '\n\nFrozen zones in the current doc (do not produce marker text in find/replace; do not modify their inner content):\n' + fzText +
+    lockSection +
     '\n\nThe current document follows. Make your edit by calling apply_edits or replace_document.\n\n<DOC>\n' + doc + '\n</DOC>';
 }
 
