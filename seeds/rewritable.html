@@ -378,9 +378,16 @@ function buildUI() {
     const text = lensInput.value;
     if (typeof window.__lensSubmitHandler === 'function') {
       window.__lensSubmitHandler(text);
-    } else if (typeof submitLens === 'function') {
-      submitLens(text);
+      return;
     }
+    if (typeof submitLens !== 'function') return;
+    // Wrap submitLens in a catch so its rejection doesn't become an
+    // unhandled promise. submitLens itself preserves the input on error
+    // (it clears only on success), so the user can edit and retry.
+    submitLens(text).catch(err => {
+      if (err?.code !== 'concurrent_modify') console.error(err);
+      setStatus('err', '✗ ' + (err?.code || err?.message || 'lens command failed'));
+    });
   });
 
   // rwa-lens/1: live mode indication (spec §6.1). The discriminator engages
@@ -1240,7 +1247,14 @@ async function submitLens(text) {
     if (anchored) {
       await runAnchoredCommand(lensState.anchor, instruction);
     } else {
-      await modify(instruction);
+      // Default-state slash command: thread lensMeta so the rwa_hist record
+      // carries surface='default-command' (Invariant 6 — every lens-originated
+      // commit names the surface that produced it).
+      await modify(instruction, {
+        surface: 'default-command',
+        instruction,
+        scope: { type: 'document' },
+      });
     }
   } else {
     const envelope = anchored
@@ -1249,7 +1263,9 @@ async function submitLens(text) {
     const surface = anchored ? 'anchored-text' : 'default-text';
     await synthesizeAndCommit(envelope, surface, stripped);
   }
-  // Clear the input on successful submit.
+  // Clear the input only on successful submit. Placed AFTER the await above
+  // (not in a finally) so a thrown error preserves the user's typed text —
+  // the keydown handler surfaces the failure and the user can re-submit.
   const input = document.getElementById('rwa-lens-input');
   if (input) input.value = '';
 }
@@ -1438,52 +1454,64 @@ async function synthesizeAndCommit(envelope, surface, instruction) {
   if (typeof window.__synthesizeAndCommit === 'function') {
     return window.__synthesizeAndCommit(envelope, surface, instruction);
   }
-  // Capture pre-commit anchor's start offset for post-commit re-anchor lookup.
-  // The anchor's source-start is the stable handle across a commit: an
-  // insert-after-anchor edit (anchored direct text) leaves the anchor's start
-  // unchanged, and a replace-this-anchor edit (Phase 7) preserves it because
-  // find/replace splices at the same source offset.
-  const prevAnchorStart = lensState.anchor ? lensState.anchor.start : null;
-  // Phase 9.1: build lensMeta so the rwa_hist record carries surface,
-  // instruction, and the scope (block-anchored or eof). Scope is captured
-  // pre-commit because lensState.anchor may be cleared by renderDoc below.
-  const lensMeta = {
-    surface,
-    instruction,
-    scope: lensState.anchor
-      ? { type: 'block', block_id: String(lensState.anchor.start) }
-      : { type: 'eof' },
-  };
-  let result;
-  if (!envelope) {
-    // Empty doc → first append → use replace_document.
-    const wrapped = wrapDirectText(instruction || '', null);
-    const repEnv = {
-      version: 'rwa-edit/1',
-      doc: wrapped,
-      reason: 'initial content into an empty document',
+  // Acquire modifyMutex around the read+commit window. Without this, two
+  // concurrent ⌘Enter submits could race against each other: both read the
+  // same currentDoc, both push it onto rwa_undo, and the later commit
+  // silently overwrites the earlier one with a stale-base envelope. Throw
+  // concurrent_modify so the keydown handler can surface it (and preserve
+  // the input — see Issue 2).
+  if (modifyMutex) throw new RwaEditError('concurrent_modify');
+  modifyMutex = true;
+  try {
+    // Capture pre-commit anchor's start offset for post-commit re-anchor lookup.
+    // The anchor's source-start is the stable handle across a commit: an
+    // insert-after-anchor edit (anchored direct text) leaves the anchor's start
+    // unchanged, and a replace-this-anchor edit (Phase 7) preserves it because
+    // find/replace splices at the same source offset.
+    const prevAnchorStart = lensState.anchor ? lensState.anchor.start : null;
+    // Phase 9.1: build lensMeta so the rwa_hist record carries surface,
+    // instruction, and the scope (block-anchored or eof). Scope is captured
+    // pre-commit because lensState.anchor may be cleared by renderDoc below.
+    const lensMeta = {
+      surface,
+      instruction,
+      scope: lensState.anchor
+        ? { type: 'block', block_id: String(lensState.anchor.start) }
+        : { type: 'eof' },
     };
-    result = await replaceDocument(repEnv, await getDoc(), lensMeta);
-  } else {
-    result = await applyEdits(envelope, await getDoc(), lensMeta);
-  }
-  // Re-render so the user sees the new content. renderDoc rebuilds sourceMap
-  // and (because the lens may sit inside the mount) calls releaseAnchor, so we
-  // must re-resolve the anchor afterwards using the offset captured above.
-  renderDoc(result);
-  if (prevAnchorStart !== null && sourceMap) {
-    const newEntry = sourceMap.find(m => m.start === prevAnchorStart);
-    if (newEntry) {
-      // Re-anchor onto the same logical block. anchorTo handles lens repos,
-      // badge text, and the data-rwa-anchored visual highlight on the live
-      // node (which is a fresh DOM element after the innerHTML rebuild).
-      anchorTo(newEntry);
+    let result;
+    if (!envelope) {
+      // Empty doc → first append → use replace_document.
+      const wrapped = wrapDirectText(instruction || '', null);
+      const repEnv = {
+        version: 'rwa-edit/1',
+        doc: wrapped,
+        reason: 'initial content into an empty document',
+      };
+      result = await replaceDocument(repEnv, await getDoc(), lensMeta);
+    } else {
+      result = await applyEdits(envelope, await getDoc(), lensMeta);
     }
-    // If newEntry is null the anchor's source-start no longer exists; the
-    // releaseAnchor inside renderDoc has already cleared lensState.anchor and
-    // returned the lens to its docked default, so no extra work is needed.
+    // Re-render so the user sees the new content. renderDoc rebuilds sourceMap
+    // and (because the lens may sit inside the mount) calls releaseAnchor, so we
+    // must re-resolve the anchor afterwards using the offset captured above.
+    renderDoc(result);
+    if (prevAnchorStart !== null && sourceMap) {
+      const newEntry = sourceMap.find(m => m.start === prevAnchorStart);
+      if (newEntry) {
+        // Re-anchor onto the same logical block. anchorTo handles lens repos,
+        // badge text, and the data-rwa-anchored visual highlight on the live
+        // node (which is a fresh DOM element after the innerHTML rebuild).
+        anchorTo(newEntry);
+      }
+      // If newEntry is null the anchor's source-start no longer exists; the
+      // releaseAnchor inside renderDoc has already cleared lensState.anchor and
+      // returned the lens to its docked default, so no extra work is needed.
+    }
+    return result;
+  } finally {
+    modifyMutex = false;
   }
-  return result;
 }
 
 // Test seam: directly write a doc to IDB + rebuild the map, no agent loop.
@@ -1958,9 +1986,9 @@ function failureToToolResult(err) {
   return JSON.stringify(payload);
 }
 
-async function modify(instr) {
+async function modify(instr, lensMeta = null) {
   const backend = sessionStorage.getItem(RWA.K_BACKEND) || 'openrouter';
-  if (backend === 'bridge') return modifyViaBridge(instr);
+  if (backend === 'bridge') return modifyViaBridge(instr, lensMeta);
 
   const key = sessionStorage.getItem(RWA.K_API);
   const model = sessionStorage.getItem(RWA.K_MODEL) || RWA.MODEL;
@@ -2050,12 +2078,12 @@ async function modify(instr) {
       try {
         if (fnName === 'apply_dsl_plan') {
           const compiled = compileDslPlan(envelope, cur);
-          if (compiled.tool === 'apply_edits') newDoc = await applyEdits(compiled.envelope, cur);
-          else if (compiled.tool === 'replace_document') newDoc = await replaceDocument(compiled.envelope, cur);
+          if (compiled.tool === 'apply_edits') newDoc = await applyEdits(compiled.envelope, cur, lensMeta);
+          else if (compiled.tool === 'replace_document') newDoc = await replaceDocument(compiled.envelope, cur, lensMeta);
           else throw new RwaEditError('unknown_tool', null, { name: compiled.tool });
         }
-        else if (fnName === 'apply_edits') newDoc = await applyEdits(envelope, cur);
-        else if (fnName === 'replace_document') newDoc = await replaceDocument(envelope, cur);
+        else if (fnName === 'apply_edits') newDoc = await applyEdits(envelope, cur, lensMeta);
+        else if (fnName === 'replace_document') newDoc = await replaceDocument(envelope, cur, lensMeta);
         else throw new RwaEditError('unknown_tool', null, { name: fnName });
       } catch (err) {
         if (!(err instanceof RwaEditError)) throw err;
@@ -2093,7 +2121,7 @@ async function modify(instr) {
 // one of the rwa-edit/1 tool schemas and dispatch it through the same
 // applyEdits/compileDslPlan/replaceDocument machinery the OpenRouter path
 // uses. No multi-turn retries — claude -p starts a fresh session each call.
-async function modifyViaBridge(instr) {
+async function modifyViaBridge(instr, lensMeta = null) {
   if (modifyMutex) {
     setPalSt('err', '✗ another modify in progress');
     throw new RwaEditError('concurrent_modify');
@@ -2146,13 +2174,13 @@ async function modifyViaBridge(instr) {
     let newDoc = null;
     if (parsed.tool === 'apply_dsl_plan') {
       const compiled = compileDslPlan(parsed.envelope, cur);
-      if (compiled.tool === 'apply_edits') newDoc = await applyEdits(compiled.envelope, cur);
-      else if (compiled.tool === 'replace_document') newDoc = await replaceDocument(compiled.envelope, cur);
+      if (compiled.tool === 'apply_edits') newDoc = await applyEdits(compiled.envelope, cur, lensMeta);
+      else if (compiled.tool === 'replace_document') newDoc = await replaceDocument(compiled.envelope, cur, lensMeta);
       else throw new RwaEditError('unknown_tool', null, { name: compiled.tool });
     } else if (parsed.tool === 'apply_edits') {
-      newDoc = await applyEdits(parsed.envelope, cur);
+      newDoc = await applyEdits(parsed.envelope, cur, lensMeta);
     } else if (parsed.tool === 'replace_document') {
-      newDoc = await replaceDocument(parsed.envelope, cur);
+      newDoc = await replaceDocument(parsed.envelope, cur, lensMeta);
     } else {
       throw new RwaEditError('unknown_tool', null, { name: parsed.tool });
     }

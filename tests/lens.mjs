@@ -840,6 +840,45 @@ console.log('\n== Test L9.1: rwa_hist records carry surface, instruction, scope 
   check('record has scope field', top.scope && top.scope.type === 'eof');
 }
 
+console.log('\n== Test L9.2: default-state slash command records surface=default-command ==');
+{
+  // Reviewer's Issue 3: when /slash routes through modify() in the default
+  // (unanchored) state, the resulting rwa_hist entry must still name a lens
+  // surface — Invariant 6. Stub a tool-call response so modify() commits via
+  // applyEdits and the new lensMeta thread reaches the hist record.
+  await window.__setDocForTest('<p>Original prose.</p>');
+  delete window.__synthesizeAndCommit;
+  // Ensure we're in default state (no anchor).
+  window.__lensState.anchor = null;
+  fetchHandler = async () => ({
+    ok: true,
+    json: async () => ({
+      choices: [{ message: { role: 'assistant', content: '', tool_calls: [{
+        id: 'd1', type: 'function',
+        function: { name: 'apply_edits', arguments: JSON.stringify({
+          version: 'rwa-edit/1',
+          edits: [{ find: 'Original prose.', replace: 'Tightened prose.' }]
+        })}
+      }]}}]
+    })
+  });
+  await window.submitLens('/tighten this');
+  await new Promise(r => setTimeout(r, 200));
+  const hist = await new Promise(res => {
+    window.openDB().then(db => {
+      const r = db.transaction('rwa_hist').objectStore('rwa_hist').get('self');
+      r.onsuccess = () => res(r.result);
+    });
+  });
+  const top = hist[0];
+  check('default-slash commit produced a hist record', !!top);
+  check('record has surface=default-command', top && top.surface === 'default-command');
+  check('record has instruction matching the typed command body',
+    top && top.instruction === 'tighten this');
+  check('record has scope.type=document',
+    top && top.scope && top.scope.type === 'document');
+}
+
 console.log('\n== Test L10.1: paste-detection hint shown for slash-leading code paste ==');
 {
   // Reset hint shown state if exposed.
