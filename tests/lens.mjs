@@ -430,5 +430,28 @@ console.log('\n== Test L3.5b: skeleton-only doc treated as empty ==');
   check('skeleton replaced with content', doc.includes('Content into skeleton.'));
 }
 
+console.log('\n== Test L4.1: default + slash invokes modify ==');
+{
+  await window.__setDocForTest('<p>Original.</p>');
+  delete window.__synthesizeAndCommit;
+  fetchHandler = async () => ({
+    ok: true,
+    json: async () => ({
+      choices: [{ message: { role: 'assistant', content: '', tool_calls: [{
+        id: 's1', type: 'function',
+        function: { name: 'apply_edits', arguments: JSON.stringify({
+          version: 'rwa-edit/1',
+          edits: [{ find: 'Original.', replace: 'Tightened.' }]
+        })}
+      }]}}]
+    })
+  });
+  await window.submitLens('/tighten throughout');
+  await new Promise(r => setTimeout(r, 200));
+  const doc = await window.getDoc();
+  check('agent edit applied via default-slash path', doc.includes('Tightened.'));
+  check('original removed', !doc.includes('Original.'));
+}
+
 console.log(`\n${pass} pass, ${fail} fail`);
 process.exit(fail > 0 ? 1 : 0);
