@@ -65,5 +65,14 @@ await new Promise(r => setTimeout(r, 200));
 
 console.log('== Lens harness loaded ==');
 // Tests appended below per phase.
+
+// === Phase 1: source-position map ===
+console.log('\n== Test L1.1: anchorable-set membership ==');
+check('ANCHORABLE_TAGS includes p, h1-h6, blockquote, li, figure, pre, aside',
+  ['P','H1','H2','H3','H4','H5','H6','BLOCKQUOTE','LI','FIGURE','PRE','ASIDE']
+    .every(t => window.ANCHORABLE_TAGS.has(t)));
+check('ANCHORABLE_TAGS excludes hr, ul, ol, dl, dt, dd',
+  ['HR','UL','OL','DL','DT','DD'].every(t => !window.ANCHORABLE_TAGS.has(t)));
+
 console.log(`\n${pass} pass, ${fail} fail`);
 process.exit(fail > 0 ? 1 : 0);

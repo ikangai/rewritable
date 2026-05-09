@@ -77,6 +77,9 @@ const INLINE_DOC = `<style>
 <p>This is a re-writeable document. Press <kbd>⌘K</kbd> and tell it what to become.</p>
 </div>`;
 
+const ANCHORABLE_TAGS = new Set(['P','H1','H2','H3','H4','H5','H6','BLOCKQUOTE','LI','FIGURE','PRE','ASIDE']);
+window.ANCHORABLE_TAGS = ANCHORABLE_TAGS; // expose for tests
+
 // ─── Storage ────────────────────────────────────────────────────────
 const RWA = {
   DB:'rwa_'+DOC_UUID, KEY:'self',
