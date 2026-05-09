@@ -524,5 +524,26 @@ console.log('\n== Test L6.1: synthesizeAnchoredInsert ==');
     env.edits[0].replace === '<p>First.</p>\n<p>New between.</p>');
 }
 
+console.log('\n== Test L6.2: e2e anchored direct text ==');
+{
+  await window.__setDocForTest('<p>First.</p>\n<p>Second.</p>');
+  delete window.__synthesizeAndCommit;
+  // Click to anchor on first <p>.
+  window.document.querySelector('p').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  check('anchored on first p before submit', window.__lensState.anchor && window.__lensState.anchor.tag === 'P');
+  // Submit direct text.
+  await window.submitLens('Insert me.');
+  await new Promise(r => setTimeout(r, 100));
+  const doc = await window.getDoc();
+  check('doc has three paragraphs', (doc.match(/<p>/g) || []).length === 3);
+  check('inserted between first and second',
+    doc.indexOf('Insert me.') > doc.indexOf('First.') &&
+    doc.indexOf('Insert me.') < doc.indexOf('Second.'));
+  check('lens stays anchored on first paragraph after insert',
+    window.__lensState.anchor && window.__lensState.anchor.tag === 'P');
+  check('anchor source range covers the original First paragraph',
+    window.__lensState.anchor && doc.slice(window.__lensState.anchor.start, window.__lensState.anchor.end) === '<p>First.</p>');
+}
+
 console.log(`\n${pass} pass, ${fail} fail`);
 process.exit(fail > 0 ? 1 : 0);

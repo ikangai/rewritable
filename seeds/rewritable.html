@@ -1040,6 +1040,13 @@ async function synthesizeAndCommit(envelope, surface, instruction) {
   if (typeof window.__synthesizeAndCommit === 'function') {
     return window.__synthesizeAndCommit(envelope, surface, instruction);
   }
+  // Capture pre-commit anchor's start offset for post-commit re-anchor lookup.
+  // The anchor's source-start is the stable handle across a commit: an
+  // insert-after-anchor edit (anchored direct text) leaves the anchor's start
+  // unchanged, and a replace-this-anchor edit (Phase 7) preserves it because
+  // find/replace splices at the same source offset.
+  const prevAnchorStart = lensState.anchor ? lensState.anchor.start : null;
+  let result;
   if (!envelope) {
     // Empty doc → first append → use replace_document.
     const wrapped = wrapDirectText(instruction || '', null);
@@ -1048,9 +1055,27 @@ async function synthesizeAndCommit(envelope, surface, instruction) {
       doc: wrapped,
       reason: 'initial content into an empty document',
     };
-    return await replaceDocument(repEnv, await getDoc());
+    result = await replaceDocument(repEnv, await getDoc());
+  } else {
+    result = await applyEdits(envelope, await getDoc());
   }
-  return await applyEdits(envelope, await getDoc());
+  // Re-render so the user sees the new content. renderDoc rebuilds sourceMap
+  // and (because the lens may sit inside the mount) calls releaseAnchor, so we
+  // must re-resolve the anchor afterwards using the offset captured above.
+  renderDoc(result);
+  if (prevAnchorStart !== null && sourceMap) {
+    const newEntry = sourceMap.find(m => m.start === prevAnchorStart);
+    if (newEntry) {
+      // Re-anchor onto the same logical block. anchorTo handles lens repos,
+      // badge text, and the data-rwa-anchored visual highlight on the live
+      // node (which is a fresh DOM element after the innerHTML rebuild).
+      anchorTo(newEntry);
+    }
+    // If newEntry is null the anchor's source-start no longer exists; the
+    // releaseAnchor inside renderDoc has already cleared lensState.anchor and
+    // returned the lens to its docked default, so no extra work is needed.
+  }
+  return result;
   // Phase 9 will augment the post-commit history record with surface/instruction/scope.
 }
 
