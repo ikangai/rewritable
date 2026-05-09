@@ -453,5 +453,41 @@ console.log('\n== Test L4.1: default + slash invokes modify ==');
   check('original removed', !doc.includes('Original.'));
 }
 
+console.log('\n== Test L5.1: click anchors lens ==');
+{
+  await window.__setDocForTest('<p id="x">First.</p>\n<p>Second.</p>');
+  // Reset anchor first.
+  window.__lensState.anchor = null;
+  window.document.getElementById('rwa-lens').dataset.state = 'default';
+  const target = window.document.querySelector('#x');
+  target.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  check('lens state is anchored', window.__lensState.anchor !== null);
+  check('anchor entry matches first <p>',
+    window.__lensState.anchor && window.__lensState.anchor.tag === 'P');
+  check('lens dataset.state shifted to "anchored"',
+    window.document.getElementById('rwa-lens').dataset.state === 'anchored');
+}
+
+console.log('\n== Test L5.1b: click on inline traverses to ancestor ==');
+{
+  await window.__setDocForTest('<p>Containing <strong id="s">strong</strong> here.</p>');
+  window.__lensState.anchor = null;
+  window.document.getElementById('rwa-lens').dataset.state = 'default';
+  const target = window.document.querySelector('#s');
+  target.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  check('inline click anchors the containing P',
+    window.__lensState.anchor && window.__lensState.anchor.tag === 'P');
+}
+
+console.log('\n== Test L5.1c: click on lens itself is not anchor ==');
+{
+  await window.__setDocForTest('<p>One.</p>');
+  window.__lensState.anchor = null;
+  window.document.getElementById('rwa-lens').dataset.state = 'default';
+  const lensInput = window.document.getElementById('rwa-lens-input');
+  lensInput.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  check('clicking lens does not anchor', window.__lensState.anchor === null);
+}
+
 console.log(`\n${pass} pass, ${fail} fail`);
 process.exit(fail > 0 ? 1 : 0);

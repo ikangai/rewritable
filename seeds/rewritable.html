@@ -228,6 +228,11 @@ function renderDoc(html) {
   // in this script — JS hoisting (script-mode `function` declarations) makes
   // it callable here even though renderDoc is defined first.
   setSourceMap(html);
+  // rwa-lens/1: click-to-anchor (Task 5.1). renderDoc runs on every commit and
+  // on bootstrap; remove first so listeners don't multiply across renders. Same
+  // function reference, so removing the previous instance is safe.
+  m.removeEventListener('click', handleMountClick);
+  m.addEventListener('click', handleMountClick);
 }
 
 // ─── File rebuild ───────────────────────────────────────────────────
@@ -799,6 +804,66 @@ const lensState = { anchor: null }; // null = default; otherwise sourceMap entry
 // Test seam (jsdom only) for inspecting lens state in tests.
 if (typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent)) {
   window.__lensState = lensState;
+}
+
+// rwa-lens/1: click-to-anchor (spec §5.1, §5.5).
+// Walks up from click target to the nearest ANCHORABLE_TAGS ancestor inside
+// the mount, then maps that live DOM node to its sourceMap entry.
+//
+// The source-position map's `node` refs point into a DOMParser document built
+// inside buildSourcePositionMap — they are NOT the live mount nodes. So we
+// can't match by reference equality. Instead we use ordinal position: the
+// scanner records anchorables in document order (outer-wins descent), and the
+// live mount produces the same order via the same outer-wins traversal — so
+// the i-th live anchorable corresponds to map[i].
+function handleMountClick(e) {
+  const mount = document.getElementById('rwa-doc-mount');
+  if (!mount) return;
+  let el = e.target;
+  while (el && el !== mount) {
+    if (el.classList && el.classList.contains('rwa-locked')) {
+      // Locked — Phase 8 wires the affordance.
+      return;
+    }
+    if (ANCHORABLE_TAGS.has(el.tagName)) {
+      const ord = anchorableOrdinal(mount, el);
+      const entry = (ord >= 0 && sourceMap) ? sourceMap[ord] : null;
+      if (entry) anchorTo(entry);
+      return;
+    }
+    el = el.parentNode;
+  }
+  // No anchorable ancestor — no-op.
+}
+
+// Outer-wins anchorable descent: matches buildSourcePositionMap's walk so
+// ordinals line up with the source-position map.
+function anchorableOrdinal(root, target) {
+  let i = 0, found = -1;
+  (function walk(el) {
+    if (found >= 0) return;
+    for (const child of el.children) {
+      if (found >= 0) return;
+      if (ANCHORABLE_TAGS.has(child.tagName)) {
+        if (child === target) { found = i; return; }
+        i++;
+        // Outer-wins: don't descend into anchorables.
+      } else {
+        walk(child);
+      }
+    }
+  })(root);
+  return found;
+}
+
+function anchorTo(entry) {
+  lensState.anchor = entry;
+  const lens = document.getElementById('rwa-lens');
+  if (lens) lens.dataset.state = 'anchored';
+  // Phase 5.2 wires visuals (badge, reposition, highlight).
+}
+if (typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent)) {
+  window.__handleMountClick = handleMountClick;
 }
 
 // rwa-lens/1: submit dispatcher. Routes (state × mode) → envelope/agent path.
