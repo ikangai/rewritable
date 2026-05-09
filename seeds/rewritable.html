@@ -692,6 +692,43 @@ function setSourceMap(doc) {
 function getSourceMap() { return sourceMap; }
 window.getSourceMap = getSourceMap;
 
+// rwa-lens/1: anchor uniqueness extension (spec §5.5).
+// Given a map entry, return { find, replacePrefix, replaceSuffix } such that
+// `find` appears exactly once in the current doc and contains the entry's
+// source range. Expands outward through map siblings until uniqueness, or
+// returns null if even full-document context fails to disambiguate.
+function resolveAnchorFind(entry) {
+  const doc = currentDocCache;
+  if (!doc || !sourceMap) return null;
+  const idx = sourceMap.indexOf(entry);
+  if (idx < 0) return null;
+
+  let lo = idx, hi = idx;
+  while (true) {
+    const start = sourceMap[lo].start;
+    const end   = sourceMap[hi].end;
+    const find  = doc.slice(start, end);
+    if (countOccurrences(doc, find) === 1) {
+      return {
+        find,
+        replacePrefix: doc.slice(start, entry.start),
+        replaceSuffix: doc.slice(entry.end, end),
+      };
+    }
+    // Expand: prefer growing in whichever direction has a sibling available.
+    // Bias toward the side with the smaller distance from the anchor for shorter find strings.
+    const canGrowLo = lo > 0;
+    const canGrowHi = hi < sourceMap.length - 1;
+    if (!canGrowLo && !canGrowHi) return null;
+    if (canGrowLo && (!canGrowHi || (idx - lo) <= (hi - idx))) {
+      lo--;
+    } else {
+      hi++;
+    }
+  }
+}
+window.resolveAnchorFind = resolveAnchorFind;
+
 // Test seam: directly write a doc to IDB + rebuild the map, no agent loop.
 async function __setDocForTest(d) {
   const db = await openDB();

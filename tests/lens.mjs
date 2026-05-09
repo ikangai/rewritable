@@ -190,5 +190,34 @@ console.log('\n== Test L1.4: source-position map lifetime ==');
   check('map reflects new content', map2.some(e => doc2.slice(e.start, e.end).includes('Added.')));
 }
 
+console.log('\n== Test L1.5a: anchor find — unique case ==');
+{
+  const doc = '<p>Unique paragraph.</p>\n<p>Another.</p>';
+  await window.__setDocForTest(doc);
+  const map = window.getSourceMap();
+  const find = window.resolveAnchorFind(map[0]);
+  check('find equals entry source for unique case',
+    find.find === '<p>Unique paragraph.</p>');
+  check('replacePrefix is empty for unique case',
+    find.replacePrefix === '');
+  check('replaceSuffix is empty for unique case',
+    find.replaceSuffix === '');
+}
+
+console.log('\n== Test L1.5b: anchor find — duplicate paragraph ==');
+{
+  const doc = '<p>Same.</p>\n<p>Other.</p>\n<p>Same.</p>';
+  await window.__setDocForTest(doc);
+  const map = window.getSourceMap();
+  // Anchor on the first <p>Same.</p>. Its outerHTML duplicates the third's.
+  const find = window.resolveAnchorFind(map[0]);
+  check('find for first duplicate is unique within doc',
+    doc.indexOf(find.find) === doc.lastIndexOf(find.find));
+  check('find still anchors at original position',
+    doc.indexOf(find.find) <= map[0].start);
+  check('reconstructed source matches: prefix + entry + suffix === find',
+    find.replacePrefix + doc.slice(map[0].start, map[0].end) + find.replaceSuffix === find.find);
+}
+
 console.log(`\n${pass} pass, ${fail} fail`);
 process.exit(fail > 0 ? 1 : 0);
