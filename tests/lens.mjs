@@ -100,5 +100,33 @@ console.log('\n== Test L1.2b: source-position map with nested li ==');
     doc.slice(map[1].start, map[1].end) === '<li>One</li>');
 }
 
+console.log('\n== Test L1.2c: script-internal markup is not anchored ==');
+{
+  const doc = '<p>Above</p>\n<script>const x = "<p>FAKE</p>";</script>\n<p>Below</p>';
+  const map = window.buildSourcePositionMap(doc);
+  check('map has exactly 2 entries (script body skipped)',
+    map.length === 2);
+  check('first entry is real Above', doc.slice(map[0].start, map[0].end) === '<p>Above</p>');
+  check('second entry is real Below', doc.slice(map[1].start, map[1].end) === '<p>Below</p>');
+  check('both entries have real DOM nodes (no desync)',
+    map.every(e => e.node && e.node.tagName === 'P'));
+}
+
+console.log('\n== Test L1.2d: style-internal markup is not anchored ==');
+{
+  const doc = '<p>Above</p>\n<style>p::before { content: "<h2>X</h2>"; }</style>\n<p>Below</p>';
+  const map = window.buildSourcePositionMap(doc);
+  check('style body skipped — exactly 2 entries', map.length === 2);
+}
+
+console.log('\n== Test L1.2e: HTML comments do not span blocks ==');
+{
+  const doc = '<p>One <!-- </p> --> still in p</p>\n<p>Two</p>';
+  const map = window.buildSourcePositionMap(doc);
+  check('first p span is correct (comment </p> ignored)',
+    doc.slice(map[0].start, map[0].end) === '<p>One <!-- </p> --> still in p</p>');
+  check('two entries total', map.length === 2);
+}
+
 console.log(`\n${pass} pass, ${fail} fail`);
 process.exit(fail > 0 ? 1 : 0);

@@ -578,6 +578,34 @@ function parseHtmlFragment(doc) {
 // anchorables inside an outer anchorable are NOT separately listed (outer
 // wins). Non-anchorable wrappers (e.g. <ul>) are transparent — their
 // anchorable children (e.g. <li>) appear at the top level of the map.
+//
+// Robustness: <script>/<style> bodies and <!--...--> comments are masked out
+// before scanning so their literal contents (which may contain anchorable-
+// looking markup) are not mistaken for real blocks. Mask preserves byte
+// offsets so recorded [start, end] ranges remain valid against the ORIGINAL
+// doc (invariant 11). Slice operations therefore return original bytes, not
+// mask spaces.
+function maskRawTextAndComments(doc) {
+  let masked = doc;
+  // Mask <script>...<\/script> body bytes (keep tags themselves intact so the
+  // scanner still sees them as non-anchorable opens and skips correctly).
+  // The `<\/` escapes in regex/string literals avoid the HTML parser closing
+  // THIS bootstrap <script> tag prematurely.
+  masked = masked.replace(/<script\b[^>]*>([\s\S]*?)<\/script>/gi, (m, body) => {
+    const opening = m.length - body.length - '<\/script>'.length;
+    return m.slice(0, opening) + ' '.repeat(body.length) + m.slice(opening + body.length);
+  });
+  // Same for <style>.
+  masked = masked.replace(/<style\b[^>]*>([\s\S]*?)<\/style>/gi, (m, body) => {
+    const opening = m.length - body.length - '<\/style>'.length;
+    return m.slice(0, opening) + ' '.repeat(body.length) + m.slice(opening + body.length);
+  });
+  // Mask comments entirely (including <!-- and --> delimiters) so a stray
+  // close-tag substring inside a comment does not derail close-tag matching.
+  masked = masked.replace(/<!--[\s\S]*?-->/g, m => ' '.repeat(m.length));
+  return masked;
+}
+
 function buildSourcePositionMap(doc) {
   const map = [];
   const parsed = new DOMParser().parseFromString('<!DOCTYPE html><html><body>' + doc + '</body></html>', 'text/html');
@@ -594,21 +622,33 @@ function buildSourcePositionMap(doc) {
     }
   })(parsed.body);
 
+  // Scan against the masked string so script/style/comment internals do not
+  // contribute false anchorables. Recorded [start, end] indices are still
+  // valid offsets into the ORIGINAL doc (mask preserves byte length).
+  const masked = maskRawTextAndComments(doc);
   const tagOpen = /<([a-zA-Z][a-zA-Z0-9]*)\b[^>]*>/g;
-  let nodeIdx = 0;
   let m;
-  while ((m = tagOpen.exec(doc)) !== null) {
+  while ((m = tagOpen.exec(masked)) !== null) {
     const tag = m[1].toUpperCase();
     if (!ANCHORABLE_TAGS.has(tag)) continue;
     const start = m.index;
-    const end = findCloseTagEnd(doc, tag, m.index + m[0].length);
+    const end = findCloseTagEnd(masked, tag, m.index + m[0].length);
     if (end < 0) continue;
-    const node = nodesInOrder[nodeIdx++] || null;
-    map.push({ tag, start, end, node });
+    map.push({ tag, start, end, node: null });
     // Outer-wins: skip past the close so nested anchorables of any type are
     // not separately recorded.
     tagOpen.lastIndex = end;
   }
+
+  // Attach DOM nodes by ordinal. If counts disagree, the parser and scanner
+  // disagree about block structure (e.g. auto-closed <p>One<p>Two</p>) — log
+  // and leave overflow entries with node:null instead of silently mis-pairing.
+  if (map.length !== nodesInOrder.length) {
+    console.warn('rwa-lens: source-position map desync; map=' + map.length +
+      ' nodes=' + nodesInOrder.length + '; node references will be null');
+  }
+  const n = Math.min(map.length, nodesInOrder.length);
+  for (let i = 0; i < n; i++) map[i].node = nodesInOrder[i];
   return map;
 }
 
@@ -627,6 +667,7 @@ function findCloseTagEnd(doc, tag, from) {
   return -1;
 }
 window.buildSourcePositionMap = buildSourcePositionMap; // expose for tests
+window.maskRawTextAndComments = maskRawTextAndComments; // expose for tests
 
 // Token-level balance check for <script> and <style>. The HTML parser
 // auto-closes these silently at EOF when the closing tag is missing, so a
