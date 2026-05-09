@@ -840,5 +840,22 @@ console.log('\n== Test L9.1: rwa_hist records carry surface, instruction, scope 
   check('record has scope field', top.scope && top.scope.type === 'eof');
 }
 
+console.log('\n== Test L10.1: paste-detection hint shown for slash-leading code paste ==');
+{
+  // Reset hint shown state if exposed.
+  if (typeof window.__resetPasteHint === 'function') window.__resetPasteHint();
+  const input = window.document.getElementById('rwa-lens-input');
+  // Simulate paste event with multi-line content containing additional slashes.
+  const e = new window.Event('paste', { bubbles: true, cancelable: true });
+  Object.defineProperty(e, 'clipboardData', {
+    value: { getData: () => '/path/to/file\n/another/path' }
+  });
+  input.dispatchEvent(e);
+  await new Promise(r => setTimeout(r, 50));
+  const hint = window.document.getElementById('rwa-lens-paste-hint');
+  check('paste hint visible', hint && !hint.hidden);
+  check('hint mentions \\\\/ escape', /\\\\\//.test(hint?.textContent || ''));
+}
+
 console.log(`\n${pass} pass, ${fail} fail`);
 process.exit(fail > 0 ? 1 : 0);
