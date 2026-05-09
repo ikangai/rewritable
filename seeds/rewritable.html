@@ -863,6 +863,29 @@ function buildAnchoredPrompt(target, context, instruction) {
 }
 window.buildAnchoredPrompt = buildAnchoredPrompt;
 
+// rwa-lens/1: validate anchored response against parent context (spec §10).
+// v1: only constrains <ul>/<ol> parent → <li> children.
+function validateAnchoredResponse(response, anchor) {
+  const parsed = new DOMParser().parseFromString(`<body>${response}</body>`, 'text/html');
+  const tops = Array.from(parsed.body.children);
+  if (tops.length === 0) {
+    // Empty response = deletion path. Accepted.
+    return { ok: true };
+  }
+  // Use the live mount to determine parent (anchor.node is from throwaway DOMParser doc).
+  const liveNode = liveNodeForEntry(anchor);
+  const parentTag = liveNode && liveNode.parentNode ? liveNode.parentNode.tagName : '';
+  if (parentTag === 'UL' || parentTag === 'OL') {
+    for (const el of tops) {
+      if (el.tagName !== 'LI') {
+        return { ok: false, reason: `parent <${parentTag.toLowerCase()}> requires <li> children; got <${el.tagName.toLowerCase()}>` };
+      }
+    }
+  }
+  return { ok: true };
+}
+window.validateAnchoredResponse = validateAnchoredResponse;
+
 // rwa-lens/1: wrap direct text per spec §5.3 wrapping table.
 function wrapDirectText(text, anchorTag) {
   const wrapper = (anchorTag === 'LI') ? 'li' : 'p';

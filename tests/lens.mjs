@@ -594,5 +594,29 @@ console.log('\n== Test L7.2: anchored prompt structure ==');
     /\<li\>|list item/.test(pLi));
 }
 
+console.log('\n== Test L7.3: response validation against parent context ==');
+{
+  // <li> target → response must be all <li>.
+  await window.__setDocForTest('<ul><li>Item.</li></ul>');
+  const liEntry = window.getSourceMap().find(e => e.tag === 'LI');
+  // Need the live-DOM parent — use liveNodeForEntry to get the live node.
+  const ok = window.validateAnchoredResponse('<li>New item.</li>', liEntry);
+  check('all-<li> response accepted', ok.ok === true);
+  const bad = window.validateAnchoredResponse('<p>Wrong.</p>', liEntry);
+  check('<p> response rejected for <li> parent',
+    bad.ok === false && /li|list/i.test(bad.reason));
+  const mixed = window.validateAnchoredResponse('<li>Good.</li><p>Bad.</p>', liEntry);
+  check('mixed <li> + <p> response rejected (multi-element check)',
+    mixed.ok === false);
+  const empty = window.validateAnchoredResponse('', liEntry);
+  check('empty response accepted (deletion path)', empty.ok === true);
+
+  // <p> target → flow content accepted (no parent constraint).
+  await window.__setDocForTest('<p>Para.</p>');
+  const pEntry = window.getSourceMap().find(e => e.tag === 'P');
+  const okP = window.validateAnchoredResponse('<blockquote>Q</blockquote>', pEntry);
+  check('flow content accepted for <p> parent', okP.ok === true);
+}
+
 console.log(`\n${pass} pass, ${fail} fail`);
 process.exit(fail > 0 ? 1 : 0);
