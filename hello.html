@@ -37,6 +37,33 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);min
 #rwa-pal-st{font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);}
 #rwa-pal-st.run{color:var(--blue);}#rwa-pal-st.ok{color:var(--accent);}#rwa-pal-st.err{color:var(--red);}
 .rwa-pal-hint{font-family:'DM Mono',monospace;font-size:10px;color:#363642;}
+#rwa-lens{position:fixed;left:0;right:0;bottom:0;background:var(--surf);border-top:1px solid var(--b2);padding:12px 16px;z-index:10;display:flex;flex-direction:column;gap:8px;}
+#rwa-lens[data-mode="command"]{border-top-color:var(--accent);}
+#rwa-lens-input{width:100%;resize:none;background:transparent;border:0;color:inherit;font:inherit;outline:none;min-height:1.5em;font-family:'DM Sans',sans-serif;font-size:14px;}
+#rwa-lens-input::placeholder{color:#363642;}
+#rwa-lens-badge{display:inline-flex;gap:4px;align-items:center;background:var(--b2);padding:2px 8px;border-radius:12px;font-size:12px;align-self:flex-start;font-family:'DM Mono',monospace;color:var(--text);}
+#rwa-lens-badge button{background:transparent;border:0;color:inherit;cursor:pointer;font:inherit;padding:0 0 0 4px;line-height:1;}
+#rwa-lens-badge button:hover{color:var(--accent);}
+#rwa-lens-hint{font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);}
+#rwa-lens-paste-hint{font-family:'DM Mono',monospace;font-size:11px;color:var(--blue);background:rgba(87,200,255,0.06);border:1px solid rgba(87,200,255,0.2);padding:6px 10px;border-radius:4px;}
+#rwa-lens-hist-btn{position:absolute;top:8px;right:12px;background:transparent;border:0;color:var(--muted);cursor:pointer;font-size:14px;padding:2px 6px;line-height:1;border-radius:3px;}
+#rwa-lens-hist-btn:hover{color:var(--text);background:var(--b2);}
+#rwa-lens-hist-panel{position:fixed;top:0;right:0;bottom:0;width:min(420px,90vw);background:var(--surf);border-left:1px solid var(--b2);z-index:50;overflow-y:auto;padding:16px;font-family:'DM Mono',monospace;font-size:12px;}
+#rwa-lens-hist-panel h3{font-family:'DM Sans',sans-serif;font-size:14px;font-weight:500;color:var(--text);margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;}
+#rwa-lens-hist-panel h3 button{background:transparent;border:0;color:var(--muted);cursor:pointer;font:inherit;font-size:18px;line-height:1;padding:0 4px;}
+#rwa-lens-hist-panel h3 button:hover{color:var(--text);}
+#rwa-lens-hist-panel .rwa-hist-row{padding:8px 0;border-bottom:1px solid var(--b1);}
+#rwa-lens-hist-panel .rwa-hist-row:last-child{border-bottom:0;}
+#rwa-lens-hist-panel .rwa-hist-meta{display:flex;gap:8px;align-items:center;margin-bottom:4px;color:var(--muted);font-size:10px;}
+#rwa-lens-hist-panel .rwa-hist-surface{background:var(--b2);color:var(--text);padding:1px 6px;border-radius:8px;font-size:9px;letter-spacing:.5px;text-transform:uppercase;}
+#rwa-lens-hist-panel .rwa-hist-instr{color:var(--text);word-wrap:break-word;}
+#rwa-lens-hist-panel .rwa-hist-empty{color:var(--muted);font-style:italic;padding:12px 0;}
+#rwa-lens[data-busy="true"]::after{content:'⏳';position:absolute;top:8px;right:40px;font-size:14px;opacity:.7;animation:rwa-lens-pulse 1.2s ease-in-out infinite;}
+@keyframes rwa-lens-pulse{0%,100%{opacity:.4;}50%{opacity:.9;}}
+.rwa-lens-toast{position:fixed;bottom:80px;left:16px;background:var(--surf);color:var(--text);padding:8px 12px;border-radius:4px;z-index:11;font-size:13px;font-family:'DM Mono',monospace;border:1px solid var(--b2);}
+[data-rwa-anchored]{outline:2px solid var(--accent);outline-offset:2px;}
+.rwa-locked{position:relative;background:rgba(255,87,87,0.04);border-left:3px solid var(--red);padding-left:8px;}
+.rwa-locked::before{content:'\1F512';position:absolute;top:4px;right:8px;font-size:12px;opacity:.6;}
 @media print{
   /* Hide all runtime chrome: status indicator, settings panel, command palette. */
   #rwa-runtime{display:none!important;}
@@ -77,11 +104,14 @@ const INLINE_DOC = `<style>
 <p>This is a re-writeable document. Press <kbd>⌘K</kbd> and tell it what to become.</p>
 </div>`;
 
+const ANCHORABLE_TAGS = new Set(['P','H1','H2','H3','H4','H5','H6','BLOCKQUOTE','LI','FIGURE','PRE','ASIDE']);
+window.ANCHORABLE_TAGS = ANCHORABLE_TAGS; // expose for tests
+
 // ─── Storage ────────────────────────────────────────────────────────
 const RWA = {
   DB:'rwa_'+DOC_UUID, KEY:'self',
   DOC:'rwa_doc', UNDO:'rwa_undo', HIST:'rwa_hist', FSA:'rwa_fsa',
-  UNDO_CAP:10, HIST_CAP:15,
+  UNDO_CAP:10, HIST_CAP:1000,
   K_API:'rwa_apikey', K_MODEL:'rwa_model', K_BACKEND:'rwa_backend',
   MODEL:'google/gemini-3-flash-preview',
   FILE:'hello.html',
@@ -93,6 +123,20 @@ const RWA = {
   // (~5-10s startup) and a single-shot agent loop (no mid-stream tool_calls).
   BRIDGE_URL:'http://127.0.0.1:8765/run',
 };
+
+// `rwa new -o` / `rwa import -o` can pass an OpenRouter key via `?key=…`.
+// Lift it into sessionStorage on first paint and scrub the URL bar so the
+// key doesn't sit in the location, history, or any later bookmark.
+try {
+  const qs = new URLSearchParams(location.search);
+  const k = qs.get('key');
+  if (k) {
+    sessionStorage.setItem(RWA.K_API, k);
+    qs.delete('key');
+    const tail = qs.toString();
+    history.replaceState(null, '', location.pathname + (tail ? '?' + tail : '') + location.hash);
+  }
+} catch (_) { /* sandboxed contexts can throw on history.replaceState */ }
 
 // LF canonicalization: doc text is stored, validated, and committed LF-only.
 const canonLF = s => s == null ? '' : String(s).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
@@ -177,6 +221,14 @@ async function popUndo() {
 // ─── Render ─────────────────────────────────────────────────────────
 function renderDoc(html) {
   const m = document.getElementById('rwa-doc-mount');
+  // rwa-lens/1: if the lens has been re-parented into the mount (anchored
+  // state in Task 5.2), release it before we wipe innerHTML — otherwise the
+  // lens DOM disappears with the mount's children, leaving stale lensState.
+  // The source map is about to rebuild, so the held entry is invalid anyway.
+  if (typeof releaseAnchor === 'function') {
+    const lens = document.getElementById('rwa-lens');
+    if (lens && m.contains(lens)) releaseAnchor();
+  }
   // Capture id-keyed form state so user-entered values survive an unrelated
   // edit (the doc gets re-rendered via innerHTML, which would otherwise
   // destroy them). Spec/benchmark APP-01/APP-02. Only id-keyed elements
@@ -200,6 +252,17 @@ function renderDoc(html) {
     if (snap.kind === 'details' && el.tagName === 'DETAILS') el.open = snap.open;
     else if (snap.kind === 'value' && 'value' in el) el.value = snap.value;
   }
+  // rwa-lens/1: rebuild the source-position map so anchored interactions stay
+  // aligned with the just-rendered doc. setSourceMap is declared further down
+  // in this script — JS hoisting (script-mode `function` declarations) makes
+  // it callable here even though renderDoc is defined first.
+  setSourceMap(html);
+  rebuildLockedRanges(html);
+  // rwa-lens/1: click-to-anchor (Task 5.1). renderDoc runs on every commit and
+  // on bootstrap; remove first so listeners don't multiply across renders. Same
+  // function reference, so removing the previous instance is safe.
+  m.removeEventListener('click', handleMountClick);
+  m.addEventListener('click', handleMountClick);
 }
 
 // ─── File rebuild ───────────────────────────────────────────────────
@@ -249,7 +312,15 @@ function buildUI() {
       <span class="rwa-pal-hint">⌘Z undo · ⌘S commit · esc close</span>
     </div>
   </div>
-</div>`;
+</div>
+<div id="rwa-lens" data-state="default">
+  <button type="button" id="rwa-lens-hist-btn" aria-label="show history" title="show history">📜</button>
+  <div id="rwa-lens-badge" hidden></div>
+  <textarea id="rwa-lens-input" rows="1" placeholder="Write, or describe what you want." spellcheck="false"></textarea>
+  <div id="rwa-lens-paste-hint" hidden></div>
+  <div id="rwa-lens-hint"></div>
+</div>
+<div id="rwa-lens-hist-panel" hidden></div>`;
 
   const k = document.getElementById('rwa-key'), m = document.getElementById('rwa-model');
   k.value = sessionStorage.getItem(RWA.K_API) || '';
@@ -293,12 +364,124 @@ function buildUI() {
       if (err?.code !== 'concurrent_modify') console.error(err);
     });
   };
+
+  // rwa-lens/1: ⌘Enter (or Ctrl+Enter) submits; plain Enter remains a newline.
+  // Spec invariant 8: the lens textarea behaves like a normal multi-line input
+  // until the user explicitly commits with the platform-modifier+Enter chord.
+  const lensEl = document.getElementById('rwa-lens');
+  const lensInput = document.getElementById('rwa-lens-input');
+  lensInput.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return;
+    if (!(e.metaKey || e.ctrlKey)) return; // plain Enter remains newline
+    if (e.shiftKey) return; // shift+Enter is also newline (cross-platform safety)
+    e.preventDefault();
+    const text = lensInput.value;
+    if (typeof window.__lensSubmitHandler === 'function') {
+      window.__lensSubmitHandler(text);
+    } else if (typeof submitLens === 'function') {
+      submitLens(text);
+    }
+  });
+
+  // rwa-lens/1: live mode indication (spec §6.1). The discriminator engages
+  // during typing — a leading slash flips the lens chrome into command mode,
+  // unless the user typed `\/` to escape (literal slash content).
+  lensInput.addEventListener('input', () => {
+    const v = lensInput.value;
+    const isCommand = v.startsWith('/') && !v.startsWith('\\/');
+    lensEl.dataset.mode = isCommand ? 'command' : 'text';
+  });
+
+  // Task 10.1: paste-detection hint. When pasted content looks like file paths
+  // or other slash-leading multi-line text (could be misinterpreted as a slash
+  // command), surface a one-time session hint reminding the user that `\/`
+  // escapes a leading slash. The hint shows once per session — pasteHintShown
+  // is a closure-scoped flag.
+  let pasteHintShown = false;
+  if (typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent)) {
+    window.__resetPasteHint = () => { pasteHintShown = false; };
+  }
+  lensInput.addEventListener('paste', (e) => {
+    const text = e.clipboardData?.getData('text/plain') || '';
+    const triggers = text.startsWith('/') && text.includes('\n') && (text.match(/\//g) || []).length > 1;
+    if (triggers && !pasteHintShown) {
+      pasteHintShown = true;
+      const hint = document.getElementById('rwa-lens-paste-hint');
+      if (hint) {
+        hint.textContent = 'Looks like content — escape the leading slash with \\\\/ to insert literally.';
+        hint.hidden = false;
+        setTimeout(() => { hint.hidden = true; }, 5000);
+      }
+    }
+  });
+
+  // Task 9.3: history pane. Read-only view of rwa_hist entries — surface chip,
+  // instruction, scope, timestamp. Toggle via the 📜 button in the lens chrome.
+  const histBtn = document.getElementById('rwa-lens-hist-btn');
+  const histPanel = document.getElementById('rwa-lens-hist-panel');
+  if (histBtn && histPanel) {
+    histBtn.addEventListener('click', async () => {
+      if (!histPanel.hidden) { histPanel.hidden = true; return; }
+      await renderHistoryPanel(histPanel);
+      histPanel.hidden = false;
+    });
+  }
+
+  // rwa-lens/1: Esc releases the anchor when one is held. Listener is on
+  // `window` so Esc anywhere works (including with focus outside the lens
+  // input — e.g. on the doc itself after a click).
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && lensState.anchor !== null) {
+      releaseAnchor();
+    }
+  });
 }
 const setStatus = (cls, msg) => { const e = document.getElementById('rwa-st-status'); if (e) { e.className = 'rwa-st-btn ' + (cls || ''); e.textContent = msg; } };
 const setPalSt = (cls, msg) => { const e = document.getElementById('rwa-pal-st'); if (e) { e.className = cls || ''; e.textContent = msg; } };
 const setDirty = d => { const e = document.getElementById('rwa-st-commit'); if (e) e.classList.toggle('dirty', d); };
 const openPal = () => { document.getElementById('rwa-pal').classList.add('open'); requestAnimationFrame(() => document.getElementById('rwa-pal-inp').focus()); setPalSt('', '● ready'); };
 const closePal = () => { document.getElementById('rwa-pal').classList.remove('open'); document.getElementById('rwa-pal-inp').value = ''; document.getElementById('rwa-pal-go').disabled = true; };
+
+// Task 9.3: read-only render of rwa_hist into the side panel. Read once on
+// open — the panel is a snapshot, not a live view. Newest first matches the
+// existing convention (commitDoc unshifts onto the array).
+async function renderHistoryPanel(panel) {
+  const fmtTs = (ts) => {
+    try { return new Date(ts).toLocaleString(); } catch { return String(ts); }
+  };
+  const escHtml = (s) => String(s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  const fmtScope = (scope) => {
+    if (!scope) return '';
+    if (scope.type === 'eof') return 'eof';
+    if (scope.type === 'block') return 'block @' + (scope.block_id || '?');
+    return scope.type || '';
+  };
+  let entries = [];
+  try { entries = (await idbGet(RWA.HIST)) || []; } catch { entries = []; }
+  const header = '<h3>History <button type="button" id="rwa-lens-hist-close" aria-label="close">×</button></h3>';
+  if (!entries.length) {
+    panel.innerHTML = header + '<div class="rwa-hist-empty">No history yet — make an edit and it will appear here.</div>';
+  } else {
+    const rows = entries.map(e => {
+      const surface = e.surface || e.kind || 'edit';
+      const scopeStr = fmtScope(e.scope);
+      const instr = e.instruction || (e.kind === 'replace_document' ? (e.reason || '(replace_document)') : '(no instruction recorded)');
+      return '<div class="rwa-hist-row">'
+        + '<div class="rwa-hist-meta">'
+        + '<span class="rwa-hist-surface">' + escHtml(surface) + '</span>'
+        + (scopeStr ? '<span>' + escHtml(scopeStr) + '</span>' : '')
+        + '<span>' + escHtml(fmtTs(e.ts)) + '</span>'
+        + '</div>'
+        + '<div class="rwa-hist-instr">' + escHtml(instr) + '</div>'
+        + '</div>';
+    }).join('');
+    panel.innerHTML = header + rows;
+  }
+  const closeBtn = panel.querySelector('#rwa-lens-hist-close');
+  if (closeBtn) closeBtn.addEventListener('click', () => { panel.hidden = true; });
+}
 
 // ─── Agent (rwa-edit/1) ─────────────────────────────────────────────
 // Spec: rwa-edit-spec.md (v1.4). The agent edits the doc via tool calls,
@@ -332,6 +515,7 @@ Rules for apply_edits:
 
 Rules for replace_document:
   • Frozen-zone marker pairs and data-rwa-frozen elements must appear in the new doc with byte-identical content. They are author-declared invariants.
+  • If the doc carries class-declared locked regions (.rwa-locked) that are NOT entirely covered by marker-form frozen zones, replace_document will be rejected. In that case, prefer apply_edits or apply_dsl_plan. The user message lists any such regions.
   • Provide a reason explaining why a smaller tool was not appropriate.
 
 If the user's input is itself substantial content (a long block of prose, an outline, a list of items), they want it rendered into the document, not summarized. When no surgical anchor exists for substantial content insertion, use replace_document.
@@ -553,6 +737,773 @@ function parseHtmlFragment(doc) {
   }
 }
 
+// rwa-lens/1: source-position map (spec §5.5).
+// Walks `doc` (LF-canonical document text) and returns one entry per anchorable
+// block in source order: { tag, start, end, node }. `doc.slice(start, end)`
+// equals the source-form bytes of the block (preserving original attribute
+// quoting/order — which the browser's outerHTML would normalize). Nested
+// anchorables inside an outer anchorable are NOT separately listed (outer
+// wins). Non-anchorable wrappers (e.g. <ul>) are transparent — their
+// anchorable children (e.g. <li>) appear at the top level of the map.
+//
+// Robustness: <script>/<style> bodies and <!--...--> comments are masked out
+// before scanning so their literal contents (which may contain anchorable-
+// looking markup) are not mistaken for real blocks. Mask preserves byte
+// offsets so recorded [start, end] ranges remain valid against the ORIGINAL
+// doc (invariant 11). Slice operations therefore return original bytes, not
+// mask spaces.
+function maskRawTextAndComments(doc) {
+  let masked = doc;
+  // Mask <script>...<\/script> body bytes (keep tags themselves intact so the
+  // scanner still sees them as non-anchorable opens and skips correctly).
+  // The `<\/` escapes in regex/string literals avoid the HTML parser closing
+  // THIS bootstrap <script> tag prematurely.
+  masked = masked.replace(/<script\b[^>]*>([\s\S]*?)<\/script>/gi, (m, body) => {
+    const opening = m.length - body.length - '<\/script>'.length;
+    return m.slice(0, opening) + ' '.repeat(body.length) + m.slice(opening + body.length);
+  });
+  // Same for <style>.
+  masked = masked.replace(/<style\b[^>]*>([\s\S]*?)<\/style>/gi, (m, body) => {
+    const opening = m.length - body.length - '<\/style>'.length;
+    return m.slice(0, opening) + ' '.repeat(body.length) + m.slice(opening + body.length);
+  });
+  // Mask comments entirely (including <!-- and --> delimiters) so a stray
+  // close-tag substring inside a comment does not derail close-tag matching.
+  masked = masked.replace(/<!--[\s\S]*?-->/g, m => ' '.repeat(m.length));
+  return masked;
+}
+
+function buildSourcePositionMap(doc) {
+  const map = [];
+  const parsed = new DOMParser().parseFromString('<!DOCTYPE html><html><body>' + doc + '</body></html>', 'text/html');
+  // Collect anchorable nodes in document order, but stop descending past an
+  // anchorable (outer wins — matches the source-scanner's lastIndex skip).
+  const nodesInOrder = [];
+  (function walk(el) {
+    for (const child of el.children) {
+      if (ANCHORABLE_TAGS.has(child.tagName)) {
+        nodesInOrder.push(child);
+      } else {
+        walk(child);
+      }
+    }
+  })(parsed.body);
+
+  // Scan against the masked string so script/style/comment internals do not
+  // contribute false anchorables. Recorded [start, end] indices are still
+  // valid offsets into the ORIGINAL doc (mask preserves byte length).
+  const masked = maskRawTextAndComments(doc);
+  const tagOpen = /<([a-zA-Z][a-zA-Z0-9]*)\b[^>]*>/g;
+  let m;
+  while ((m = tagOpen.exec(masked)) !== null) {
+    const tag = m[1].toUpperCase();
+    if (!ANCHORABLE_TAGS.has(tag)) continue;
+    const start = m.index;
+    const end = findCloseTagEnd(masked, tag, m.index + m[0].length);
+    if (end < 0) continue;
+    map.push({ tag, start, end, node: null });
+    // Outer-wins: skip past the close so nested anchorables of any type are
+    // not separately recorded.
+    tagOpen.lastIndex = end;
+  }
+
+  // Attach DOM nodes by ordinal. If counts disagree, the parser and scanner
+  // disagree about block structure (e.g. auto-closed <p>One<p>Two</p>) —
+  // pairing by ordinal would silently mis-align nodes with source slices, so
+  // clear ALL entries' node refs. Consumers must then rely on [start, end]
+  // and treat the source-form content as authoritative.
+  if (map.length !== nodesInOrder.length) {
+    console.warn('rwa-lens: source-position map desync; map=' + map.length +
+      ' nodes=' + nodesInOrder.length + '; clearing all node references');
+    for (const entry of map) entry.node = null;
+  } else {
+    for (let i = 0; i < map.length; i++) map[i].node = nodesInOrder[i];
+  }
+  return map;
+}
+
+function findCloseTagEnd(doc, tag, from) {
+  const re = new RegExp('<(\\/?)' + tag + '\\b[^>]*>', 'gi');
+  re.lastIndex = from;
+  let depth = 1, m;
+  while ((m = re.exec(doc)) !== null) {
+    if (m[1] === '/') {
+      depth--;
+      if (depth === 0) return m.index + m[0].length;
+    } else {
+      depth++;
+    }
+  }
+  return -1;
+}
+window.buildSourcePositionMap = buildSourcePositionMap; // expose for tests
+window.maskRawTextAndComments = maskRawTextAndComments; // expose for tests
+
+// rwa-lens/1: source-position map state. Ephemeral, in-memory, rebuilt after
+// every successful commit; never persisted (spec invariant 11 + lifetime
+// rule §5.5). The state is module-scoped — callers go through setSourceMap /
+// getSourceMap, not direct globals. renderDoc() is the single rebuild point:
+// every commit path eventually re-renders, so wiring there gives us implicit
+// rebuild on commit, undo, and bootstrap restore without scattering calls.
+let sourceMap = null;
+let currentDocCache = null; // consumed by Task 1.5+ anchor resolution
+function setSourceMap(doc) {
+  currentDocCache = doc;
+  sourceMap = buildSourcePositionMap(doc);
+}
+function getSourceMap() { return sourceMap; }
+window.getSourceMap = getSourceMap;
+
+// rwa-lens/1: class-declared locks (spec §7).
+let lockedRanges = [];
+function lockedRangesIn(doc) {
+  if (!doc) return [];
+  const opening = /<([a-zA-Z][a-zA-Z0-9]*)\b[^>]*\bclass\s*=\s*("([^"]*)"|'([^']*)')[^>]*>/g;
+  const out = [];
+  let m;
+  while ((m = opening.exec(doc)) !== null) {
+    const cls = (m[3] || m[4] || '');
+    if (!/\brwa-locked\b/.test(cls)) continue;
+    const tag = m[1];
+    const start = m.index;
+    const end = findCloseTagEnd(doc, tag, m.index + m[0].length);
+    if (end > 0) out.push([start, end]);
+  }
+  return out;
+}
+// rwa-lens/1: marker-form frozen-zone byte ranges (spec §7 coverage check).
+// Mirrors extractFrozenZones (~L586) but returns [start, end] source-byte
+// ranges including the marker fences themselves — markers are unique
+// substrings and their byte content is invariant, so the fences are part of
+// the protected range. Used by replaceDocument's class-lock coverage check
+// to verify .rwa-locked ranges are entirely contained within marker zones.
+function markerZoneRangesIn(doc) {
+  if (!doc) return [];
+  const out = [];
+  // Comment-fence markers: <!-- rwa:frozen:begin <name> --> ... <!-- rwa:frozen:end <name> -->
+  // Same regex shape as extractFrozenZones; record byte ranges instead of inner text.
+  const beginRe = /(<!--|\/\*|\/\/)\s*rwa:frozen:begin\s+([A-Za-z0-9_-]+)\s*(-->|\*\/|(?=\r?\n|$))/g;
+  let m;
+  while ((m = beginRe.exec(doc)) !== null) {
+    const opener = m[1];
+    const name = m[2];
+    const startOfBegin = m.index;
+    let innerStart = m.index + m[0].length;
+    if (opener === '//') {
+      while (innerStart < doc.length && doc[innerStart] !== '\n') innerStart++;
+      if (innerStart < doc.length) innerStart++;
+    }
+    let endRe;
+    if (opener === '<!--') {
+      endRe = new RegExp('<!--\\s*rwa:frozen:end\\s+' + escapeRegex(name) + '\\s*-->', 'g');
+    } else if (opener === '/*') {
+      endRe = new RegExp('\\/\\*\\s*rwa:frozen:end\\s+' + escapeRegex(name) + '\\s*\\*\\/', 'g');
+    } else {
+      endRe = new RegExp('\\/\\/\\s*rwa:frozen:end\\s+' + escapeRegex(name) + '(?=\\r?\\n|$)', 'g');
+    }
+    endRe.lastIndex = innerStart;
+    const e = endRe.exec(doc);
+    if (!e) continue; // unterminated — skip
+    const endOfEnd = e.index + e[0].length;
+    out.push([startOfBegin, endOfEnd]);
+  }
+  // data-rwa-frozen elements: scan for opening tags carrying that attribute.
+  const fzAttr = /<([a-zA-Z][a-zA-Z0-9]*)\b[^>]*\bdata-rwa-frozen\b[^>]*>/g;
+  while ((m = fzAttr.exec(doc)) !== null) {
+    const tag = m[1];
+    const start = m.index;
+    const end = findCloseTagEnd(doc, tag, m.index + m[0].length);
+    if (end > 0) out.push([start, end]);
+  }
+  return out;
+}
+function rebuildLockedRanges(doc) {
+  lockedRanges = lockedRangesIn(doc);
+}
+function getLockedRanges() { return lockedRanges; }
+window.getLockedRanges = getLockedRanges;
+function isWithinLockedRange(start, end) {
+  return lockedRanges.some(([ls, le]) => start >= ls && end <= le);
+}
+
+// rwa-lens/1: anchor uniqueness extension (spec §5.5).
+// Given a map entry, return { find, replacePrefix, replaceSuffix } such that
+// `find` appears exactly once in the current doc and contains the entry's
+// source range. Expands outward through map siblings until uniqueness, or
+// returns null if even full-document context fails to disambiguate.
+function resolveAnchorFind(entry) {
+  const doc = currentDocCache;
+  if (!doc || !sourceMap) return null;
+  const idx = sourceMap.indexOf(entry);
+  if (idx < 0) return null;
+
+  let lo = idx, hi = idx;
+  while (true) {
+    const start = sourceMap[lo].start;
+    const end   = sourceMap[hi].end;
+    const find  = doc.slice(start, end);
+    if (countOccurrences(doc, find) === 1) {
+      return {
+        find,
+        replacePrefix: doc.slice(start, entry.start),
+        replaceSuffix: doc.slice(entry.end, end),
+      };
+    }
+    // Expand: grow whichever side is currently less extended from the anchor
+    // (alternating expansion, biased toward earlier siblings on ties). Keeps
+    // the find window near-symmetric around the anchor — minimizes find-string
+    // length and the eventual `replace` length on average.
+    const canGrowLo = lo > 0;
+    const canGrowHi = hi < sourceMap.length - 1;
+    if (!canGrowLo && !canGrowHi) return null;
+    if (canGrowLo && (!canGrowHi || (idx - lo) <= (hi - idx))) {
+      lo--;
+    } else {
+      hi++;
+    }
+  }
+}
+window.resolveAnchorFind = resolveAnchorFind;
+
+// rwa-lens/1: EOF anchor resolution. Returns resolveAnchorFind for the last
+// anchorable block in the source-position map. Locked blocks are excluded
+// (Task 8.3 wires the skip).
+function resolveEofAnchor() {
+  const map = sourceMap;
+  if (!map || map.length === 0) return null;
+  for (let i = map.length - 1; i >= 0; i--) {
+    if (isWithinLockedRange(map[i].start, map[i].end)) continue;
+    return resolveAnchorFind(map[i]);
+  }
+  return null;
+}
+window.resolveEofAnchor = resolveEofAnchor;
+
+// rwa-lens/1: bounded context window for anchored slash commands (spec §10).
+// Heading-relative heuristic: blocks between the nearest preceding heading
+// (any of H1-H6) and the next heading. Excludes the target.
+function buildAnchoredContextWindow(anchor) {
+  const map = sourceMap, doc = currentDocCache;
+  if (!map || !doc) return { target: '', context: '' };
+  const idx = map.indexOf(anchor);
+  if (idx < 0) return { target: doc.slice(anchor.start, anchor.end), context: '' };
+  const isHeading = e => /^H[1-6]$/.test(e.tag);
+  let lo = idx;
+  while (lo > 0 && !isHeading(map[lo - 1])) lo--;
+  if (lo > 0) lo--; // include the heading itself
+  let hi = idx;
+  while (hi < map.length - 1 && !isHeading(map[hi + 1])) hi++;
+  const blocks = [];
+  for (let i = lo; i <= hi; i++) {
+    if (i === idx) continue;
+    blocks.push(doc.slice(map[i].start, map[i].end));
+  }
+  return {
+    target: doc.slice(anchor.start, anchor.end),
+    context: blocks.join('\n'),
+  };
+}
+window.buildAnchoredContextWindow = buildAnchoredContextWindow;
+
+// rwa-lens/1: anchored agent prompt (spec §10).
+function buildAnchoredPrompt(target, context, instruction) {
+  // Detect parent-type constraint by inspecting the target's outer element.
+  const parsed = new DOMParser().parseFromString(`<body>${target}</body>`, 'text/html');
+  const root = parsed.body.firstElementChild;
+  const targetTag = root ? root.tagName : '';
+  const parentConstraint = (targetTag === 'LI')
+    ? '\n\nThe target is an <li>. Every top-level element of your response must also be <li> — never <p> or other types. Lists may not contain <p> children.'
+    : '';
+  return [
+    'You are editing a single block of an HTML document.',
+    '',
+    '<TARGET>',
+    target,
+    '</TARGET>',
+    '',
+    '<CONTEXT>',
+    context || '(no surrounding context — the target is in a section by itself)',
+    '</CONTEXT>',
+    '',
+    `User instruction: ${instruction}`,
+    '',
+    'Return a replacement for the target block, of any length.',
+    'Output naked HTML markup only — no markdown fences, no commentary, no preamble or explanation.',
+    'The first character of your response must be the first character of the replacement block.' + parentConstraint,
+  ].join('\n');
+}
+window.buildAnchoredPrompt = buildAnchoredPrompt;
+
+// rwa-lens/1: validate anchored response against parent context (spec §10).
+// v1: only constrains <ul>/<ol> parent → <li> children.
+function validateAnchoredResponse(response, anchor) {
+  const parsed = new DOMParser().parseFromString(`<body>${response}</body>`, 'text/html');
+  const tops = Array.from(parsed.body.children);
+  if (tops.length === 0) {
+    // Empty response = deletion path. Accepted.
+    return { ok: true };
+  }
+  // Use the live mount to determine parent (anchor.node is from throwaway DOMParser doc).
+  const liveNode = liveNodeForEntry(anchor);
+  const parentTag = liveNode && liveNode.parentNode ? liveNode.parentNode.tagName : '';
+  if (parentTag === 'UL' || parentTag === 'OL') {
+    for (const el of tops) {
+      if (el.tagName !== 'LI') {
+        return { ok: false, reason: `parent <${parentTag.toLowerCase()}> requires <li> children; got <${el.tagName.toLowerCase()}>` };
+      }
+    }
+  }
+  return { ok: true };
+}
+window.validateAnchoredResponse = validateAnchoredResponse;
+
+// rwa-lens/1: wrap direct text per spec §5.3 wrapping table.
+function wrapDirectText(text, anchorTag) {
+  const wrapper = (anchorTag === 'LI') ? 'li' : 'p';
+  const chunks = text.split(/\n\s*\n/).map(s => s.trim()).filter(Boolean);
+  return chunks.map(c => `<${wrapper}>${escapeHtml(c)}</${wrapper}>`).join('\n');
+}
+function escapeHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+window.wrapDirectText = wrapDirectText;
+
+// rwa-lens/1: lens state.
+const lensState = { anchor: null }; // null = default; otherwise sourceMap entry
+// Test seam (jsdom only) for inspecting lens state in tests.
+if (typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent)) {
+  window.__lensState = lensState;
+}
+
+// rwa-lens/1: click-to-anchor (spec §5.1, §5.5).
+// Walks up from click target to the nearest ANCHORABLE_TAGS ancestor inside
+// the mount, then maps that live DOM node to its sourceMap entry.
+//
+// The source-position map's `node` refs point into a DOMParser document built
+// inside buildSourcePositionMap — they are NOT the live mount nodes. So we
+// can't match by reference equality. Instead we use ordinal position: the
+// scanner records anchorables in document order (outer-wins descent), and the
+// live mount produces the same order via the same outer-wins traversal — so
+// the i-th live anchorable corresponds to map[i].
+function handleMountClick(e) {
+  const mount = document.getElementById('rwa-doc-mount');
+  if (!mount) return;
+  // Phase 8: reject the click outright if any ancestor up to the mount carries
+  // .rwa-locked. The class-lock applies to the whole subtree (spec §8), so a
+  // click on an inner <p> inside a locked <section> must not anchor — even
+  // though the <p> itself is anchorable. Walk to the mount checking lock first,
+  // then re-walk for the nearest anchorable ancestor.
+  let el = e.target;
+  while (el && el !== mount) {
+    if (el.classList && el.classList.contains('rwa-locked')) {
+      showAffordance('this region is locked');
+      return;
+    }
+    el = el.parentNode;
+  }
+  el = e.target;
+  while (el && el !== mount) {
+    if (ANCHORABLE_TAGS.has(el.tagName)) {
+      const ord = anchorableOrdinal(mount, el);
+      const entry = (ord >= 0 && sourceMap) ? sourceMap[ord] : null;
+      if (entry) anchorTo(entry);
+      return;
+    }
+    el = el.parentNode;
+  }
+  // No anchorable ancestor — no-op.
+}
+
+// Outer-wins anchorable descent: matches buildSourcePositionMap's walk so
+// ordinals line up with the source-position map.
+function anchorableOrdinal(root, target) {
+  let i = 0, found = -1;
+  (function walk(el) {
+    if (found >= 0) return;
+    for (const child of el.children) {
+      if (found >= 0) return;
+      if (ANCHORABLE_TAGS.has(child.tagName)) {
+        if (child === target) { found = i; return; }
+        i++;
+        // Outer-wins: don't descend into anchorables.
+      } else {
+        walk(child);
+      }
+    }
+  })(root);
+  return found;
+}
+
+// Reverse of anchorableOrdinal: given a sourceMap entry, walk the live mount
+// in document order (outer-wins) and return the live node at the same ordinal.
+// The sourceMap's entry.node refs point into a throwaway DOMParser doc, so we
+// can't follow them — but ordinal position is stable across the two walks.
+function liveNodeForEntry(entry) {
+  const map = sourceMap;
+  if (!map || !entry) return null;
+  const ord = map.indexOf(entry);
+  if (ord < 0) return null;
+  const mount = document.getElementById('rwa-doc-mount');
+  if (!mount) return null;
+  let i = 0;
+  let found = null;
+  (function walk(el) {
+    for (const child of el.children) {
+      if (found) return;
+      if (ANCHORABLE_TAGS.has(child.tagName)) {
+        if (i === ord) { found = child; return; }
+        i++;
+      } else {
+        walk(child);
+      }
+    }
+  })(mount);
+  return found;
+}
+
+function anchorTo(entry) {
+  lensState.anchor = entry;
+  const lens = document.getElementById('rwa-lens');
+  if (!lens) return;
+  lens.dataset.state = 'anchored';
+  // Move lens to sit just after the anchored block's live node, if findable.
+  const liveNode = liveNodeForEntry(entry);
+  if (liveNode && liveNode.parentNode) {
+    liveNode.parentNode.insertBefore(lens, liveNode.nextSibling);
+  }
+  // Badge: "anchored on <tag>" + an X close button.
+  const badge = lens.querySelector('#rwa-lens-badge');
+  if (badge) {
+    badge.hidden = false;
+    badge.textContent = '';
+    const tagSpan = document.createElement('span');
+    tagSpan.textContent = `anchored on ${entry.tag.toLowerCase()} `;
+    badge.appendChild(tagSpan);
+    const x = document.createElement('button');
+    x.type = 'button';
+    x.textContent = '✕';
+    x.setAttribute('aria-label', 'release anchor');
+    x.addEventListener('click', releaseAnchor);
+    badge.appendChild(x);
+  }
+  // Visual highlight on the live block.
+  if (lensState._highlighted) lensState._highlighted.removeAttribute('data-rwa-anchored');
+  if (liveNode) {
+    liveNode.setAttribute('data-rwa-anchored', '');
+    lensState._highlighted = liveNode;
+  } else {
+    lensState._highlighted = null;
+  }
+  // Placeholder shift — what the user can do here.
+  const input = lens.querySelector('#rwa-lens-input');
+  if (input) input.placeholder = 'insert after this block, or /edit it';
+}
+
+// Releases an anchored lens back to its docked default position.
+// Called by the badge X button and by the global Esc keydown handler.
+function releaseAnchor() {
+  const lens = document.getElementById('rwa-lens');
+  if (!lens) return;
+  // Move lens back to its docked position. The default mount is direct child
+  // of body (CSS uses position:fixed; bottom:0 to dock it). Re-appending to
+  // body is sufficient for layout and matches the harness expectation.
+  document.body.appendChild(lens);
+  lens.dataset.state = 'default';
+  const badge = lens.querySelector('#rwa-lens-badge');
+  if (badge) {
+    badge.hidden = true;
+    badge.textContent = '';
+  }
+  if (lensState._highlighted) {
+    lensState._highlighted.removeAttribute('data-rwa-anchored');
+    lensState._highlighted = null;
+  }
+  lensState.anchor = null;
+  const input = lens.querySelector('#rwa-lens-input');
+  if (input) input.placeholder = 'Write, or describe what you want.';
+}
+window.releaseAnchor = releaseAnchor;
+if (typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent)) {
+  window.__handleMountClick = handleMountClick;
+  window.__liveNodeForEntry = liveNodeForEntry;
+}
+
+// rwa-lens/1: submit dispatcher. Routes (state × mode) → envelope/agent path.
+async function submitLens(text) {
+  if (!text || !text.length) return;
+  const isEscapedSlash = text.startsWith('\\/');
+  const isCommand = text.startsWith('/') && !isEscapedSlash;
+  const stripped = isEscapedSlash ? text.slice(1) : text;
+  const anchored = lensState.anchor !== null;
+  if (isCommand) {
+    const instruction = stripped.slice(1); // drop the leading '/'
+    if (anchored) {
+      await runAnchoredCommand(lensState.anchor, instruction);
+    } else {
+      await modify(instruction);
+    }
+  } else {
+    const envelope = anchored
+      ? synthesizeAnchoredInsert(lensState.anchor, stripped)
+      : synthesizeDefaultAppend(stripped);
+    const surface = anchored ? 'anchored-text' : 'default-text';
+    await synthesizeAndCommit(envelope, surface, stripped);
+  }
+  // Clear the input on successful submit.
+  const input = document.getElementById('rwa-lens-input');
+  if (input) input.value = '';
+}
+window.submitLens = submitLens;
+
+// rwa-lens/1: single-shot completion helper for anchored slash commands.
+// Unlike modify(), no tool_use loop: the runtime constructs the envelope from
+// the model's plain-text response (one block of HTML), so we don't need tools
+// at all — just a plain chat completion. tool_choice: 'none' is implicit by
+// omitting tools.
+async function callAgentSingleShot(prompt) {
+  const backend = sessionStorage.getItem(RWA.K_BACKEND) || 'openrouter';
+  const key = sessionStorage.getItem(RWA.K_API);
+  const model = sessionStorage.getItem(RWA.K_MODEL) || RWA.MODEL;
+  if (backend !== 'openrouter') {
+    throw new Error('lens anchored commands currently support openrouter backend only');
+  }
+  if (!key) throw new Error('no API key');
+  const r = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': 'Bearer ' + key,
+      'HTTP-Referer': 'https://github.com/ikangai/rewritable',
+      'X-Title': 're-write-able',
+    },
+    body: JSON.stringify({
+      model,
+      max_tokens: 32000,
+      messages: [{ role: 'user', content: prompt }],
+    }),
+  });
+  if (!r.ok) {
+    const e = await r.json().catch(() => ({}));
+    throw new Error((e.error && e.error.message) || r.statusText);
+  }
+  const data = await r.json();
+  const msg = data.choices?.[0]?.message;
+  return (msg?.content || '').trim();
+}
+
+// rwa-lens/1: post-commit anchor behavior (spec §5.4).
+// Three branches based on the agent's response shape:
+//   1. Single anchorable block → re-anchor on the new block at the same source-start.
+//   2. Multiple anchorable blocks → release with affordance (the lens can no longer
+//      point at "this block" because the response replaced it with several).
+//   3. Empty (or no anchorable elements after parse) → release without affordance
+//      (the user explicitly asked for deletion, no surprise to surface).
+function handlePostCommitAnchor(response, prevAnchor) {
+  const parsed = new DOMParser().parseFromString(`<body>${response}</body>`, 'text/html');
+  const tops = Array.from(parsed.body.children).filter(el => ANCHORABLE_TAGS.has(el.tagName));
+  if (tops.length === 0) {
+    // Empty (or no anchorable elements) → release without affordance.
+    releaseAnchor();
+    return;
+  }
+  if (tops.length === 1) {
+    // Single anchorable block → re-anchor on the new entry at the prevAnchor.start position.
+    const newEntry = sourceMap ? sourceMap.find(m => m.start === prevAnchor.start) : null;
+    if (newEntry) anchorTo(newEntry);
+    else releaseAnchor();
+    return;
+  }
+  // Multi-block → release with affordance.
+  releaseAnchor();
+  showAffordance('anchor released — response was multi-block');
+}
+
+// rwa-lens/1: ephemeral toast for surfacing post-commit affordances.
+// Used by handlePostCommitAnchor's multi-block branch to explain why the
+// lens is no longer anchored. Auto-removes after 3 seconds.
+function showAffordance(text) {
+  const el = document.createElement('div');
+  el.className = 'rwa-lens-toast';
+  el.textContent = text;
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 3000);
+}
+
+// rwa-lens/1: anchored slash command runner (spec §7).
+// Build the bounded context, prompt the agent for a replacement block, validate
+// the response shape, synthesize an apply_edits envelope (anchored find +
+// prefix/suffix from resolveAnchorFind), commit through applyEdits, and apply
+// the spec §5.4 post-commit anchor behavior (re-anchor / release-with-affordance /
+// release). Up to 3 retries with structured failure context appended to the
+// prompt. No silent escalation to replace_document.
+async function runAnchoredCommand(anchor, instruction) {
+  if (modifyMutex) {
+    setStatus('err', '✗ another modify in progress');
+    throw new RwaEditError('concurrent_modify');
+  }
+  modifyMutex = true;
+  // Task 11.1: visible busy indicator on the lens during in-flight commands.
+  const lensBusy = document.getElementById('rwa-lens');
+  if (lensBusy) lensBusy.dataset.busy = 'true';
+  setStatus('run', '⌘K running');
+  try {
+    const { target, context } = buildAnchoredContextWindow(anchor);
+    const basePrompt = buildAnchoredPrompt(target, context, instruction);
+    let attempts = 0;
+    let lastFailure = null;
+    while (attempts < 3) {
+      attempts++;
+      const tryPrompt = basePrompt + (lastFailure ? `\n\nPrevious attempt failed: ${lastFailure}\nRetry honoring the constraint.` : '');
+      const response = await callAgentSingleShot(tryPrompt);
+      const validation = validateAnchoredResponse(response, anchor);
+      if (!validation.ok) { lastFailure = validation.reason; continue; }
+      const find = resolveAnchorFind(anchor);
+      if (!find) { lastFailure = 'anchor could not be resolved (ambiguous source)'; continue; }
+      const envelope = {
+        version: 'rwa-edit/1',
+        edits: [{
+          find: find.find,
+          replace: find.replacePrefix + response + find.replaceSuffix,
+          reason: 'lens: anchored slash command',
+        }],
+        reason: `lens: ${instruction}`,
+      };
+      try {
+        const lensMeta = {
+          surface: 'anchored-command',
+          instruction,
+          scope: { type: 'block', block_id: String(anchor.start) },
+        };
+        const result = await applyEdits(envelope, await getDoc(), lensMeta);
+        renderDoc(result);
+        // Spec §5.4 post-commit anchor branches: single → re-anchor on new
+        // block; multi → release with affordance; empty → release silently.
+        // The pre-commit anchor (with its start offset) is the stable handle
+        // for the single-block re-anchor lookup, since find/replace splices
+        // at the same source offset preserve the start position.
+        handlePostCommitAnchor(response, anchor);
+        setStatus('ok', '✓ done');
+        return;
+      } catch (err) {
+        if (!(err instanceof RwaEditError)) throw err;
+        lastFailure = err.code + (err.editIndex != null ? ' [edit ' + err.editIndex + ']' : '');
+        continue;
+      }
+    }
+    setStatus('err', `✗ ${lastFailure || 'lens command failed after retries'}`);
+  } catch (e) {
+    setStatus('err', '✗ ' + e.message);
+    console.error(e);
+  } finally {
+    modifyMutex = false;
+    if (lensBusy) lensBusy.dataset.busy = 'false';
+  }
+}
+function synthesizeAnchoredInsert(anchor, text) {
+  const find = resolveAnchorFind(anchor);
+  if (!find) return null;
+  const wrapped = wrapDirectText(text, anchor.tag);
+  return {
+    version: 'rwa-edit/1',
+    edits: [{
+      find: find.find,
+      replace: find.find + '\n' + wrapped,
+      reason: 'lens: anchored direct-text insert',
+    }],
+    reason: 'lens: insert after anchor',
+  };
+}
+if (typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent)) {
+  window.__synthesizeAnchoredInsert = synthesizeAnchoredInsert;
+}
+function synthesizeDefaultAppend(text) {
+  const eof = resolveEofAnchor();
+  if (!eof) return null; // empty doc — caller routes via replace_document
+  const wrapped = wrapDirectText(text, null);
+  return {
+    version: 'rwa-edit/1',
+    edits: [{
+      find: eof.find,
+      replace: eof.find + '\n' + wrapped,
+      reason: 'lens: default-state direct-text append',
+    }],
+    reason: 'lens: append at EOF',
+  };
+}
+if (typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent)) {
+  window.__synthesizeDefaultAppend = synthesizeDefaultAppend;
+}
+async function synthesizeAndCommit(envelope, surface, instruction) {
+  // Test seam preserved.
+  if (typeof window.__synthesizeAndCommit === 'function') {
+    return window.__synthesizeAndCommit(envelope, surface, instruction);
+  }
+  // Capture pre-commit anchor's start offset for post-commit re-anchor lookup.
+  // The anchor's source-start is the stable handle across a commit: an
+  // insert-after-anchor edit (anchored direct text) leaves the anchor's start
+  // unchanged, and a replace-this-anchor edit (Phase 7) preserves it because
+  // find/replace splices at the same source offset.
+  const prevAnchorStart = lensState.anchor ? lensState.anchor.start : null;
+  // Phase 9.1: build lensMeta so the rwa_hist record carries surface,
+  // instruction, and the scope (block-anchored or eof). Scope is captured
+  // pre-commit because lensState.anchor may be cleared by renderDoc below.
+  const lensMeta = {
+    surface,
+    instruction,
+    scope: lensState.anchor
+      ? { type: 'block', block_id: String(lensState.anchor.start) }
+      : { type: 'eof' },
+  };
+  let result;
+  if (!envelope) {
+    // Empty doc → first append → use replace_document.
+    const wrapped = wrapDirectText(instruction || '', null);
+    const repEnv = {
+      version: 'rwa-edit/1',
+      doc: wrapped,
+      reason: 'initial content into an empty document',
+    };
+    result = await replaceDocument(repEnv, await getDoc(), lensMeta);
+  } else {
+    result = await applyEdits(envelope, await getDoc(), lensMeta);
+  }
+  // Re-render so the user sees the new content. renderDoc rebuilds sourceMap
+  // and (because the lens may sit inside the mount) calls releaseAnchor, so we
+  // must re-resolve the anchor afterwards using the offset captured above.
+  renderDoc(result);
+  if (prevAnchorStart !== null && sourceMap) {
+    const newEntry = sourceMap.find(m => m.start === prevAnchorStart);
+    if (newEntry) {
+      // Re-anchor onto the same logical block. anchorTo handles lens repos,
+      // badge text, and the data-rwa-anchored visual highlight on the live
+      // node (which is a fresh DOM element after the innerHTML rebuild).
+      anchorTo(newEntry);
+    }
+    // If newEntry is null the anchor's source-start no longer exists; the
+    // releaseAnchor inside renderDoc has already cleared lensState.anchor and
+    // returned the lens to its docked default, so no extra work is needed.
+  }
+  return result;
+}
+
+// Test seam: directly write a doc to IDB + rebuild the map, no agent loop.
+async function __setDocForTest(d) {
+  const db = await openDB();
+  await new Promise((resolve, reject) => {
+    const tx = db.transaction('rwa_doc', 'readwrite');
+    tx.objectStore('rwa_doc').put(d, 'self');
+    tx.oncomplete = resolve;
+    tx.onerror = () => reject(tx.error);
+  });
+  renderDoc(d);
+}
+// Test seam: only exposed under jsdom (the tests/ harness).
+// In real browsers this binding stays internal — a script inside INLINE_DOC
+// could otherwise call __setDocForTest('') to wipe the doc with no undo.
+if (typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent)) {
+  window.__setDocForTest = __setDocForTest;
+}
+
 // Token-level balance check for <script> and <style>. The HTML parser
 // auto-closes these silently at EOF when the closing tag is missing, so a
 // post-parse shape check can pass while the doc has actually been
@@ -649,7 +1600,7 @@ async function commitDoc(currentDoc, newDoc, histRecord) {
 // for older runtimes by treating absence as "no check available."
 const isWellFormed = (s) => typeof s !== 'string' || typeof s.isWellFormed !== 'function' || s.isWellFormed();
 
-async function applyEdits(envelope, currentDocRaw) {
+async function applyEdits(envelope, currentDocRaw, lensMeta = null) {
   if (envelope?.version !== 'rwa-edit/1') throw new RwaEditError('version_unsupported');
   if (!Array.isArray(envelope.edits) || envelope.edits.length === 0) throw new RwaEditError('malformed_envelope');
   for (let i = 0; i < envelope.edits.length; i++) {
@@ -678,10 +1629,23 @@ async function applyEdits(envelope, currentDocRaw) {
     const occ = countOccurrences(work, find);
     if (occ === 0) throw new RwaEditError('find_not_found', i);
     if (occ > 1) throw new RwaEditError('find_not_unique', i, { count: occ, hints: nearbySnippets(work, find) });
+    const idx = work.indexOf(find);
+    // rwa-lens/1: class-declared lock check (spec §7). Reject any find range
+    // that overlaps a .rwa-locked source range. Adjacent insertions (find ends
+    // exactly where a lock begins, or starts exactly where one ends) are OK.
+    // Recomputed per iteration because `work` mutates after each splice.
+    const editStart = idx;
+    const editEnd = idx + find.length;
+    const locks = lockedRangesIn(work);
+    for (const [ls, le] of locks) {
+      // Overlap: NOT (editEnd <= ls || editStart >= le).
+      if (editEnd > ls && editStart < le) {
+        throw new RwaEditError('class_lock_violation', i, { lockRange: [ls, le], editRange: [editStart, editEnd] });
+      }
+    }
     // Slice-based splice — String.prototype.replace honors $&, $$, $`, $' patterns
     // even when the search arg is a literal string, mangling replacements like
     // "$$amount" → "$amount". Splicing preserves the model's bytes verbatim.
-    const idx = work.indexOf(find);
     work = work.slice(0, idx) + replace + work.slice(idx + find.length);
   }
 
@@ -708,11 +1672,17 @@ async function applyEdits(envelope, currentDocRaw) {
 
   if (work.length > RWA_EDIT.MAX_DOC) throw new RwaEditError('target_size_exceeded');
 
-  await commitDoc(currentDoc, work, { ts: Date.now(), kind: 'edit_batch', envelope });
+  const histRecord = { ts: Date.now(), kind: 'edit_batch', envelope };
+  if (lensMeta) {
+    histRecord.surface = lensMeta.surface;
+    histRecord.instruction = lensMeta.instruction;
+    histRecord.scope = lensMeta.scope;
+  }
+  await commitDoc(currentDoc, work, histRecord);
   return work;
 }
 
-async function replaceDocument(envelope, currentDocRaw) {
+async function replaceDocument(envelope, currentDocRaw, lensMeta = null) {
   if (envelope?.version !== 'rwa-edit/1') throw new RwaEditError('version_unsupported');
   if (typeof envelope.doc !== 'string' || typeof envelope.reason !== 'string' || !envelope.reason)
     throw new RwaEditError('malformed_envelope');
@@ -721,6 +1691,24 @@ async function replaceDocument(envelope, currentDocRaw) {
 
   const currentDoc = canonLF(currentDocRaw);
   const newDoc = canonLF(envelope.doc);
+
+  // rwa-lens/1: class-declared lock coverage check (spec §7).
+  // A bare .rwa-locked block in the current doc cannot survive a wholesale
+  // rewrite — the wrapper can be reshaped, attribute-mutated, or just
+  // dropped. Locks are only safe under replace_document if their source
+  // range is entirely contained within a marker-form frozen zone (markers
+  // wrap or equal the lock — NOT the inverse). Markers nested inside a
+  // .rwa-locked wrapper preserve only their inner content, so the wrapper
+  // itself remains mutable; that pattern fails coverage too.
+  const lockRanges = lockedRangesIn(currentDoc);
+  const markerRanges = markerZoneRangesIn(currentDoc);
+  for (const [ls, le] of lockRanges) {
+    const covered = markerRanges.some(([ms, me]) => ms <= ls && le <= me);
+    if (!covered) {
+      throw new RwaEditError('class_lock_uncovered', null, { lockRange: [ls, le] });
+    }
+  }
+
   const originalFrozen = extractFrozenZones(currentDoc);
   const originalAttrs = dataRwaFrozenSnapshot(parseHtmlFragment(currentDoc).doc);
 
@@ -738,7 +1726,13 @@ async function replaceDocument(envelope, currentDocRaw) {
 
   if (newDoc.length > RWA_EDIT.MAX_DOC) throw new RwaEditError('target_size_exceeded');
 
-  await commitDoc(currentDoc, newDoc, { ts: Date.now(), kind: 'replace_document', reason: envelope.reason });
+  const histRecord = { ts: Date.now(), kind: 'replace_document', reason: envelope.reason };
+  if (lensMeta) {
+    histRecord.surface = lensMeta.surface;
+    histRecord.instruction = lensMeta.instruction;
+    histRecord.scope = lensMeta.scope;
+  }
+  await commitDoc(currentDoc, newDoc, histRecord);
   return newDoc;
 }
 
@@ -935,8 +1929,25 @@ function buildUserPrompt(instr, doc, frozenZones) {
   const fzText = frozenZones.length === 0
     ? '(none)'
     : frozenZones.map(z => '- ' + z.name + (z.error ? ' [' + z.error + ']' : '')).join('\n');
+  // rwa-lens/1 §7: enumerate class-declared locks alongside marker frozen zones.
+  // Each item shows the wrapper tag plus a compact preview so the agent can
+  // identify the region without scanning the entire doc.
+  const lockRanges = lockedRangesIn(doc);
+  let lockSection = '';
+  if (lockRanges.length > 0) {
+    const items = lockRanges.map(([s, e]) => {
+      const slice = doc.slice(s, e);
+      const tagMatch = slice.match(/^<([a-zA-Z][a-zA-Z0-9]*)/);
+      const tag = tagMatch ? tagMatch[1] : '?';
+      const preview = slice.replace(/\s+/g, ' ').slice(0, 80);
+      return '- <' + tag + ' class="rwa-locked">: ' + preview + (slice.length > 80 ? '...' : '');
+    }).join('\n');
+    lockSection = '\n\nClass-declared locked regions (rwa-lens/1 §7) — also off-limits:\n' + items +
+      '\n\nNote: replace_document is unavailable on documents containing class-declared locks not entirely covered by marker-form frozen zones. Prefer apply_edits or apply_dsl_plan.';
+  }
   return 'User request:\n' + instr +
     '\n\nFrozen zones in the current doc (do not produce marker text in find/replace; do not modify their inner content):\n' + fzText +
+    lockSection +
     '\n\nThe current document follows. Make your edit by calling apply_edits or replace_document.\n\n<DOC>\n' + doc + '\n</DOC>';
 }
 
