@@ -128,5 +128,27 @@ console.log('\n== Test L1.2e: HTML comments do not span blocks ==');
   check('two entries total', map.length === 2);
 }
 
+console.log('\n== Test L1.2f: auto-closed <p> desync clears all node refs ==');
+{
+  // <p>One<p>Two</p> — HTML parser auto-closes the first <p>, producing 2 DOM nodes.
+  // Source scanner only finds 1 valid pair (<p>Two</p>) because findCloseTagEnd
+  // gets confused by depth counting on the unclosed first <p>. This is a desync.
+  const doc = '<p>One<p>Two</p>';
+  // Capture the warning so the test doesn't pollute test output.
+  // The bootstrap calls console.warn from within the jsdom window, so patch
+  // window.console.warn (jsdom's console is a distinct object from Node's).
+  const origWarn = window.console.warn;
+  let warned = '';
+  window.console.warn = (msg) => { warned = String(msg); };
+  const map = window.buildSourcePositionMap(doc);
+  window.console.warn = origWarn;
+  check('desync detected and warned',
+    /desync/i.test(warned));
+  check('all entries have node=null on desync',
+    map.every(e => e.node === null));
+  check('slices remain valid against original doc',
+    map.every(e => doc.slice(e.start, e.end).startsWith('<p>')));
+}
+
 console.log(`\n${pass} pass, ${fail} fail`);
 process.exit(fail > 0 ? 1 : 0);

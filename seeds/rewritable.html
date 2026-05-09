@@ -641,14 +641,17 @@ function buildSourcePositionMap(doc) {
   }
 
   // Attach DOM nodes by ordinal. If counts disagree, the parser and scanner
-  // disagree about block structure (e.g. auto-closed <p>One<p>Two</p>) — log
-  // and leave overflow entries with node:null instead of silently mis-pairing.
+  // disagree about block structure (e.g. auto-closed <p>One<p>Two</p>) —
+  // pairing by ordinal would silently mis-align nodes with source slices, so
+  // clear ALL entries' node refs. Consumers must then rely on [start, end]
+  // and treat the source-form content as authoritative.
   if (map.length !== nodesInOrder.length) {
     console.warn('rwa-lens: source-position map desync; map=' + map.length +
-      ' nodes=' + nodesInOrder.length + '; node references will be null');
+      ' nodes=' + nodesInOrder.length + '; clearing all node references');
+    for (const entry of map) entry.node = null;
+  } else {
+    for (let i = 0; i < map.length; i++) map[i].node = nodesInOrder[i];
   }
-  const n = Math.min(map.length, nodesInOrder.length);
-  for (let i = 0; i < n; i++) map[i].node = nodesInOrder[i];
   return map;
 }
 
