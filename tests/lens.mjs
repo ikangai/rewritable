@@ -161,5 +161,34 @@ console.log('\n== Test L1.3: source-position map invariant 11 ==');
   }
 }
 
+console.log('\n== Test L1.4: source-position map lifetime ==');
+{
+  // Initial map (from current rwa_doc, which is the seed's hello.html-like default)
+  const doc1 = await window.getDoc();
+  const map1 = window.getSourceMap();
+  check('map exists after bootstrap', Array.isArray(map1) && map1.length > 0);
+
+  // Stub the agent to insert a new <p> at end via apply_edits.
+  fetchHandler = async () => ({
+    ok: true,
+    json: async () => ({
+      choices: [{ message: { role: 'assistant', content: '', tool_calls: [{
+        id: 'm1', type: 'function',
+        function: { name: 'apply_edits', arguments: JSON.stringify({
+          version: 'rwa-edit/1',
+          edits: [{ find: 'Hello, world.', replace: 'Hello, world.</p>\n<p>Added.' }]
+        })}
+      }]}}]
+    })
+  });
+  await window.modify('add a paragraph');
+  await new Promise(r => setTimeout(r, 100));
+
+  const map2 = window.getSourceMap();
+  const doc2 = await window.getDoc();
+  check('map rebuilt after commit', map2 !== map1);
+  check('map reflects new content', map2.some(e => doc2.slice(e.start, e.end).includes('Added.')));
+}
+
 console.log(`\n${pass} pass, ${fail} fail`);
 process.exit(fail > 0 ? 1 : 0);

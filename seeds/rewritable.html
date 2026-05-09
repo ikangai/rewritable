@@ -217,6 +217,11 @@ function renderDoc(html) {
     if (snap.kind === 'details' && el.tagName === 'DETAILS') el.open = snap.open;
     else if (snap.kind === 'value' && 'value' in el) el.value = snap.value;
   }
+  // rwa-lens/1: rebuild the source-position map so anchored interactions stay
+  // aligned with the just-rendered doc. setSourceMap is declared further down
+  // in this script — JS hoisting (script-mode `function` declarations) makes
+  // it callable here even though renderDoc is defined first.
+  setSourceMap(html);
 }
 
 // ─── File rebuild ───────────────────────────────────────────────────
@@ -671,6 +676,34 @@ function findCloseTagEnd(doc, tag, from) {
 }
 window.buildSourcePositionMap = buildSourcePositionMap; // expose for tests
 window.maskRawTextAndComments = maskRawTextAndComments; // expose for tests
+
+// rwa-lens/1: source-position map state. Ephemeral, in-memory, rebuilt after
+// every successful commit; never persisted (spec invariant 11 + lifetime
+// rule §5.5). The state is module-scoped — callers go through setSourceMap /
+// getSourceMap, not direct globals. renderDoc() is the single rebuild point:
+// every commit path eventually re-renders, so wiring there gives us implicit
+// rebuild on commit, undo, and bootstrap restore without scattering calls.
+let sourceMap = null;
+let currentDocCache = null;
+function setSourceMap(doc) {
+  currentDocCache = doc;
+  sourceMap = buildSourcePositionMap(doc);
+}
+function getSourceMap() { return sourceMap; }
+window.getSourceMap = getSourceMap;
+
+// Test seam: directly write a doc to IDB + rebuild the map, no agent loop.
+async function __setDocForTest(d) {
+  const db = await openDB();
+  await new Promise((resolve, reject) => {
+    const tx = db.transaction('rwa_doc', 'readwrite');
+    tx.objectStore('rwa_doc').put(d, 'self');
+    tx.oncomplete = resolve;
+    tx.onerror = () => reject(tx.error);
+  });
+  renderDoc(d);
+}
+window.__setDocForTest = __setDocForTest;
 
 // Token-level balance check for <script> and <style>. The HTML parser
 // auto-closes these silently at EOF when the closing tag is missing, so a
