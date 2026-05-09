@@ -74,5 +74,31 @@ check('ANCHORABLE_TAGS includes p, h1-h6, blockquote, li, figure, pre, aside',
 check('ANCHORABLE_TAGS excludes hr, ul, ol, dl, dt, dd',
   ['HR','UL','OL','DL','DT','DD'].every(t => !window.ANCHORABLE_TAGS.has(t)));
 
+console.log('\n== Test L1.2: source-position map basic ==');
+{
+  const doc = '<p>Alpha</p>\n<p>Beta</p>\n<h2>Gamma</h2>';
+  const map = window.buildSourcePositionMap(doc);
+  check('map is an array of 3 entries', Array.isArray(map) && map.length === 3);
+  check('first entry covers <p>Alpha</p>',
+    doc.slice(map[0].start, map[0].end) === '<p>Alpha</p>');
+  check('second entry covers <p>Beta</p>',
+    doc.slice(map[1].start, map[1].end) === '<p>Beta</p>');
+  check('third entry covers <h2>Gamma</h2>',
+    doc.slice(map[2].start, map[2].end) === '<h2>Gamma</h2>');
+  check('each entry has tag', map.every(e => typeof e.tag === 'string'));
+  check('each entry has node reference', map.every(e => e.node && e.node.tagName));
+}
+
+console.log('\n== Test L1.2b: source-position map with nested li ==');
+{
+  const doc = '<p>Intro</p>\n<ul>\n  <li>One</li>\n  <li>Two</li>\n</ul>\n<p>Outro</p>';
+  const map = window.buildSourcePositionMap(doc);
+  const tags = map.map(e => e.tag);
+  check('map contains P, LI, LI, P (in order, no UL)',
+    JSON.stringify(tags) === JSON.stringify(['P','LI','LI','P']));
+  check('first LI has correct source slice',
+    doc.slice(map[1].start, map[1].end) === '<li>One</li>');
+}
+
 console.log(`\n${pass} pass, ${fail} fail`);
 process.exit(fail > 0 ? 1 : 0);

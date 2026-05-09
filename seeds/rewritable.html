@@ -570,6 +570,64 @@ function parseHtmlFragment(doc) {
   }
 }
 
+// rwa-lens/1: source-position map (spec §5.5).
+// Walks `doc` (LF-canonical document text) and returns one entry per anchorable
+// block in source order: { tag, start, end, node }. `doc.slice(start, end)`
+// equals the source-form bytes of the block (preserving original attribute
+// quoting/order — which the browser's outerHTML would normalize). Nested
+// anchorables inside an outer anchorable are NOT separately listed (outer
+// wins). Non-anchorable wrappers (e.g. <ul>) are transparent — their
+// anchorable children (e.g. <li>) appear at the top level of the map.
+function buildSourcePositionMap(doc) {
+  const map = [];
+  const parsed = new DOMParser().parseFromString('<!DOCTYPE html><html><body>' + doc + '</body></html>', 'text/html');
+  // Collect anchorable nodes in document order, but stop descending past an
+  // anchorable (outer wins — matches the source-scanner's lastIndex skip).
+  const nodesInOrder = [];
+  (function walk(el) {
+    for (const child of el.children) {
+      if (ANCHORABLE_TAGS.has(child.tagName)) {
+        nodesInOrder.push(child);
+      } else {
+        walk(child);
+      }
+    }
+  })(parsed.body);
+
+  const tagOpen = /<([a-zA-Z][a-zA-Z0-9]*)\b[^>]*>/g;
+  let nodeIdx = 0;
+  let m;
+  while ((m = tagOpen.exec(doc)) !== null) {
+    const tag = m[1].toUpperCase();
+    if (!ANCHORABLE_TAGS.has(tag)) continue;
+    const start = m.index;
+    const end = findCloseTagEnd(doc, tag, m.index + m[0].length);
+    if (end < 0) continue;
+    const node = nodesInOrder[nodeIdx++] || null;
+    map.push({ tag, start, end, node });
+    // Outer-wins: skip past the close so nested anchorables of any type are
+    // not separately recorded.
+    tagOpen.lastIndex = end;
+  }
+  return map;
+}
+
+function findCloseTagEnd(doc, tag, from) {
+  const re = new RegExp('<(\\/?)' + tag + '\\b[^>]*>', 'gi');
+  re.lastIndex = from;
+  let depth = 1, m;
+  while ((m = re.exec(doc)) !== null) {
+    if (m[1] === '/') {
+      depth--;
+      if (depth === 0) return m.index + m[0].length;
+    } else {
+      depth++;
+    }
+  }
+  return -1;
+}
+window.buildSourcePositionMap = buildSourcePositionMap; // expose for tests
+
 // Token-level balance check for <script> and <style>. The HTML parser
 // auto-closes these silently at EOF when the closing tag is missing, so a
 // post-parse shape check can pass while the doc has actually been
