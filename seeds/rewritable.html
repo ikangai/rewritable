@@ -759,8 +759,8 @@ window.getSourceMap = getSourceMap;
 
 // rwa-lens/1: class-declared locks (spec §7).
 let lockedRanges = [];
-function rebuildLockedRanges(doc) {
-  if (!doc) { lockedRanges = []; return; }
+function lockedRangesIn(doc) {
+  if (!doc) return [];
   const opening = /<([a-zA-Z][a-zA-Z0-9]*)\b[^>]*\bclass\s*=\s*("([^"]*)"|'([^']*)')[^>]*>/g;
   const out = [];
   let m;
@@ -772,7 +772,10 @@ function rebuildLockedRanges(doc) {
     const end = findCloseTagEnd(doc, tag, m.index + m[0].length);
     if (end > 0) out.push([start, end]);
   }
-  lockedRanges = out;
+  return out;
+}
+function rebuildLockedRanges(doc) {
+  lockedRanges = lockedRangesIn(doc);
 }
 function getLockedRanges() { return lockedRanges; }
 window.getLockedRanges = getLockedRanges;
@@ -1465,10 +1468,23 @@ async function applyEdits(envelope, currentDocRaw) {
     const occ = countOccurrences(work, find);
     if (occ === 0) throw new RwaEditError('find_not_found', i);
     if (occ > 1) throw new RwaEditError('find_not_unique', i, { count: occ, hints: nearbySnippets(work, find) });
+    const idx = work.indexOf(find);
+    // rwa-lens/1: class-declared lock check (spec §7). Reject any find range
+    // that overlaps a .rwa-locked source range. Adjacent insertions (find ends
+    // exactly where a lock begins, or starts exactly where one ends) are OK.
+    // Recomputed per iteration because `work` mutates after each splice.
+    const editStart = idx;
+    const editEnd = idx + find.length;
+    const locks = lockedRangesIn(work);
+    for (const [ls, le] of locks) {
+      // Overlap: NOT (editEnd <= ls || editStart >= le).
+      if (editEnd > ls && editStart < le) {
+        throw new RwaEditError('class_lock_violation', i, { lockRange: [ls, le], editRange: [editStart, editEnd] });
+      }
+    }
     // Slice-based splice — String.prototype.replace honors $&, $$, $`, $' patterns
     // even when the search arg is a literal string, mangling replacements like
     // "$$amount" → "$amount". Splicing preserves the model's bytes verbatim.
-    const idx = work.indexOf(find);
     work = work.slice(0, idx) + replace + work.slice(idx + find.length);
   }
 

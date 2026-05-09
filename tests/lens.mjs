@@ -725,5 +725,41 @@ console.log('\n== Test L8.3: EOF resolution skips locked footer ==');
     eof.find === '<p>Body.</p>');
 }
 
+console.log('\n== Test L8.4: apply_edits rejects edits overlapping a .rwa-locked range ==');
+{
+  await window.__setDocForTest('<section class="rwa-locked"><p>Locked.</p></section>\n<p>Free.</p>');
+  const env = {
+    version: 'rwa-edit/1',
+    edits: [{ find: '<p>Locked.</p>', replace: '<p>Hacked.</p>' }],
+    reason: 'attempt to edit locked content',
+  };
+  let threw = false;
+  let code = '';
+  try {
+    await window.applyEdits(env, await window.getDoc());
+  } catch (e) {
+    threw = true;
+    code = e?.code || '';
+  }
+  check('apply_edits threw on class-lock overlap', threw === true);
+  check('error code mentions lock or frozen',
+    /lock|frozen/i.test(code));
+}
+
+console.log('\n== Test L8.4b: adjacent insertion (find ends where lock begins) is accepted ==');
+{
+  await window.__setDocForTest('<p>Before.</p>\n<section class="rwa-locked"><p>Locked.</p></section>');
+  const env = {
+    version: 'rwa-edit/1',
+    edits: [{ find: '<p>Before.</p>', replace: '<p>Before.</p>\n<p>Inserted.</p>' }],
+    reason: 'adjacent insertion',
+  };
+  let threw = false;
+  try {
+    await window.applyEdits(env, await window.getDoc());
+  } catch (e) { threw = true; }
+  check('adjacent insertion accepted', threw === false);
+}
+
 console.log(`\n${pass} pass, ${fail} fail`);
 process.exit(fail > 0 ? 1 : 0);
