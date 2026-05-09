@@ -45,6 +45,18 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);min
 #rwa-lens-badge button{background:transparent;border:0;color:inherit;cursor:pointer;font:inherit;padding:0 0 0 4px;line-height:1;}
 #rwa-lens-badge button:hover{color:var(--accent);}
 #rwa-lens-hint{font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);}
+#rwa-lens-hist-btn{position:absolute;top:8px;right:12px;background:transparent;border:0;color:var(--muted);cursor:pointer;font-size:14px;padding:2px 6px;line-height:1;border-radius:3px;}
+#rwa-lens-hist-btn:hover{color:var(--text);background:var(--b2);}
+#rwa-lens-hist-panel{position:fixed;top:0;right:0;bottom:0;width:min(420px,90vw);background:var(--surf);border-left:1px solid var(--b2);z-index:50;overflow-y:auto;padding:16px;font-family:'DM Mono',monospace;font-size:12px;}
+#rwa-lens-hist-panel h3{font-family:'DM Sans',sans-serif;font-size:14px;font-weight:500;color:var(--text);margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;}
+#rwa-lens-hist-panel h3 button{background:transparent;border:0;color:var(--muted);cursor:pointer;font:inherit;font-size:18px;line-height:1;padding:0 4px;}
+#rwa-lens-hist-panel h3 button:hover{color:var(--text);}
+#rwa-lens-hist-panel .rwa-hist-row{padding:8px 0;border-bottom:1px solid var(--b1);}
+#rwa-lens-hist-panel .rwa-hist-row:last-child{border-bottom:0;}
+#rwa-lens-hist-panel .rwa-hist-meta{display:flex;gap:8px;align-items:center;margin-bottom:4px;color:var(--muted);font-size:10px;}
+#rwa-lens-hist-panel .rwa-hist-surface{background:var(--b2);color:var(--text);padding:1px 6px;border-radius:8px;font-size:9px;letter-spacing:.5px;text-transform:uppercase;}
+#rwa-lens-hist-panel .rwa-hist-instr{color:var(--text);word-wrap:break-word;}
+#rwa-lens-hist-panel .rwa-hist-empty{color:var(--muted);font-style:italic;padding:12px 0;}
 .rwa-lens-toast{position:fixed;bottom:80px;left:16px;background:var(--surf);color:var(--text);padding:8px 12px;border-radius:4px;z-index:11;font-size:13px;font-family:'DM Mono',monospace;border:1px solid var(--b2);}
 [data-rwa-anchored]{outline:2px solid var(--accent);outline-offset:2px;}
 .rwa-locked{position:relative;background:rgba(255,87,87,0.04);border-left:3px solid var(--red);padding-left:8px;}
@@ -299,10 +311,12 @@ function buildUI() {
   </div>
 </div>
 <div id="rwa-lens" data-state="default">
+  <button type="button" id="rwa-lens-hist-btn" aria-label="show history" title="show history">📜</button>
   <div id="rwa-lens-badge" hidden></div>
   <textarea id="rwa-lens-input" rows="1" placeholder="Write, or describe what you want." spellcheck="false"></textarea>
   <div id="rwa-lens-hint"></div>
-</div>`;
+</div>
+<div id="rwa-lens-hist-panel" hidden></div>`;
 
   const k = document.getElementById('rwa-key'), m = document.getElementById('rwa-model');
   k.value = sessionStorage.getItem(RWA.K_API) || '';
@@ -374,6 +388,18 @@ function buildUI() {
     lensEl.dataset.mode = isCommand ? 'command' : 'text';
   });
 
+  // Task 9.3: history pane. Read-only view of rwa_hist entries — surface chip,
+  // instruction, scope, timestamp. Toggle via the 📜 button in the lens chrome.
+  const histBtn = document.getElementById('rwa-lens-hist-btn');
+  const histPanel = document.getElementById('rwa-lens-hist-panel');
+  if (histBtn && histPanel) {
+    histBtn.addEventListener('click', async () => {
+      if (!histPanel.hidden) { histPanel.hidden = true; return; }
+      await renderHistoryPanel(histPanel);
+      histPanel.hidden = false;
+    });
+  }
+
   // rwa-lens/1: Esc releases the anchor when one is held. Listener is on
   // `window` so Esc anywhere works (including with focus outside the lens
   // input — e.g. on the doc itself after a click).
@@ -388,6 +414,47 @@ const setPalSt = (cls, msg) => { const e = document.getElementById('rwa-pal-st')
 const setDirty = d => { const e = document.getElementById('rwa-st-commit'); if (e) e.classList.toggle('dirty', d); };
 const openPal = () => { document.getElementById('rwa-pal').classList.add('open'); requestAnimationFrame(() => document.getElementById('rwa-pal-inp').focus()); setPalSt('', '● ready'); };
 const closePal = () => { document.getElementById('rwa-pal').classList.remove('open'); document.getElementById('rwa-pal-inp').value = ''; document.getElementById('rwa-pal-go').disabled = true; };
+
+// Task 9.3: read-only render of rwa_hist into the side panel. Read once on
+// open — the panel is a snapshot, not a live view. Newest first matches the
+// existing convention (commitDoc unshifts onto the array).
+async function renderHistoryPanel(panel) {
+  const fmtTs = (ts) => {
+    try { return new Date(ts).toLocaleString(); } catch { return String(ts); }
+  };
+  const escHtml = (s) => String(s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  const fmtScope = (scope) => {
+    if (!scope) return '';
+    if (scope.type === 'eof') return 'eof';
+    if (scope.type === 'block') return 'block @' + (scope.block_id || '?');
+    return scope.type || '';
+  };
+  let entries = [];
+  try { entries = (await idbGet(RWA.HIST)) || []; } catch { entries = []; }
+  const header = '<h3>History <button type="button" id="rwa-lens-hist-close" aria-label="close">×</button></h3>';
+  if (!entries.length) {
+    panel.innerHTML = header + '<div class="rwa-hist-empty">No history yet — make an edit and it will appear here.</div>';
+  } else {
+    const rows = entries.map(e => {
+      const surface = e.surface || e.kind || 'edit';
+      const scopeStr = fmtScope(e.scope);
+      const instr = e.instruction || (e.kind === 'replace_document' ? (e.reason || '(replace_document)') : '(no instruction recorded)');
+      return '<div class="rwa-hist-row">'
+        + '<div class="rwa-hist-meta">'
+        + '<span class="rwa-hist-surface">' + escHtml(surface) + '</span>'
+        + (scopeStr ? '<span>' + escHtml(scopeStr) + '</span>' : '')
+        + '<span>' + escHtml(fmtTs(e.ts)) + '</span>'
+        + '</div>'
+        + '<div class="rwa-hist-instr">' + escHtml(instr) + '</div>'
+        + '</div>';
+    }).join('');
+    panel.innerHTML = header + rows;
+  }
+  const closeBtn = panel.querySelector('#rwa-lens-hist-close');
+  if (closeBtn) closeBtn.addEventListener('click', () => { panel.hidden = true; });
+}
 
 // ─── Agent (rwa-edit/1) ─────────────────────────────────────────────
 // Spec: rwa-edit-spec.md (v1.4). The agent edits the doc via tool calls,
