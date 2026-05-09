@@ -690,5 +690,17 @@ console.log('\n== Test L7.5: post-commit anchor branches ==');
   check('second paragraph preserved', doc3.includes('Keep.'));
 }
 
+console.log('\n== Test L8.1: source-position map flags locked entries ==');
+{
+  const doc = '<p>Free.</p>\n<section class="rwa-locked"><p>Locked.</p></section>';
+  await window.__setDocForTest(doc);
+  const lockedRanges = window.getLockedRanges();
+  check('one locked range identified', lockedRanges.length === 1);
+  check('locked range covers the section',
+    doc.slice(lockedRanges[0][0], lockedRanges[0][1]).includes('class="rwa-locked"'));
+  check('locked range covers the inner p too',
+    doc.slice(lockedRanges[0][0], lockedRanges[0][1]).includes('Locked.'));
+}
+
 console.log(`\n${pass} pass, ${fail} fail`);
 process.exit(fail > 0 ? 1 : 0);

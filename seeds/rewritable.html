@@ -240,6 +240,7 @@ function renderDoc(html) {
   // in this script — JS hoisting (script-mode `function` declarations) makes
   // it callable here even though renderDoc is defined first.
   setSourceMap(html);
+  rebuildLockedRanges(html);
   // rwa-lens/1: click-to-anchor (Task 5.1). renderDoc runs on every commit and
   // on bootstrap; remove first so listeners don't multiply across renders. Same
   // function reference, so removing the previous instance is safe.
@@ -755,6 +756,26 @@ function setSourceMap(doc) {
 }
 function getSourceMap() { return sourceMap; }
 window.getSourceMap = getSourceMap;
+
+// rwa-lens/1: class-declared locks (spec §7).
+let lockedRanges = [];
+function rebuildLockedRanges(doc) {
+  if (!doc) { lockedRanges = []; return; }
+  const opening = /<([a-zA-Z][a-zA-Z0-9]*)\b[^>]*\bclass\s*=\s*("([^"]*)"|'([^']*)')[^>]*>/g;
+  const out = [];
+  let m;
+  while ((m = opening.exec(doc)) !== null) {
+    const cls = (m[3] || m[4] || '');
+    if (!/\brwa-locked\b/.test(cls)) continue;
+    const tag = m[1];
+    const start = m.index;
+    const end = findCloseTagEnd(doc, tag, m.index + m[0].length);
+    if (end > 0) out.push([start, end]);
+  }
+  lockedRanges = out;
+}
+function getLockedRanges() { return lockedRanges; }
+window.getLockedRanges = getLockedRanges;
 
 // rwa-lens/1: anchor uniqueness extension (spec §5.5).
 // Given a map entry, return { find, replacePrefix, replaceSuffix } such that
