@@ -400,5 +400,35 @@ console.log('\n== Test L3.4: e2e default + direct text ==');
     doc.indexOf('Existing.') < doc.indexOf('Direct text appended.'));
 }
 
+console.log('\n== Test L3.5: first append into empty doc uses replace_document ==');
+{
+  await window.__setDocForTest(''); // genuinely empty
+  delete window.__synthesizeAndCommit;
+  await window.submitLens('First content.');
+  await new Promise(r => setTimeout(r, 50));
+  const doc = await window.getDoc();
+  check('doc now contains first content', doc.includes('First content.'));
+  // Inspect rwa_hist for kind:'replace_document'.
+  const hist = await new Promise(res => {
+    window.openDB().then(db => {
+      const r = db.transaction('rwa_hist').objectStore('rwa_hist').get('self');
+      r.onsuccess = () => res(r.result);
+    });
+  });
+  const top = hist[0];
+  check('most recent history record is replace_document', top.kind === 'replace_document');
+  check('reason matches "initial content into an empty document"',
+    /initial content/.test(top.reason || top.envelope?.reason || ''));
+}
+
+console.log('\n== Test L3.5b: skeleton-only doc treated as empty ==');
+{
+  await window.__setDocForTest('<article></article>');
+  await window.submitLens('Content into skeleton.');
+  await new Promise(r => setTimeout(r, 50));
+  const doc = await window.getDoc();
+  check('skeleton replaced with content', doc.includes('Content into skeleton.'));
+}
+
 console.log(`\n${pass} pass, ${fail} fail`);
 process.exit(fail > 0 ? 1 : 0);
