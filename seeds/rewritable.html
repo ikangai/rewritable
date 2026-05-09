@@ -808,6 +808,32 @@ function resolveEofAnchor() {
 }
 window.resolveEofAnchor = resolveEofAnchor;
 
+// rwa-lens/1: bounded context window for anchored slash commands (spec §10).
+// Heading-relative heuristic: blocks between the nearest preceding heading
+// (any of H1-H6) and the next heading. Excludes the target.
+function buildAnchoredContextWindow(anchor) {
+  const map = sourceMap, doc = currentDocCache;
+  if (!map || !doc) return { target: '', context: '' };
+  const idx = map.indexOf(anchor);
+  if (idx < 0) return { target: doc.slice(anchor.start, anchor.end), context: '' };
+  const isHeading = e => /^H[1-6]$/.test(e.tag);
+  let lo = idx;
+  while (lo > 0 && !isHeading(map[lo - 1])) lo--;
+  if (lo > 0) lo--; // include the heading itself
+  let hi = idx;
+  while (hi < map.length - 1 && !isHeading(map[hi + 1])) hi++;
+  const blocks = [];
+  for (let i = lo; i <= hi; i++) {
+    if (i === idx) continue;
+    blocks.push(doc.slice(map[i].start, map[i].end));
+  }
+  return {
+    target: doc.slice(anchor.start, anchor.end),
+    context: blocks.join('\n'),
+  };
+}
+window.buildAnchoredContextWindow = buildAnchoredContextWindow;
+
 // rwa-lens/1: wrap direct text per spec §5.3 wrapping table.
 function wrapDirectText(text, anchorTag) {
   const wrapper = (anchorTag === 'LI') ? 'li' : 'p';

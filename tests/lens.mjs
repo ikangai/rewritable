@@ -560,5 +560,24 @@ console.log('\n== Test L6.3: anchored direct text on <li> wraps as <li> ==');
     (doc.match(/<li>/g) || []).length === 3);
 }
 
+console.log('\n== Test L7.1: bounded context window — heading-relative ==');
+{
+  const doc = '<h1>Title</h1>\n<p>Intro.</p>\n<h2>Section A</h2>\n<p>A1.</p>\n<p>A2.</p>\n<h2>Section B</h2>\n<p>B1.</p>';
+  await window.__setDocForTest(doc);
+  const map = window.getSourceMap();
+  // Find the entry containing "A1."
+  const a1 = map.find(e => doc.slice(e.start, e.end).includes('A1.'));
+  const ctx = window.buildAnchoredContextWindow(a1);
+  check('context includes section A blocks (A2)',
+    ctx.context.includes('A2.'));
+  check('context includes the preceding heading (Section A)',
+    ctx.context.includes('Section A'));
+  check('context does NOT include section B (B1)',
+    !ctx.context.includes('B1.'));
+  check('context does NOT include the target itself (A1)',
+    !ctx.context.includes('A1.'));
+  check('target equals A1 source', ctx.target === '<p>A1.</p>');
+}
+
 console.log(`\n${pass} pass, ${fail} fail`);
 process.exit(fail > 0 ? 1 : 0);
