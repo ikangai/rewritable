@@ -375,5 +375,17 @@ console.log('\n== Test L3.2: resolveEofAnchor ==');
   check('EOF replaceSuffix is empty (unique)', eof.replaceSuffix === '');
 }
 
+console.log('\n== Test L3.3: synthesizeDefaultAppend ==');
+{
+  await window.__setDocForTest('<p>Existing.</p>');
+  const env = window.__synthesizeDefaultAppend('New paragraph.');
+  check('envelope is rwa-edit/1', env.version === 'rwa-edit/1');
+  check('envelope has 1 edit', env.edits.length === 1);
+  check('edit find is last anchorable',
+    env.edits[0].find === '<p>Existing.</p>');
+  check('edit replace appends new <p>',
+    env.edits[0].replace === '<p>Existing.</p>\n<p>New paragraph.</p>');
+}
+
 console.log(`\n${pass} pass, ${fail} fail`);
 process.exit(fail > 0 ? 1 : 0);

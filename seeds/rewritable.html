@@ -837,8 +837,21 @@ function synthesizeAnchoredInsert(anchor, text) {
   return null;
 }
 function synthesizeDefaultAppend(text) {
-  // Phase 3 will replace this. Returning null lets synthesizeAndCommit handle the empty-doc case.
-  return null;
+  const eof = resolveEofAnchor();
+  if (!eof) return null; // empty doc — caller routes via replace_document
+  const wrapped = wrapDirectText(text, null);
+  return {
+    version: 'rwa-edit/1',
+    edits: [{
+      find: eof.find,
+      replace: eof.find + '\n' + wrapped,
+      reason: 'lens: default-state direct-text append',
+    }],
+    reason: 'lens: append at EOF',
+  };
+}
+if (typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent)) {
+  window.__synthesizeDefaultAppend = synthesizeDefaultAppend;
 }
 async function synthesizeAndCommit(envelope, surface, instruction) {
   // Test seam.
