@@ -325,6 +325,23 @@ function buildUI() {
       if (err?.code !== 'concurrent_modify') console.error(err);
     });
   };
+
+  // rwa-lens/1: ⌘Enter (or Ctrl+Enter) submits; plain Enter remains a newline.
+  // Spec invariant 8: the lens textarea behaves like a normal multi-line input
+  // until the user explicitly commits with the platform-modifier+Enter chord.
+  const lensInput = document.getElementById('rwa-lens-input');
+  lensInput.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return;
+    if (!(e.metaKey || e.ctrlKey)) return; // plain Enter remains newline
+    if (e.shiftKey) return; // shift+Enter is also newline (cross-platform safety)
+    e.preventDefault();
+    const text = lensInput.value;
+    if (typeof window.__lensSubmitHandler === 'function') {
+      window.__lensSubmitHandler(text);
+    } else if (typeof submitLens === 'function') {
+      submitLens(text);
+    }
+  });
 }
 const setStatus = (cls, msg) => { const e = document.getElementById('rwa-st-status'); if (e) { e.className = 'rwa-st-btn ' + (cls || ''); e.textContent = msg; } };
 const setPalSt = (cls, msg) => { const e = document.getElementById('rwa-pal-st'); if (e) { e.className = cls || ''; e.textContent = msg; } };

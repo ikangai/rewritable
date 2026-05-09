@@ -282,5 +282,21 @@ check('lens is initially in default state',
 check('lens placeholder mentions writing or describing',
   /write|describe/i.test(window.document.getElementById('rwa-lens-input')?.placeholder || ''));
 
+console.log('\n== Test L2.2: ⌘Enter submits, Enter does not ==');
+{
+  let submittedWith = null;
+  window.__lensSubmitHandler = (text) => { submittedWith = text; };
+  const input = window.document.getElementById('rwa-lens-input');
+  input.value = 'hello';
+  // Plain Enter: should NOT submit.
+  input.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+  check('plain Enter did not trigger submit', submittedWith === null);
+  // ⌘Enter: should submit.
+  input.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', metaKey: true, bubbles: true }));
+  check('⌘Enter triggered submit with text', submittedWith === 'hello');
+  // Cleanup
+  delete window.__lensSubmitHandler;
+}
+
 console.log(`\n${pass} pass, ${fail} fail`);
 process.exit(fail > 0 ? 1 : 0);
