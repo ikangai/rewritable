@@ -298,5 +298,23 @@ console.log('\n== Test L2.2: ⌘Enter submits, Enter does not ==');
   delete window.__lensSubmitHandler;
 }
 
+console.log('\n== Test L2.3: live mode indication ==');
+{
+  const input = window.document.getElementById('rwa-lens-input');
+  const lens = window.document.getElementById('rwa-lens');
+  // Type a leading slash.
+  input.value = '/dark mode';
+  input.dispatchEvent(new window.Event('input', { bubbles: true }));
+  check('lens dataset.mode shifts to "command"', lens.dataset.mode === 'command');
+  // Backspace away the slash.
+  input.value = 'dark mode';
+  input.dispatchEvent(new window.Event('input', { bubbles: true }));
+  check('lens dataset.mode reverts to "text"', lens.dataset.mode === 'text');
+  // Escaped slash should NOT trigger command mode.
+  input.value = '\\/dark mode';
+  input.dispatchEvent(new window.Event('input', { bubbles: true }));
+  check('escaped \\\\/ keeps text mode', lens.dataset.mode === 'text');
+}
+
 console.log(`\n${pass} pass, ${fail} fail`);
 process.exit(fail > 0 ? 1 : 0);

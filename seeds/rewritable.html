@@ -38,6 +38,7 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);min
 #rwa-pal-st.run{color:var(--blue);}#rwa-pal-st.ok{color:var(--accent);}#rwa-pal-st.err{color:var(--red);}
 .rwa-pal-hint{font-family:'DM Mono',monospace;font-size:10px;color:#363642;}
 #rwa-lens{position:fixed;left:0;right:0;bottom:0;background:var(--surf);border-top:1px solid var(--b2);padding:12px 16px;z-index:10;display:flex;flex-direction:column;gap:8px;}
+#rwa-lens[data-mode="command"]{border-top-color:var(--accent);}
 #rwa-lens-input{width:100%;resize:none;background:transparent;border:0;color:inherit;font:inherit;outline:none;min-height:1.5em;font-family:'DM Sans',sans-serif;font-size:14px;}
 #rwa-lens-input::placeholder{color:#363642;}
 #rwa-lens-badge{display:inline-flex;gap:4px;align-items:center;background:var(--b2);padding:2px 8px;border-radius:12px;font-size:12px;align-self:flex-start;font-family:'DM Mono',monospace;color:var(--text);}
@@ -329,6 +330,7 @@ function buildUI() {
   // rwa-lens/1: ⌘Enter (or Ctrl+Enter) submits; plain Enter remains a newline.
   // Spec invariant 8: the lens textarea behaves like a normal multi-line input
   // until the user explicitly commits with the platform-modifier+Enter chord.
+  const lensEl = document.getElementById('rwa-lens');
   const lensInput = document.getElementById('rwa-lens-input');
   lensInput.addEventListener('keydown', (e) => {
     if (e.key !== 'Enter') return;
@@ -341,6 +343,15 @@ function buildUI() {
     } else if (typeof submitLens === 'function') {
       submitLens(text);
     }
+  });
+
+  // rwa-lens/1: live mode indication (spec §6.1). The discriminator engages
+  // during typing — a leading slash flips the lens chrome into command mode,
+  // unless the user typed `\/` to escape (literal slash content).
+  lensInput.addEventListener('input', () => {
+    const v = lensInput.value;
+    const isCommand = v.startsWith('/') && !v.startsWith('\\/');
+    lensEl.dataset.mode = isCommand ? 'command' : 'text';
   });
 }
 const setStatus = (cls, msg) => { const e = document.getElementById('rwa-st-status'); if (e) { e.className = 'rwa-st-btn ' + (cls || ''); e.textContent = msg; } };
