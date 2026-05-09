@@ -275,5 +275,12 @@ console.log('\n== Test L1.5e: anchor find — pathological null ==');
     find === null);
 }
 
+console.log('\n== Test L2.1: lens DOM is mounted ==');
+check('lens input exists', !!window.document.getElementById('rwa-lens-input'));
+check('lens is initially in default state',
+  window.document.getElementById('rwa-lens')?.dataset.state === 'default');
+check('lens placeholder mentions writing or describing',
+  /write|describe/i.test(window.document.getElementById('rwa-lens-input')?.placeholder || ''));
+
 console.log(`\n${pass} pass, ${fail} fail`);
 process.exit(fail > 0 ? 1 : 0);
