@@ -47,6 +47,8 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);min
 #rwa-lens-hint{font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);}
 .rwa-lens-toast{position:fixed;bottom:80px;left:16px;background:var(--surf);color:var(--text);padding:8px 12px;border-radius:4px;z-index:11;font-size:13px;font-family:'DM Mono',monospace;border:1px solid var(--b2);}
 [data-rwa-anchored]{outline:2px solid var(--accent);outline-offset:2px;}
+.rwa-locked{position:relative;background:rgba(255,87,87,0.04);border-left:3px solid var(--red);padding-left:8px;}
+.rwa-locked::before{content:'\1F512';position:absolute;top:4px;right:8px;font-size:12px;opacity:.6;}
 @media print{
   /* Hide all runtime chrome: status indicator, settings panel, command palette. */
   #rwa-runtime{display:none!important;}
