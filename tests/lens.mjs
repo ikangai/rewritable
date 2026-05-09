@@ -545,5 +545,20 @@ console.log('\n== Test L6.2: e2e anchored direct text ==');
     window.__lensState.anchor && doc.slice(window.__lensState.anchor.start, window.__lensState.anchor.end) === '<p>First.</p>');
 }
 
+console.log('\n== Test L6.3: anchored direct text on <li> wraps as <li> ==');
+{
+  await window.__setDocForTest('<ul>\n  <li>One</li>\n  <li>Two</li>\n</ul>');
+  delete window.__synthesizeAndCommit;
+  // Click on the first <li>.
+  window.document.querySelectorAll('li')[0].dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  await window.submitLens('Three');
+  await new Promise(r => setTimeout(r, 100));
+  const doc = await window.getDoc();
+  check('new content wrapped as <li>, not <p>',
+    doc.includes('<li>Three</li>') && !doc.includes('<p>Three</p>'));
+  check('list now has three items',
+    (doc.match(/<li>/g) || []).length === 3);
+}
+
 console.log(`\n${pass} pass, ${fail} fail`);
 process.exit(fail > 0 ? 1 : 0);
