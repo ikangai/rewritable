@@ -1075,9 +1075,107 @@ async function submitLens(text) {
 }
 window.submitLens = submitLens;
 
-// Stubs — replaced in later phases.
-async function runAnchoredCommand(anchor, instr) {
-  console.warn('rwa-lens: runAnchoredCommand stub — Phase 7 not implemented');
+// rwa-lens/1: single-shot completion helper for anchored slash commands.
+// Unlike modify(), no tool_use loop: the runtime constructs the envelope from
+// the model's plain-text response (one block of HTML), so we don't need tools
+// at all — just a plain chat completion. tool_choice: 'none' is implicit by
+// omitting tools.
+async function callAgentSingleShot(prompt) {
+  const backend = sessionStorage.getItem(RWA.K_BACKEND) || 'openrouter';
+  const key = sessionStorage.getItem(RWA.K_API);
+  const model = sessionStorage.getItem(RWA.K_MODEL) || RWA.MODEL;
+  if (backend !== 'openrouter') {
+    throw new Error('lens anchored commands currently support openrouter backend only');
+  }
+  if (!key) throw new Error('no API key');
+  const r = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': 'Bearer ' + key,
+      'HTTP-Referer': 'https://github.com/ikangai/rewritable',
+      'X-Title': 're-write-able',
+    },
+    body: JSON.stringify({
+      model,
+      max_tokens: 32000,
+      messages: [{ role: 'user', content: prompt }],
+    }),
+  });
+  if (!r.ok) {
+    const e = await r.json().catch(() => ({}));
+    throw new Error((e.error && e.error.message) || r.statusText);
+  }
+  const data = await r.json();
+  const msg = data.choices?.[0]?.message;
+  return (msg?.content || '').trim();
+}
+
+// rwa-lens/1: anchored slash command runner (spec §7).
+// Build the bounded context, prompt the agent for a replacement block, validate
+// the response shape, synthesize an apply_edits envelope (anchored find +
+// prefix/suffix from resolveAnchorFind), commit through applyEdits, and re-anchor
+// the lens onto the same source-start. Up to 3 retries with structured failure
+// context appended to the prompt. No silent escalation to replace_document.
+async function runAnchoredCommand(anchor, instruction) {
+  if (modifyMutex) {
+    setStatus('err', '✗ another modify in progress');
+    throw new RwaEditError('concurrent_modify');
+  }
+  modifyMutex = true;
+  setStatus('run', '⌘K running');
+  try {
+    const { target, context } = buildAnchoredContextWindow(anchor);
+    const basePrompt = buildAnchoredPrompt(target, context, instruction);
+    let attempts = 0;
+    let lastFailure = null;
+    while (attempts < 3) {
+      attempts++;
+      const tryPrompt = basePrompt + (lastFailure ? `\n\nPrevious attempt failed: ${lastFailure}\nRetry honoring the constraint.` : '');
+      const response = await callAgentSingleShot(tryPrompt);
+      const validation = validateAnchoredResponse(response, anchor);
+      if (!validation.ok) { lastFailure = validation.reason; continue; }
+      const find = resolveAnchorFind(anchor);
+      if (!find) { lastFailure = 'anchor could not be resolved (ambiguous source)'; continue; }
+      const envelope = {
+        version: 'rwa-edit/1',
+        edits: [{
+          find: find.find,
+          replace: find.replacePrefix + response + find.replaceSuffix,
+          reason: 'lens: anchored slash command',
+        }],
+        reason: `lens: ${instruction}`,
+      };
+      // Capture pre-commit anchor's start offset for post-commit re-anchor lookup.
+      // A find/replace splice at the same source offset preserves the anchor's
+      // start position; we use it as the stable handle across the commit.
+      const prevAnchorStart = anchor.start;
+      try {
+        const result = await applyEdits(envelope, await getDoc());
+        renderDoc(result);
+        // Task 7.5 will refine post-commit anchor behavior. For now, re-anchor
+        // by start-offset lookup (stable for find/replace splices at the same
+        // offset) so the lens stays on the rewritten block.
+        const newEntry = sourceMap ? sourceMap.find(m => m.start === prevAnchorStart) : null;
+        if (newEntry) anchorTo(newEntry);
+        // If the new entry can't be found, renderDoc has already cleared the
+        // anchor via releaseAnchor (lens lives inside the mount), so the lens
+        // is back in its docked default — nothing else to do.
+        setStatus('ok', '✓ done');
+        return;
+      } catch (err) {
+        if (!(err instanceof RwaEditError)) throw err;
+        lastFailure = err.code + (err.editIndex != null ? ' [edit ' + err.editIndex + ']' : '');
+        continue;
+      }
+    }
+    setStatus('err', `✗ ${lastFailure || 'lens command failed after retries'}`);
+  } catch (e) {
+    setStatus('err', '✗ ' + e.message);
+    console.error(e);
+  } finally {
+    modifyMutex = false;
+  }
 }
 function synthesizeAnchoredInsert(anchor, text) {
   const find = resolveAnchorFind(anchor);

@@ -618,5 +618,25 @@ console.log('\n== Test L7.3: response validation against parent context ==');
   check('flow content accepted for <p> parent', okP.ok === true);
 }
 
+console.log('\n== Test L7.4: e2e anchored slash command ==');
+{
+  await window.__setDocForTest('<p>Original.</p>');
+  delete window.__synthesizeAndCommit;
+  // Click to anchor.
+  window.document.querySelector('p').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  // Stub fetch to return a single-shot completion (no tool_use — the lens runtime constructs the envelope).
+  fetchHandler = async () => ({
+    ok: true,
+    json: async () => ({
+      choices: [{ message: { role: 'assistant', content: '<p>Tightened.</p>' }}]
+    })
+  });
+  await window.submitLens('/tighten');
+  await new Promise(r => setTimeout(r, 200));
+  const doc = await window.getDoc();
+  check('anchored block was rewritten', doc.includes('<p>Tightened.</p>'));
+  check('original removed', !doc.includes('<p>Original.</p>'));
+}
+
 console.log(`\n${pass} pass, ${fail} fail`);
 process.exit(fail > 0 ? 1 : 0);
