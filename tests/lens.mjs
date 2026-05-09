@@ -150,5 +150,16 @@ console.log('\n== Test L1.2f: auto-closed <p> desync clears all node refs ==');
     map.every(e => doc.slice(e.start, e.end).startsWith('<p>')));
 }
 
+console.log('\n== Test L1.3: source-position map invariant 11 ==');
+{
+  const doc = '<h1>Title</h1>\n<p>One.</p>\n<blockquote><p>Quoted.</p></blockquote>\n<aside>Side.</aside>';
+  const map = window.buildSourcePositionMap(doc);
+  for (const e of map) {
+    const slice = doc.slice(e.start, e.end);
+    check(`invariant 11 holds for ${e.tag}: slice equals expected source form`,
+      slice.startsWith(`<${e.tag.toLowerCase()}`) && slice.endsWith(`</${e.tag.toLowerCase()}>`));
+  }
+}
+
 console.log(`\n${pass} pass, ${fail} fail`);
 process.exit(fail > 0 ? 1 : 0);
