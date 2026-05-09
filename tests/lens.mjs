@@ -579,5 +579,20 @@ console.log('\n== Test L7.1: bounded context window — heading-relative ==');
   check('target equals A1 source', ctx.target === '<p>A1.</p>');
 }
 
+console.log('\n== Test L7.2: anchored prompt structure ==');
+{
+  const p = window.buildAnchoredPrompt('<p>Target.</p>', '<h2>Section</h2>', 'tighten this');
+  check('prompt names target', p.includes('<TARGET>') && p.includes('<p>Target.</p>'));
+  check('prompt names context', p.includes('<CONTEXT>') && p.includes('<h2>Section</h2>'));
+  check('prompt includes instruction', p.includes('tighten this'));
+  check('prompt forbids markdown fences (naked HTML directive)',
+    /naked HTML|no markdown fences|no commentary/i.test(p));
+
+  // LI parent-type constraint
+  const pLi = window.buildAnchoredPrompt('<li>Item.</li>', '', 'make formal');
+  check('LI prompt mentions LI constraint',
+    /\<li\>|list item/.test(pLi));
+}
+
 console.log(`\n${pass} pass, ${fail} fail`);
 process.exit(fail > 0 ? 1 : 0);

@@ -834,6 +834,35 @@ function buildAnchoredContextWindow(anchor) {
 }
 window.buildAnchoredContextWindow = buildAnchoredContextWindow;
 
+// rwa-lens/1: anchored agent prompt (spec §10).
+function buildAnchoredPrompt(target, context, instruction) {
+  // Detect parent-type constraint by inspecting the target's outer element.
+  const parsed = new DOMParser().parseFromString(`<body>${target}</body>`, 'text/html');
+  const root = parsed.body.firstElementChild;
+  const targetTag = root ? root.tagName : '';
+  const parentConstraint = (targetTag === 'LI')
+    ? '\n\nThe target is an <li>. Every top-level element of your response must also be <li> — never <p> or other types. Lists may not contain <p> children.'
+    : '';
+  return [
+    'You are editing a single block of an HTML document.',
+    '',
+    '<TARGET>',
+    target,
+    '</TARGET>',
+    '',
+    '<CONTEXT>',
+    context || '(no surrounding context — the target is in a section by itself)',
+    '</CONTEXT>',
+    '',
+    `User instruction: ${instruction}`,
+    '',
+    'Return a replacement for the target block, of any length.',
+    'Output naked HTML markup only — no markdown fences, no commentary, no preamble or explanation.',
+    'The first character of your response must be the first character of the replacement block.' + parentConstraint,
+  ].join('\n');
+}
+window.buildAnchoredPrompt = buildAnchoredPrompt;
+
 // rwa-lens/1: wrap direct text per spec §5.3 wrapping table.
 function wrapDirectText(text, anchorTag) {
   const wrapper = (anchorTag === 'LI') ? 'li' : 'p';
