@@ -219,5 +219,61 @@ console.log('\n== Test L1.5b: anchor find — duplicate paragraph ==');
     find.replacePrefix + doc.slice(map[0].start, map[0].end) + find.replaceSuffix === find.find);
 }
 
+console.log('\n== Test L1.5c: anchor find — left-only expansion (anchor at last entry) ==');
+{
+  const doc = '<p>Same.</p>\n<p>Other.</p>\n<p>Same.</p>';
+  await window.__setDocForTest(doc);
+  const map = window.getSourceMap();
+  // Anchor on the LAST <p>Same.</p>. canGrowHi is false; only lo can grow.
+  const last = map[map.length - 1];
+  const find = window.resolveAnchorFind(last);
+  check('left-expansion result is unique',
+    doc.indexOf(find.find) === doc.lastIndexOf(find.find));
+  check('left-expansion result anchors at the LAST occurrence',
+    doc.indexOf(find.find) + find.find.length === last.end);
+  check('left-expansion reconstruction holds',
+    find.replacePrefix + doc.slice(last.start, last.end) + find.replaceSuffix === find.find);
+}
+
+console.log('\n== Test L1.5d: anchor find — alternating expansion ==');
+{
+  // Construct a doc where the immediate entry is duplicate AND expanding by
+  // one sibling on EITHER side is still ambiguous, so the runtime must
+  // alternate (lo--, hi++, hi++…) before finding a unique window.
+  // Layout: A Mid B C A Mid B — both Mid blocks share the same one-sibling
+  // context "A.\nMid.\nB." but the full left-and-right context only appears
+  // once around the first Mid. Avoids the trailing-X overlap trap so that
+  // countOccurrences (non-overlapping) and indexOf/lastIndexOf agree.
+  const doc = '<p>A.</p>\n<p>Mid.</p>\n<p>B.</p>\n<p>C.</p>\n<p>A.</p>\n<p>Mid.</p>\n<p>B.</p>';
+  await window.__setDocForTest(doc);
+  const map = window.getSourceMap();
+  // Indices 0..6 = A, Mid, B, C, A, Mid, B. Anchor on map[1] (first Mid).
+  // map[1] duplicates map[5]. Stepwise: <p>Mid.</p> alone → 2 occ.
+  // lo--/hi++ alternation grows the window through neighbors until the
+  // surrounding A/B/C pattern only matches once.
+  const find = window.resolveAnchorFind(map[1]);
+  check('alternating-expansion produced a non-null find', find !== null);
+  check('alternating-expansion result is unique within doc',
+    doc.indexOf(find.find) === doc.lastIndexOf(find.find));
+  check('alternating-expansion reconstruction holds',
+    find.replacePrefix + doc.slice(map[1].start, map[1].end) + find.replaceSuffix === find.find);
+}
+
+console.log('\n== Test L1.5e: anchor find — pathological null ==');
+{
+  // Same source bytes appear inside an HTML comment AND as a real anchorable.
+  // The map only contains the real <p>X.</p> (one entry; comment-internal is masked
+  // from the scanner per Task 1.2's mask). But countOccurrences operates on the
+  // unmasked doc, so it sees TWO matches, and there's no surrounding context to
+  // expand into — only one map entry exists. Must return null.
+  const doc = '<!-- <p>X.</p> --><p>X.</p>';
+  await window.__setDocForTest(doc);
+  const map = window.getSourceMap();
+  check('only one anchorable entry', map.length === 1);
+  const find = window.resolveAnchorFind(map[0]);
+  check('pathological case returns null',
+    find === null);
+}
+
 console.log(`\n${pass} pass, ${fail} fail`);
 process.exit(fail > 0 ? 1 : 0);

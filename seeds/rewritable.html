@@ -715,8 +715,10 @@ function resolveAnchorFind(entry) {
         replaceSuffix: doc.slice(entry.end, end),
       };
     }
-    // Expand: prefer growing in whichever direction has a sibling available.
-    // Bias toward the side with the smaller distance from the anchor for shorter find strings.
+    // Expand: grow whichever side is currently less extended from the anchor
+    // (alternating expansion, biased toward earlier siblings on ties). Keeps
+    // the find window near-symmetric around the anchor — minimizes find-string
+    // length and the eventual `replace` length on average.
     const canGrowLo = lo > 0;
     const canGrowHi = hi < sourceMap.length - 1;
     if (!canGrowLo && !canGrowHi) return null;
