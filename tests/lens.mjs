@@ -316,5 +316,40 @@ console.log('\n== Test L2.3: live mode indication ==');
   check('escaped \\\\/ keeps text mode', lens.dataset.mode === 'text');
 }
 
+console.log('\n== Test L2.4: submitLens routes by state and mode ==');
+{
+  const calls = [];
+  window.__synthesizeAndCommit = (envelope, surface, instr) => calls.push({ envelope, surface, instr });
+  // Reset state
+  if (window.__lensState) window.__lensState.anchor = null;
+  // Default + text: routes to direct-text envelope synthesis.
+  await window.submitLens('hello world');
+  check('default + text invokes synth with surface=default-text',
+    calls.length === 1 && calls[0].surface === 'default-text');
+  check('default + text passes raw text as instruction',
+    calls[0].instr === 'hello world');
+  // Default + command: routes through modify (we just check it does NOT call synth).
+  calls.length = 0;
+  let modifyCalled = false;
+  let modifyArg = null;
+  const realModify = window.modify;
+  window.modify = async (instr) => { modifyCalled = true; modifyArg = instr; };
+  await window.submitLens('/whatever');
+  check('default + command routes to modify, not direct-text synth',
+    modifyCalled === true && calls.length === 0);
+  check('default + command strips leading slash before passing to modify',
+    modifyArg === 'whatever');
+  window.modify = realModify;
+  // Escape: \/ should be treated as text, not command.
+  calls.length = 0;
+  await window.submitLens('\\/api/v1/users');
+  check('\\\\/ escape treated as text (synth surface)',
+    calls.length === 1 && calls[0].surface === 'default-text');
+  check('\\\\/ escape strips leading backslash before passing as text',
+    calls[0].instr === '/api/v1/users');
+  // Cleanup
+  delete window.__synthesizeAndCommit;
+}
+
 console.log(`\n${pass} pass, ${fail} fail`);
 process.exit(fail > 0 ? 1 : 0);
