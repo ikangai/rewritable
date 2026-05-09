@@ -702,5 +702,19 @@ console.log('\n== Test L8.1: source-position map flags locked entries ==');
     doc.slice(lockedRanges[0][0], lockedRanges[0][1]).includes('Locked.'));
 }
 
+console.log('\n== Test L8.2: clicking a locked block does not anchor ==');
+{
+  await window.__setDocForTest('<section class="rwa-locked"><p>Legal.</p></section>\n<p>Free.</p>');
+  window.__lensState.anchor = null;
+  window.document.getElementById('rwa-lens').dataset.state = 'default';
+  // Click on locked content.
+  window.document.querySelector('section.rwa-locked p').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  check('click on locked content does not anchor', window.__lensState.anchor === null);
+  check('lens stays in default state', window.document.getElementById('rwa-lens').dataset.state === 'default');
+  // Click on free block still anchors.
+  window.document.querySelectorAll('p')[1].dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  check('click on free block still anchors', window.__lensState.anchor !== null);
+}
+
 console.log(`\n${pass} pass, ${fail} fail`);
 process.exit(fail > 0 ? 1 : 0);

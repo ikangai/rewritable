@@ -939,12 +939,21 @@ if (typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent)) {
 function handleMountClick(e) {
   const mount = document.getElementById('rwa-doc-mount');
   if (!mount) return;
+  // Phase 8: reject the click outright if any ancestor up to the mount carries
+  // .rwa-locked. The class-lock applies to the whole subtree (spec §8), so a
+  // click on an inner <p> inside a locked <section> must not anchor — even
+  // though the <p> itself is anchorable. Walk to the mount checking lock first,
+  // then re-walk for the nearest anchorable ancestor.
   let el = e.target;
   while (el && el !== mount) {
     if (el.classList && el.classList.contains('rwa-locked')) {
-      // Locked — Phase 8 wires the affordance.
+      showAffordance('this region is locked');
       return;
     }
+    el = el.parentNode;
+  }
+  el = e.target;
+  while (el && el !== mount) {
     if (ANCHORABLE_TAGS.has(el.tagName)) {
       const ord = anchorableOrdinal(mount, el);
       const entry = (ord >= 0 && sourceMap) ? sourceMap[ord] : null;
