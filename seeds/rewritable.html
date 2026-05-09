@@ -854,12 +854,22 @@ if (typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent)) {
   window.__synthesizeDefaultAppend = synthesizeDefaultAppend;
 }
 async function synthesizeAndCommit(envelope, surface, instruction) {
-  // Test seam.
+  // Test seam preserved.
   if (typeof window.__synthesizeAndCommit === 'function') {
     return window.__synthesizeAndCommit(envelope, surface, instruction);
   }
-  // Phase 3 fills this in.
-  console.warn('rwa-lens: synthesizeAndCommit stub — Phase 3 not implemented');
+  if (!envelope) {
+    // Empty doc → first append → use replace_document.
+    const wrapped = wrapDirectText(instruction || '', null);
+    const repEnv = {
+      version: 'rwa-edit/1',
+      doc: wrapped,
+      reason: 'initial content into an empty document',
+    };
+    return await replaceDocument(repEnv, await getDoc());
+  }
+  return await applyEdits(envelope, await getDoc());
+  // Phase 9 will augment the post-commit history record with surface/instruction/scope.
 }
 
 // Test seam: directly write a doc to IDB + rebuild the map, no agent loop.

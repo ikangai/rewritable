@@ -387,5 +387,18 @@ console.log('\n== Test L3.3: synthesizeDefaultAppend ==');
     env.edits[0].replace === '<p>Existing.</p>\n<p>New paragraph.</p>');
 }
 
+console.log('\n== Test L3.4: e2e default + direct text ==');
+{
+  await window.__setDocForTest('<p>Existing.</p>');
+  delete window.__synthesizeAndCommit; // unstub — use the real one
+  await window.submitLens('Direct text appended.');
+  await new Promise(r => setTimeout(r, 50));
+  const doc = await window.getDoc();
+  check('doc contains both old and new',
+    doc.includes('<p>Existing.</p>') && doc.includes('Direct text appended.'));
+  check('order: existing first, new last',
+    doc.indexOf('Existing.') < doc.indexOf('Direct text appended.'));
+}
+
 console.log(`\n${pass} pass, ${fail} fail`);
 process.exit(fail > 0 ? 1 : 0);
