@@ -776,6 +776,9 @@ function rebuildLockedRanges(doc) {
 }
 function getLockedRanges() { return lockedRanges; }
 window.getLockedRanges = getLockedRanges;
+function isWithinLockedRange(start, end) {
+  return lockedRanges.some(([ls, le]) => start >= ls && end <= le);
+}
 
 // rwa-lens/1: anchor uniqueness extension (spec §5.5).
 // Given a map entry, return { find, replacePrefix, replaceSuffix } such that
@@ -823,7 +826,7 @@ function resolveEofAnchor() {
   const map = sourceMap;
   if (!map || map.length === 0) return null;
   for (let i = map.length - 1; i >= 0; i--) {
-    // Phase 8 will add: if (isWithinLockedRange(map[i].start, map[i].end)) continue;
+    if (isWithinLockedRange(map[i].start, map[i].end)) continue;
     return resolveAnchorFind(map[i]);
   }
   return null;

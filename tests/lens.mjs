@@ -716,5 +716,14 @@ console.log('\n== Test L8.2: clicking a locked block does not anchor ==');
   check('click on free block still anchors', window.__lensState.anchor !== null);
 }
 
+console.log('\n== Test L8.3: EOF resolution skips locked footer ==');
+{
+  const doc = '<p>Body.</p>\n<section class="rwa-locked"><p>Footer.</p></section>';
+  await window.__setDocForTest(doc);
+  const eof = window.resolveEofAnchor();
+  check('EOF anchor is the body <p>, not the locked footer',
+    eof.find === '<p>Body.</p>');
+}
+
 console.log(`\n${pass} pass, ${fail} fail`);
 process.exit(fail > 0 ? 1 : 0);
