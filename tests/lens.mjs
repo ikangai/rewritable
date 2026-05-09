@@ -351,5 +351,19 @@ console.log('\n== Test L2.4: submitLens routes by state and mode ==');
   delete window.__synthesizeAndCommit;
 }
 
+console.log('\n== Test L3.1: wrapDirectText ==');
+check('single paragraph wraps in <p>',
+  window.wrapDirectText('Hello world.', null) === '<p>Hello world.</p>');
+check('multi-paragraph splits on blank lines',
+  window.wrapDirectText('First.\n\nSecond.', null) === '<p>First.</p>\n<p>Second.</p>');
+check('anchor on LI wraps in <li>',
+  window.wrapDirectText('New item.', 'LI') === '<li>New item.</li>');
+check('multi-paragraph in LI context produces multiple <li>',
+  window.wrapDirectText('A.\n\nB.', 'LI') === '<li>A.</li>\n<li>B.</li>');
+check('anchor on BLOCKQUOTE still wraps in <p>',
+  window.wrapDirectText('After quote.', 'BLOCKQUOTE') === '<p>After quote.</p>');
+check('HTML special chars are escaped',
+  window.wrapDirectText('a < b & c > d', null) === '<p>a &lt; b &amp; c &gt; d</p>');
+
 console.log(`\n${pass} pass, ${fail} fail`);
 process.exit(fail > 0 ? 1 : 0);

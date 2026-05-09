@@ -769,6 +769,17 @@ function resolveAnchorFind(entry) {
 }
 window.resolveAnchorFind = resolveAnchorFind;
 
+// rwa-lens/1: wrap direct text per spec §5.3 wrapping table.
+function wrapDirectText(text, anchorTag) {
+  const wrapper = (anchorTag === 'LI') ? 'li' : 'p';
+  const chunks = text.split(/\n\s*\n/).map(s => s.trim()).filter(Boolean);
+  return chunks.map(c => `<${wrapper}>${escapeHtml(c)}</${wrapper}>`).join('\n');
+}
+function escapeHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+window.wrapDirectText = wrapDirectText;
+
 // rwa-lens/1: lens state.
 const lensState = { anchor: null }; // null = default; otherwise sourceMap entry
 // Test seam (jsdom only) for inspecting lens state in tests.
