@@ -96,7 +96,7 @@ window.ANCHORABLE_TAGS = ANCHORABLE_TAGS; // expose for tests
 const RWA = {
   DB:'rwa_'+DOC_UUID, KEY:'self',
   DOC:'rwa_doc', UNDO:'rwa_undo', HIST:'rwa_hist', FSA:'rwa_fsa',
-  UNDO_CAP:10, HIST_CAP:15,
+  UNDO_CAP:10, HIST_CAP:1000,
   K_API:'rwa_apikey', K_MODEL:'rwa_model', K_BACKEND:'rwa_backend',
   MODEL:'google/gemini-3-flash-preview',
   FILE:'rewritable.html',
