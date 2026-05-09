@@ -12,6 +12,10 @@ Usage:
 Flags:
   --force, -f    overwrite the destination if it exists
   --open, -o     open the resulting file in the default app
+                 (if OPENROUTER_API_KEY is set in the environment or in
+                  ./.env, it is appended as ?key=… so the new container
+                  can talk to the agent without manually pasting it.
+                  The bootstrap scrubs the URL on first paint.)
   --vision       (import only, .pdf only) send the PDF to OpenRouter and
                  ask the model to convert it to clean HTML. Bypasses the
                  local pdfjs heuristic entirely. Requires OPENROUTER_API_KEY.

@@ -2,6 +2,86 @@
 
 Notable changes to `re-write-able`. The container format is versioned in `re-write-able-spec.md`; the edit protocol in `rwa-edit-spec.md`; the structural-transform DSL in `rwa-edit-dsl-spec.md`. The CLI follows semver in `cli/package.json`.
 
+## 2026-05-09 — `-o` hands the OpenRouter key to a fresh container via `?key=`
+
+Quality-of-life fix on the `rwa new -o` / `rwa import -o` path. When `OPENROUTER_API_KEY` is set in the environment (or in a `./.env` file in the working directory), the CLI now appends it to the `file://` URL it opens as `?key=…`. The bootstrap reads the parameter on first paint, lifts it into `sessionStorage`, and immediately scrubs the URL via `history.replaceState` so the key doesn't sit in the location bar, history, or any later bookmark. Without `-o`, behavior is unchanged. Without a key in the environment, behavior is unchanged.
+
+### What changed for users
+
+- `rwa new -o` and `rwa import -o` will now silently bring an OpenRouter key with them when one is available. ⌘K works on first open without visiting the settings panel.
+- The CLI prints `note: passing OPENROUTER_API_KEY via ?key= URL parameter` to stderr when it does so.
+- A minimal `.env` parser is included (`KEY=value`, optional `export`, optional matched quotes, no interpolation, no multiline). Existing shell-exported env wins.
+
+### What changed for the seed
+
+- The bootstrap gains a ~10-line block right after `RWA` is defined that reads `?key=…` from `location.search`, writes it to `sessionStorage[RWA.K_API]`, and rewrites the URL via `history.replaceState`. Wrapped in `try/catch` because sandboxed `file://` contexts can throw on `history.replaceState`.
+
+### Backward compatibility
+
+- Strict addition. The seed bytes change only by the inserted block; bootstrap byte-identity invariant still holds across containers within this release.
+- Bridge backend (`rwa_backend = bridge`) ignores the key — the URL parameter is still consumed and scrubbed, just unused.
+
+## 2026-05-08 — bridge backend: ⌘K via local `claude -p`, plus printable containers
+
+The runtime grows a second agent backend, selectable in the ⚙ settings panel. In addition to the existing OpenRouter HTTP path, ⌘K can now route through a localhost CLI bridge — a `web_cli_bridge`-style endpoint at `http://127.0.0.1:8765/run` that takes `{command}` and returns `{stdout, stderr, exit_code}`. The bridge spawns `claude -p`, which produces a JSON edit envelope; the runtime parses it and dispatches through the existing `applyEdits` / `compileDslPlan` / `replaceDocument` paths. For users with a Claude subscription this is free per call (vs. per-token OpenRouter cost) and uses whatever model their `claude` CLI is configured for.
+
+In the same release, freshly-imported containers print correctly: the runtime chrome (READY pill, ⚙ button, ⌘S button) is hidden via `@media print`, and the import skills/agent are prompted to lay content out for printing.
+
+### What changed for users
+
+- **New "Backend" select** in ⚙ settings. Choose `OpenRouter` (existing HTTP path, requires API key) or `Bridge` (local subprocess, requires `web_cli_bridge` running and `claude` CLI installed). Persisted in `sessionStorage` as `rwa_backend`.
+- When `Bridge` is selected, the OpenRouter Key + Model rows hide. They're irrelevant.
+- **Containers print as documents, not as web apps.** The status pill, settings cog, and commit button are `display: none` in print media. A blank container's hero placeholder is also hidden.
+- **Import paths nudge the agent toward print-fit layouts.** `rwa import --claude` and `--vision` skills are asked to keep imported invoices/letters/forms on a single page where possible, with white background, system fonts, and clean alignment.
+
+### What changed for the seed
+
+- New `RWA.K_BACKEND` constant; new branch in `modify()` selects the backend.
+- New `callBridge()` parallel to `callOpenRouter()`. The bridge call shells out `claude -p` with the prompt + tool envelope on stdin; the response is parsed as a single JSON object matching one of the three tool envelopes (`apply_edits`, `apply_dsl_plan`, `replace_document`).
+- New `@media print` block hides `#rwa-status`, `#rwa-settings-btn`, `#rwa-commit-btn`, and the empty-state hero. The doc mount itself prints as-is.
+
+### Backward compatibility
+
+- OpenRouter remains the default backend. Existing containers in IDB are unaffected — the `K_BACKEND` slot is read with a default of `openrouter`.
+- The bridge endpoint URL is hardcoded to `http://127.0.0.1:8765/run` to match the `web_cli_bridge` convention. Containers that don't have one running surface a connection error in the palette.
+
+## 2026-05-08 — docx + pdf import (CLI + service), with optional `--vision` and `--claude` paths for PDFs
+
+`rwa import` and `rewritable.ikangai.com/import` now accept `.docx` and `.pdf`. By default both run a deterministic offline conversion: mammoth for docx, a pdfjs-driven paragraph heuristic for PDFs. Two opt-in paths exist for PDFs whose layout the heuristic mangles: `--vision` ships the PDF to OpenRouter and asks a vision model for clean HTML, and `--claude` spawns the user's locally-installed `claude` CLI in print mode so the agent can use its official `pdf` / `docx` skills (~/.claude/skills/) and the rich Python tooling those skills carry (pypdf, pdfplumber, pandoc, mammoth, LibreOffice).
+
+### What changed for users
+
+- **`rwa import file.docx`** — mammoth.convertToHtml. Warnings on unmapped styles surface via stderr.
+- **`rwa import file.pdf`** — pdfjs walks text items, groups same-y items into lines, flushes paragraphs on y-jumps. Always emits a heuristic warning. Encrypted/scanned PDFs exit cleanly with an error.
+- **`rwa import file.pdf --vision [--model …]`** — sends the PDF to OpenRouter (default `google/gemini-3-flash-preview`); the model returns clean HTML. Bypasses the local heuristic. Requires `OPENROUTER_API_KEY`.
+- **`rwa import file.{pdf,docx} --claude [--timeout SECS]`** — spawns `claude -p` with the file path on stdin. The agent reads the file with its skill's tools, returns clean HTML on stdout. Default timeout 20 minutes. PDFs with more than ~10 pages are split into page-range chunks and run in up to 4 parallel `claude -p` subprocesses.
+- **`/import` accepts `.docx` and `.pdf`** in the browser. Same drop zone, same client-side conversion, same offline guarantee.
+
+### What changed for the CLI
+
+- New runtime deps in `cli/package.json`: `mammoth@1.11.0`, `pdfjs-dist@5.4.149`. Pinned to match cdnjs builds so `/import` stays byte-equivalent.
+- `convert(ext, content)` is now `convert(ext, bytes)` — text formats decode utf8 internally, binary formats consume bytes directly.
+- `importCmd` reads the input as a `Buffer`.
+- New `import-vision.mjs` — wraps OpenRouter chat completions with a base64-encoded PDF and a system prompt asking for `<article>`-wrapped HTML.
+- New `import-claude.mjs` — spawns `claude -p`, manages timeout + chunking + parallelism, parses the agent's stdout to extract the `<article>` block. The skills it invokes live in `~/.claude/skills/`; the CLI does not bundle them.
+- `--vision` and `--claude` are mutually exclusive and produce a clear error if both are passed.
+
+### What changed for the service
+
+- `service/public/import.html` accepts `.docx` and `.pdf`. mammoth + pdfjs are loaded from cdnjs (mammoth) and self-hosted at `service/public/pdf/{pdf.min.mjs,pdf.worker.min.mjs}` (pdfjs is ESM-only on cdnjs and `integrity=` on `<script type="module">` doesn't validate the URL the inline body imports — self-hosting gives real SRI).
+- The browser convertDocx + convertPdf functions are verbatim ports of the CLI's. Mammoth output is passed through `sanitizeMammothUrls` (allowlist: `http`, `https`, `mailto`, `tel`, relatives, `data:image/*` for `<img src>`) — mammoth's tag vocabulary is fixed but it does **not** filter URL schemes, so a docx with a `javascript:` link would otherwise land in `INLINE_DOC` and execute on click. CLI does the same sanitization.
+- Four sites must stay aligned when import logic changes: `cli/src/seed.mjs`, `cli/src/import.mjs`, `seeds/rewritable.html`, and `service/public/import.html`. Documented in `CLAUDE.md`.
+
+### What changed for documentation
+
+- `CLAUDE.md` extends the service conventions with the four-site mirror, the pdfjs self-hosting rationale, and the mammoth URL sanitization rule.
+- `docs/plans/2026-05-08-docx-pdf-import-design.md` records the design.
+
+### Backward compatibility
+
+- Strict addition for both CLI and service. Existing `.md`/`.html`/`.csv`/`.txt` paths are untouched.
+- New CLI runtime deps (`mammoth`, `pdfjs-dist`). `npm i -g rewritable` pulls them transitively.
+
 ## 2026-05-05 — DSL structural-transform tool (rwa-edit-dsl/1) shipped in runtime
 
 The runtime gains a third tool, `apply_dsl_plan`, that takes a small typed DSL of structural transforms (`replace`, `insert`, `delete`, `set_attr`, plus a `replace_document` escape) and compiles them deterministically to `apply_edits` envelopes. Sugar on top of rwa-edit/1 — `apply_edits` and `replace_document` semantics are unchanged. The DSL parser is the trust boundary; compiled output flows through the existing `applyEdits` / `replaceDocument` paths so all rwa-edit/1 invariants (frozen zones, structural shape, reserved markers) still hold.
