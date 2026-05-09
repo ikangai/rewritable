@@ -1272,7 +1272,12 @@ async function runAnchoredCommand(anchor, instruction) {
         reason: `lens: ${instruction}`,
       };
       try {
-        const result = await applyEdits(envelope, await getDoc());
+        const lensMeta = {
+          surface: 'anchored-command',
+          instruction,
+          scope: { type: 'block', block_id: String(anchor.start) },
+        };
+        const result = await applyEdits(envelope, await getDoc(), lensMeta);
         renderDoc(result);
         // Spec §5.4 post-commit anchor branches: single → re-anchor on new
         // block; multi → release with affordance; empty → release silently.
@@ -1341,6 +1346,16 @@ async function synthesizeAndCommit(envelope, surface, instruction) {
   // unchanged, and a replace-this-anchor edit (Phase 7) preserves it because
   // find/replace splices at the same source offset.
   const prevAnchorStart = lensState.anchor ? lensState.anchor.start : null;
+  // Phase 9.1: build lensMeta so the rwa_hist record carries surface,
+  // instruction, and the scope (block-anchored or eof). Scope is captured
+  // pre-commit because lensState.anchor may be cleared by renderDoc below.
+  const lensMeta = {
+    surface,
+    instruction,
+    scope: lensState.anchor
+      ? { type: 'block', block_id: String(lensState.anchor.start) }
+      : { type: 'eof' },
+  };
   let result;
   if (!envelope) {
     // Empty doc → first append → use replace_document.
@@ -1350,9 +1365,9 @@ async function synthesizeAndCommit(envelope, surface, instruction) {
       doc: wrapped,
       reason: 'initial content into an empty document',
     };
-    result = await replaceDocument(repEnv, await getDoc());
+    result = await replaceDocument(repEnv, await getDoc(), lensMeta);
   } else {
-    result = await applyEdits(envelope, await getDoc());
+    result = await applyEdits(envelope, await getDoc(), lensMeta);
   }
   // Re-render so the user sees the new content. renderDoc rebuilds sourceMap
   // and (because the lens may sit inside the mount) calls releaseAnchor, so we
@@ -1371,7 +1386,6 @@ async function synthesizeAndCommit(envelope, surface, instruction) {
     // returned the lens to its docked default, so no extra work is needed.
   }
   return result;
-  // Phase 9 will augment the post-commit history record with surface/instruction/scope.
 }
 
 // Test seam: directly write a doc to IDB + rebuild the map, no agent loop.
@@ -1488,7 +1502,7 @@ async function commitDoc(currentDoc, newDoc, histRecord) {
 // for older runtimes by treating absence as "no check available."
 const isWellFormed = (s) => typeof s !== 'string' || typeof s.isWellFormed !== 'function' || s.isWellFormed();
 
-async function applyEdits(envelope, currentDocRaw) {
+async function applyEdits(envelope, currentDocRaw, lensMeta = null) {
   if (envelope?.version !== 'rwa-edit/1') throw new RwaEditError('version_unsupported');
   if (!Array.isArray(envelope.edits) || envelope.edits.length === 0) throw new RwaEditError('malformed_envelope');
   for (let i = 0; i < envelope.edits.length; i++) {
@@ -1560,11 +1574,17 @@ async function applyEdits(envelope, currentDocRaw) {
 
   if (work.length > RWA_EDIT.MAX_DOC) throw new RwaEditError('target_size_exceeded');
 
-  await commitDoc(currentDoc, work, { ts: Date.now(), kind: 'edit_batch', envelope });
+  const histRecord = { ts: Date.now(), kind: 'edit_batch', envelope };
+  if (lensMeta) {
+    histRecord.surface = lensMeta.surface;
+    histRecord.instruction = lensMeta.instruction;
+    histRecord.scope = lensMeta.scope;
+  }
+  await commitDoc(currentDoc, work, histRecord);
   return work;
 }
 
-async function replaceDocument(envelope, currentDocRaw) {
+async function replaceDocument(envelope, currentDocRaw, lensMeta = null) {
   if (envelope?.version !== 'rwa-edit/1') throw new RwaEditError('version_unsupported');
   if (typeof envelope.doc !== 'string' || typeof envelope.reason !== 'string' || !envelope.reason)
     throw new RwaEditError('malformed_envelope');
@@ -1608,7 +1628,13 @@ async function replaceDocument(envelope, currentDocRaw) {
 
   if (newDoc.length > RWA_EDIT.MAX_DOC) throw new RwaEditError('target_size_exceeded');
 
-  await commitDoc(currentDoc, newDoc, { ts: Date.now(), kind: 'replace_document', reason: envelope.reason });
+  const histRecord = { ts: Date.now(), kind: 'replace_document', reason: envelope.reason };
+  if (lensMeta) {
+    histRecord.surface = lensMeta.surface;
+    histRecord.instruction = lensMeta.instruction;
+    histRecord.scope = lensMeta.scope;
+  }
+  await commitDoc(currentDoc, newDoc, histRecord);
   return newDoc;
 }
 

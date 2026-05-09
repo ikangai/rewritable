@@ -822,5 +822,23 @@ console.log('\n== Test L8.7: prompt names .rwa-locked blocks ==');
     /rwa-locked|class.declared|class-declared/i.test(head));
 }
 
+console.log('\n== Test L9.1: rwa_hist records carry surface, instruction, scope ==');
+{
+  await window.__setDocForTest('<p>X.</p>');
+  delete window.__synthesizeAndCommit;
+  await window.submitLens('Direct text added.');
+  await new Promise(r => setTimeout(r, 100));
+  const hist = await new Promise(res => {
+    window.openDB().then(db => {
+      const r = db.transaction('rwa_hist').objectStore('rwa_hist').get('self');
+      r.onsuccess = () => res(r.result);
+    });
+  });
+  const top = hist[0];
+  check('record has surface field', top.surface === 'default-text');
+  check('record has instruction field', typeof top.instruction === 'string');
+  check('record has scope field', top.scope && top.scope.type === 'eof');
+}
+
 console.log(`\n${pass} pass, ${fail} fail`);
 process.exit(fail > 0 ? 1 : 0);
