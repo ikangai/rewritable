@@ -2,6 +2,60 @@
 
 Notable changes to `re-write-able`. The container format is versioned in `re-write-able-spec.md`; the edit protocol in `rwa-edit-spec.md`; the structural-transform DSL in `rwa-edit-dsl-spec.md`. The CLI follows semver in `cli/package.json`.
 
+## 2026-05-12 — rwa-lens/1 edit model: the modal ⌘K becomes a steerable lens
+
+The user-surface layer over rwa-edit/1 changes. The modal `Cmd+K` palette is replaced by a single steerable input — the **lens** — that has two states (default, anchored) and discriminates content from instruction via a leading slash. No new edit protocol; every gesture compiles down to an existing `apply_edits`, `apply_dsl_plan`, or `replace_document` envelope. The container spec stays at v0.8 and the edit protocol stays at rwa-edit/1 (v1.4).
+
+The model also adds class-declared locks (`class="rwa-locked"`) as a UI-affordance layer over the existing frozen-zone mechanism, and a re-skin: the runtime ships a Claude-styled light theme (warm cream `#f5f4ef` / terracotta accent `#cd5d3c`) replacing the previous dark theme.
+
+### What changed for users
+
+- **The lens.** A single text input docked at the bottom of the viewport as a floating max-width 740px white card. Always present, in one of two states:
+    - **Default (global).** Direct text (⌘Enter) appends a new block at end-of-document. A slash command (`/dark mode`, `/convert this to a kanban board`) runs the existing multi-turn rwa-edit/1 loop with the whole document as context.
+    - **Anchored on a block.** Click any block (`<p>`, `<h1>`–`<h6>`, `<blockquote>`, `<li>`, `<figure>`, `<pre>`, `<aside>`) to anchor the lens beneath it. Direct text now *inserts* a new block after the anchor; a slash command *edits* the anchored block. The badge on the lens shows what it's targeting; `Esc` (or the badge X) releases. A "down" button re-docks at EOF.
+- **Slash convention.** No leading slash → direct text (prose). Leading `/` → command. `\/` at the start of a submission produces a literal slash. Live mode indication: the lens chrome shifts (border accent + placeholder + "command" pill) as soon as the input begins with `/`, so the discriminator is visible before submit. Multi-line pastes that start with a slash surface a one-time hint (*escape with `\/` to insert literally*).
+- **Class-declared locks.** `class="rwa-locked"` on any block renders it with a stripe + lock icon. Anchoring on it is rejected, edits that overlap it are rejected, and `replace_document` is rejected unless the lock is entirely contained within a marker-form frozen zone (comment fence or `data-rwa-frozen`). The UI affordance for the *this part is fixed, the rest is malleable* use case — contract templates, tax forms, press releases.
+- **Collapsible history pane.** A read-only pane lists recent edits with surface (default / anchored), instruction, and scope (whole-doc / single-block). History cap raised from 15 to **1000** entries.
+- **Light theme.** Bg `#f5f4ef` (warm cream), surface `#ffffff`, text `#1a1a17`, accents `#cd5d3c` (terracotta) / `#3d7fb8` (blue) / `#c84a4a` (red). Fonts unchanged. Print stylesheet adjusted: lens, history button, status pill all hidden; body padding zeroed.
+- **Busy indicator.** A ⏳ pulse animates on the lens while a command is in flight, so the user can see that ⌘Enter registered.
+- **Bridge backend works with anchored commands.** Anchored slash commands now route through `claude -p` when the bridge backend is selected, not just OpenRouter.
+
+### What changed for the seed
+
+- New CSS variables and a full re-skin: light palette, floating lens chrome with rounded-24px corners, drop shadow, focus-within glow, command-mode terracotta accent. `body` gains `padding-bottom:160px` so document content scrolls above the floating lens.
+- New runtime cluster in `seeds/rewritable.html`: source-position map for `rwa_doc`, click-to-anchor, anchored/default dispatchers, EOF anchor resolution (skips locked tail), `.rwa-locked` source-range tracking, overlap check for `apply_edits` / `apply_dsl_plan`, coverage check for `replace_document`, post-commit anchor re-anchoring / release logic, paste-detection hint, collapsible history pane.
+- `rwa_hist` schema extended with `surface` (`default` / `anchored`), `instruction` (user prompt verbatim), and `scope` (`whole-doc` / `single-block`); cap raised 15 → 1000. Schema is additive; existing entries continue to render.
+- Direct-text submissions hold the modify mutex; submit errors surface in the lens chrome instead of silently dropping. Default-state slash commands carry `lensMeta` ({surface, scope}) into the audit record.
+- New `callBridgeSingleShot` parallel to `callAgentSingleShot` so anchored commands work with both backends.
+- Agent prompt for anchored slash commands names `.rwa-locked` blocks explicitly and reminds the agent that `replace_document` cannot remove them; anchored response is validated against the parent context to avoid structurally invalid HTML before envelope construction.
+
+### What changed for the references
+
+- `hello.html` and `re-write-able-spec.html` regenerated from the new seed against the lens runtime. Each preserves its own `DOC_UUID` and `INLINE_DOC` body; the bootstrap mirrors the seed.
+- `tools/regenerate-refs.mjs` gains an optional `rewritable.html` target at the repo root so a `rwa new`-produced container can be re-skinned in place during dev.
+
+### What changed for documentation
+
+- New spec `docs/specs/rwa-lens-spec.md` (rwa-lens/1 v0.9). Defines the two states, the slash convention, anchor resolution, the source-position map invariant, post-commit anchor behavior, lock semantics (class-declared vs. marker-form coverage), wrapper rules per anchor type, and the failure modes that need affordances.
+- `CLAUDE.md` documents the lens edit model, the four-site alignment for lens changes (spec ↔ seed ↔ regen flow), and the new light-theme palette.
+
+### What changed for testing
+
+- `tests/e2e.mjs`: HIST_CAP assertions updated for the new 1000-entry cap; new tests cover the anchored slash command end-to-end (prompt, validate, envelope, commit), parent-type validation, `.rwa-locked` overlap rejection on `apply_edits`, and `replace_document` coverage rejection.
+
+### Backward compatibility
+
+- **No edit-protocol changes.** rwa-edit/1 envelope shapes and semantics are unchanged. `apply_edits`, `apply_dsl_plan`, and `replace_document` validate identically.
+- **`rwa_hist` schema is additive.** New fields (`surface`, `instruction`, `scope`) coexist with legacy entries; the history pane renders both.
+- **Existing containers continue to work.** Their bootstrap upgrades only on the next `⌘S` (or by regenerating from the seed). The bootstrap byte-identity invariant still holds across containers within this release.
+- **CLI and service unchanged.** Both handle the seed bytes opaquely. The CLI's bundled seed regenerates on the next `npm publish` from the canonical seed.
+
+### Known limitations
+
+- **Definition lists are not in v1's anchorable set.** Clicks on `<dl>`/`<dt>`/`<dd>` content traverse to the nearest anchorable ancestor or no-op.
+- **Multi-block responses release the anchor.** When an agent returns more than one anchorable element from an anchored slash command, the lens releases to default with a brief affordance — v1 does not support multi-anchor.
+- **The bare `.rwa-locked` class has no protocol-level preservation through `replace_document`.** Authors who want both the UI affordance and `replace_document` survival declare both forms on the same block (comment fence outside, or `data-rwa-frozen` on the same element).
+
 ## 2026-05-09 — `-o` hands the OpenRouter key to a fresh container via `?key=`
 
 Quality-of-life fix on the `rwa new -o` / `rwa import -o` path. When `OPENROUTER_API_KEY` is set in the environment (or in a `./.env` file in the working directory), the CLI now appends it to the `file://` URL it opens as `?key=…`. The bootstrap reads the parameter on first paint, lifts it into `sessionStorage`, and immediately scrubs the URL via `history.replaceState` so the key doesn't sit in the location bar, history, or any later bookmark. Without `-o`, behavior is unchanged. Without a key in the environment, behavior is unchanged.
