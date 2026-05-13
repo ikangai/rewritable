@@ -12,6 +12,9 @@ const seedPath = path.join(repoRoot, 'seeds', 'rewritable.html');
 const refs = [
   { path: path.join(repoRoot, 'hello.html'), file: 'hello.html' },
   { path: path.join(repoRoot, 're-write-able-spec.html'), file: 're-write-able-spec.html' },
+  // Optional: a working rewritable.html at the repo root (e.g. produced by
+  // `rwa new` for ad-hoc testing). Skipped silently if absent.
+  { path: path.join(repoRoot, 'rewritable.html'), file: 'rewritable.html', optional: true },
 ];
 
 const seed = fs.readFileSync(seedPath, 'utf8');
@@ -52,6 +55,10 @@ function extractFile(html) {
 }
 
 for (const ref of refs) {
+  if (ref.optional && !fs.existsSync(ref.path)) {
+    console.log(`Skipped ${ref.path} (optional, not present)`);
+    continue;
+  }
   const refHtml = fs.readFileSync(ref.path, 'utf8');
   const uuid = extractDocUuid(refHtml);
   const inline = extractInlineDoc(refHtml);

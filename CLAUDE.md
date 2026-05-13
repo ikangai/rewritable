@@ -110,7 +110,7 @@ FSA persistence: the `FileSystemFileHandle` is structured-cloneable in modern Ch
 
 - Single self-contained file; CSS inline; JS inline only when the document has interactivity.
 - No React, no npm, no build steps. Libraries from `cdnjs.cloudflare.com` only when genuinely needed.
-- Dark theme palette: bg `#0e0e0f`, surface `#161618`, border `#2d2d34`, text `#dddde4`, muted `#575766`, accents `#b8ff57` / `#57c8ff` / `#ff5757`.
+- Light theme palette (Claude-styled, since 2026-05-10): bg `#f5f4ef` (warm cream), surface `#ffffff`, borders `#ece9e1` / `#d8d3c8`, text `#1a1a17`, muted `#8a877d`, accents `#cd5d3c` (terracotta) / `#3d7fb8` (blue) / `#c84a4a` (red). The lens chrome is a floating max-width 740px white card with rounded-24px corners and subtle drop shadow, docked at `bottom:24px` (not a full-width bar). `body` has `padding-bottom:160px` so document content can scroll above the floating lens.
 - Fonts: DM Sans (UI), DM Mono (labels/code), Instrument Serif (display).
 - Real seed data, never lorem ipsum.
 - Pure-prose documents are valid: a single `<article>` and a stylesheet, no JS.
