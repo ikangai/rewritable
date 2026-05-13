@@ -110,8 +110,8 @@ FSA persistence: the `FileSystemFileHandle` is structured-cloneable in modern Ch
 
 - Single self-contained file; CSS inline; JS inline only when the document has interactivity.
 - No React, no npm, no build steps. Libraries from `cdnjs.cloudflare.com` only when genuinely needed.
-- Light theme palette (Claude-styled, since 2026-05-10): bg `#f5f4ef` (warm cream), surface `#ffffff`, borders `#ece9e1` / `#d8d3c8`, text `#1a1a17`, muted `#8a877d`, accents `#cd5d3c` (terracotta) / `#3d7fb8` (blue) / `#c84a4a` (red). The lens chrome is a floating max-width 740px white card with rounded-24px corners and subtle drop shadow, docked at `bottom:24px` (not a full-width bar). `body` has `padding-bottom:160px` so document content can scroll above the floating lens.
-- Fonts: DM Sans (UI), DM Mono (labels/code), Instrument Serif (display).
+- Light theme palette (playground.ikangai.com-aligned, since 2026-05-13): neutral grayscale ramp `--gray-50…--gray-900` (`#fafafa` → `#171717`) plus semantic `--green:#22c55e` / `--yellow:#eab308` / `--red:#ef4444` / `--blue:#3b82f6`. Legacy aliases (`--bg`, `--surf`, `--b1`/`--b2`, `--text`, `--muted`, `--accent`) resolve to the ramp so existing INLINE_DOC references keep rendering. Primary action color is `--gray-900` (the ⌘S commit button and "command mode" lens border). The lens chrome is a floating max-width 680px white card with `--radius` (24px), a 1px `--gray-200` border, and shadows `0 2px 8px rgba(0,0,0,.04)` baseline → `0 4px 16px rgba(0,0,0,.08)` on `:focus-within`. Docked at `bottom:24px`; `body` has `padding-bottom:160px` so document content scrolls above it.
+- Fonts: system stack — `-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif` for UI; `'SF Mono', Menlo, Monaco, ui-monospace, 'Cascadia Mono', monospace` for code/labels. Exposed as `--font-ui` and `--font-mono`. No web fonts loaded; the bootstrap is fully self-contained.
 - Real seed data, never lorem ipsum.
 - Pure-prose documents are valid: a single `<article>` and a stylesheet, no JS.
 

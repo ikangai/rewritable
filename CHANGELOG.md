@@ -2,6 +2,34 @@
 
 Notable changes to `re-write-able`. The container format is versioned in `re-write-able-spec.md`; the edit protocol in `rwa-edit-spec.md`; the structural-transform DSL in `rwa-edit-dsl-spec.md`. The CLI follows semver in `cli/package.json`.
 
+## 2026-05-13 — default styling aligned with playground.ikangai.com
+
+The seed's bootstrap is re-skinned to match the styling of `playground.ikangai.com` — neutral grayscale, system fonts, and a quieter chrome — so re-writeable containers feel like siblings of the playground rather than a separate visual family. Container spec, edit protocol, and runtime behavior are unchanged; this is a CSS-only change.
+
+### What changed for users
+
+- **Neutral grayscale palette.** `--gray-50` (`#fafafa`) through `--gray-900` (`#171717`), plus semantic `--green` / `--yellow` / `--red` / `--blue`. The previous warm-cream + terracotta + Claude-blue scheme is gone. Primary actions (⌘S commit, "command mode" lens border, send button) are `--gray-900`. The status pill for "ok" is `--green` and for "err" is `--red`.
+- **System fonts.** UI in `-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`; mono in `'SF Mono', Menlo, Monaco, ui-monospace, monospace`. The Google Fonts `<link>` to DM Sans / DM Mono / Instrument Serif is removed — the bootstrap is now fully self-contained, no third-party font calls, faster first paint.
+- **Quieter lens chrome.** Max-width tightened from 740px → **680px** (matches the playground's `.input-area`). Border is `1px solid var(--gray-200)`, shadow is `0 2px 8px rgba(0,0,0,.04)` baseline → `0 4px 16px rgba(0,0,0,.08)` on `:focus-within` — the playground's `.input-wrapper` values. "Command mode" border is `--gray-900` (replaces the terracotta accent).
+- **Busy indicator restyled.** The pulsing `⏳` emoji is replaced by a small `--gray-400` pulsing dot at the top-right of the lens.
+- **Hello-world heading.** The empty-seed greeting still uses an italic serif heading, now via `Georgia, 'Times New Roman', serif` instead of Instrument Serif. The gradient text-clip is removed in favor of solid `--gray-900` to match the playground's restraint.
+
+### What changed for the seed
+
+- The `<style>` block is rewritten end-to-end. The legacy `--bg` / `--surf` / `--b1` / `--b2` / `--text` / `--muted` / `--accent` / `--blue` aliases are kept and resolve to the new ramp, so any INLINE_DOC referencing them keeps rendering. Two new variables: `--font-ui` and `--font-mono`.
+- `INLINE_DOC` font references (DM Mono, Instrument Serif) swapped for system stack + Georgia fallback.
+- Print stylesheet comment cleaned up — no more "dark surface" reference.
+
+### What changed for documentation
+
+- `CLAUDE.md` "Design constraints for documents" section updated: palette table, font stack, lens chrome dimensions.
+
+### Backward compatibility
+
+- No runtime, edit-protocol, or schema changes. 274/274 e2e scenarios pass against the new seed.
+- The bootstrap byte-identity invariant still holds within this release.
+- Existing containers with old DM Sans / Instrument Serif references in their INLINE_DOC continue to render — the fonts fall back to the system stack since the `<link>` is gone. No layout breakage observed in the seed's own hello content.
+
 ## 2026-05-12 — rwa-lens/1 edit model: the modal ⌘K becomes a steerable lens
 
 The user-surface layer over rwa-edit/1 changes. The modal `Cmd+K` palette is replaced by a single steerable input — the **lens** — that has two states (default, anchored) and discriminates content from instruction via a leading slash. No new edit protocol; every gesture compiles down to an existing `apply_edits`, `apply_dsl_plan`, or `replace_document` envelope. The container spec stays at v0.8 and the edit protocol stays at rwa-edit/1 (v1.4).
