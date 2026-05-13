@@ -796,7 +796,7 @@ function buildUI() {
   </div>
 </div>
 <div id="rwa-lens" data-state="default">
-  <button type="button" id="rwa-lens-hist-btn" aria-label="show history" title="show history">📜</button>
+  <button type="button" id="rwa-lens-hist-btn" aria-label="show history" title="show history"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/><path d="M12 7v5l3 2"/></svg></button>
   <div id="rwa-lens-badge" hidden></div>
   <textarea id="rwa-lens-input" rows="1" placeholder="Write, or describe what you want." spellcheck="false"></textarea>
   <div id="rwa-lens-paste-hint" hidden></div>
@@ -920,7 +920,7 @@ function buildUI() {
   });
 
   // Task 9.3: history pane. Read-only view of rwa_hist entries — surface chip,
-  // instruction, scope, timestamp. Toggle via the 📜 button in the lens chrome.
+  // instruction, scope, timestamp. Toggle via the history button in the lens chrome.
   const histBtn = document.getElementById('rwa-lens-hist-btn');
   const histPanel = document.getElementById('rwa-lens-hist-panel');
   if (histBtn && histPanel) {
