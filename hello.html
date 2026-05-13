@@ -60,7 +60,7 @@ body{font-family:var(--font-ui);background:var(--bg);color:var(--text);min-heigh
 #rwa-lens{position:fixed;left:50%;transform:translateX(-50%);bottom:24px;width:calc(100% - 48px);max-width:680px;background:var(--white);border:1px solid var(--gray-200);border-radius:var(--radius);padding:12px 16px;z-index:10;display:flex;flex-direction:column;gap:8px;box-shadow:0 2px 8px rgba(0,0,0,0.04);transition:border-color .15s,box-shadow .15s;}
 #rwa-lens:focus-within{border-color:var(--gray-300);box-shadow:0 4px 16px rgba(0,0,0,0.08);}
 #rwa-lens[data-mode="command"]{border-color:var(--gray-900);box-shadow:0 4px 16px rgba(0,0,0,0.08);}
-#rwa-lens-input{width:100%;resize:none;background:transparent;border:0;color:var(--gray-900);font-family:var(--font-ui);font-size:16px;line-height:1.5;outline:none;min-height:24px;}
+#rwa-lens-input{width:100%;resize:none;background:transparent;border:0;color:var(--gray-900);font-family:var(--font-ui);font-size:16px;line-height:1.5;outline:none;min-height:24px;max-height:200px;overflow-y:auto;}
 #rwa-lens-input::placeholder{color:var(--gray-400);}
 #rwa-lens-badge{display:inline-flex;gap:6px;align-items:center;background:var(--gray-50);border:1px solid var(--gray-200);padding:4px 10px;border-radius:100px;font-size:12px;align-self:flex-start;font-family:var(--font-mono);color:var(--gray-600);}
 #rwa-lens-badge button{background:transparent;border:0;color:var(--gray-400);cursor:pointer;font:inherit;padding:0 0 0 4px;line-height:1;display:flex;}
@@ -408,6 +408,20 @@ function buildUI() {
     });
   });
 
+  // Auto-grow: the textarea expands as the user types newlines, capped by
+  // CSS max-height:200px (≈9 lines at 1.5 line-height) — past that the
+  // textarea scrolls internally. Pattern: collapse height to 'auto' so
+  // scrollHeight reflects the natural content size (not the previous
+  // stretched height), then set height = scrollHeight. The CSS min-height
+  // keeps the textarea at one line when empty. Exposed via window so
+  // submitLens can reset after clearing the value.
+  function autosizeLens() {
+    lensInput.style.height = 'auto';
+    const next = lensInput.scrollHeight;
+    if (next > 0) lensInput.style.height = next + 'px';
+  }
+  window.__lensAutosize = autosizeLens;
+
   // rwa-lens/1: live mode indication (spec §6.1). The discriminator engages
   // during typing — a leading slash flips the lens chrome into command mode,
   // unless the user typed `\/` to escape (literal slash content).
@@ -415,6 +429,7 @@ function buildUI() {
     const v = lensInput.value;
     const isCommand = v.startsWith('/') && !v.startsWith('\\/');
     lensEl.dataset.mode = isCommand ? 'command' : 'text';
+    autosizeLens();
   });
 
   // Task 10.1: paste-detection hint. When pasted content looks like file paths
@@ -1285,7 +1300,12 @@ async function submitLens(text) {
   // (not in a finally) so a thrown error preserves the user's typed text —
   // the keydown handler surfaces the failure and the user can re-submit.
   const input = document.getElementById('rwa-lens-input');
-  if (input) input.value = '';
+  if (input) {
+    input.value = '';
+    // Collapse the auto-grown textarea back to one row. Without this the
+    // textarea would keep the height it grew to during input.
+    if (typeof window.__lensAutosize === 'function') window.__lensAutosize();
+  }
 }
 window.submitLens = submitLens;
 
