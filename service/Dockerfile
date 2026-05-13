@@ -8,6 +8,10 @@ WORKDIR /app
 COPY service/server.js ./service/
 COPY service/public/ ./service/public/
 COPY seeds/ ./seeds/
+# Demo tree served from /demo/html-effectiveness/. Scoped to the subdir
+# (not all of demo/) so any local cruft like PDFs sitting in demo/ is
+# never copied into the image.
+COPY demo/html-effectiveness/ ./demo/html-effectiveness/
 
 ENV NODE_ENV=production
 ENV PORT=80
