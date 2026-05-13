@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>html-effectiveness — original vs. rewritable</title>
+<style>
+:root{
+  --white:#ffffff;
+  --gray-50:#fafafa;--gray-100:#f5f5f5;--gray-200:#e5e5e5;--gray-300:#d4d4d4;
+  --gray-400:#a3a3a3;--gray-500:#737373;--gray-600:#525252;--gray-700:#404040;
+  --gray-800:#262626;--gray-900:#171717;
+  --font-ui:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  --font-mono:'SF Mono',Menlo,Monaco,ui-monospace,monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+html,body{height:100%;}
+body{font-family:var(--font-ui);color:var(--gray-900);background:var(--gray-50);display:flex;flex-direction:column;}
+header{flex-shrink:0;padding:16px 24px 0;border-bottom:1px solid var(--gray-200);background:var(--white);}
+header h1{font-size:14px;font-weight:600;letter-spacing:-.01em;}
+header h1 .muted{color:var(--gray-500);font-weight:400;}
+header p{font-size:12px;color:var(--gray-500);margin-top:4px;}
+.tablist{display:flex;gap:4px;margin-top:14px;overflow-x:auto;padding-bottom:0;scrollbar-width:thin;}
+.tab{flex-shrink:0;border:none;background:transparent;padding:8px 12px;cursor:pointer;font-family:inherit;font-size:12px;color:var(--gray-600);border-bottom:2px solid transparent;border-radius:0;white-space:nowrap;transition:color .15s,border-color .15s;}
+.tab:hover{color:var(--gray-900);}
+.tab.on{color:var(--gray-900);border-bottom-color:var(--gray-900);}
+.tab .n{font-family:var(--font-mono);font-size:10px;color:var(--gray-400);margin-right:6px;}
+.tab.on .n{color:var(--gray-500);}
+main{flex:1;display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--gray-200);overflow:hidden;}
+.pane{display:flex;flex-direction:column;background:var(--white);min-width:0;min-height:0;}
+.pane-head{flex-shrink:0;padding:10px 16px;border-bottom:1px solid var(--gray-200);display:flex;justify-content:space-between;align-items:center;gap:12px;}
+.pane-head .label{font-family:var(--font-mono);font-size:10px;letter-spacing:.5px;text-transform:uppercase;color:var(--gray-500);}
+.pane-head .open{font-size:11px;color:var(--gray-500);text-decoration:none;padding:3px 8px;border:1px solid var(--gray-200);border-radius:6px;transition:color .15s,border-color .15s;}
+.pane-head .open:hover{color:var(--gray-900);border-color:var(--gray-400);}
+.pane iframe{flex:1;border:0;width:100%;background:var(--white);}
+.empty{flex:1;display:grid;place-items:center;color:var(--gray-400);font-size:14px;}
+@media(max-width:900px){main{grid-template-columns:1fr;grid-template-rows:1fr 1fr;}}
+</style>
+</head>
+<body>
+<header>
+  <h1>html-effectiveness <span class="muted">— original vs. rewritable</span></h1>
+  <p>Twenty single-file HTML examples from <a href="https://thariqs.github.io/html-effectiveness/" target="_blank" style="color:inherit">thariqs.github.io/html-effectiveness</a>, each imported into a re-writeable container via <code style="font-family:var(--font-mono);font-size:11px;background:var(--gray-100);padding:1px 5px;border-radius:3px">rwa import</code>. Pick one to compare.</p>
+  <nav class="tablist" id="tabs"></nav>
+</header>
+<main id="panes">
+  <div class="pane">
+    <div class="pane-head"><span class="label">Original</span><a class="open" id="open-orig" target="_blank">open ↗</a></div>
+    <iframe id="frame-orig" title="original"></iframe>
+  </div>
+  <div class="pane">
+    <div class="pane-head"><span class="label">Rewritable</span><a class="open" id="open-rwa" target="_blank">open ↗</a></div>
+    <iframe id="frame-rwa" title="rewritable"></iframe>
+  </div>
+</main>
+<script>
+const EXAMPLES = [
+  ['01','Debounced search — three approaches'],
+  ['02','Empty state — four visual directions'],
+  ['03','PR #247 — Review Summary'],
+  ['04','How authentication flows through acme/web'],
+  ['05','Acme — Design System Reference'],
+  ['06','Acme — Card Variant Matrix'],
+  ['07','Acme — Task completed micro-interaction'],
+  ['08','Acme — Sidebar drag-to-reorder'],
+  ['09','Platform Eng — Week of Mar 10'],
+  ['10','Background jobs — header illustrations'],
+  ['11','Acme — Engineering Status — Week 11'],
+  ['12','INC-2025-0412 — Elevated 502s on task sync'],
+  ['13','Deploy pipeline — annotated flowchart'],
+  ['14','How rate limiting works in acme/api'],
+  ['15','Consistent hashing — an interactive explainer'],
+  ['16','Implementation plan — Comment threads on task cards'],
+  ['17','PR #312 — Move notification delivery onto a queue'],
+  ['18','Acme — Cycle 14 triage'],
+  ['19','Acme — flags.production.json'],
+  ['20','Acme — Support reply prompt tuner'],
+];
+
+const tabsEl = document.getElementById('tabs');
+const frameOrig = document.getElementById('frame-orig');
+const frameRwa = document.getElementById('frame-rwa');
+const openOrig = document.getElementById('open-orig');
+const openRwa = document.getElementById('open-rwa');
+
+function pick(n){
+  const ex = EXAMPLES.find(e => e[0] === n);
+  if(!ex) return;
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('on', t.dataset.n === n));
+  const orig = `original/${n}.html`;
+  const rwa = `rewritable/${n}.html`;
+  frameOrig.src = orig;
+  frameRwa.src = rwa;
+  openOrig.href = orig;
+  openRwa.href = rwa;
+  document.title = `${ex[1]} — original vs. rewritable`;
+  if(location.hash !== `#${n}`) history.replaceState(null, '', `#${n}`);
+}
+
+EXAMPLES.forEach(([n, title]) => {
+  const t = document.createElement('button');
+  t.className = 'tab';
+  t.dataset.n = n;
+  t.innerHTML = `<span class="n">${n}</span>${title}`;
+  t.addEventListener('click', () => pick(n));
+  tabsEl.appendChild(t);
+});
+
+window.addEventListener('hashchange', () => {
+  const n = location.hash.slice(1);
+  if(EXAMPLES.find(e => e[0] === n)) pick(n);
+});
+
+const initial = location.hash.slice(1);
+pick(EXAMPLES.find(e => e[0] === initial) ? initial : '02');
+</script>
+</body>
+</html>

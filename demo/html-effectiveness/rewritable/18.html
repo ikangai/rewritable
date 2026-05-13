@@ -1,0 +1,2926 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>18</title>
+<style>
+/* Palette + chrome modeled on playground.ikangai.com — neutral grayscale,
+   system fonts, white surface, 24px radius, subtle shadows. The legacy
+   --bg/--surf/--b1/--b2/--text/--muted/--accent/--blue aliases are
+   preserved so anything in INLINE_DOC that still references them keeps
+   rendering. */
+:root{
+  --white:#ffffff;
+  --gray-50:#fafafa;--gray-100:#f5f5f5;--gray-200:#e5e5e5;--gray-300:#d4d4d4;
+  --gray-400:#a3a3a3;--gray-500:#737373;--gray-600:#525252;--gray-700:#404040;
+  --gray-800:#262626;--gray-900:#171717;
+  --green:#22c55e;--yellow:#eab308;--red:#ef4444;--blue:#3b82f6;
+  --radius:24px;--radius-sm:12px;
+  --bg:var(--white);--surf:var(--white);
+  --b1:var(--gray-100);--b2:var(--gray-200);
+  --text:var(--gray-900);--muted:var(--gray-500);--accent:var(--gray-900);
+  --font-ui:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  --font-mono:'SF Mono',Menlo,Monaco,ui-monospace,'Cascadia Mono',monospace;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+[hidden]{display:none!important;}
+body{font-family:var(--font-ui);background:var(--bg);color:var(--text);min-height:100dvh;padding-bottom:160px;line-height:1.5;-webkit-font-smoothing:antialiased;}
+#rwa-set{position:fixed;top:12px;right:12px;display:flex;gap:6px;z-index:1000;}
+.rwa-st-btn{background:var(--white);border:1px solid var(--gray-200);color:var(--gray-500);font-family:var(--font-mono);font-size:10px;padding:6px 10px;border-radius:6px;cursor:pointer;letter-spacing:.5px;text-transform:uppercase;transition:color .15s,background .15s,border-color .15s;}
+.rwa-st-btn:hover{color:var(--gray-900);border-color:var(--gray-300);background:var(--gray-50);}
+.rwa-st-btn.dirty{color:var(--gray-900);border-color:var(--gray-300);background:var(--gray-100);}
+.rwa-st-btn.pri{background:var(--gray-900);color:var(--white);border-color:var(--gray-900);}
+.rwa-st-btn.pri:hover{background:var(--gray-700);border-color:var(--gray-700);color:var(--white);}
+.rwa-st-btn.run{color:var(--gray-700);border-color:var(--gray-300);background:var(--gray-50);}
+.rwa-st-btn.err{color:var(--red);border-color:var(--red);background:var(--white);}
+.rwa-st-btn.ok{color:var(--green);border-color:var(--green);background:var(--white);}
+#rwa-set-panel{position:fixed;top:50px;right:12px;background:var(--white);border:1px solid var(--gray-200);border-radius:var(--radius-sm);padding:14px;display:none;min-width:300px;z-index:999;box-shadow:0 4px 16px rgba(0,0,0,0.08);}
+#rwa-set-panel.open{display:block;}
+.rwa-set-row{display:flex;flex-direction:column;gap:4px;margin-bottom:10px;}
+.rwa-set-row:last-child{margin-bottom:0;}
+.rwa-set-row label{font-family:var(--font-mono);font-size:9px;letter-spacing:1.5px;text-transform:uppercase;color:var(--gray-500);}
+.rwa-set-row input,.rwa-set-row select{background:var(--white);border:1px solid var(--gray-200);color:var(--gray-900);font-family:var(--font-ui);font-size:13px;padding:8px 10px;outline:none;border-radius:8px;transition:border-color .15s;}
+.rwa-set-row input:focus,.rwa-set-row select:focus{border-color:var(--gray-400);}
+.rwa-set-row select{appearance:none;-webkit-appearance:none;cursor:pointer;}
+#rwa-pal{position:fixed;inset:0;display:none;align-items:flex-start;justify-content:center;padding-top:13vh;background:rgba(0,0,0,.3);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);z-index:99999;}
+#rwa-pal.open{display:flex;}
+#rwa-pal-box{width:min(540px,92vw);background:var(--white);border:1px solid var(--gray-200);border-radius:var(--radius-sm);overflow:hidden;box-shadow:0 16px 48px rgba(0,0,0,0.12),0 4px 12px rgba(0,0,0,0.06);}
+.rwa-pal-top{display:flex;align-items:center;border-bottom:1px solid var(--gray-100);}
+.rwa-pal-sig{padding:0 14px;font-size:13px;color:var(--gray-400);font-family:var(--font-mono);letter-spacing:.5px;}
+#rwa-pal-inp{flex:1;background:transparent;border:none;outline:none;color:var(--gray-900);font-family:var(--font-ui);font-size:16px;padding:14px 0;}
+#rwa-pal-inp::placeholder{color:var(--gray-400);}
+#rwa-pal-go{background:var(--gray-900);color:var(--white);border:none;border-radius:var(--radius-sm);font-family:var(--font-ui);font-size:13px;font-weight:500;padding:8px 16px;margin:8px 12px;cursor:pointer;transition:background .15s;}
+#rwa-pal-go:hover{background:var(--gray-700);}
+#rwa-pal-go:disabled{background:var(--gray-200);color:var(--gray-400);cursor:not-allowed;}
+.rwa-pal-foot{border-top:1px solid var(--gray-100);padding:7px 14px;display:flex;justify-content:space-between;align-items:center;}
+#rwa-pal-st{font-family:var(--font-mono);font-size:10px;color:var(--gray-500);}
+#rwa-pal-st.run{color:var(--gray-700);}#rwa-pal-st.ok{color:var(--green);}#rwa-pal-st.err{color:var(--red);}
+.rwa-pal-hint{font-family:var(--font-mono);font-size:10px;color:var(--gray-400);}
+#rwa-lens{position:fixed;left:50%;transform:translateX(-50%);bottom:24px;width:calc(100% - 48px);max-width:680px;background:var(--white);border:1px solid var(--gray-200);border-radius:var(--radius);padding:12px 16px;z-index:10;display:flex;flex-direction:column;gap:8px;box-shadow:0 2px 8px rgba(0,0,0,0.04);transition:border-color .15s,box-shadow .15s;}
+#rwa-lens:focus-within{border-color:var(--gray-300);box-shadow:0 4px 16px rgba(0,0,0,0.08);}
+#rwa-lens[data-mode="command"]{border-color:var(--gray-900);box-shadow:0 4px 16px rgba(0,0,0,0.08);}
+#rwa-lens-input{width:100%;resize:none;background:transparent;border:0;color:var(--gray-900);font-family:var(--font-ui);font-size:16px;line-height:1.5;outline:none;min-height:24px;max-height:200px;overflow-y:auto;}
+#rwa-lens-input::placeholder{color:var(--gray-400);}
+#rwa-lens-badge{display:inline-flex;gap:6px;align-items:center;background:var(--gray-50);border:1px solid var(--gray-200);padding:4px 10px;border-radius:100px;font-size:12px;align-self:flex-start;font-family:var(--font-mono);color:var(--gray-600);}
+#rwa-lens-badge button{background:transparent;border:0;color:var(--gray-400);cursor:pointer;font:inherit;padding:0 0 0 4px;line-height:1;display:flex;}
+#rwa-lens-badge button:hover{color:var(--gray-700);}
+#rwa-lens-hint{font-family:var(--font-mono);font-size:11px;color:var(--gray-400);}
+#rwa-lens-paste-hint{font-family:var(--font-ui);font-size:13px;color:var(--gray-700);background:#fff8e1;border:1px solid #e0a500;padding:8px 12px;border-radius:8px;}
+#rwa-lens-hist-btn{position:absolute;top:10px;right:14px;background:transparent;border:0;color:var(--gray-400);cursor:pointer;font-size:14px;padding:4px 6px;line-height:1;border-radius:50%;width:28px;height:28px;display:flex;align-items:center;justify-content:center;transition:background .15s,color .15s;}
+#rwa-lens-hist-btn:hover{color:var(--gray-700);background:var(--gray-100);}
+#rwa-lens-hist-panel{position:fixed;top:0;right:0;bottom:0;width:min(420px,90vw);background:var(--white);border-left:1px solid var(--gray-200);z-index:1100;overflow-y:auto;padding:20px;font-family:var(--font-ui);font-size:13px;box-shadow:-8px 0 32px rgba(0,0,0,0.06);}
+#rwa-lens-hist-panel h3{font-family:var(--font-ui);font-size:14px;font-weight:600;color:var(--gray-900);margin-bottom:16px;display:flex;justify-content:space-between;align-items:center;}
+#rwa-lens-hist-panel h3 button{background:transparent;border:0;color:var(--gray-400);cursor:pointer;font:inherit;font-size:20px;line-height:1;padding:0 4px;}
+#rwa-lens-hist-panel h3 button:hover{color:var(--gray-700);}
+#rwa-lens-hist-panel .rwa-hist-row{padding:10px 0;border-bottom:1px solid var(--gray-100);}
+#rwa-lens-hist-panel .rwa-hist-row:last-child{border-bottom:0;}
+#rwa-lens-hist-panel .rwa-hist-meta{display:flex;gap:8px;align-items:center;margin-bottom:4px;color:var(--gray-400);font-size:11px;font-family:var(--font-mono);}
+#rwa-lens-hist-panel .rwa-hist-surface{background:var(--gray-100);color:var(--gray-600);padding:2px 8px;border-radius:100px;font-size:9px;letter-spacing:.5px;text-transform:uppercase;font-family:var(--font-mono);}
+#rwa-lens-hist-panel .rwa-hist-instr{color:var(--gray-900);word-wrap:break-word;}
+#rwa-lens-hist-panel .rwa-hist-empty{color:var(--gray-400);font-style:italic;padding:12px 0;}
+#rwa-lens[data-busy="true"]::after{content:'';position:absolute;top:16px;right:48px;width:8px;height:8px;border-radius:50%;background:var(--gray-400);animation:rwa-lens-pulse 1.2s ease-in-out infinite;}
+@keyframes rwa-lens-pulse{0%,100%{opacity:.3;transform:scale(1);}50%{opacity:1;transform:scale(1.2);}}
+.rwa-lens-toast{position:fixed;bottom:140px;left:50%;transform:translateX(-50%);background:var(--gray-900);color:var(--white);padding:10px 16px;border-radius:8px;z-index:11;font-size:13px;font-family:var(--font-ui);box-shadow:0 8px 24px rgba(0,0,0,0.12);}
+[data-rwa-anchored]{outline:2px solid var(--gray-900);outline-offset:2px;border-radius:4px;}
+.rwa-locked{position:relative;background:rgba(239,68,68,0.04);border-left:3px solid var(--red);padding-left:8px;}
+.rwa-locked::before{content:'\1F512';position:absolute;top:4px;right:8px;font-size:12px;opacity:.6;}
+@media print{
+  /* Hide all runtime chrome: status indicator, settings panel, lens. */
+  #rwa-runtime{display:none!important;}
+  body{background:#fff!important;color:#000!important;min-height:0!important;padding-bottom:0!important;}
+  /* Let the document's own padding/margins control the page layout. */
+  #rwa-doc-mount{margin:0!important;padding:0!important;}
+}
+</style>
+</head>
+<body>
+<div id="rwa-doc-mount"></div>
+<div id="rwa-runtime"></div>
+<script id="rwa-bootstrap">
+'use strict';
+
+// Per-container identity — namespaces IndexedDB so file:// docs don't collide.
+// Generated at creation time; preserved across commits because buildFile only
+// rewrites the INLINE_DOC literal contents.
+//
+// The nil UUID below is a sentinel — the /new service substitutes a fresh
+// crypto.randomUUID() at request time. If a downloaded file still has all
+// zeros here, the substitution failed and isolation is broken.
+const DOC_UUID = 'f11732dc-cebf-49f1-a65d-4c11b35be532';
+
+// The document — a frozen snapshot, hydrated into IndexedDB on first open
+// and rewritten in place on every commit.
+const INLINE_DOC = `<style>
+  :root {
+    --ivory: #FAF9F5;
+    --slate: #141413;
+    --clay: #D97757;
+    --clay-d: #B85C3E;
+    --oat: #E3DACC;
+    --olive: #788C5D;
+    --gray-50: #F0EEE6;
+    --gray-200: #D1CFC5;
+    --gray-500: #87867F;
+    --gray-800: #3D3D3A;
+    --white: #ffffff;
+    --serif: ui-serif, Georgia, "Times New Roman", serif;
+    --sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    background: var(--ivory);
+    color: var(--slate);
+    font-family: var(--sans);
+    font-size: 14px;
+    line-height: 1.5;
+  }
+  .wrap {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 48px 32px 64px;
+  }
+
+  /* ---------- header ---------- */
+  header { margin-bottom: 22px; }
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--gray-500);
+  }
+  h1 {
+    font-family: var(--serif);
+    font-weight: 500;
+    font-size: 30px;
+    letter-spacing: -0.01em;
+    margin: 6px 0 4px;
+  }
+  .sub {
+    color: var(--gray-500);
+    max-width: 620px;
+    margin: 0;
+  }
+  .hintline {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--gray-500);
+    margin-top: 10px;
+  }
+  .hintline::before {
+    content: "›";
+    color: var(--clay);
+    margin-right: 6px;
+  }
+
+  /* ---------- toolbar ---------- */
+  .toolbar {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    background: var(--ivory);
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 14px 0 12px;
+    margin-bottom: 14px;
+    border-bottom: 1.5px solid var(--gray-200);
+  }
+  .summary {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--gray-800);
+    letter-spacing: 0.01em;
+  }
+  .summary b { color: var(--slate); font-weight: 600; }
+  .summary .dot { color: var(--gray-200); margin: 0 4px; }
+  .spacer { flex: 1; }
+  .filter-active {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--clay-d);
+    background: #F5E6DE;
+    border: 1.5px solid #E8C9BA;
+    border-radius: 999px;
+    padding: 4px 10px;
+    cursor: pointer;
+    display: none;
+  }
+  .filter-active.on { display: inline-block; }
+  .filter-active:hover { border-color: var(--clay); }
+  button.primary {
+    background: var(--slate);
+    color: var(--ivory);
+    border: 1.5px solid var(--slate);
+    border-radius: 999px;
+    font-family: var(--mono);
+    font-size: 12px;
+    padding: 9px 16px;
+    cursor: pointer;
+    letter-spacing: 0.01em;
+  }
+  button.primary:hover { background: var(--gray-800); }
+  button.primary.copied { background: var(--olive); border-color: var(--olive); }
+  button.ghost {
+    background: transparent;
+    color: var(--gray-800);
+    border: 1.5px solid var(--gray-200);
+    border-radius: 999px;
+    font-family: var(--mono);
+    font-size: 12px;
+    padding: 9px 16px;
+    cursor: pointer;
+  }
+  button.ghost:hover { border-color: var(--gray-500); }
+
+  /* ---------- board ---------- */
+  .board {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 16px;
+    align-items: start;
+  }
+  .col {
+    background: var(--white);
+    border: 1.5px solid var(--gray-200);
+    border-radius: 12px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    min-height: 200px;
+  }
+  .col[data-col="now"]   { border-top: 3px solid var(--clay); }
+  .col[data-col="next"]  { border-top: 3px solid var(--olive); }
+  .col[data-col="later"] { border-top: 3px solid var(--gray-500); }
+  .col[data-col="cut"]   { border-top: 3px solid var(--gray-200); }
+  .col.dragover {
+    outline: 2px dashed var(--clay);
+    outline-offset: -6px;
+    background: #FBF6F2;
+  }
+  .col-head {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--white);
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding: 14px 14px 10px;
+    border-bottom: 1.5px solid var(--gray-50);
+  }
+  .col-head h2 {
+    font-family: var(--serif);
+    font-weight: 500;
+    font-size: 17px;
+    margin: 0;
+    letter-spacing: -0.01em;
+  }
+  .col-head .count {
+    margin-left: auto;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--gray-500);
+    background: var(--gray-50);
+    border: 1.5px solid var(--gray-200);
+    border-radius: 999px;
+    padding: 1px 8px;
+    min-width: 26px;
+    text-align: center;
+  }
+  .col-body {
+    padding: 10px 10px 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    flex: 1;
+    min-height: 60px;
+  }
+  .col-foot {
+    border-top: 1.5px solid var(--gray-50);
+    padding: 8px 14px 12px;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--gray-500);
+    display: flex;
+    justify-content: space-between;
+  }
+  .col-foot b { color: var(--gray-800); font-weight: 600; }
+
+  /* ---------- ticket card ---------- */
+  .ticket {
+    background: var(--white);
+    border: 1.5px solid var(--gray-200);
+    border-radius: 8px;
+    padding: 10px 11px 9px;
+    cursor: grab;
+    user-select: none;
+    transition: border-color 120ms ease, box-shadow 120ms ease, opacity 120ms ease;
+  }
+  .ticket:hover { border-color: var(--gray-500); box-shadow: 0 1px 3px rgba(20,20,19,0.06); }
+  .ticket:active { cursor: grabbing; }
+  .ticket.dragging { opacity: .4; }
+  .ticket.dim { opacity: .25; }
+  .ticket-top {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 5px;
+  }
+  .tid {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--gray-500);
+    letter-spacing: 0.01em;
+  }
+  .tag {
+    font-family: var(--mono);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    border-radius: 999px;
+    padding: 1px 7px 2px;
+    border: 1px solid transparent;
+    cursor: pointer;
+  }
+  .tag:hover { filter: brightness(0.96); }
+  .tag-bug   { background: #F5E2D8; color: var(--clay-d); border-color: #E8C9BA; }
+  .tag-feat  { background: #E8EDE0; color: #5C6F44; border-color: #CFDAC0; }
+  .tag-chore { background: var(--gray-50); color: var(--gray-800); border-color: var(--gray-200); }
+  .tag-debt  { background: var(--gray-50); color: var(--gray-800); border-color: var(--gray-200); }
+  .est {
+    margin-left: auto;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--gray-500);
+    border: 1.5px solid var(--gray-200);
+    border-radius: 4px;
+    width: 18px;
+    height: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .ttitle {
+    font-size: 13px;
+    line-height: 1.35;
+    color: var(--slate);
+    margin-bottom: 7px;
+  }
+  .ticket-bot {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .owner {
+    font-family: var(--mono);
+    font-size: 10px;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: var(--oat);
+    color: var(--gray-800);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    letter-spacing: 0.02em;
+  }
+  .owner.o2 { background: #DCE4D2; }
+  .owner.o3 { background: #ECD9CE; }
+  .owner.o4 { background: var(--gray-50); }
+
+  @media (max-width: 920px) {
+    .board { grid-template-columns: repeat(2, 1fr); }
+  }
+</style>
+<div class="wrap">
+
+  <header>
+    <div class="eyebrow">Acme / editor / triage</div>
+    <h1>Cycle 14 triage</h1>
+    <p class="sub">
+      Twenty-four open Linear tickets, pre-sorted into a best guess. Drag them
+      across Now / Next / Later / Cut until the cut feels right, then copy the
+      result back into the planning doc as markdown.
+    </p>
+    <div class="hintline">drag tickets between columns &nbsp;·&nbsp; click a tag to filter</div>
+  </header>
+
+  <div class="toolbar">
+    <div class="summary" id="summary"></div>
+    <div class="spacer"></div>
+    <button class="filter-active" id="filterBadge"></button>
+    <button class="ghost" id="resetBtn">Reset</button>
+    <button class="primary" id="copyBtn">Copy as markdown</button>
+  </div>
+
+  <div class="board" id="board"></div>
+
+</div>
+
+<script>
+  // ---------- data ----------
+  var COLUMNS = [
+    { key: 'now',   label: 'Now',   rationale: 'Blocking the v2.4 release or actively losing user data.' },
+    { key: 'next',  label: 'Next',  rationale: 'High-leverage and well-scoped — start the moment Now clears.' },
+    { key: 'later', label: 'Later', rationale: 'Real, but can ride to a future cycle without anyone noticing.' },
+    { key: 'cut',   label: 'Cut',   rationale: 'Not this quarter — close, dedupe, or push back to the requester.' }
+  ];
+
+  var EST_PTS = { S: 1, M: 2, L: 3 };
+
+  // tag, est, owner, col
+  var INITIAL = [
+    { id: 'BIR-241', title: 'Fix sync conflict toast firing twice on reconnect', tag: 'bug',   est: 'M', owner: 'AK', col: 'now' },
+    { id: 'BIR-238', title: 'Comments lost when editing offline then reloading', tag: 'bug',   est: 'L', owner: 'JM', col: 'now' },
+    { id: 'BIR-252', title: 'Billing webhook 500s on annual → monthly downgrade', tag: 'bug',   est: 'M', owner: 'RS', col: 'now' },
+    { id: 'BIR-219', title: 'Migrate workspace permissions to new ACL table',    tag: 'debt',  est: 'L', owner: 'AK', col: 'now' },
+    { id: 'BIR-260', title: 'SSO login loop on Safari 17 with strict cookies',   tag: 'bug',   est: 'S', owner: 'TN', col: 'now' },
+
+    { id: 'BIR-244', title: 'Inline @-mention picker in doc comments',           tag: 'feat',  est: 'M', owner: 'JM', col: 'next' },
+    { id: 'BIR-231', title: 'Bulk-archive completed projects from the sidebar',  tag: 'feat',  est: 'S', owner: 'EL', col: 'next' },
+    { id: 'BIR-247', title: 'Activity feed: collapse repeated edit events',      tag: 'feat',  est: 'M', owner: 'TN', col: 'next' },
+    { id: 'BIR-228', title: 'Notification preferences per project',              tag: 'feat',  est: 'L', owner: 'EL', col: 'next' },
+    { id: 'BIR-255', title: 'Keyboard shortcut cheat-sheet overlay (⌘/)',        tag: 'feat',  est: 'S', owner: 'RS', col: 'next' },
+    { id: 'BIR-236', title: 'Empty-state illustrations for new workspaces',      tag: 'chore', est: 'S', owner: 'EL', col: 'next' },
+    { id: 'BIR-249', title: 'Audit log export to CSV for admins',                tag: 'feat',  est: 'M', owner: 'AK', col: 'next' },
+
+    { id: 'BIR-213', title: 'Dark mode pass on settings + billing pages',        tag: 'chore', est: 'M', owner: 'EL', col: 'later' },
+    { id: 'BIR-258', title: 'Slack integration: post on milestone close',        tag: 'feat',  est: 'M', owner: 'RS', col: 'later' },
+    { id: 'BIR-221', title: 'Replace moment.js with date-fns across web',        tag: 'debt',  est: 'L', owner: 'TN', col: 'later' },
+    { id: 'BIR-263', title: 'Drag-to-reorder columns on the board view',         tag: 'feat',  est: 'M', owner: 'JM', col: 'later' },
+    { id: 'BIR-209', title: 'Upgrade Postgres minor + reindex search vectors',   tag: 'chore', est: 'M', owner: 'AK', col: 'later' },
+    { id: 'BIR-251', title: 'Per-doc read receipts in the share dialog',         tag: 'feat',  est: 'L', owner: 'JM', col: 'later' },
+    { id: 'BIR-240', title: 'Onboarding checklist resurfaces after dismissal',   tag: 'bug',   est: 'S', owner: 'TN', col: 'later' },
+    { id: 'BIR-265', title: 'Add request-id to client error reports',            tag: 'debt',  est: 'S', owner: 'RS', col: 'later' },
+
+    { id: 'BIR-198', title: 'Custom emoji reactions on comments',                tag: 'feat',  est: 'M', owner: 'EL', col: 'cut' },
+    { id: 'BIR-204', title: 'Native Windows desktop wrapper',                    tag: 'feat',  est: 'L', owner: 'TN', col: 'cut' },
+    { id: 'BIR-217', title: 'AI summary of long comment threads',                tag: 'feat',  est: 'L', owner: 'JM', col: 'cut' },
+    { id: 'BIR-233', title: 'Public roadmap page with voting',                   tag: 'feat',  est: 'L', owner: 'RS', col: 'cut' }
+  ];
+
+  var OWNER_CLASS = { AK: 'o1', JM: 'o2', RS: 'o3', TN: 'o4', EL: 'o1' };
+
+  var tickets = [];          // live state
+  var activeFilter = null;   // tag string or null
+  var dragId = null;
+
+  // ---------- build DOM ----------
+  var board = document.getElementById('board');
+  var colBodies = {};
+  var colCounts = {};
+  var colFoots = {};
+
+  COLUMNS.forEach(function (c) {
+    var col = document.createElement('section');
+    col.className = 'col';
+    col.dataset.col = c.key;
+
+    var head = document.createElement('div');
+    head.className = 'col-head';
+    var h2 = document.createElement('h2');
+    h2.textContent = c.label;
+    var count = document.createElement('span');
+    count.className = 'count';
+    head.appendChild(h2);
+    head.appendChild(count);
+
+    var body = document.createElement('div');
+    body.className = 'col-body';
+
+    var foot = document.createElement('div');
+    foot.className = 'col-foot';
+
+    col.appendChild(head);
+    col.appendChild(body);
+    col.appendChild(foot);
+    board.appendChild(col);
+
+    colBodies[c.key] = body;
+    colCounts[c.key] = count;
+    colFoots[c.key] = foot;
+
+    // drop targets
+    col.addEventListener('dragover', function (e) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      col.classList.add('dragover');
+    });
+    col.addEventListener('dragleave', function (e) {
+      if (!col.contains(e.relatedTarget)) col.classList.remove('dragover');
+    });
+    col.addEventListener('drop', function (e) {
+      e.preventDefault();
+      col.classList.remove('dragover');
+      if (!dragId) return;
+      var t = tickets.find(function (x) { return x.id === dragId; });
+      if (t && t.col !== c.key) { t.col = c.key; render(); }
+    });
+  });
+
+  function makeCard(t) {
+    var card = document.createElement('article');
+    card.className = 'ticket';
+    card.draggable = true;
+    card.dataset.id = t.id;
+    if (activeFilter && t.tag !== activeFilter) card.classList.add('dim');
+
+    var top = document.createElement('div');
+    top.className = 'ticket-top';
+    var tid = document.createElement('span');
+    tid.className = 'tid';
+    tid.textContent = t.id;
+    var tag = document.createElement('button');
+    tag.type = 'button';
+    tag.className = 'tag tag-' + t.tag;
+    tag.textContent = t.tag;
+    tag.addEventListener('click', function (e) {
+      e.stopPropagation();
+      activeFilter = (activeFilter === t.tag) ? null : t.tag;
+      render();
+    });
+    var est = document.createElement('span');
+    est.className = 'est';
+    est.textContent = t.est;
+    top.appendChild(tid);
+    top.appendChild(tag);
+    top.appendChild(est);
+
+    var title = document.createElement('div');
+    title.className = 'ttitle';
+    title.textContent = t.title;
+
+    var bot = document.createElement('div');
+    bot.className = 'ticket-bot';
+    var owner = document.createElement('span');
+    owner.className = 'owner ' + (OWNER_CLASS[t.owner] || 'o1');
+    owner.textContent = t.owner;
+    bot.appendChild(owner);
+
+    card.appendChild(top);
+    card.appendChild(title);
+    card.appendChild(bot);
+
+    card.addEventListener('dragstart', function (e) {
+      dragId = t.id;
+      card.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', t.id);
+    });
+    card.addEventListener('dragend', function () {
+      dragId = null;
+      card.classList.remove('dragging');
+      document.querySelectorAll('.col.dragover').forEach(function (el) {
+        el.classList.remove('dragover');
+      });
+    });
+
+    return card;
+  }
+
+  function render() {
+    COLUMNS.forEach(function (c) { colBodies[c.key].innerHTML = ''; });
+    var counts = {};
+    var pts = {};
+    COLUMNS.forEach(function (c) { counts[c.key] = 0; pts[c.key] = 0; });
+
+    tickets.forEach(function (t) {
+      colBodies[t.col].appendChild(makeCard(t));
+      counts[t.col] += 1;
+      pts[t.col] += EST_PTS[t.est] || 0;
+    });
+
+    COLUMNS.forEach(function (c) {
+      colCounts[c.key].textContent = counts[c.key];
+      colFoots[c.key].innerHTML = 'estimate <b>' + pts[c.key] + ' pt' + (pts[c.key] === 1 ? '' : 's') + '</b>';
+    });
+
+    var summary = document.getElementById('summary');
+    summary.innerHTML = COLUMNS.map(function (c) {
+      return '<b>' + counts[c.key] + '</b>&nbsp;' + c.key;
+    }).join('<span class="dot">·</span>');
+
+    var badge = document.getElementById('filterBadge');
+    if (activeFilter) {
+      badge.textContent = 'filter: ' + activeFilter + ' ×';
+      badge.classList.add('on');
+    } else {
+      badge.classList.remove('on');
+    }
+  }
+
+  document.getElementById('filterBadge').addEventListener('click', function () {
+    activeFilter = null;
+    render();
+  });
+
+  // ---------- export ----------
+  function buildMarkdown() {
+    var lines = [];
+    lines.push('# Acme — Cycle 14 triage');
+    lines.push('');
+    COLUMNS.forEach(function (c) {
+      var rows = tickets.filter(function (t) { return t.col === c.key; });
+      var pts = rows.reduce(function (s, t) { return s + (EST_PTS[t.est] || 0); }, 0);
+      lines.push('## ' + c.label + ' (' + rows.length + ' · ' + pts + ' pts)');
+      lines.push('');
+      lines.push('_' + c.rationale + '_');
+      lines.push('');
+      rows.forEach(function (t) {
+        lines.push('- **' + t.id + '** ' + t.title + ' — ' + t.tag + ', ' + t.est + ', ' + t.owner);
+      });
+      lines.push('');
+    });
+    return lines.join('\\n');
+  }
+
+  var copyBtn = document.getElementById('copyBtn');
+  var copyTimer = null;
+  copyBtn.addEventListener('click', function () {
+    var md = buildMarkdown();
+    function flash() {
+      copyBtn.textContent = 'Copied ✓';
+      copyBtn.classList.add('copied');
+      clearTimeout(copyTimer);
+      copyTimer = setTimeout(function () {
+        copyBtn.textContent = 'Copy as markdown';
+        copyBtn.classList.remove('copied');
+      }, 1200);
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(md).then(flash, flash);
+    } else {
+      var ta = document.createElement('textarea');
+      ta.value = md;
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand('copy'); } catch (e) {}
+      document.body.removeChild(ta);
+      flash();
+    }
+  });
+
+  document.getElementById('resetBtn').addEventListener('click', function () {
+    tickets = INITIAL.map(function (t) { return Object.assign({}, t); });
+    activeFilter = null;
+    render();
+  });
+
+  // ---------- init ----------
+  tickets = INITIAL.map(function (t) { return Object.assign({}, t); });
+  render();
+<\/script>`;
+
+const ANCHORABLE_TAGS = new Set(['P','H1','H2','H3','H4','H5','H6','BLOCKQUOTE','LI','FIGURE','PRE','ASIDE']);
+window.ANCHORABLE_TAGS = ANCHORABLE_TAGS; // expose for tests
+
+// ─── Storage ────────────────────────────────────────────────────────
+const RWA = {
+  DB:'rwa_'+DOC_UUID, KEY:'self',
+  DOC:'rwa_doc', UNDO:'rwa_undo', HIST:'rwa_hist', FSA:'rwa_fsa',
+  UNDO_CAP:10, HIST_CAP:1000,
+  K_API:'rwa_apikey', K_MODEL:'rwa_model', K_BACKEND:'rwa_backend',
+  MODEL:'google/gemini-3-flash-preview',
+  FILE:'18.html',
+  // Optional alternative agent backend: a localhost CLI bridge
+  // (https://github.com/martintreiber/web_cli_bridge style) that runs
+  // arbitrary shell commands. When the user picks "bridge" in settings, ⌘K
+  // shells out to `claude -p` instead of calling OpenRouter directly. Free
+  // for users with a Claude subscription; the price is a per-call subprocess
+  // (~5-10s startup) and a single-shot agent loop (no mid-stream tool_calls).
+  BRIDGE_URL:'http://127.0.0.1:8765/run',
+};
+
+// `rwa new -o` / `rwa import -o` can pass an OpenRouter key via `?key=…`.
+// Lift it into sessionStorage on first paint and scrub the URL bar so the
+// key doesn't sit in the location, history, or any later bookmark.
+try {
+  const qs = new URLSearchParams(location.search);
+  const k = qs.get('key');
+  if (k) {
+    sessionStorage.setItem(RWA.K_API, k);
+    qs.delete('key');
+    const tail = qs.toString();
+    history.replaceState(null, '', location.pathname + (tail ? '?' + tail : '') + location.hash);
+  }
+} catch (_) { /* sandboxed contexts can throw on history.replaceState */ }
+
+// LF canonicalization: doc text is stored, validated, and committed LF-only.
+const canonLF = s => s == null ? '' : String(s).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+
+let _db;
+const REQUIRED_STORES = [RWA.DOC, RWA.UNDO, RWA.HIST, RWA.FSA];
+async function openDB() {
+  if (_db) return _db;
+  // Open without specifying a version, so we work whatever the existing db version is.
+  const probe = await new Promise((res, rej) => {
+    const r = indexedDB.open(RWA.DB);
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+    r.onblocked = () => rej(new Error('db open blocked by another tab'));
+  });
+  // We expect every required store to use out-of-line keys (keyPath === null).
+  // If a store is missing — or exists with the wrong schema (in-line keys from
+  // an old prototype) — we need to (re)create it.
+  const toRecreate = [];
+  for (const name of REQUIRED_STORES) {
+    if (!probe.objectStoreNames.contains(name)) { toRecreate.push(name); continue; }
+    const store = probe.transaction(name, 'readonly').objectStore(name);
+    if (store.keyPath !== null) toRecreate.push(name);
+  }
+  if (toRecreate.length === 0) { _db = probe; return _db; }
+  const newVersion = probe.version + 1;
+  probe.close();
+  _db = await new Promise((res, rej) => {
+    const r = indexedDB.open(RWA.DB, newVersion);
+    r.onupgradeneeded = e => {
+      const db = e.target.result;
+      toRecreate.forEach(name => {
+        if (db.objectStoreNames.contains(name)) db.deleteObjectStore(name);
+        db.createObjectStore(name); // out-of-line keys
+      });
+    };
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+    r.onblocked = () => rej(new Error('db upgrade blocked by another tab'));
+  });
+  return _db;
+}
+const idbGet = (s, k = RWA.KEY) => openDB().then(db => new Promise((res, rej) => {
+  const r = db.transaction(s).objectStore(s).get(k);
+  r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+}));
+const idbPut = (s, v, k = RWA.KEY) => openDB().then(db => new Promise((res, rej) => {
+  const r = db.transaction(s, 'readwrite').objectStore(s).put(v, k);
+  r.onsuccess = () => res(); r.onerror = () => rej(r.error);
+}));
+const idbDel = (s, k = RWA.KEY) => openDB().then(db => new Promise((res, rej) => {
+  const r = db.transaction(s, 'readwrite').objectStore(s).delete(k);
+  r.onsuccess = () => res(); r.onerror = () => rej(r.error);
+}));
+
+async function getDoc() {
+  let d = await idbGet(RWA.DOC);
+  if (d == null) { d = INLINE_DOC; await idbPut(RWA.DOC, d); }
+  return d;
+}
+async function popUndo() {
+  // Read+write in one tx: rapid ⌘Z keypresses would otherwise interleave the
+  // get and the put, both observe the same array, both pop the same entry,
+  // and the user would see only one undo for two presses.
+  const db = await openDB();
+  return new Promise((res, rej) => {
+    const tx = db.transaction(RWA.UNDO, 'readwrite');
+    const store = tx.objectStore(RWA.UNDO);
+    const r = store.get(RWA.KEY);
+    let v = null;
+    r.onsuccess = () => {
+      const s = r.result || [];
+      if (!s.length) return;
+      v = s.pop();
+      store.put(s, RWA.KEY);
+    };
+    tx.oncomplete = () => res(v);
+    tx.onerror = () => rej(tx.error || new Error('popUndo tx error'));
+    tx.onabort = () => rej(tx.error || new Error('popUndo tx aborted'));
+  });
+}
+// ─── Render ─────────────────────────────────────────────────────────
+function renderDoc(html) {
+  const m = document.getElementById('rwa-doc-mount');
+  // rwa-lens/1: if the lens has been re-parented into the mount (anchored
+  // state in Task 5.2), release it before we wipe innerHTML — otherwise the
+  // lens DOM disappears with the mount's children, leaving stale lensState.
+  // The source map is about to rebuild, so the held entry is invalid anyway.
+  if (typeof releaseAnchor === 'function') {
+    const lens = document.getElementById('rwa-lens');
+    if (lens && m.contains(lens)) releaseAnchor();
+  }
+  // Capture id-keyed form state so user-entered values survive an unrelated
+  // edit (the doc gets re-rendered via innerHTML, which would otherwise
+  // destroy them). Spec/benchmark APP-01/APP-02. Only id-keyed elements
+  // round-trip — anonymous inputs are inherently unmappable across renders.
+  const captured = new Map();
+  m.querySelectorAll('input,textarea,select,details').forEach(el => {
+    if (!el.id) return;
+    if (el.tagName === 'DETAILS') captured.set(el.id, { kind: 'details', open: el.open });
+    else captured.set(el.id, { kind: 'value', value: el.value });
+  });
+  m.innerHTML = html;
+  m.querySelectorAll('script').forEach(o => {
+    const s = document.createElement('script');
+    for (const a of o.attributes) s.setAttribute(a.name, a.value);
+    s.textContent = o.textContent;
+    o.parentNode.replaceChild(s, o);
+  });
+  for (const [id, snap] of captured) {
+    const el = m.querySelector('#' + (typeof CSS !== 'undefined' && CSS.escape ? CSS.escape(id) : id));
+    if (!el) continue;
+    if (snap.kind === 'details' && el.tagName === 'DETAILS') el.open = snap.open;
+    else if (snap.kind === 'value' && 'value' in el) el.value = snap.value;
+  }
+  // rwa-lens/1: rebuild the source-position map so anchored interactions stay
+  // aligned with the just-rendered doc. setSourceMap is declared further down
+  // in this script — JS hoisting (script-mode `function` declarations) makes
+  // it callable here even though renderDoc is defined first.
+  setSourceMap(html);
+  rebuildLockedRanges(html);
+  // rwa-lens/1: click-to-anchor (Task 5.1). renderDoc runs on every commit and
+  // on bootstrap; remove first so listeners don't multiply across renders. Same
+  // function reference, so removing the previous instance is safe.
+  m.removeEventListener('click', handleMountClick);
+  m.addEventListener('click', handleMountClick);
+}
+
+// ─── File rebuild ───────────────────────────────────────────────────
+let FROZEN = '';
+const escapeTL = s => canonLF(s)
+  .replace(/\\/g, '\\\\')
+  .replace(/`/g, '\\`')
+  .replace(/\$\{/g, '\\${')
+  .replace(/<\/script/gi, '<\\/script');
+function buildFile(doc) {
+  const marker = 'const INLINE_DOC = `';
+  const start = FROZEN.indexOf(marker);
+  if (start < 0) throw new Error('cannot locate INLINE_DOC');
+  const cs = start + marker.length;
+  let i = cs;
+  while (i < FROZEN.length) {
+    if (FROZEN[i] === '\\') { i += 2; continue; }
+    if (FROZEN[i] === '`') break;
+    i++;
+  }
+  if (i >= FROZEN.length) throw new Error('unterminated INLINE_DOC');
+  return FROZEN.slice(0, cs) + escapeTL(doc) + FROZEN.slice(i);
+}
+
+// ─── Runtime UI ─────────────────────────────────────────────────────
+function buildUI() {
+  document.getElementById('rwa-runtime').innerHTML = `
+<div id="rwa-set">
+  <button class="rwa-st-btn" id="rwa-st-status">● ready</button>
+  <button class="rwa-st-btn" id="rwa-st-cog">⚙</button>
+  <button class="rwa-st-btn pri" id="rwa-st-commit">⌘S</button>
+</div>
+<div id="rwa-set-panel">
+  <div class="rwa-set-row"><label>Backend</label><select id="rwa-backend"><option value="openrouter">OpenRouter (API key)</option><option value="bridge">Bridge (claude -p, localhost)</option></select></div>
+  <div class="rwa-set-row" id="rwa-set-row-key"><label>OpenRouter Key</label><input type="password" id="rwa-key" placeholder="sk-or-..." autocomplete="off"></div>
+  <div class="rwa-set-row" id="rwa-set-row-model"><label>Model</label><input type="text" id="rwa-model" autocomplete="off"></div>
+</div>
+<div id="rwa-pal">
+  <div id="rwa-pal-box">
+    <div class="rwa-pal-top">
+      <span class="rwa-pal-sig">⌘K</span>
+      <input id="rwa-pal-inp" placeholder="modify this document..." autocomplete="off" spellcheck="false">
+      <button id="rwa-pal-go" disabled>Run ↵</button>
+    </div>
+    <div class="rwa-pal-foot">
+      <span id="rwa-pal-st">● ready</span>
+      <span class="rwa-pal-hint">⌘Z undo · ⌘S commit · esc close</span>
+    </div>
+  </div>
+</div>
+<div id="rwa-lens" data-state="default">
+  <button type="button" id="rwa-lens-hist-btn" aria-label="show history" title="show history"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/><path d="M12 7v5l3 2"/></svg></button>
+  <div id="rwa-lens-badge" hidden></div>
+  <textarea id="rwa-lens-input" rows="1" placeholder="Write, or describe what you want." spellcheck="false"></textarea>
+  <div id="rwa-lens-paste-hint" hidden></div>
+  <div id="rwa-lens-hint"></div>
+</div>
+<div id="rwa-lens-hist-panel" hidden></div>`;
+
+  const k = document.getElementById('rwa-key'), m = document.getElementById('rwa-model');
+  k.value = sessionStorage.getItem(RWA.K_API) || '';
+  m.value = sessionStorage.getItem(RWA.K_MODEL) || RWA.MODEL;
+  k.oninput = e => sessionStorage.setItem(RWA.K_API, e.target.value.trim());
+  m.oninput = e => sessionStorage.setItem(RWA.K_MODEL, e.target.value.trim() || RWA.MODEL);
+
+  const backendEl = document.getElementById('rwa-backend');
+  const syncBackendRows = () => {
+    const isOR = backendEl.value === 'openrouter';
+    document.getElementById('rwa-set-row-key').style.display = isOR ? '' : 'none';
+    document.getElementById('rwa-set-row-model').style.display = isOR ? '' : 'none';
+  };
+  backendEl.value = sessionStorage.getItem(RWA.K_BACKEND) || 'openrouter';
+  syncBackendRows();
+  backendEl.onchange = e => {
+    sessionStorage.setItem(RWA.K_BACKEND, e.target.value);
+    syncBackendRows();
+  };
+
+  document.getElementById('rwa-st-cog').onclick = () => document.getElementById('rwa-set-panel').classList.toggle('open');
+  document.getElementById('rwa-st-commit').onclick = commit;
+
+  const pal = document.getElementById('rwa-pal'), inp = document.getElementById('rwa-pal-inp'), go = document.getElementById('rwa-pal-go');
+  pal.onclick = e => { if (e.target === pal) closePal(); };
+  inp.oninput = () => { go.disabled = !inp.value.trim(); };
+  inp.onkeydown = e => {
+    if (e.key === 'Enter' && !e.shiftKey && inp.value.trim()) {
+      e.preventDefault();
+      modify(inp.value.trim()).catch(err => {
+        // concurrent_modify is already surfaced via setPalSt; suppress the
+        // unhandled rejection. Any other throw is a programming error.
+        if (err?.code !== 'concurrent_modify') console.error(err);
+      });
+    }
+    if (e.key === 'Escape') closePal();
+  };
+  go.onclick = () => {
+    if (!inp.value.trim()) return;
+    modify(inp.value.trim()).catch(err => {
+      if (err?.code !== 'concurrent_modify') console.error(err);
+    });
+  };
+
+  // rwa-lens/1: ⌘Enter (or Ctrl+Enter) submits; plain Enter remains a newline.
+  // Spec invariant 8: the lens textarea behaves like a normal multi-line input
+  // until the user explicitly commits with the platform-modifier+Enter chord.
+  const lensEl = document.getElementById('rwa-lens');
+  const lensInput = document.getElementById('rwa-lens-input');
+  lensInput.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return;
+    if (!(e.metaKey || e.ctrlKey)) return; // plain Enter remains newline
+    if (e.shiftKey) return; // shift+Enter is also newline (cross-platform safety)
+    e.preventDefault();
+    const text = lensInput.value;
+    if (typeof window.__lensSubmitHandler === 'function') {
+      window.__lensSubmitHandler(text);
+      return;
+    }
+    if (typeof submitLens !== 'function') return;
+    // Wrap submitLens in a catch so its rejection doesn't become an
+    // unhandled promise. submitLens itself preserves the input on error
+    // (it clears only on success), so the user can edit and retry.
+    submitLens(text).catch(err => {
+      if (err?.code !== 'concurrent_modify') console.error(err);
+      setStatus('err', '✗ ' + (err?.code || err?.message || 'lens command failed'));
+    });
+  });
+
+  // Auto-grow: the textarea expands as the user types newlines, capped by
+  // CSS max-height:200px (≈9 lines at 1.5 line-height) — past that the
+  // textarea scrolls internally. Pattern: collapse height to 'auto' so
+  // scrollHeight reflects the natural content size (not the previous
+  // stretched height), then set height = scrollHeight. The CSS min-height
+  // keeps the textarea at one line when empty. Exposed via window so
+  // submitLens can reset after clearing the value.
+  function autosizeLens() {
+    lensInput.style.height = 'auto';
+    const next = lensInput.scrollHeight;
+    if (next > 0) lensInput.style.height = next + 'px';
+  }
+  window.__lensAutosize = autosizeLens;
+
+  // rwa-lens/1: live mode indication (spec §6.1). The discriminator engages
+  // during typing — a leading slash flips the lens chrome into command mode,
+  // unless the user typed `\/` to escape (literal slash content).
+  lensInput.addEventListener('input', () => {
+    const v = lensInput.value;
+    const isCommand = v.startsWith('/') && !v.startsWith('\\/');
+    lensEl.dataset.mode = isCommand ? 'command' : 'text';
+    autosizeLens();
+  });
+
+  // Task 10.1: paste-detection hint. When pasted content looks like file paths
+  // or other slash-leading multi-line text (could be misinterpreted as a slash
+  // command), surface a one-time session hint reminding the user that `\/`
+  // escapes a leading slash. The hint shows once per session — pasteHintShown
+  // is a closure-scoped flag.
+  let pasteHintShown = false;
+  if (typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent)) {
+    window.__resetPasteHint = () => { pasteHintShown = false; };
+  }
+  lensInput.addEventListener('paste', (e) => {
+    const text = e.clipboardData?.getData('text/plain') || '';
+    const triggers = text.startsWith('/') && text.includes('\n') && (text.match(/\//g) || []).length > 1;
+    if (triggers && !pasteHintShown) {
+      pasteHintShown = true;
+      const hint = document.getElementById('rwa-lens-paste-hint');
+      if (hint) {
+        hint.textContent = 'Looks like content — escape the leading slash with \\\\/ to insert literally.';
+        hint.hidden = false;
+        setTimeout(() => { hint.hidden = true; }, 5000);
+      }
+    }
+  });
+
+  // Task 9.3: history pane. Read-only view of rwa_hist entries — surface chip,
+  // instruction, scope, timestamp. Toggle via the history button in the lens chrome.
+  const histBtn = document.getElementById('rwa-lens-hist-btn');
+  const histPanel = document.getElementById('rwa-lens-hist-panel');
+  if (histBtn && histPanel) {
+    histBtn.addEventListener('click', async () => {
+      if (!histPanel.hidden) { histPanel.hidden = true; return; }
+      await renderHistoryPanel(histPanel);
+      histPanel.hidden = false;
+    });
+  }
+
+  // rwa-lens/1: Esc releases the anchor when one is held. Listener is on
+  // `window` so Esc anywhere works (including with focus outside the lens
+  // input — e.g. on the doc itself after a click).
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && lensState.anchor !== null) {
+      releaseAnchor();
+    }
+  });
+}
+const setStatus = (cls, msg) => { const e = document.getElementById('rwa-st-status'); if (e) { e.className = 'rwa-st-btn ' + (cls || ''); e.textContent = msg; } };
+const setPalSt = (cls, msg) => { const e = document.getElementById('rwa-pal-st'); if (e) { e.className = cls || ''; e.textContent = msg; } };
+const setDirty = d => { const e = document.getElementById('rwa-st-commit'); if (e) e.classList.toggle('dirty', d); };
+const openPal = () => { document.getElementById('rwa-pal').classList.add('open'); requestAnimationFrame(() => document.getElementById('rwa-pal-inp').focus()); setPalSt('', '● ready'); };
+const closePal = () => { document.getElementById('rwa-pal').classList.remove('open'); document.getElementById('rwa-pal-inp').value = ''; document.getElementById('rwa-pal-go').disabled = true; };
+
+// Task 9.3: read-only render of rwa_hist into the side panel. Read once on
+// open — the panel is a snapshot, not a live view. Newest first matches the
+// existing convention (commitDoc unshifts onto the array).
+async function renderHistoryPanel(panel) {
+  const fmtTs = (ts) => {
+    try { return new Date(ts).toLocaleString(); } catch { return String(ts); }
+  };
+  const escHtml = (s) => String(s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  const fmtScope = (scope) => {
+    if (!scope) return '';
+    if (scope.type === 'eof') return 'eof';
+    if (scope.type === 'block') return 'block @' + (scope.block_id || '?');
+    return scope.type || '';
+  };
+  let entries = [];
+  try { entries = (await idbGet(RWA.HIST)) || []; } catch { entries = []; }
+  const header = '<h3>History <button type="button" id="rwa-lens-hist-close" aria-label="close">×</button></h3>';
+  if (!entries.length) {
+    panel.innerHTML = header + '<div class="rwa-hist-empty">No history yet — make an edit and it will appear here.</div>';
+  } else {
+    const rows = entries.map(e => {
+      const surface = e.surface || e.kind || 'edit';
+      const scopeStr = fmtScope(e.scope);
+      const instr = e.instruction || (e.kind === 'replace_document' ? (e.reason || '(replace_document)') : '(no instruction recorded)');
+      return '<div class="rwa-hist-row">'
+        + '<div class="rwa-hist-meta">'
+        + '<span class="rwa-hist-surface">' + escHtml(surface) + '</span>'
+        + (scopeStr ? '<span>' + escHtml(scopeStr) + '</span>' : '')
+        + '<span>' + escHtml(fmtTs(e.ts)) + '</span>'
+        + '</div>'
+        + '<div class="rwa-hist-instr">' + escHtml(instr) + '</div>'
+        + '</div>';
+    }).join('');
+    panel.innerHTML = header + rows;
+  }
+  const closeBtn = panel.querySelector('#rwa-lens-hist-close');
+  if (closeBtn) closeBtn.addEventListener('click', () => { panel.hidden = true; });
+}
+
+// ─── Agent (rwa-edit/1) ─────────────────────────────────────────────
+// Spec: rwa-edit-spec.md (v1.4). The agent edits the doc via tool calls,
+// not by emitting a full rewritten document. unchanged regions are byte-
+// identical because the model never re-emits them.
+
+const SYSTEM_PROMPT = `You are editing a rewritable HTML document. Apply the user's request as a small set of surgical edits via tool calls.
+
+You have three tools:
+  • apply_dsl_plan — preferred for STRUCTURAL transforms. Submit a sequence of typed ops (replace, insert, delete, set_attr) compiled deterministically to anchored edits. The runtime guarantees bytes outside change regions stay byte-identical. Use for: insert/delete elements, mass rename, wrap/unwrap, change a class or attribute, reorder.
+  • apply_edits — preferred for CONTENT transforms. Submit (find, replace) pairs. Each find must be a non-empty literal substring that appears exactly once in the doc. Use for: prose rewrites, value updates, fine-grained text changes, translations, typo fixes.
+  • replace_document — escape hatch. Use only for scaffolding a fresh document, or when the user explicitly asked for a wholesale redesign.
+
+Preference: structural change → apply_dsl_plan. Content change → apply_edits. Wholesale redesign → replace_document. The two surgical tools cover different kinds of work; pick the one that fits the change.
+
+Rules for apply_dsl_plan:
+  • version is "rwa-edit-dsl/1". ops is a non-empty array.
+  • Each op is one of: replace { find, replace, region?, all? }, insert { content, after | before }, delete { target }, set_attr { anchor, attr, value }, replace_document { doc, reason } (sole-op only).
+  • Anchors and find/target/anchor strings must be uniquely locatable in the doc (extend with surrounding context if not).
+  • set_attr.anchor MUST start with < and end BEFORE the closing > of the target element's opening tag (e.g. \`<p class="callout"\` — no trailing >). The compiler reads up to the next > to determine the full opening tag.
+  • For repeated patterns (e.g. wrap each card in a section), emit one op per match with disambiguating context, OR use replace with all=true.
+  • Frozen zones are off-limits — see below.
+
+Rules for apply_edits:
+  • Copy anchors from the doc verbatim. Do not retype them.
+  • Whitespace and line endings in find must match the doc exactly.
+  • If your natural anchor is not unique, extend it with surrounding context until it is.
+  • Never include the substrings rwa:frozen:begin, rwa:frozen:end, the HTML/CSS/JS comment prefixes that start with rwa: (HTML <!--, CSS /*, JS //), or the attribute name data-rwa-frozen in find or replace. Frozen zones are listed in the user message and are off-limits.
+  • Do not add or remove <script> or <style> tags via apply_edits — that requires replace_document.
+  • If your edit's anchor would be longer than the changed region itself, replace_document is probably more appropriate.
+
+Rules for replace_document:
+  • Frozen-zone marker pairs and data-rwa-frozen elements must appear in the new doc with byte-identical content. They are author-declared invariants.
+  • If the doc carries class-declared locked regions (.rwa-locked) that are NOT entirely covered by marker-form frozen zones, replace_document will be rejected. In that case, prefer apply_edits or apply_dsl_plan. The user message lists any such regions.
+  • Provide a reason explaining why a smaller tool was not appropriate.
+
+If the user's input is itself substantial content (a long block of prose, an outline, a list of items), they want it rendered into the document, not summarized. When no surgical anchor exists for substantial content insertion, use replace_document.
+
+Always call a tool. Respond with text-only only when you genuinely need to ask for clarification before editing.`;
+
+const TOOL_SCHEMAS = [
+  {
+    type: 'function',
+    function: {
+      name: 'apply_dsl_plan',
+      description: 'Apply a structural transform plan. A small DSL of named ops (replace/insert/delete/set_attr) compiled deterministically to apply_edits. Prefer for structural work — bytes outside change regions stay byte-identical by construction. Frozen zones (rwa:frozen markers and data-rwa-frozen elements) are off-limits.',
+      parameters: {
+        type: 'object',
+        required: ['version', 'ops'],
+        properties: {
+          version: { type: 'string', enum: ['rwa-edit-dsl/1'] },
+          ops: {
+            type: 'array', minItems: 1,
+            items: {
+              oneOf: [
+                {
+                  type: 'object', required: ['op', 'find', 'replace'],
+                  properties: {
+                    op: { const: 'replace' },
+                    find: { type: 'string' },
+                    replace: { type: 'string' },
+                    region: { type: 'string' },
+                    all: { type: 'boolean' }
+                  }
+                },
+                {
+                  type: 'object', required: ['op', 'content'],
+                  properties: {
+                    op: { const: 'insert' },
+                    content: { type: 'string' },
+                    after: { type: 'string' },
+                    before: { type: 'string' }
+                  }
+                },
+                {
+                  type: 'object', required: ['op', 'target'],
+                  properties: {
+                    op: { const: 'delete' },
+                    target: { type: 'string' }
+                  }
+                },
+                {
+                  type: 'object', required: ['op', 'anchor', 'attr', 'value'],
+                  properties: {
+                    op: { const: 'set_attr' },
+                    anchor: { type: 'string' },
+                    attr: { type: 'string' },
+                    value: { type: 'string' }
+                  }
+                },
+                {
+                  type: 'object', required: ['op', 'doc', 'reason'],
+                  properties: {
+                    op: { const: 'replace_document' },
+                    doc: { type: 'string' },
+                    reason: { type: 'string' }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'apply_edits',
+      description: 'Apply anchor-based string edits. Each edit specifies a literal substring to find (unique in the doc) and a replacement. Edits are applied in order, atomically. Frozen zones (rwa:frozen markers and data-rwa-frozen elements) are off-limits. <script>/<style> tag counts must not change.',
+      parameters: {
+        type: 'object',
+        required: ['version', 'edits'],
+        properties: {
+          version: { type: 'string', enum: ['rwa-edit/1'] },
+          reason: { type: 'string' },
+          edits: {
+            type: 'array', minItems: 1,
+            items: {
+              type: 'object',
+              required: ['find', 'replace'],
+              properties: {
+                find: { type: 'string', minLength: 1 },
+                replace: { type: 'string' },
+                reason: { type: 'string' }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'replace_document',
+      description: 'Wholesale-replace the document. Use only for scaffolding a fresh document or for a wholesale redesign the user explicitly requested. Frozen zones (rwa:frozen markers and data-rwa-frozen elements) must be preserved byte-identically.',
+      parameters: {
+        type: 'object',
+        required: ['version', 'doc', 'reason'],
+        properties: {
+          version: { type: 'string', enum: ['rwa-edit/1'] },
+          doc: { type: 'string' },
+          reason: { type: 'string', minLength: 1 }
+        }
+      }
+    }
+  }
+];
+
+// ─── Validator (rwa-edit/1) ─────────────────────────────────────────
+class RwaEditError extends Error {
+  constructor(code, editIndex = null, context = {}) {
+    super(code);
+    this.code = code;
+    this.editIndex = editIndex;
+    this.context = context;
+  }
+}
+
+const RWA_EDIT = {
+  MAX_REPLACE: 8 * 1024,                 // per-edit replace cap (spec §13 rule 5)
+  MAX_DOC: 1024 * 1024,                  // whole-doc cap
+  RETRIES: 3,                            // §9.2
+  RESERVED: ['rwa:frozen:begin', 'rwa:frozen:end', '<' + '!-- rwa:', '/*' + ' rwa:', '//' + ' rwa:', 'data-rwa-frozen'],
+};
+
+function containsReservedMarker(s) {
+  if (!s) return false;
+  for (const m of RWA_EDIT.RESERVED) if (s.includes(m)) return true;
+  return false;
+}
+
+function countOccurrences(haystack, needle) {
+  if (!needle) return 0;
+  let n = 0, i = 0;
+  while ((i = haystack.indexOf(needle, i)) !== -1) { n++; i += needle.length; }
+  return n;
+}
+
+function nearbySnippets(haystack, needle, max = 3, ctx = 40) {
+  const out = []; let i = 0;
+  while ((i = haystack.indexOf(needle, i)) !== -1 && out.length < max) {
+    const a = Math.max(0, i - ctx);
+    const b = Math.min(haystack.length, i + needle.length + ctx);
+    out.push({ pos: i, before: haystack.slice(a, i), after: haystack.slice(i + needle.length, b) });
+    i += needle.length;
+  }
+  return out;
+}
+
+const escapeRegex = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+// Extract frozen zones. Three marker forms:
+//   <!-- rwa:frozen:begin <name> --> ... <!-- rwa:frozen:end <name> -->
+//   /* rwa:frozen:begin <name> */   ... /* rwa:frozen:end <name> */
+//   // rwa:frozen:begin <name>(\n)  ... (\n)// rwa:frozen:end <name>(\n|$)
+// Returns array of {name, inner} or {name, error} on unterminated/duplicate.
+function extractFrozenZones(doc) {
+  const zones = [];
+  const seen = new Set();
+  const beginRe = /(<!--|\/\*|\/\/)\s*rwa:frozen:begin\s+([A-Za-z0-9_-]+)\s*(-->|\*\/|(?=\r?\n|$))/g;
+  let m;
+  while ((m = beginRe.exec(doc)) !== null) {
+    const opener = m[1];
+    const name = m[2];
+    let innerStart = m.index + m[0].length;
+    if (opener === '//') {
+      // Line-comment form: skip to and past the newline.
+      while (innerStart < doc.length && doc[innerStart] !== '\n') innerStart++;
+      if (innerStart < doc.length) innerStart++;
+    }
+    let endRe;
+    if (opener === '<!--') {
+      endRe = new RegExp('<!--\\s*rwa:frozen:end\\s+' + escapeRegex(name) + '\\s*-->', 'g');
+    } else if (opener === '/*') {
+      endRe = new RegExp('\\/\\*\\s*rwa:frozen:end\\s+' + escapeRegex(name) + '\\s*\\*\\/', 'g');
+    } else {
+      endRe = new RegExp('\\/\\/\\s*rwa:frozen:end\\s+' + escapeRegex(name) + '(?=\\r?\\n|$)', 'g');
+    }
+    endRe.lastIndex = innerStart;
+    const e = endRe.exec(doc);
+    if (!e) { zones.push({ name, error: 'unterminated' }); continue; }
+    if (seen.has(name)) { zones.push({ name, error: 'duplicate' }); continue; }
+    seen.add(name);
+    zones.push({ name, inner: doc.slice(innerStart, e.index) });
+  }
+  return zones;
+}
+
+function frozenZonesIntact(before, after) {
+  if (before.some(z => z.error) || after.some(z => z.error)) return false;
+  if (before.length !== after.length) return false;
+  const beforeMap = new Map(before.map(z => [z.name, z.inner]));
+  if (beforeMap.size !== before.length) return false;
+  const afterMap = new Map(after.map(z => [z.name, z.inner]));
+  if (afterMap.size !== after.length) return false;
+  for (const [name, inner] of beforeMap) {
+    if (!afterMap.has(name)) return false;
+    if (afterMap.get(name) !== inner) return false;
+  }
+  return true;
+}
+
+function parseHtmlFragment(doc) {
+  try {
+    const parsed = new DOMParser().parseFromString('<!DOCTYPE html><html><body>' + doc + '</body></html>', 'text/html');
+    const errs = parsed.querySelectorAll('parsererror');
+    if (errs.length) return { ok: false, error: errs[0].textContent.slice(0, 200) };
+    return { ok: true, doc: parsed };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+// rwa-lens/1: source-position map (spec §5.5).
+// Walks `doc` (LF-canonical document text) and returns one entry per anchorable
+// block in source order: { tag, start, end, node }. `doc.slice(start, end)`
+// equals the source-form bytes of the block (preserving original attribute
+// quoting/order — which the browser's outerHTML would normalize). Nested
+// anchorables inside an outer anchorable are NOT separately listed (outer
+// wins). Non-anchorable wrappers (e.g. <ul>) are transparent — their
+// anchorable children (e.g. <li>) appear at the top level of the map.
+//
+// Robustness: <script>/<style> bodies and <!--...--> comments are masked out
+// before scanning so their literal contents (which may contain anchorable-
+// looking markup) are not mistaken for real blocks. Mask preserves byte
+// offsets so recorded [start, end] ranges remain valid against the ORIGINAL
+// doc (invariant 11). Slice operations therefore return original bytes, not
+// mask spaces.
+function maskRawTextAndComments(doc) {
+  let masked = doc;
+  // Mask <script>...<\/script> body bytes (keep tags themselves intact so the
+  // scanner still sees them as non-anchorable opens and skips correctly).
+  // The `<\/` escapes in regex/string literals avoid the HTML parser closing
+  // THIS bootstrap <script> tag prematurely.
+  masked = masked.replace(/<script\b[^>]*>([\s\S]*?)<\/script>/gi, (m, body) => {
+    const opening = m.length - body.length - '<\/script>'.length;
+    return m.slice(0, opening) + ' '.repeat(body.length) + m.slice(opening + body.length);
+  });
+  // Same for <style>.
+  masked = masked.replace(/<style\b[^>]*>([\s\S]*?)<\/style>/gi, (m, body) => {
+    const opening = m.length - body.length - '<\/style>'.length;
+    return m.slice(0, opening) + ' '.repeat(body.length) + m.slice(opening + body.length);
+  });
+  // Mask comments entirely (including <!-- and --> delimiters) so a stray
+  // close-tag substring inside a comment does not derail close-tag matching.
+  masked = masked.replace(/<!--[\s\S]*?-->/g, m => ' '.repeat(m.length));
+  return masked;
+}
+
+function buildSourcePositionMap(doc) {
+  const map = [];
+  const parsed = new DOMParser().parseFromString('<!DOCTYPE html><html><body>' + doc + '</body></html>', 'text/html');
+  // Collect anchorable nodes in document order, but stop descending past an
+  // anchorable (outer wins — matches the source-scanner's lastIndex skip).
+  const nodesInOrder = [];
+  (function walk(el) {
+    for (const child of el.children) {
+      if (ANCHORABLE_TAGS.has(child.tagName)) {
+        nodesInOrder.push(child);
+      } else {
+        walk(child);
+      }
+    }
+  })(parsed.body);
+
+  // Scan against the masked string so script/style/comment internals do not
+  // contribute false anchorables. Recorded [start, end] indices are still
+  // valid offsets into the ORIGINAL doc (mask preserves byte length).
+  const masked = maskRawTextAndComments(doc);
+  const tagOpen = /<([a-zA-Z][a-zA-Z0-9]*)\b[^>]*>/g;
+  let m;
+  while ((m = tagOpen.exec(masked)) !== null) {
+    const tag = m[1].toUpperCase();
+    if (!ANCHORABLE_TAGS.has(tag)) continue;
+    const start = m.index;
+    const end = findCloseTagEnd(masked, tag, m.index + m[0].length);
+    if (end < 0) continue;
+    map.push({ tag, start, end, node: null });
+    // Outer-wins: skip past the close so nested anchorables of any type are
+    // not separately recorded.
+    tagOpen.lastIndex = end;
+  }
+
+  // Attach DOM nodes by ordinal. If counts disagree, the parser and scanner
+  // disagree about block structure (e.g. auto-closed <p>One<p>Two</p>) —
+  // pairing by ordinal would silently mis-align nodes with source slices, so
+  // clear ALL entries' node refs. Consumers must then rely on [start, end]
+  // and treat the source-form content as authoritative.
+  if (map.length !== nodesInOrder.length) {
+    console.warn('rwa-lens: source-position map desync; map=' + map.length +
+      ' nodes=' + nodesInOrder.length + '; clearing all node references');
+    for (const entry of map) entry.node = null;
+  } else {
+    for (let i = 0; i < map.length; i++) map[i].node = nodesInOrder[i];
+  }
+  return map;
+}
+
+function findCloseTagEnd(doc, tag, from) {
+  const re = new RegExp('<(\\/?)' + tag + '\\b[^>]*>', 'gi');
+  re.lastIndex = from;
+  let depth = 1, m;
+  while ((m = re.exec(doc)) !== null) {
+    if (m[1] === '/') {
+      depth--;
+      if (depth === 0) return m.index + m[0].length;
+    } else {
+      depth++;
+    }
+  }
+  return -1;
+}
+window.buildSourcePositionMap = buildSourcePositionMap; // expose for tests
+window.maskRawTextAndComments = maskRawTextAndComments; // expose for tests
+
+// rwa-lens/1: source-position map state. Ephemeral, in-memory, rebuilt after
+// every successful commit; never persisted (spec invariant 11 + lifetime
+// rule §5.5). The state is module-scoped — callers go through setSourceMap /
+// getSourceMap, not direct globals. renderDoc() is the single rebuild point:
+// every commit path eventually re-renders, so wiring there gives us implicit
+// rebuild on commit, undo, and bootstrap restore without scattering calls.
+let sourceMap = null;
+let currentDocCache = null; // consumed by Task 1.5+ anchor resolution
+function setSourceMap(doc) {
+  currentDocCache = doc;
+  sourceMap = buildSourcePositionMap(doc);
+}
+function getSourceMap() { return sourceMap; }
+window.getSourceMap = getSourceMap;
+
+// rwa-lens/1: class-declared locks (spec §7).
+let lockedRanges = [];
+function lockedRangesIn(doc) {
+  if (!doc) return [];
+  const opening = /<([a-zA-Z][a-zA-Z0-9]*)\b[^>]*\bclass\s*=\s*("([^"]*)"|'([^']*)')[^>]*>/g;
+  const out = [];
+  let m;
+  while ((m = opening.exec(doc)) !== null) {
+    const cls = (m[3] || m[4] || '');
+    if (!/\brwa-locked\b/.test(cls)) continue;
+    const tag = m[1];
+    const start = m.index;
+    const end = findCloseTagEnd(doc, tag, m.index + m[0].length);
+    if (end > 0) out.push([start, end]);
+  }
+  return out;
+}
+// rwa-lens/1: marker-form frozen-zone byte ranges (spec §7 coverage check).
+// Mirrors extractFrozenZones (~L586) but returns [start, end] source-byte
+// ranges including the marker fences themselves — markers are unique
+// substrings and their byte content is invariant, so the fences are part of
+// the protected range. Used by replaceDocument's class-lock coverage check
+// to verify .rwa-locked ranges are entirely contained within marker zones.
+function markerZoneRangesIn(doc) {
+  if (!doc) return [];
+  const out = [];
+  // Comment-fence markers: <!-- rwa:frozen:begin <name> --> ... <!-- rwa:frozen:end <name> -->
+  // Same regex shape as extractFrozenZones; record byte ranges instead of inner text.
+  const beginRe = /(<!--|\/\*|\/\/)\s*rwa:frozen:begin\s+([A-Za-z0-9_-]+)\s*(-->|\*\/|(?=\r?\n|$))/g;
+  let m;
+  while ((m = beginRe.exec(doc)) !== null) {
+    const opener = m[1];
+    const name = m[2];
+    const startOfBegin = m.index;
+    let innerStart = m.index + m[0].length;
+    if (opener === '//') {
+      while (innerStart < doc.length && doc[innerStart] !== '\n') innerStart++;
+      if (innerStart < doc.length) innerStart++;
+    }
+    let endRe;
+    if (opener === '<!--') {
+      endRe = new RegExp('<!--\\s*rwa:frozen:end\\s+' + escapeRegex(name) + '\\s*-->', 'g');
+    } else if (opener === '/*') {
+      endRe = new RegExp('\\/\\*\\s*rwa:frozen:end\\s+' + escapeRegex(name) + '\\s*\\*\\/', 'g');
+    } else {
+      endRe = new RegExp('\\/\\/\\s*rwa:frozen:end\\s+' + escapeRegex(name) + '(?=\\r?\\n|$)', 'g');
+    }
+    endRe.lastIndex = innerStart;
+    const e = endRe.exec(doc);
+    if (!e) continue; // unterminated — skip
+    const endOfEnd = e.index + e[0].length;
+    out.push([startOfBegin, endOfEnd]);
+  }
+  // data-rwa-frozen elements: scan for opening tags carrying that attribute.
+  const fzAttr = /<([a-zA-Z][a-zA-Z0-9]*)\b[^>]*\bdata-rwa-frozen\b[^>]*>/g;
+  while ((m = fzAttr.exec(doc)) !== null) {
+    const tag = m[1];
+    const start = m.index;
+    const end = findCloseTagEnd(doc, tag, m.index + m[0].length);
+    if (end > 0) out.push([start, end]);
+  }
+  return out;
+}
+function rebuildLockedRanges(doc) {
+  lockedRanges = lockedRangesIn(doc);
+}
+function getLockedRanges() { return lockedRanges; }
+window.getLockedRanges = getLockedRanges;
+function isWithinLockedRange(start, end) {
+  return lockedRanges.some(([ls, le]) => start >= ls && end <= le);
+}
+
+// rwa-lens/1: anchor uniqueness extension (spec §5.5).
+// Given a map entry, return { find, replacePrefix, replaceSuffix } such that
+// `find` appears exactly once in the current doc and contains the entry's
+// source range. Expands outward through map siblings until uniqueness, or
+// returns null if even full-document context fails to disambiguate.
+function resolveAnchorFind(entry) {
+  const doc = currentDocCache;
+  if (!doc || !sourceMap) return null;
+  const idx = sourceMap.indexOf(entry);
+  if (idx < 0) return null;
+
+  let lo = idx, hi = idx;
+  while (true) {
+    const start = sourceMap[lo].start;
+    const end   = sourceMap[hi].end;
+    const find  = doc.slice(start, end);
+    if (countOccurrences(doc, find) === 1) {
+      return {
+        find,
+        replacePrefix: doc.slice(start, entry.start),
+        replaceSuffix: doc.slice(entry.end, end),
+      };
+    }
+    // Expand: grow whichever side is currently less extended from the anchor
+    // (alternating expansion, biased toward earlier siblings on ties). Keeps
+    // the find window near-symmetric around the anchor — minimizes find-string
+    // length and the eventual `replace` length on average.
+    const canGrowLo = lo > 0;
+    const canGrowHi = hi < sourceMap.length - 1;
+    if (!canGrowLo && !canGrowHi) return null;
+    if (canGrowLo && (!canGrowHi || (idx - lo) <= (hi - idx))) {
+      lo--;
+    } else {
+      hi++;
+    }
+  }
+}
+window.resolveAnchorFind = resolveAnchorFind;
+
+// rwa-lens/1: EOF anchor resolution. Returns resolveAnchorFind for the last
+// anchorable block in the source-position map. Locked blocks are excluded
+// (Task 8.3 wires the skip).
+function resolveEofAnchor() {
+  const map = sourceMap;
+  if (!map || map.length === 0) return null;
+  for (let i = map.length - 1; i >= 0; i--) {
+    if (isWithinLockedRange(map[i].start, map[i].end)) continue;
+    return resolveAnchorFind(map[i]);
+  }
+  return null;
+}
+window.resolveEofAnchor = resolveEofAnchor;
+
+// rwa-lens/1: bounded context window for anchored slash commands (spec §10).
+// Heading-relative heuristic: blocks between the nearest preceding heading
+// (any of H1-H6) and the next heading. Excludes the target.
+function buildAnchoredContextWindow(anchor) {
+  const map = sourceMap, doc = currentDocCache;
+  if (!map || !doc) return { target: '', context: '' };
+  const idx = map.indexOf(anchor);
+  if (idx < 0) return { target: doc.slice(anchor.start, anchor.end), context: '' };
+  const isHeading = e => /^H[1-6]$/.test(e.tag);
+  let lo = idx;
+  while (lo > 0 && !isHeading(map[lo - 1])) lo--;
+  if (lo > 0) lo--; // include the heading itself
+  let hi = idx;
+  while (hi < map.length - 1 && !isHeading(map[hi + 1])) hi++;
+  const blocks = [];
+  for (let i = lo; i <= hi; i++) {
+    if (i === idx) continue;
+    blocks.push(doc.slice(map[i].start, map[i].end));
+  }
+  return {
+    target: doc.slice(anchor.start, anchor.end),
+    context: blocks.join('\n'),
+  };
+}
+window.buildAnchoredContextWindow = buildAnchoredContextWindow;
+
+// rwa-lens/1: anchored agent prompt (spec §10).
+function buildAnchoredPrompt(target, context, instruction) {
+  // Detect parent-type constraint by inspecting the target's outer element.
+  const parsed = new DOMParser().parseFromString(`<body>${target}</body>`, 'text/html');
+  const root = parsed.body.firstElementChild;
+  const targetTag = root ? root.tagName : '';
+  const parentConstraint = (targetTag === 'LI')
+    ? '\n\nThe target is an <li>. Every top-level element of your response must also be <li> — never <p> or other types. Lists may not contain <p> children.'
+    : '';
+  return [
+    'You are editing a single block of an HTML document.',
+    '',
+    '<TARGET>',
+    target,
+    '</TARGET>',
+    '',
+    '<CONTEXT>',
+    context || '(no surrounding context — the target is in a section by itself)',
+    '</CONTEXT>',
+    '',
+    `User instruction: ${instruction}`,
+    '',
+    'Return a replacement for the target block, of any length.',
+    'Output naked HTML markup only — no markdown fences, no commentary, no preamble or explanation.',
+    'The first character of your response must be the first character of the replacement block.' + parentConstraint,
+  ].join('\n');
+}
+window.buildAnchoredPrompt = buildAnchoredPrompt;
+
+// rwa-lens/1: validate anchored response against parent context (spec §10).
+// v1: only constrains <ul>/<ol> parent → <li> children.
+function validateAnchoredResponse(response, anchor) {
+  const parsed = new DOMParser().parseFromString(`<body>${response}</body>`, 'text/html');
+  const tops = Array.from(parsed.body.children);
+  if (tops.length === 0) {
+    // Empty response = deletion path. Accepted.
+    return { ok: true };
+  }
+  // Use the live mount to determine parent (anchor.node is from throwaway DOMParser doc).
+  const liveNode = liveNodeForEntry(anchor);
+  const parentTag = liveNode && liveNode.parentNode ? liveNode.parentNode.tagName : '';
+  if (parentTag === 'UL' || parentTag === 'OL') {
+    for (const el of tops) {
+      if (el.tagName !== 'LI') {
+        return { ok: false, reason: `parent <${parentTag.toLowerCase()}> requires <li> children; got <${el.tagName.toLowerCase()}>` };
+      }
+    }
+  }
+  return { ok: true };
+}
+window.validateAnchoredResponse = validateAnchoredResponse;
+
+// rwa-lens/1: wrap direct text per spec §5.3 wrapping table.
+function wrapDirectText(text, anchorTag) {
+  const wrapper = (anchorTag === 'LI') ? 'li' : 'p';
+  const chunks = text.split(/\n\s*\n/).map(s => s.trim()).filter(Boolean);
+  return chunks.map(c => `<${wrapper}>${escapeHtml(c)}</${wrapper}>`).join('\n');
+}
+function escapeHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+window.wrapDirectText = wrapDirectText;
+
+// rwa-lens/1: lens state.
+const lensState = { anchor: null }; // null = default; otherwise sourceMap entry
+// Test seam (jsdom only) for inspecting lens state in tests.
+if (typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent)) {
+  window.__lensState = lensState;
+}
+
+// rwa-lens/1: click-to-anchor (spec §5.1, §5.5).
+// Walks up from click target to the nearest ANCHORABLE_TAGS ancestor inside
+// the mount, then maps that live DOM node to its sourceMap entry.
+//
+// The source-position map's `node` refs point into a DOMParser document built
+// inside buildSourcePositionMap — they are NOT the live mount nodes. So we
+// can't match by reference equality. Instead we use ordinal position: the
+// scanner records anchorables in document order (outer-wins descent), and the
+// live mount produces the same order via the same outer-wins traversal — so
+// the i-th live anchorable corresponds to map[i].
+function handleMountClick(e) {
+  const mount = document.getElementById('rwa-doc-mount');
+  if (!mount) return;
+  // Phase 8: reject the click outright if any ancestor up to the mount carries
+  // .rwa-locked. The class-lock applies to the whole subtree (spec §8), so a
+  // click on an inner <p> inside a locked <section> must not anchor — even
+  // though the <p> itself is anchorable. Walk to the mount checking lock first,
+  // then re-walk for the nearest anchorable ancestor.
+  let el = e.target;
+  while (el && el !== mount) {
+    if (el.classList && el.classList.contains('rwa-locked')) {
+      showAffordance('this region is locked');
+      return;
+    }
+    el = el.parentNode;
+  }
+  el = e.target;
+  while (el && el !== mount) {
+    if (ANCHORABLE_TAGS.has(el.tagName)) {
+      const ord = anchorableOrdinal(mount, el);
+      const entry = (ord >= 0 && sourceMap) ? sourceMap[ord] : null;
+      if (entry) anchorTo(entry);
+      return;
+    }
+    el = el.parentNode;
+  }
+  // No anchorable ancestor — no-op.
+}
+
+// Outer-wins anchorable descent: matches buildSourcePositionMap's walk so
+// ordinals line up with the source-position map.
+function anchorableOrdinal(root, target) {
+  let i = 0, found = -1;
+  (function walk(el) {
+    if (found >= 0) return;
+    for (const child of el.children) {
+      if (found >= 0) return;
+      if (ANCHORABLE_TAGS.has(child.tagName)) {
+        if (child === target) { found = i; return; }
+        i++;
+        // Outer-wins: don't descend into anchorables.
+      } else {
+        walk(child);
+      }
+    }
+  })(root);
+  return found;
+}
+
+// Reverse of anchorableOrdinal: given a sourceMap entry, walk the live mount
+// in document order (outer-wins) and return the live node at the same ordinal.
+// The sourceMap's entry.node refs point into a throwaway DOMParser doc, so we
+// can't follow them — but ordinal position is stable across the two walks.
+function liveNodeForEntry(entry) {
+  const map = sourceMap;
+  if (!map || !entry) return null;
+  const ord = map.indexOf(entry);
+  if (ord < 0) return null;
+  const mount = document.getElementById('rwa-doc-mount');
+  if (!mount) return null;
+  let i = 0;
+  let found = null;
+  (function walk(el) {
+    for (const child of el.children) {
+      if (found) return;
+      if (ANCHORABLE_TAGS.has(child.tagName)) {
+        if (i === ord) { found = child; return; }
+        i++;
+      } else {
+        walk(child);
+      }
+    }
+  })(mount);
+  return found;
+}
+
+function anchorTo(entry) {
+  lensState.anchor = entry;
+  const lens = document.getElementById('rwa-lens');
+  if (!lens) return;
+  lens.dataset.state = 'anchored';
+  // Move lens to sit just after the anchored block's live node, if findable.
+  const liveNode = liveNodeForEntry(entry);
+  if (liveNode && liveNode.parentNode) {
+    liveNode.parentNode.insertBefore(lens, liveNode.nextSibling);
+  }
+  // Badge: "anchored on <tag>" + an X close button.
+  const badge = lens.querySelector('#rwa-lens-badge');
+  if (badge) {
+    badge.hidden = false;
+    badge.textContent = '';
+    const tagSpan = document.createElement('span');
+    tagSpan.textContent = `anchored on ${entry.tag.toLowerCase()} `;
+    badge.appendChild(tagSpan);
+    const x = document.createElement('button');
+    x.type = 'button';
+    x.textContent = '✕';
+    x.setAttribute('aria-label', 'release anchor');
+    x.addEventListener('click', releaseAnchor);
+    badge.appendChild(x);
+  }
+  // Visual highlight on the live block.
+  if (lensState._highlighted) lensState._highlighted.removeAttribute('data-rwa-anchored');
+  if (liveNode) {
+    liveNode.setAttribute('data-rwa-anchored', '');
+    lensState._highlighted = liveNode;
+  } else {
+    lensState._highlighted = null;
+  }
+  // Placeholder shift — what the user can do here.
+  const input = lens.querySelector('#rwa-lens-input');
+  if (input) input.placeholder = 'insert after this block, or /edit it';
+}
+
+// Releases an anchored lens back to its docked default position.
+// Called by the badge X button and by the global Esc keydown handler.
+function releaseAnchor() {
+  const lens = document.getElementById('rwa-lens');
+  if (!lens) return;
+  // Move lens back to its docked position. The default mount is direct child
+  // of body (CSS uses position:fixed; bottom:0 to dock it). Re-appending to
+  // body is sufficient for layout and matches the harness expectation.
+  document.body.appendChild(lens);
+  lens.dataset.state = 'default';
+  const badge = lens.querySelector('#rwa-lens-badge');
+  if (badge) {
+    badge.hidden = true;
+    badge.textContent = '';
+  }
+  if (lensState._highlighted) {
+    lensState._highlighted.removeAttribute('data-rwa-anchored');
+    lensState._highlighted = null;
+  }
+  lensState.anchor = null;
+  const input = lens.querySelector('#rwa-lens-input');
+  if (input) input.placeholder = 'Write, or describe what you want.';
+}
+window.releaseAnchor = releaseAnchor;
+if (typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent)) {
+  window.__handleMountClick = handleMountClick;
+  window.__liveNodeForEntry = liveNodeForEntry;
+}
+
+// rwa-lens/1: submit dispatcher. Routes (state × mode) → envelope/agent path.
+async function submitLens(text) {
+  if (!text || !text.length) return;
+  const isEscapedSlash = text.startsWith('\\/');
+  const isCommand = text.startsWith('/') && !isEscapedSlash;
+  const stripped = isEscapedSlash ? text.slice(1) : text;
+  const anchored = lensState.anchor !== null;
+  if (isCommand) {
+    const instruction = stripped.slice(1); // drop the leading '/'
+    if (anchored) {
+      await runAnchoredCommand(lensState.anchor, instruction);
+    } else {
+      // Default-state slash command: thread lensMeta so the rwa_hist record
+      // carries surface='default-command' (Invariant 6 — every lens-originated
+      // commit names the surface that produced it).
+      await modify(instruction, {
+        surface: 'default-command',
+        instruction,
+        scope: { type: 'document' },
+      });
+    }
+  } else {
+    const envelope = anchored
+      ? synthesizeAnchoredInsert(lensState.anchor, stripped)
+      : synthesizeDefaultAppend(stripped);
+    const surface = anchored ? 'anchored-text' : 'default-text';
+    await synthesizeAndCommit(envelope, surface, stripped);
+  }
+  // Clear the input only on successful submit. Placed AFTER the await above
+  // (not in a finally) so a thrown error preserves the user's typed text —
+  // the keydown handler surfaces the failure and the user can re-submit.
+  const input = document.getElementById('rwa-lens-input');
+  if (input) {
+    input.value = '';
+    // Collapse the auto-grown textarea back to one row. Without this the
+    // textarea would keep the height it grew to during input.
+    if (typeof window.__lensAutosize === 'function') window.__lensAutosize();
+  }
+}
+window.submitLens = submitLens;
+
+// rwa-lens/1: single-shot completion helper for anchored slash commands.
+// Unlike modify(), no tool_use loop: the runtime constructs the envelope from
+// the model's plain-text response (one block of HTML), so we don't need tools
+// at all — just a plain chat completion. tool_choice: 'none' is implicit by
+// omitting tools.
+async function callAgentSingleShot(prompt) {
+  const backend = sessionStorage.getItem(RWA.K_BACKEND) || 'openrouter';
+  if (backend === 'bridge') return callBridgeSingleShot(prompt);
+  const key = sessionStorage.getItem(RWA.K_API);
+  const model = sessionStorage.getItem(RWA.K_MODEL) || RWA.MODEL;
+  if (!key) throw new Error('no API key');
+  const r = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': 'Bearer ' + key,
+      'HTTP-Referer': 'https://github.com/ikangai/rewritable',
+      'X-Title': 're-write-able',
+    },
+    body: JSON.stringify({
+      model,
+      max_tokens: 32000,
+      messages: [{ role: 'user', content: prompt }],
+    }),
+  });
+  if (!r.ok) {
+    const e = await r.json().catch(() => ({}));
+    throw new Error((e.error && e.error.message) || r.statusText);
+  }
+  const data = await r.json();
+  const msg = data.choices?.[0]?.message;
+  return (msg?.content || '').trim();
+}
+
+// Bridge counterpart to callAgentSingleShot. Anchored commands ask for naked
+// HTML, not a JSON envelope, so we don't run parseBridgeEnvelope — but we do
+// strip a leading ```html / ``` fence in case claude wraps it anyway.
+async function callBridgeSingleShot(prompt) {
+  const promptB64 = btoa(unescape(encodeURIComponent(prompt)));
+  const cmd = `echo '${promptB64}' | base64 -d | claude -p --output-format text --permission-mode bypassPermissions`;
+  let resp;
+  try {
+    resp = await fetch(RWA.BRIDGE_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ command: cmd }),
+    });
+  } catch (err) {
+    throw new Error('bridge unreachable at ' + RWA.BRIDGE_URL + ' — is web_cli_bridge running?');
+  }
+  if (!resp.ok) throw new Error('bridge http ' + resp.status);
+  const { stdout, stderr, exit_code } = await resp.json();
+  if (exit_code !== 0) {
+    const tail = (stderr || '').trim().split('\n').slice(-3).join('\n').slice(0, 300);
+    throw new Error('claude -p exited ' + exit_code + (tail ? ': ' + tail : ''));
+  }
+  return (stdout || '').trim()
+    .replace(/^```(?:html)?\s*\n?/i, '')
+    .replace(/\n?\s*```\s*$/, '')
+    .trim();
+}
+
+// rwa-lens/1: post-commit anchor behavior (spec §5.4).
+// Three branches based on the agent's response shape:
+//   1. Single anchorable block → re-anchor on the new block at the same source-start.
+//   2. Multiple anchorable blocks → release with affordance (the lens can no longer
+//      point at "this block" because the response replaced it with several).
+//   3. Empty (or no anchorable elements after parse) → release without affordance
+//      (the user explicitly asked for deletion, no surprise to surface).
+function handlePostCommitAnchor(response, prevAnchor) {
+  const parsed = new DOMParser().parseFromString(`<body>${response}</body>`, 'text/html');
+  const tops = Array.from(parsed.body.children).filter(el => ANCHORABLE_TAGS.has(el.tagName));
+  if (tops.length === 0) {
+    // Empty (or no anchorable elements) → release without affordance.
+    releaseAnchor();
+    return;
+  }
+  if (tops.length === 1) {
+    // Single anchorable block → re-anchor on the new entry at the prevAnchor.start position.
+    const newEntry = sourceMap ? sourceMap.find(m => m.start === prevAnchor.start) : null;
+    if (newEntry) anchorTo(newEntry);
+    else releaseAnchor();
+    return;
+  }
+  // Multi-block → release with affordance.
+  releaseAnchor();
+  showAffordance('anchor released — response was multi-block');
+}
+
+// rwa-lens/1: ephemeral toast for surfacing post-commit affordances.
+// Used by handlePostCommitAnchor's multi-block branch to explain why the
+// lens is no longer anchored. Auto-removes after 3 seconds.
+function showAffordance(text) {
+  const el = document.createElement('div');
+  el.className = 'rwa-lens-toast';
+  el.textContent = text;
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 3000);
+}
+
+// rwa-lens/1: anchored slash command runner (spec §7).
+// Build the bounded context, prompt the agent for a replacement block, validate
+// the response shape, synthesize an apply_edits envelope (anchored find +
+// prefix/suffix from resolveAnchorFind), commit through applyEdits, and apply
+// the spec §5.4 post-commit anchor behavior (re-anchor / release-with-affordance /
+// release). Up to 3 retries with structured failure context appended to the
+// prompt. No silent escalation to replace_document.
+async function runAnchoredCommand(anchor, instruction) {
+  if (modifyMutex) {
+    setStatus('err', '✗ another modify in progress');
+    throw new RwaEditError('concurrent_modify');
+  }
+  modifyMutex = true;
+  // Task 11.1: visible busy indicator on the lens during in-flight commands.
+  const lensBusy = document.getElementById('rwa-lens');
+  if (lensBusy) lensBusy.dataset.busy = 'true';
+  setStatus('run', '⌘K running');
+  try {
+    const { target, context } = buildAnchoredContextWindow(anchor);
+    const basePrompt = buildAnchoredPrompt(target, context, instruction);
+    let attempts = 0;
+    let lastFailure = null;
+    while (attempts < 3) {
+      attempts++;
+      const tryPrompt = basePrompt + (lastFailure ? `\n\nPrevious attempt failed: ${lastFailure}\nRetry honoring the constraint.` : '');
+      const response = await callAgentSingleShot(tryPrompt);
+      const validation = validateAnchoredResponse(response, anchor);
+      if (!validation.ok) { lastFailure = validation.reason; continue; }
+      const find = resolveAnchorFind(anchor);
+      if (!find) { lastFailure = 'anchor could not be resolved (ambiguous source)'; continue; }
+      const envelope = {
+        version: 'rwa-edit/1',
+        edits: [{
+          find: find.find,
+          replace: find.replacePrefix + response + find.replaceSuffix,
+          reason: 'lens: anchored slash command',
+        }],
+        reason: `lens: ${instruction}`,
+      };
+      try {
+        const lensMeta = {
+          surface: 'anchored-command',
+          instruction,
+          scope: { type: 'block', block_id: String(anchor.start) },
+        };
+        const result = await applyEdits(envelope, await getDoc(), lensMeta);
+        renderDoc(result);
+        // Spec §5.4 post-commit anchor branches: single → re-anchor on new
+        // block; multi → release with affordance; empty → release silently.
+        // The pre-commit anchor (with its start offset) is the stable handle
+        // for the single-block re-anchor lookup, since find/replace splices
+        // at the same source offset preserve the start position.
+        handlePostCommitAnchor(response, anchor);
+        setStatus('ok', '✓ done');
+        return;
+      } catch (err) {
+        if (!(err instanceof RwaEditError)) throw err;
+        lastFailure = err.code + (err.editIndex != null ? ' [edit ' + err.editIndex + ']' : '');
+        continue;
+      }
+    }
+    setStatus('err', `✗ ${lastFailure || 'lens command failed after retries'}`);
+  } catch (e) {
+    setStatus('err', '✗ ' + e.message);
+    console.error(e);
+  } finally {
+    modifyMutex = false;
+    if (lensBusy) lensBusy.dataset.busy = 'false';
+  }
+}
+function synthesizeAnchoredInsert(anchor, text) {
+  const find = resolveAnchorFind(anchor);
+  if (!find) return null;
+  const wrapped = wrapDirectText(text, anchor.tag);
+  return {
+    version: 'rwa-edit/1',
+    edits: [{
+      find: find.find,
+      replace: find.find + '\n' + wrapped,
+      reason: 'lens: anchored direct-text insert',
+    }],
+    reason: 'lens: insert after anchor',
+  };
+}
+if (typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent)) {
+  window.__synthesizeAnchoredInsert = synthesizeAnchoredInsert;
+}
+function synthesizeDefaultAppend(text) {
+  const eof = resolveEofAnchor();
+  if (!eof) return null; // empty doc — caller routes via replace_document
+  const wrapped = wrapDirectText(text, null);
+  return {
+    version: 'rwa-edit/1',
+    edits: [{
+      find: eof.find,
+      replace: eof.find + '\n' + wrapped,
+      reason: 'lens: default-state direct-text append',
+    }],
+    reason: 'lens: append at EOF',
+  };
+}
+if (typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent)) {
+  window.__synthesizeDefaultAppend = synthesizeDefaultAppend;
+}
+async function synthesizeAndCommit(envelope, surface, instruction) {
+  // Test seam preserved.
+  if (typeof window.__synthesizeAndCommit === 'function') {
+    return window.__synthesizeAndCommit(envelope, surface, instruction);
+  }
+  // Acquire modifyMutex around the read+commit window. Without this, two
+  // concurrent ⌘Enter submits could race against each other: both read the
+  // same currentDoc, both push it onto rwa_undo, and the later commit
+  // silently overwrites the earlier one with a stale-base envelope. Throw
+  // concurrent_modify so the keydown handler can surface it (and preserve
+  // the input — see Issue 2).
+  if (modifyMutex) throw new RwaEditError('concurrent_modify');
+  modifyMutex = true;
+  try {
+    // Capture pre-commit anchor's start offset for post-commit re-anchor lookup.
+    // The anchor's source-start is the stable handle across a commit: an
+    // insert-after-anchor edit (anchored direct text) leaves the anchor's start
+    // unchanged, and a replace-this-anchor edit (Phase 7) preserves it because
+    // find/replace splices at the same source offset.
+    const prevAnchorStart = lensState.anchor ? lensState.anchor.start : null;
+    // Phase 9.1: build lensMeta so the rwa_hist record carries surface,
+    // instruction, and the scope (block-anchored or eof). Scope is captured
+    // pre-commit because lensState.anchor may be cleared by renderDoc below.
+    const lensMeta = {
+      surface,
+      instruction,
+      scope: lensState.anchor
+        ? { type: 'block', block_id: String(lensState.anchor.start) }
+        : { type: 'eof' },
+    };
+    let result;
+    if (!envelope) {
+      // Empty doc → first append → use replace_document.
+      const wrapped = wrapDirectText(instruction || '', null);
+      const repEnv = {
+        version: 'rwa-edit/1',
+        doc: wrapped,
+        reason: 'initial content into an empty document',
+      };
+      result = await replaceDocument(repEnv, await getDoc(), lensMeta);
+    } else {
+      result = await applyEdits(envelope, await getDoc(), lensMeta);
+    }
+    // Re-render so the user sees the new content. renderDoc rebuilds sourceMap
+    // and (because the lens may sit inside the mount) calls releaseAnchor, so we
+    // must re-resolve the anchor afterwards using the offset captured above.
+    renderDoc(result);
+    if (prevAnchorStart !== null && sourceMap) {
+      const newEntry = sourceMap.find(m => m.start === prevAnchorStart);
+      if (newEntry) {
+        // Re-anchor onto the same logical block. anchorTo handles lens repos,
+        // badge text, and the data-rwa-anchored visual highlight on the live
+        // node (which is a fresh DOM element after the innerHTML rebuild).
+        anchorTo(newEntry);
+      }
+      // If newEntry is null the anchor's source-start no longer exists; the
+      // releaseAnchor inside renderDoc has already cleared lensState.anchor and
+      // returned the lens to its docked default, so no extra work is needed.
+    }
+    return result;
+  } finally {
+    modifyMutex = false;
+  }
+}
+
+// Test seam: directly write a doc to IDB + rebuild the map, no agent loop.
+async function __setDocForTest(d) {
+  const db = await openDB();
+  await new Promise((resolve, reject) => {
+    const tx = db.transaction('rwa_doc', 'readwrite');
+    tx.objectStore('rwa_doc').put(d, 'self');
+    tx.oncomplete = resolve;
+    tx.onerror = () => reject(tx.error);
+  });
+  renderDoc(d);
+}
+// Test seam: only exposed under jsdom (the tests/ harness).
+// In real browsers this binding stays internal — a script inside INLINE_DOC
+// could otherwise call __setDocForTest('') to wipe the doc with no undo.
+if (typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent)) {
+  window.__setDocForTest = __setDocForTest;
+}
+
+// Token-level balance check for <script> and <style>. The HTML parser
+// auto-closes these silently at EOF when the closing tag is missing, so a
+// post-parse shape check can pass while the doc has actually been
+// corrupted (a lone `<script>` swallows all following markup as text).
+// We catch this by counting raw tokens in the doc string.
+function tagBalance(doc) {
+  const opens = {
+    script: (doc.match(/<script\b/gi) || []).length,
+    style: (doc.match(/<style\b/gi) || []).length,
+  };
+  const closes = {
+    script: (doc.match(/<\/script\s*>/gi) || []).length,
+    style: (doc.match(/<\/style\s*>/gi) || []).length,
+  };
+  for (const tag of ['script', 'style']) {
+    if (opens[tag] !== closes[tag]) return { tag, opens: opens[tag], closes: closes[tag] };
+  }
+  return null;
+}
+
+function computeShape(parsedDoc) {
+  if (!parsedDoc) return null;
+  const body = parsedDoc.body;
+  // Track the SET of distinct top-level tag types (not the multiset count) —
+  // splitting one <p> into two <p>s is a legitimate edit, but introducing a
+  // <section> alongside <div> is a structural shape change.
+  const topLevelTypes = body
+    ? [...new Set(Array.from(body.children).map(el => el.tagName.toLowerCase()))].sort().join(',')
+    : '';
+  return {
+    scripts: parsedDoc.querySelectorAll('script').length,
+    styles: parsedDoc.querySelectorAll('style').length,
+    topLevelTypes,
+  };
+}
+
+const shapesEqual = (a, b) =>
+  !!a && !!b &&
+  a.scripts === b.scripts &&
+  a.styles === b.styles &&
+  a.topLevelTypes === b.topLevelTypes;
+
+function dataRwaFrozenSnapshot(parsedDoc) {
+  if (!parsedDoc) return [];
+  return Array.from(parsedDoc.querySelectorAll('[data-rwa-frozen]'))
+    .map(el => el.tagName.toLowerCase() + '\0' + el.outerHTML)
+    .sort();
+}
+
+function snapshotsEqual(a, b) {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
+
+// Reserved IDs/attributes the runtime owns. The render mount is #rwa-doc-mount
+// (CLAUDE.md §"Reserved namespaces"); data-rwa-id is reserved for v2. A doc
+// that introduces either name shadows the runtime's contract.
+function findReservedIdViolation(parsedDoc) {
+  if (!parsedDoc) return null;
+  if (parsedDoc.querySelector('#rwa-doc-mount')) return 'rwa-doc-mount';
+  if (parsedDoc.querySelector('[data-rwa-id]')) return 'data-rwa-id';
+  return null;
+}
+
+// ─── Commit (rwa-edit/1) ────────────────────────────────────────────
+// Single IDB transaction across rwa_doc, rwa_undo, rwa_hist. Reads happen
+// before the transaction (modifyMutex prevents concurrent writes). The
+// transaction itself only writes — three put()s, all atomic.
+async function commitDoc(currentDoc, newDoc, histRecord) {
+  const db = await openDB();
+  const undoArr = (await idbGet(RWA.UNDO)) || [];
+  undoArr.push(currentDoc);
+  while (undoArr.length > RWA.UNDO_CAP) undoArr.shift();
+  const histArr = (await idbGet(RWA.HIST)) || [];
+  histArr.unshift(histRecord);
+  const histTrimmed = histArr.slice(0, RWA.HIST_CAP);
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction([RWA.DOC, RWA.UNDO, RWA.HIST], 'readwrite');
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error || new Error('transaction error'));
+    tx.onabort = () => reject(tx.error || new Error('transaction aborted'));
+    tx.objectStore(RWA.DOC).put(newDoc, RWA.KEY);
+    tx.objectStore(RWA.UNDO).put(undoArr, RWA.KEY);
+    tx.objectStore(RWA.HIST).put(histTrimmed, RWA.KEY);
+  });
+}
+
+// ─── apply_edits / replace_document ─────────────────────────────────
+// UTF-16 well-formedness — JS strings can hold lone surrogates which become
+// U+FFFD on UTF-8 encoding (file write, fetch body, etc.) and silently
+// corrupt downstream byte-equality checks. Spec §10: malformed_envelope.
+// String.prototype.isWellFormed is ES2024 (Node 22+, Chromium 124+); guard
+// for older runtimes by treating absence as "no check available."
+const isWellFormed = (s) => typeof s !== 'string' || typeof s.isWellFormed !== 'function' || s.isWellFormed();
+
+async function applyEdits(envelope, currentDocRaw, lensMeta = null) {
+  if (envelope?.version !== 'rwa-edit/1') throw new RwaEditError('version_unsupported');
+  if (!Array.isArray(envelope.edits) || envelope.edits.length === 0) throw new RwaEditError('malformed_envelope');
+  for (let i = 0; i < envelope.edits.length; i++) {
+    const e = envelope.edits[i] || {};
+    if (!isWellFormed(e.find) || !isWellFormed(e.replace))
+      throw new RwaEditError('malformed_envelope', i, { reason: 'lone_surrogate' });
+  }
+
+  const currentDoc = canonLF(currentDocRaw);
+  const originalFrozen = extractFrozenZones(currentDoc);
+  const originalParsed = parseHtmlFragment(currentDoc);
+  const originalShape = computeShape(originalParsed.doc);
+  const originalAttrs = dataRwaFrozenSnapshot(originalParsed.doc);
+
+  let work = currentDoc;
+  for (let i = 0; i < envelope.edits.length; i++) {
+    const edit = envelope.edits[i] || {};
+    if (!edit.find) throw new RwaEditError('empty_find', i);
+    const replaceRaw = edit.replace || '';
+    if (containsReservedMarker(edit.find) || containsReservedMarker(replaceRaw))
+      throw new RwaEditError('frozen_zone_violation', i);
+    if (replaceRaw.length > RWA_EDIT.MAX_REPLACE)
+      throw new RwaEditError('replace_too_large', i, { length: replaceRaw.length, cap: RWA_EDIT.MAX_REPLACE });
+    const find = canonLF(edit.find);
+    const replace = canonLF(replaceRaw);
+    const occ = countOccurrences(work, find);
+    if (occ === 0) throw new RwaEditError('find_not_found', i);
+    if (occ > 1) throw new RwaEditError('find_not_unique', i, { count: occ, hints: nearbySnippets(work, find) });
+    const idx = work.indexOf(find);
+    // rwa-lens/1: class-declared lock check (spec §7). Reject any find range
+    // that overlaps a .rwa-locked source range. Adjacent insertions (find ends
+    // exactly where a lock begins, or starts exactly where one ends) are OK.
+    // Recomputed per iteration because `work` mutates after each splice.
+    const editStart = idx;
+    const editEnd = idx + find.length;
+    const locks = lockedRangesIn(work);
+    for (const [ls, le] of locks) {
+      // Overlap: NOT (editEnd <= ls || editStart >= le).
+      if (editEnd > ls && editStart < le) {
+        throw new RwaEditError('class_lock_violation', i, { lockRange: [ls, le], editRange: [editStart, editEnd] });
+      }
+    }
+    // Slice-based splice — String.prototype.replace honors $&, $$, $`, $' patterns
+    // even when the search arg is a literal string, mangling replacements like
+    // "$$amount" → "$amount". Splicing preserves the model's bytes verbatim.
+    work = work.slice(0, idx) + replace + work.slice(idx + find.length);
+  }
+
+  const newFrozen = extractFrozenZones(work);
+  if (!frozenZonesIntact(originalFrozen, newFrozen))
+    throw new RwaEditError('frozen_zone_corrupted');
+
+  const parseResult = parseHtmlFragment(work);
+  if (!parseResult.ok) throw new RwaEditError('parse_error_post_apply', null, { message: parseResult.error });
+
+  const newShape = computeShape(parseResult.doc);
+  if (!shapesEqual(originalShape, newShape))
+    throw new RwaEditError('structural_shape_changed', null, { shape_before: originalShape, shape_after: newShape });
+
+  const imbalance = tagBalance(work);
+  if (imbalance && !tagBalance(currentDoc))
+    throw new RwaEditError('structural_shape_changed', null, { tag_imbalance: imbalance });
+
+  if (!snapshotsEqual(originalAttrs, dataRwaFrozenSnapshot(parseResult.doc)))
+    throw new RwaEditError('frozen_zone_corrupted');
+
+  const reservedId = findReservedIdViolation(parseResult.doc);
+  if (reservedId) throw new RwaEditError('reserved_id_used', null, { id: reservedId });
+
+  if (work.length > RWA_EDIT.MAX_DOC) throw new RwaEditError('target_size_exceeded');
+
+  const histRecord = { ts: Date.now(), kind: 'edit_batch', envelope };
+  if (lensMeta) {
+    histRecord.surface = lensMeta.surface;
+    histRecord.instruction = lensMeta.instruction;
+    histRecord.scope = lensMeta.scope;
+  }
+  await commitDoc(currentDoc, work, histRecord);
+  return work;
+}
+
+async function replaceDocument(envelope, currentDocRaw, lensMeta = null) {
+  if (envelope?.version !== 'rwa-edit/1') throw new RwaEditError('version_unsupported');
+  if (typeof envelope.doc !== 'string' || typeof envelope.reason !== 'string' || !envelope.reason)
+    throw new RwaEditError('malformed_envelope');
+  if (!isWellFormed(envelope.doc) || !isWellFormed(envelope.reason))
+    throw new RwaEditError('malformed_envelope', null, { reason: 'lone_surrogate' });
+
+  const currentDoc = canonLF(currentDocRaw);
+  const newDoc = canonLF(envelope.doc);
+
+  // rwa-lens/1: class-declared lock coverage check (spec §7).
+  // A bare .rwa-locked block in the current doc cannot survive a wholesale
+  // rewrite — the wrapper can be reshaped, attribute-mutated, or just
+  // dropped. Locks are only safe under replace_document if their source
+  // range is entirely contained within a marker-form frozen zone (markers
+  // wrap or equal the lock — NOT the inverse). Markers nested inside a
+  // .rwa-locked wrapper preserve only their inner content, so the wrapper
+  // itself remains mutable; that pattern fails coverage too.
+  const lockRanges = lockedRangesIn(currentDoc);
+  const markerRanges = markerZoneRangesIn(currentDoc);
+  for (const [ls, le] of lockRanges) {
+    const covered = markerRanges.some(([ms, me]) => ms <= ls && le <= me);
+    if (!covered) {
+      throw new RwaEditError('class_lock_uncovered', null, { lockRange: [ls, le] });
+    }
+  }
+
+  const originalFrozen = extractFrozenZones(currentDoc);
+  const originalAttrs = dataRwaFrozenSnapshot(parseHtmlFragment(currentDoc).doc);
+
+  const parseResult = parseHtmlFragment(newDoc);
+  if (!parseResult.ok) throw new RwaEditError('parse_error_post_apply', null, { message: parseResult.error });
+
+  if (!frozenZonesIntact(originalFrozen, extractFrozenZones(newDoc)))
+    throw new RwaEditError('frozen_zone_corrupted');
+
+  if (!snapshotsEqual(originalAttrs, dataRwaFrozenSnapshot(parseResult.doc)))
+    throw new RwaEditError('frozen_zone_corrupted');
+
+  const reservedId = findReservedIdViolation(parseResult.doc);
+  if (reservedId) throw new RwaEditError('reserved_id_used', null, { id: reservedId });
+
+  if (newDoc.length > RWA_EDIT.MAX_DOC) throw new RwaEditError('target_size_exceeded');
+
+  const histRecord = { ts: Date.now(), kind: 'replace_document', reason: envelope.reason };
+  if (lensMeta) {
+    histRecord.surface = lensMeta.surface;
+    histRecord.instruction = lensMeta.instruction;
+    histRecord.scope = lensMeta.scope;
+  }
+  await commitDoc(currentDoc, newDoc, histRecord);
+  return newDoc;
+}
+
+// ─── apply_dsl_plan compiler (rwa-edit-dsl/1) ──────────────────────
+// Sugar over apply_edits: a small fixed vocabulary of structural transforms
+// that compile down to apply_edits / replace_document envelopes. The DSL
+// parser is the trust boundary; compiled output flows through applyEdits /
+// replaceDocument above so all rwa-edit/1 invariants (frozen zones, shape,
+// reserved markers) still hold. Spec: rwa-edit-dsl-spec.md.
+//
+// Empirically motivated: gemini-3.1-pro-preview meanT jumped from 0.88
+// (apply_edits direct) to 1.44 (apply_dsl_plan + compile) across 89
+// fidelity scenarios — biggest gains on paste (0.22→2.00), mixed
+// (0.00→0.89), and content (0.76→1.33).
+const DSL_VERSION = 'rwa-edit-dsl/1';
+
+function compileDslPlan(plan, doc) {
+  if (!plan || typeof plan !== 'object')
+    throw new RwaEditError('malformed_envelope', null, { reason: 'plan must be an object' });
+  if (plan.version !== DSL_VERSION)
+    throw new RwaEditError('version_unsupported');
+  if (!Array.isArray(plan.ops) || plan.ops.length === 0)
+    throw new RwaEditError('malformed_envelope', null, { reason: 'plan.ops must be a non-empty array' });
+
+  // replace_document op is a sole-op escape — must be the only op in the plan.
+  if (plan.ops.some(op => op?.op === 'replace_document')) {
+    if (plan.ops.length !== 1)
+      throw new RwaEditError('malformed_envelope', null, { reason: 'replace_document must be the sole op' });
+    const op = plan.ops[0];
+    if (typeof op.doc !== 'string' || typeof op.reason !== 'string')
+      throw new RwaEditError('malformed_envelope', 0, { reason: 'replace_document requires doc and reason' });
+    return { tool: 'replace_document', envelope: { version: 'rwa-edit/1', doc: op.doc, reason: op.reason } };
+  }
+
+  // Apply each op against an evolving in-memory shadow so subsequent ops'
+  // anchors resolve against the post-prior-op state, mirroring the runtime's
+  // sequential apply_edits semantics.
+  let shadow = canonLF(doc);
+  const edits = [];
+  for (let i = 0; i < plan.ops.length; i++) {
+    const op = plan.ops[i];
+    if (!op || typeof op !== 'object' || typeof op.op !== 'string')
+      throw new RwaEditError('malformed_envelope', i, { reason: 'op must have a string `op` field' });
+    let opEdits;
+    switch (op.op) {
+      case 'replace':  opEdits = compileDslReplace(op, shadow, i); break;
+      case 'insert':   opEdits = compileDslInsert(op, shadow, i); break;
+      case 'delete':   opEdits = compileDslDelete(op, shadow, i); break;
+      case 'set_attr': opEdits = compileDslSetAttr(op, shadow, i); break;
+      default: throw new RwaEditError('malformed_envelope', i, { reason: 'unknown op: ' + op.op });
+    }
+    for (const e of opEdits) {
+      const idx = shadow.indexOf(e.find);
+      if (idx < 0)
+        throw new RwaEditError('malformed_envelope', i, { reason: 'compiler shadow drift: emitted edit no longer matches' });
+      if (shadow.indexOf(e.find, idx + 1) >= 0)
+        throw new RwaEditError('malformed_envelope', i, { reason: 'compiler shadow drift: emitted edit ambiguous' });
+      shadow = shadow.slice(0, idx) + e.replace + shadow.slice(idx + e.find.length);
+      edits.push(e);
+    }
+  }
+  return { tool: 'apply_edits', envelope: { version: 'rwa-edit/1', edits } };
+}
+
+function dslAllOccurrences(haystack, needle) {
+  const out = [];
+  if (!needle.length) return out;
+  let from = 0;
+  while (true) {
+    const idx = haystack.indexOf(needle, from);
+    if (idx < 0) break;
+    out.push(idx);
+    from = idx + 1;
+  }
+  return out;
+}
+
+function compileDslReplace(op, doc, opIndex) {
+  if (typeof op.find !== 'string' || typeof op.replace !== 'string')
+    throw new RwaEditError('malformed_envelope', opIndex, { reason: 'replace requires find and replace strings' });
+  let windowStart = 0, windowEnd = doc.length;
+  if (typeof op.region === 'string') {
+    const occs = dslAllOccurrences(doc, op.region);
+    if (!occs.length) throw new RwaEditError('malformed_envelope', opIndex, { reason: 'region not found' });
+    if (occs.length > 1) throw new RwaEditError('malformed_envelope', opIndex, { reason: 'region not unique' });
+    windowStart = occs[0]; windowEnd = occs[0] + op.region.length;
+  }
+  const window = doc.slice(windowStart, windowEnd);
+  const localOccs = dslAllOccurrences(window, op.find);
+  if (!localOccs.length) throw new RwaEditError('malformed_envelope', opIndex, { reason: 'find has zero matches in window' });
+  if (!op.all && localOccs.length > 1)
+    throw new RwaEditError('malformed_envelope', opIndex, { reason: 'find non-unique in window with all=false' });
+
+  if (!op.all) {
+    const globalOccs = dslAllOccurrences(doc, op.find);
+    if (globalOccs.length === 1) return [{ find: op.find, replace: op.replace }];
+    return [contextualizeDslEdit(doc, windowStart + localOccs[0], op.find, op.replace, opIndex)];
+  }
+  return localOccs.map(localStart => contextualizeDslEdit(doc, windowStart + localStart, op.find, op.replace, opIndex));
+}
+
+function contextualizeDslEdit(doc, absStart, find, replace, opIndex) {
+  const findEnd = absStart + find.length;
+  let pre = 0, post = 0;
+  const MAX = 200;
+  while (true) {
+    const ctxFind = doc.slice(absStart - pre, findEnd + post);
+    if (dslAllOccurrences(doc, ctxFind).length === 1) {
+      const ctxReplace = doc.slice(absStart - pre, absStart) + replace + doc.slice(findEnd, findEnd + post);
+      return { find: ctxFind, replace: ctxReplace };
+    }
+    if (pre >= MAX && post >= MAX)
+      throw new RwaEditError('malformed_envelope', opIndex, { reason: 'unable to disambiguate within ' + MAX + ' chars' });
+    if (post <= pre && findEnd + post < doc.length) post++;
+    else if (absStart - pre > 0) pre++;
+    else post++;
+  }
+}
+
+function compileDslInsert(op, doc, opIndex) {
+  if (typeof op.content !== 'string')
+    throw new RwaEditError('malformed_envelope', opIndex, { reason: 'insert requires content string' });
+  const positionalCount = (typeof op.after === 'string' ? 1 : 0) + (typeof op.before === 'string' ? 1 : 0);
+  if (positionalCount !== 1)
+    throw new RwaEditError('malformed_envelope', opIndex, { reason: 'insert requires exactly one of after or before' });
+  const anchor = typeof op.after === 'string' ? op.after : op.before;
+  const occs = dslAllOccurrences(doc, anchor);
+  if (!occs.length) throw new RwaEditError('malformed_envelope', opIndex, { reason: 'insert anchor not found' });
+  if (occs.length > 1) throw new RwaEditError('malformed_envelope', opIndex, { reason: 'insert anchor not unique' });
+  if (typeof op.after === 'string') return [{ find: anchor, replace: anchor + op.content }];
+  return [{ find: anchor, replace: op.content + anchor }];
+}
+
+function compileDslDelete(op, doc, opIndex) {
+  if (typeof op.target !== 'string')
+    throw new RwaEditError('malformed_envelope', opIndex, { reason: 'delete requires target string' });
+  const occs = dslAllOccurrences(doc, op.target);
+  if (!occs.length) throw new RwaEditError('malformed_envelope', opIndex, { reason: 'delete target not found' });
+  if (occs.length > 1) throw new RwaEditError('malformed_envelope', opIndex, { reason: 'delete target not unique' });
+  return [{ find: op.target, replace: '' }];
+}
+
+function compileDslSetAttr(op, doc, opIndex) {
+  if (typeof op.anchor !== 'string' || typeof op.attr !== 'string' || typeof op.value !== 'string')
+    throw new RwaEditError('malformed_envelope', opIndex, { reason: 'set_attr requires anchor, attr, value strings' });
+  if (!op.anchor.startsWith('<') || op.anchor.endsWith('>'))
+    throw new RwaEditError('malformed_envelope', opIndex, { reason: 'set_attr.anchor must start with < and end before >' });
+  const occs = dslAllOccurrences(doc, op.anchor);
+  if (!occs.length) throw new RwaEditError('malformed_envelope', opIndex, { reason: 'set_attr.anchor not found' });
+  if (occs.length > 1) throw new RwaEditError('malformed_envelope', opIndex, { reason: 'set_attr.anchor not unique' });
+  const closeIdx = doc.indexOf('>', occs[0] + op.anchor.length);
+  if (closeIdx < 0) throw new RwaEditError('malformed_envelope', opIndex, { reason: 'no `>` after set_attr.anchor' });
+  const fullTag = doc.slice(occs[0], closeIdx + 1);
+  const escapedValue = op.value.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+  const existing = findAttrInTag(fullTag, op.attr);
+  const newTag = existing
+    ? fullTag.slice(0, existing[0]) + op.attr + '="' + escapedValue + '"' + fullTag.slice(existing[1])
+    : fullTag.slice(0, -1) + ' ' + op.attr + '="' + escapedValue + '">';
+  return [{ find: fullTag, replace: newTag }];
+}
+
+// Locate `attrName` inside a parsed opening tag, returning [start, end) byte
+// offsets within the tag of the full `name="value"` (or `name='...'`,
+// `name=value`, or boolean `name`) substring. Respects quote state to avoid
+// matching attribute substrings inside another attribute's value.
+function findAttrInTag(tag, attrName) {
+  const nameMatch = tag.match(/^<\/?([a-zA-Z][a-zA-Z0-9_-]*)/);
+  if (!nameMatch) return null;
+  let i = nameMatch[0].length;
+  while (i < tag.length - 1) {
+    while (i < tag.length && /\s/.test(tag[i])) i++;
+    if (i >= tag.length || tag[i] === '>' || tag[i] === '/') break;
+    const attrStart = i;
+    let nameEnd = i;
+    while (nameEnd < tag.length && !/[\s=>/]/.test(tag[nameEnd])) nameEnd++;
+    const name = tag.slice(attrStart, nameEnd);
+    i = nameEnd;
+    let attrEnd = nameEnd;
+    if (tag[i] === '=') {
+      i++;
+      if (tag[i] === '"') { const c = tag.indexOf('"', i + 1); if (c < 0) return null; attrEnd = c + 1; i = attrEnd; }
+      else if (tag[i] === "'") { const c = tag.indexOf("'", i + 1); if (c < 0) return null; attrEnd = c + 1; i = attrEnd; }
+      else { while (i < tag.length && !/[\s>]/.test(tag[i])) i++; attrEnd = i; }
+    }
+    if (name === attrName) return [attrStart, attrEnd];
+  }
+  return null;
+}
+
+// ─── Modify lifecycle (rwa-edit/1) ──────────────────────────────────
+let modifyMutex = false;
+
+function buildUserPrompt(instr, doc, frozenZones) {
+  const fzText = frozenZones.length === 0
+    ? '(none)'
+    : frozenZones.map(z => '- ' + z.name + (z.error ? ' [' + z.error + ']' : '')).join('\n');
+  // rwa-lens/1 §7: enumerate class-declared locks alongside marker frozen zones.
+  // Each item shows the wrapper tag plus a compact preview so the agent can
+  // identify the region without scanning the entire doc.
+  const lockRanges = lockedRangesIn(doc);
+  let lockSection = '';
+  if (lockRanges.length > 0) {
+    const items = lockRanges.map(([s, e]) => {
+      const slice = doc.slice(s, e);
+      const tagMatch = slice.match(/^<([a-zA-Z][a-zA-Z0-9]*)/);
+      const tag = tagMatch ? tagMatch[1] : '?';
+      const preview = slice.replace(/\s+/g, ' ').slice(0, 80);
+      return '- <' + tag + ' class="rwa-locked">: ' + preview + (slice.length > 80 ? '...' : '');
+    }).join('\n');
+    lockSection = '\n\nClass-declared locked regions (rwa-lens/1 §7) — also off-limits:\n' + items +
+      '\n\nNote: replace_document is unavailable on documents containing class-declared locks not entirely covered by marker-form frozen zones. Prefer apply_edits or apply_dsl_plan.';
+  }
+  return 'User request:\n' + instr +
+    '\n\nFrozen zones in the current doc (do not produce marker text in find/replace; do not modify their inner content):\n' + fzText +
+    lockSection +
+    '\n\nThe current document follows. Make your edit by calling apply_edits or replace_document.\n\n<DOC>\n' + doc + '\n</DOC>';
+}
+
+function failureToToolResult(err) {
+  const payload = { ok: false, code: err.code };
+  if (err.editIndex != null) payload.edit_index = err.editIndex;
+  if (err.context) Object.assign(payload, err.context);
+  return JSON.stringify(payload);
+}
+
+async function modify(instr, lensMeta = null) {
+  const backend = sessionStorage.getItem(RWA.K_BACKEND) || 'openrouter';
+  if (backend === 'bridge') return modifyViaBridge(instr, lensMeta);
+
+  const key = sessionStorage.getItem(RWA.K_API);
+  const model = sessionStorage.getItem(RWA.K_MODEL) || RWA.MODEL;
+  if (!key) {
+    setPalSt('err', 'no API key — open ⚙ settings');
+    document.getElementById('rwa-set-panel').classList.add('open');
+    document.getElementById('rwa-key').focus();
+    return;
+  }
+
+  if (modifyMutex) {
+    setPalSt('err', '✗ another modify in progress');
+    throw new RwaEditError('concurrent_modify');
+  }
+  modifyMutex = true;
+
+  closePal();
+  setStatus('run', '⌘K running');
+
+  try {
+    const cur = canonLF(await getDoc());
+    const frozenZones = extractFrozenZones(cur);
+
+    const messages = [
+      { role: 'system', content: SYSTEM_PROMPT },
+      { role: 'user', content: buildUserPrompt(instr, cur, frozenZones) }
+    ];
+
+    let attemptsLeft = RWA_EDIT.RETRIES;
+    let lastFailure = null;
+    let newDoc = null;
+
+    while (attemptsLeft > 0 && newDoc === null) {
+      attemptsLeft--;
+
+      const r = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer ' + key,
+          'HTTP-Referer': 'https://github.com/ikangai/rewritable',
+          'X-Title': 're-write-able'
+        },
+        body: JSON.stringify({
+          model,
+          max_tokens: 32000,
+          messages,
+          tools: TOOL_SCHEMAS,
+          tool_choice: 'auto',
+        }),
+      });
+
+      if (!r.ok) {
+        const e = await r.json().catch(() => ({}));
+        throw new Error((e.error && e.error.message) || r.statusText);
+      }
+
+      const data = await r.json();
+      const msg = data.choices?.[0]?.message;
+      if (!msg) throw new Error('empty response');
+
+      const toolCalls = msg.tool_calls || [];
+      if (toolCalls.length === 0) {
+        const text = (msg.content || '(no message)').trim();
+        setStatus('err', '✗ model declined');
+        setPalSt('err', text.slice(0, 200));
+        return;
+      }
+
+      const tc = toolCalls[0];
+      const fnName = tc.function?.name;
+      let envelope;
+      try {
+        envelope = JSON.parse(tc.function?.arguments ?? '{}');
+      } catch {
+        lastFailure = new RwaEditError('malformed_envelope', null, { message: 'invalid JSON arguments' });
+        if (attemptsLeft > 0) {
+          // Echo only the consumed tool_call. If the model emits parallel calls
+          // we ignore the rest, and providers reject assistant messages whose
+          // tool_calls don't all have a paired tool_result on the next turn.
+          messages.push({ role: 'assistant', content: msg.content || '', tool_calls: [tc] });
+          messages.push({ role: 'tool', tool_call_id: tc.id, content: failureToToolResult(lastFailure) });
+        }
+        continue;
+      }
+
+      try {
+        if (fnName === 'apply_dsl_plan') {
+          const compiled = compileDslPlan(envelope, cur);
+          if (compiled.tool === 'apply_edits') newDoc = await applyEdits(compiled.envelope, cur, lensMeta);
+          else if (compiled.tool === 'replace_document') newDoc = await replaceDocument(compiled.envelope, cur, lensMeta);
+          else throw new RwaEditError('unknown_tool', null, { name: compiled.tool });
+        }
+        else if (fnName === 'apply_edits') newDoc = await applyEdits(envelope, cur, lensMeta);
+        else if (fnName === 'replace_document') newDoc = await replaceDocument(envelope, cur, lensMeta);
+        else throw new RwaEditError('unknown_tool', null, { name: fnName });
+      } catch (err) {
+        if (!(err instanceof RwaEditError)) throw err;
+        lastFailure = err;
+        if (attemptsLeft > 0) {
+          messages.push({ role: 'assistant', content: msg.content || '', tool_calls: [tc] });
+          messages.push({ role: 'tool', tool_call_id: tc.id, content: failureToToolResult(err) });
+        }
+      }
+    }
+
+    if (newDoc !== null) {
+      renderDoc(newDoc);
+      setDirty(true);
+      setStatus('ok', '✓ done');
+    } else {
+      const summary = lastFailure
+        ? '✗ ' + lastFailure.code + (lastFailure.editIndex != null ? ' [edit ' + lastFailure.editIndex + ']' : '')
+        : '✗ retry budget exhausted';
+      setStatus('err', summary);
+      console.error('rwa-edit retry exhausted', lastFailure);
+    }
+  } catch (e) {
+    setStatus('err', '✗ ' + e.message);
+    console.error(e);
+  } finally {
+    modifyMutex = false;
+  }
+}
+
+// ─── Bridge backend (claude -p via localhost shell) ────────────────
+//
+// Single-shot agent loop. claude -p has no mid-stream tool_calls (it's a
+// completion-style endpoint), so we ask it to emit a JSON envelope matching
+// one of the rwa-edit/1 tool schemas and dispatch it through the same
+// applyEdits/compileDslPlan/replaceDocument machinery the OpenRouter path
+// uses. No multi-turn retries — claude -p starts a fresh session each call.
+async function modifyViaBridge(instr, lensMeta = null) {
+  if (modifyMutex) {
+    setPalSt('err', '✗ another modify in progress');
+    throw new RwaEditError('concurrent_modify');
+  }
+  modifyMutex = true;
+  closePal();
+  setStatus('run', '⌘K running (bridge)');
+
+  try {
+    const cur = canonLF(await getDoc());
+    const frozenZones = extractFrozenZones(cur);
+
+    const prompt = SYSTEM_PROMPT + '\n\n' + buildUserPrompt(instr, cur, frozenZones) +
+      '\n\nThis backend is single-shot (no tool-calling protocol). Output ONLY a single JSON envelope as your last response, no markdown fences, no commentary, no preamble. The envelope MUST be one of these three exact shapes:\n\n' +
+      '{"tool":"apply_dsl_plan","envelope":{"version":"rwa-edit-dsl/1","ops":[/* per the rules above */]}}\n\n' +
+      '{"tool":"apply_edits","envelope":{"version":"rwa-edit/1","edits":[{"find":"...","replace":"..."}]}}\n\n' +
+      '{"tool":"replace_document","envelope":{"version":"rwa-edit/1","doc":"...","reason":"..."}}\n\n' +
+      'Pick the tool per the same preference rules: structural → apply_dsl_plan, content → apply_edits, wholesale → replace_document.';
+
+    // Encode the prompt as base64 to sidestep shell quoting (the doc may
+    // contain quotes, backticks, dollar signs, newlines — anything). The
+    // shell command decodes and pipes to claude -p's stdin via the
+    // text input mode.
+    const promptB64 = btoa(unescape(encodeURIComponent(prompt)));
+    const cmd = `echo '${promptB64}' | base64 -d | claude -p --output-format text --permission-mode bypassPermissions`;
+
+    let resp;
+    try {
+      resp = await fetch(RWA.BRIDGE_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ command: cmd }),
+      });
+    } catch (err) {
+      throw new Error('bridge unreachable at ' + RWA.BRIDGE_URL + ' — is web_cli_bridge running?');
+    }
+    if (!resp.ok) throw new Error('bridge http ' + resp.status);
+    const { stdout, stderr, exit_code } = await resp.json();
+    if (exit_code !== 0) {
+      const tail = (stderr || '').trim().split('\n').slice(-3).join('\n').slice(0, 300);
+      throw new Error('claude -p exited ' + exit_code + (tail ? ': ' + tail : ''));
+    }
+
+    const parsed = parseBridgeEnvelope(stdout);
+    if (!parsed) {
+      const preview = (stdout || '').trim().slice(0, 300);
+      throw new Error('bridge: model output did not contain a parseable JSON envelope. Preview: ' + preview);
+    }
+
+    let newDoc = null;
+    if (parsed.tool === 'apply_dsl_plan') {
+      const compiled = compileDslPlan(parsed.envelope, cur);
+      if (compiled.tool === 'apply_edits') newDoc = await applyEdits(compiled.envelope, cur, lensMeta);
+      else if (compiled.tool === 'replace_document') newDoc = await replaceDocument(compiled.envelope, cur, lensMeta);
+      else throw new RwaEditError('unknown_tool', null, { name: compiled.tool });
+    } else if (parsed.tool === 'apply_edits') {
+      newDoc = await applyEdits(parsed.envelope, cur, lensMeta);
+    } else if (parsed.tool === 'replace_document') {
+      newDoc = await replaceDocument(parsed.envelope, cur, lensMeta);
+    } else {
+      throw new RwaEditError('unknown_tool', null, { name: parsed.tool });
+    }
+
+    renderDoc(newDoc);
+    setDirty(true);
+    setStatus('ok', '✓ done');
+  } catch (e) {
+    if (e instanceof RwaEditError) {
+      setStatus('err', '✗ ' + e.code + (e.editIndex != null ? ' [edit ' + e.editIndex + ']' : ''));
+    } else {
+      setStatus('err', '✗ ' + e.message);
+    }
+    console.error(e);
+  } finally {
+    modifyMutex = false;
+  }
+}
+
+// Pull the first balanced top-level JSON object out of stdout. claude may
+// wrap output in stray text or markdown fences despite the prompt; walk
+// braces honoring strings + escapes to find the envelope.
+function parseBridgeEnvelope(text) {
+  if (typeof text !== 'string') return null;
+  // First strip ```json or ``` fences if the model emitted them.
+  const fenceStripped = text.replace(/```(?:json|html)?\s*/i, '').replace(/```\s*$/i, '');
+  const start = fenceStripped.indexOf('{');
+  if (start < 0) return null;
+  let depth = 0, inStr = false, escape = false;
+  for (let i = start; i < fenceStripped.length; i++) {
+    const ch = fenceStripped[i];
+    if (escape) { escape = false; continue; }
+    if (inStr) {
+      if (ch === '\\') escape = true;
+      else if (ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '"') { inStr = true; continue; }
+    if (ch === '{') depth++;
+    else if (ch === '}') {
+      depth--;
+      if (depth === 0) {
+        try {
+          const obj = JSON.parse(fenceStripped.slice(start, i + 1));
+          if (obj && typeof obj === 'object' && typeof obj.tool === 'string' && obj.envelope) return obj;
+          return null;
+        } catch (_) { return null; }
+      }
+    }
+  }
+  return null;
+}
+
+async function undo() {
+  // ⌘Z must not race a ⌘K commit: modify() holds `cur` from before its fetch,
+  // and its commitDoc would clobber the doc/undo writes we make here.
+  if (modifyMutex) { setStatus('err', '✗ modify in progress'); return; }
+  const p = await popUndo();
+  if (!p) { setStatus('err', '✗ nothing to undo'); return; }
+  await idbPut(RWA.DOC, p);
+  renderDoc(p);
+  setDirty(true);
+  setStatus('ok', '↩ undone');
+}
+
+async function commit() {
+  setStatus('run', '⌘S writing');
+  try {
+    const text = buildFile(await getDoc());
+    if ('showSaveFilePicker' in window) {
+      let h = null; try { h = await idbGet(RWA.FSA); } catch (_) {}
+      try {
+        if (h) {
+          let p = await h.queryPermission({ mode: 'readwrite' });
+          if (p === 'prompt') p = await h.requestPermission({ mode: 'readwrite' });
+          if (p !== 'granted') {
+            // Stale or revoked handle — drop it so the next ⌘S re-prompts.
+            await idbDel(RWA.FSA).catch(() => {});
+            h = null;
+            throw new Error('permission denied — re-pick on next ⌘S');
+          }
+        } else {
+          h = await window.showSaveFilePicker({ suggestedName: RWA.FILE, types: [{ description: 'HTML', accept: { 'text/html': ['.html'] } }] });
+          await idbPut(RWA.FSA, h);
+        }
+        const w = await h.createWritable(); await w.write(text); await w.close();
+        setDirty(false); setStatus('ok', '✓ committed'); return;
+      } catch (e) {
+        if (e.name === 'AbortError') { setStatus('', 'cancelled'); return; }
+        console.warn('FSA failed, falling back to download:', e);
+      }
+    }
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([text], { type: 'text/html' }));
+    a.download = RWA.FILE;
+    a.click();
+    URL.revokeObjectURL(a.href);
+    setDirty(false); setStatus('ok', '✓ exported');
+  } catch (e) {
+    setStatus('err', '✗ ' + e.message);
+  }
+}
+
+document.addEventListener('keydown', e => {
+  const mod = navigator.platform.includes('Mac') ? e.metaKey : e.ctrlKey;
+  if (!mod) return;
+  if (e.key === 'k') { e.preventDefault(); document.getElementById('rwa-pal').classList.contains('open') ? closePal() : openPal(); }
+  else if (e.key === 'z') { e.preventDefault(); undo(); }
+  else if (e.key === 's') { e.preventDefault(); commit(); }
+});
+
+(async () => {
+  try {
+    FROZEN = canonLF('<!DOCTYPE html>\n' + document.documentElement.outerHTML);
+    buildUI();
+    if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
+    renderDoc(await getDoc());
+    setStatus('ok', '● ready');
+  } catch (e) {
+    document.body.textContent = 'Bootstrap error: ' + e.message;
+    console.error(e);
+  }
+})();
+</script>
+</body>
+</html>
