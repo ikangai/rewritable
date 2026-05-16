@@ -61,6 +61,7 @@ npx rwa import scan.pdf --claude  # PDF/docx → HTML via local `claude -p` + th
 
 ```sh
 # Service — hosted
+open    https://rewritable.ikangai.com                         # landing page: pitch, download, copy-the-skill, FAQ
 curl -O https://rewritable.ikangai.com/rewritable.html         # blank container
 open    https://rewritable.ikangai.com/import                  # browser: drop md/csv/txt/html/docx/pdf
 open    https://rewritable.ikangai.com/demo/html-effectiveness/ # gallery: 20 example pages, original vs. rewritable

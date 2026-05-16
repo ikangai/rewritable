@@ -2,6 +2,41 @@
 
 Notable changes to `re-write-able`. The container format is versioned in `re-write-able-spec.md`; the edit protocol in `rwa-edit-spec.md`; the structural-transform DSL in `rwa-edit-dsl-spec.md`. The CLI follows semver in `cli/package.json`.
 
+## 2026-05-16 — landing page at `rewritable.ikangai.com/`
+
+The service root now serves a landing page instead of `302`-ing straight to the download. A single URL to share that explains what a rewritable is, the two-step usage flow, the two surfaces (modify loop + build skill), the CLI, the demo gallery, and a FAQ.
+
+Plan: [`docs/plans/2026-05-16-landing-page.md`](docs/plans/2026-05-16-landing-page.md).
+
+### What changed for users
+
+- **`/` is the landing page.** Visit `rewritable.ikangai.com` and you get the pitch + a "Download a fresh container" button (which triggers `/rewritable.html`) and a secondary link to `/import`. Direct download URLs (`/new`, `/rewritable.html`) keep working unchanged.
+- **Copy the rewritable-building skill.** A one-click button copies the rewritable Claude/Codex/Cursor skill (`SKILL.md`) to clipboard. Paste it into any agent that can author files and ask for the container you want; the skill teaches it the components-directory layout, the runtime API, and the hard rules.
+- **Discoverability.** The landing surfaces the demo gallery (`/demo/html-effectiveness/`), the GitHub repo, and the specs. Previously these had no entry point from the root URL.
+- **No tracking, no fonts loaded, no JS framework.** The landing is a single self-contained `.html` with inline CSS and ~50 lines of JS (sticky-header + clipboard handler). Matches the rest of the project's "one file" ethic.
+
+### What changed for the service
+
+- **`GET /`** switches from `302 → /new` to serving `LANDING_HTML` (`200`, `Cache-Control: public, max-age=300`). `/new` stays as the auto-download trigger page, reachable via the landing's "Download" CTA and direct links.
+- **`service/public/landing.html`** new asset. Self-contained HTML, design tokens lifted from `playground.ikangai.com` (gray ramp 50–900, semantic green/yellow/red, 24px radius for surfaces, system font UI, SF Mono for code, primary action `gray-900` pill).
+- **`service/public/build-skill.md`** new asset. Bundled fallback copy of the rewritable-building `SKILL.md`. Embedded at startup into the landing's `<script type="text/markdown" id="skill-md">` block, defensively escaping any `</script` substrings. The "Copy" button reads from that inline block — no extra fetch.
+- **`RWA_SKILL_PATH` env var** overrides the bundled skill location. Missing/unreadable file is non-fatal; the landing still renders, the button copies an empty payload, and the service logs a warning.
+- **Zero new dependencies.** Still Node `http` only.
+
+### What changed for the specs
+
+- No spec changes. The landing is a marketing surface that links to the specs; it doesn't define new behavior.
+
+### What changed for CLAUDE.md
+
+- `service/` entry mentions the landing route.
+- New service convention paragraph documents the `{{SKILL_MD}}` template marker, the bundled fallback, the `RWA_SKILL_PATH` override, and the rebuild ritual when the skill changes.
+
+### Backward compatibility
+
+- `/new` and `/rewritable.html` are unchanged. Existing share/install URLs continue to work.
+- The only breaking change is the URL behavior at `/`: it now returns the landing HTML instead of a redirect. Tooling that relied on the `302 → /new` chain should switch to hitting `/new` directly (which has always been the canonical auto-download endpoint).
+
 ## 2026-05-16 — snapshot publishing: `rewritable.ikangai.com/s/<short>`
 
 The service now hosts anonymous 24h snapshots of any rewritable. Click **Publish & share** on `/new` or `/import`, get back a public URL, hand it to anyone. The published bytes are immutable; each viewer's edits land in their own browser-local IDB, never propagate back to the publisher. No accounts, no paywall, no signup.

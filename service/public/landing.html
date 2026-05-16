@@ -1,0 +1,649 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>rewritable — the HTML file that rewrites itself</title>
+<meta name="description" content="One .html file you open in any browser. Type into the lens, and the file rewrites itself in place. No server, no account, no build step.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23171717'/%3E%3Ctext x='16' y='22' font-family='system-ui,sans-serif' font-size='18' font-weight='600' fill='%23fafafa' text-anchor='middle'%3Er%3C/text%3E%3C/svg%3E">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --white: #ffffff;
+    --gray-50: #fafafa;  --gray-100: #f5f5f5; --gray-200: #e5e5e5;
+    --gray-300: #d4d4d4; --gray-400: #a3a3a3; --gray-500: #737373;
+    --gray-600: #525252; --gray-700: #404040; --gray-800: #262626;
+    --gray-900: #171717;
+    --green: #22c55e; --yellow: #eab308; --red: #ef4444;
+    --radius: 24px; --radius-sm: 12px;
+    --font-ui: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    --font-mono: 'SF Mono', Menlo, Monaco, ui-monospace, 'Cascadia Mono', monospace;
+  }
+  html { scroll-behavior: smooth; }
+  body {
+    font-family: var(--font-ui);
+    background: var(--white); color: var(--gray-900);
+    line-height: 1.5; -webkit-font-smoothing: antialiased;
+    font-feature-settings: 'kern' 1, 'liga' 1;
+  }
+  a { color: inherit; }
+
+  /* Header */
+  header {
+    position: sticky; top: 0; z-index: 50;
+    background: rgba(255,255,255,0.85); backdrop-filter: blur(10px);
+    border-bottom: 1px solid transparent;
+    transition: border-color 0.2s;
+  }
+  header.scrolled { border-bottom-color: var(--gray-100); }
+  .header-inner {
+    max-width: 1080px; margin: 0 auto; padding: 0 24px;
+    height: 56px; display: flex; align-items: center; justify-content: space-between;
+  }
+  .wordmark {
+    font-size: 15px; font-weight: 600; letter-spacing: -0.01em;
+    text-decoration: none; color: var(--gray-900);
+    display: inline-flex; align-items: center; gap: 8px;
+  }
+  .wordmark-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--gray-900);
+  }
+  .header-nav { display: flex; align-items: center; gap: 4px; }
+  .header-nav a {
+    font-size: 13px; color: var(--gray-600); text-decoration: none;
+    padding: 8px 12px; border-radius: 8px; transition: all 0.15s;
+  }
+  .header-nav a:hover { color: var(--gray-900); background: var(--gray-50); }
+
+  /* Layout */
+  main { padding-bottom: 96px; }
+  .section { max-width: 1080px; margin: 0 auto; padding: 0 24px; }
+  .section-eyebrow {
+    font-size: 12px; font-weight: 500; color: var(--gray-500);
+    text-transform: uppercase; letter-spacing: 0.08em;
+    margin-bottom: 16px;
+  }
+
+  /* Hero */
+  .hero { padding: 96px 24px 64px; text-align: center; }
+  .hero-inner { max-width: 720px; margin: 0 auto; }
+  .hero h1 {
+    font-size: clamp(40px, 6.4vw, 64px);
+    font-weight: 600; letter-spacing: -0.035em;
+    line-height: 1.05; color: var(--gray-900);
+    margin-bottom: 24px;
+  }
+  .hero h1 em {
+    font-style: normal; font-weight: 600;
+    color: var(--gray-400);
+  }
+  .hero p.lede {
+    font-size: clamp(17px, 2vw, 19px); color: var(--gray-500);
+    max-width: 560px; margin: 0 auto 36px;
+    line-height: 1.55;
+  }
+  .hero p.lede code {
+    font-family: var(--font-mono); font-size: 0.92em;
+    background: var(--gray-100); padding: 2px 6px;
+    border-radius: 4px; color: var(--gray-700);
+  }
+  .cta-row {
+    display: inline-flex; align-items: center; gap: 16px;
+    flex-wrap: wrap; justify-content: center;
+  }
+  .btn {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 14px 24px; border-radius: 100px;
+    font-size: 15px; font-weight: 500; font-family: inherit;
+    text-decoration: none; cursor: pointer; border: 1px solid transparent;
+    transition: background 0.15s, color 0.15s, border-color 0.15s, transform 0.1s;
+  }
+  .btn:active { transform: translateY(1px); }
+  .btn-primary { background: var(--gray-900); color: var(--white); }
+  .btn-primary:hover { background: var(--gray-700); }
+  .btn-primary.copied { background: var(--green); }
+  .btn-secondary {
+    background: var(--white); color: var(--gray-700);
+    border-color: var(--gray-200);
+  }
+  .btn-secondary:hover { background: var(--gray-50); border-color: var(--gray-300); color: var(--gray-900); }
+  .btn svg { width: 16px; height: 16px; }
+
+  .hero-subnote {
+    margin-top: 28px; font-size: 13px; color: var(--gray-400);
+  }
+  .hero-subnote a { color: var(--gray-600); text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--gray-300); }
+  .hero-subnote a:hover { color: var(--gray-900); text-decoration-color: var(--gray-500); }
+
+  /* Lens illustration — a faithful mini of the actual lens chrome */
+  .lens-mock {
+    max-width: 560px; margin: 56px auto 0;
+    background: var(--white); border: 1px solid var(--gray-200);
+    border-radius: var(--radius); box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+    padding: 18px 22px; text-align: left;
+    font-size: 16px; color: var(--gray-700);
+    display: flex; align-items: center; gap: 14px;
+    transition: box-shadow 0.3s, border-color 0.2s;
+  }
+  .lens-mock:hover { box-shadow: 0 4px 16px rgba(0,0,0,0.08); border-color: var(--gray-300); }
+  .lens-mock .lens-prompt {
+    font-family: var(--font-mono); font-size: 14px;
+    color: var(--gray-400);
+  }
+  .lens-mock .lens-cursor {
+    display: inline-block; width: 1.5px; height: 18px;
+    background: var(--gray-700); margin-left: 2px; vertical-align: -3px;
+    animation: blink 1.1s steps(2) infinite;
+  }
+  @keyframes blink { 50% { opacity: 0; } }
+  .lens-mock .lens-meta { margin-left: auto; font-size: 12px; color: var(--gray-400); }
+  .lens-mock .lens-meta kbd {
+    font-family: var(--font-mono); font-size: 11px;
+    background: var(--gray-100); border: 1px solid var(--gray-200);
+    border-radius: 4px; padding: 1px 6px; color: var(--gray-600);
+  }
+
+  /* Two-step section */
+  .steps { padding: 80px 24px; }
+  .steps-grid {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 56px;
+    max-width: 880px; margin: 0 auto;
+  }
+  .step { display: flex; gap: 20px; align-items: flex-start; }
+  .step-num {
+    font-size: 56px; font-weight: 500; line-height: 0.9;
+    color: transparent; -webkit-text-stroke: 1.5px var(--gray-300);
+    letter-spacing: -0.04em; flex-shrink: 0;
+    font-feature-settings: 'tnum' 1;
+  }
+  .step-body h3 {
+    font-size: 17px; font-weight: 600; color: var(--gray-900);
+    margin-bottom: 6px; letter-spacing: -0.01em;
+  }
+  .step-body p {
+    font-size: 14.5px; color: var(--gray-600); line-height: 1.55;
+  }
+  .step-body code {
+    font-family: var(--font-mono); font-size: 0.9em;
+    background: var(--gray-100); padding: 1px 6px; border-radius: 4px;
+    color: var(--gray-700);
+  }
+
+  /* Card sections */
+  .card-section { padding: 64px 24px; }
+  .card {
+    background: var(--white); border: 1px solid var(--gray-200);
+    border-radius: var(--radius); padding: 40px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+  }
+  .card.dark {
+    background: var(--gray-900); color: var(--gray-100);
+    border-color: var(--gray-900);
+  }
+  .card.dark .section-eyebrow { color: var(--gray-400); }
+
+  /* Works-with section */
+  .works h2 {
+    font-size: 28px; font-weight: 600; letter-spacing: -0.02em;
+    color: var(--gray-900); margin-bottom: 12px;
+  }
+  .works p.intro {
+    font-size: 15px; color: var(--gray-500); margin-bottom: 32px;
+    max-width: 560px;
+  }
+  .surface { margin-bottom: 28px; }
+  .surface:last-child { margin-bottom: 0; }
+  .surface-label {
+    font-size: 12px; font-weight: 500; color: var(--gray-500);
+    text-transform: uppercase; letter-spacing: 0.06em;
+    margin-bottom: 12px;
+  }
+  .chip-row {
+    display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px;
+  }
+  .chip {
+    padding: 7px 14px; border-radius: 100px;
+    background: var(--white); border: 1px solid var(--gray-200);
+    font-size: 13.5px; color: var(--gray-700);
+    display: inline-flex; align-items: center; gap: 6px;
+    font-family: inherit;
+  }
+  .chip .chip-dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--gray-400);
+  }
+  .chip.host .chip-dot { background: var(--green); }
+  .chip.local .chip-dot { background: var(--yellow); }
+  .copy-skill-actions {
+    margin-top: 14px; display: flex; align-items: center; gap: 14px;
+    flex-wrap: wrap;
+  }
+  .copy-hint { font-size: 13px; color: var(--gray-500); }
+
+  /* CLI block */
+  .cli-section { padding: 32px 24px; }
+  .cli-card {
+    max-width: 720px; margin: 0 auto;
+    background: var(--gray-900); color: var(--gray-100);
+    border-radius: var(--radius);
+    padding: 28px 32px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.08);
+  }
+  .cli-card pre {
+    font-family: var(--font-mono); font-size: 14px;
+    line-height: 1.75; overflow-x: auto;
+  }
+  .cli-card .prompt { color: var(--gray-500); user-select: none; }
+  .cli-card .comment { color: var(--gray-500); }
+  .cli-card .cmd { color: var(--white); }
+
+  /* Demo teaser */
+  .demo-teaser { padding: 32px 24px; }
+  .demo-card {
+    max-width: 720px; margin: 0 auto;
+    background: var(--white); border: 1px solid var(--gray-200);
+    border-radius: var(--radius); padding: 24px 28px;
+    display: flex; align-items: center; gap: 20px;
+    text-decoration: none; color: inherit;
+    transition: border-color 0.15s, box-shadow 0.15s, transform 0.15s;
+  }
+  .demo-card:hover {
+    border-color: var(--gray-300); box-shadow: 0 4px 16px rgba(0,0,0,0.06);
+  }
+  .demo-card-icon {
+    width: 48px; height: 48px; border-radius: 12px;
+    background: var(--gray-100); display: flex;
+    align-items: center; justify-content: center; flex-shrink: 0;
+    color: var(--gray-600);
+  }
+  .demo-card-icon svg { width: 22px; height: 22px; }
+  .demo-card-body { flex: 1; min-width: 0; }
+  .demo-card-body h3 {
+    font-size: 16px; font-weight: 600; color: var(--gray-900);
+    margin-bottom: 4px; letter-spacing: -0.01em;
+  }
+  .demo-card-body p {
+    font-size: 14px; color: var(--gray-500); line-height: 1.5;
+  }
+  .demo-card-arrow {
+    color: var(--gray-400); flex-shrink: 0;
+    transition: transform 0.2s, color 0.2s;
+  }
+  .demo-card:hover .demo-card-arrow { transform: translateX(4px); color: var(--gray-700); }
+  .demo-card-arrow svg { width: 18px; height: 18px; }
+
+  /* FAQ */
+  .faq { padding: 64px 24px; }
+  .faq-inner { max-width: 720px; margin: 0 auto; }
+  .faq h2 {
+    font-size: 28px; font-weight: 600; letter-spacing: -0.02em;
+    color: var(--gray-900); margin-bottom: 32px; text-align: center;
+  }
+  .faq details {
+    border-bottom: 1px solid var(--gray-100);
+    padding: 20px 0;
+  }
+  .faq details:first-of-type { border-top: 1px solid var(--gray-100); }
+  .faq summary {
+    list-style: none; cursor: pointer;
+    display: flex; align-items: center; justify-content: space-between;
+    font-size: 16px; font-weight: 500; color: var(--gray-900);
+    gap: 24px;
+  }
+  .faq summary::-webkit-details-marker { display: none; }
+  .faq summary::after {
+    content: ''; width: 12px; height: 12px;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'><path d='M2 4l4 4 4-4' stroke='%23737373' stroke-width='1.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+    background-repeat: no-repeat; background-position: center;
+    flex-shrink: 0; transition: transform 0.2s;
+  }
+  .faq details[open] summary::after { transform: rotate(180deg); }
+  .faq-body {
+    padding-top: 14px; font-size: 15px; line-height: 1.65;
+    color: var(--gray-600); max-width: 640px;
+  }
+  .faq-body p + p { margin-top: 10px; }
+  .faq-body code {
+    font-family: var(--font-mono); font-size: 0.9em;
+    background: var(--gray-100); padding: 1px 6px;
+    border-radius: 4px; color: var(--gray-700);
+  }
+  .faq-body a {
+    color: var(--gray-800); text-decoration: underline;
+    text-underline-offset: 3px; text-decoration-color: var(--gray-300);
+  }
+  .faq-body a:hover { text-decoration-color: var(--gray-600); }
+
+  /* Footer */
+  footer {
+    border-top: 1px solid var(--gray-100);
+    padding: 40px 24px 64px;
+    margin-top: 32px;
+  }
+  .footer-inner {
+    max-width: 1080px; margin: 0 auto;
+    display: flex; align-items: center; justify-content: space-between;
+    flex-wrap: wrap; gap: 20px;
+  }
+  .footer-brand {
+    font-size: 13px; color: var(--gray-500);
+    display: inline-flex; align-items: center; gap: 8px;
+  }
+  .footer-links { display: flex; gap: 4px; flex-wrap: wrap; }
+  .footer-links a {
+    font-size: 13px; color: var(--gray-500); text-decoration: none;
+    padding: 6px 10px; border-radius: 6px;
+  }
+  .footer-links a:hover { color: var(--gray-900); background: var(--gray-50); }
+
+  /* Page-load reveal */
+  .reveal { opacity: 0; transform: translateY(8px); animation: rise 0.7s ease forwards; }
+  .reveal-2 { animation-delay: 0.08s; }
+  .reveal-3 { animation-delay: 0.16s; }
+  .reveal-4 { animation-delay: 0.24s; }
+  .reveal-5 { animation-delay: 0.32s; }
+  @keyframes rise {
+    to { opacity: 1; transform: translateY(0); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .reveal { animation: none; opacity: 1; transform: none; }
+    .lens-mock .lens-cursor { animation: none; }
+    html { scroll-behavior: auto; }
+  }
+
+  /* Responsive */
+  @media (max-width: 720px) {
+    .header-nav a { padding: 8px 8px; font-size: 12.5px; }
+    .hero { padding: 64px 20px 48px; }
+    .steps { padding: 56px 20px; }
+    .steps-grid { grid-template-columns: 1fr; gap: 32px; }
+    .card { padding: 28px 22px; }
+    .cli-card { padding: 22px 20px; }
+    .demo-card { padding: 20px 22px; gap: 16px; }
+    .lens-mock { padding: 14px 18px; margin-top: 40px; }
+    .lens-mock .lens-meta { display: none; }
+    .faq { padding: 48px 20px; }
+    .footer-inner { flex-direction: column; align-items: flex-start; gap: 16px; }
+  }
+</style>
+</head>
+<body>
+
+<header id="page-header">
+  <div class="header-inner">
+    <a href="/" class="wordmark">
+      <span class="wordmark-dot"></span>
+      <span>rewritable</span>
+    </a>
+    <nav class="header-nav">
+      <a href="https://github.com/ikangai/rewritable/blob/main/re-write-able-spec.md">Spec</a>
+      <a href="/demo/html-effectiveness/">Gallery</a>
+      <a href="https://github.com/ikangai/rewritable">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+
+  <section class="hero">
+    <div class="hero-inner">
+      <h1 class="reveal">The HTML file that <em>rewrites itself.</em></h1>
+      <p class="lede reveal reveal-2">
+        One <code>.html</code> file you open in any browser. Type into the lens at the bottom &mdash;
+        the file rewrites itself in place. No server, no account, no build step.
+      </p>
+      <div class="cta-row reveal reveal-3">
+        <a href="/new" class="btn btn-primary">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v9m0 0l-3-3m3 3l3-3M3 13h10"/></svg>
+          Download a fresh container
+        </a>
+        <a href="/import" class="btn btn-secondary">
+          or import a doc you already have
+        </a>
+      </div>
+      <p class="hero-subnote reveal reveal-4">
+        Free. No sign-up. Works in any modern browser; saves in-place on Chromium, downloads elsewhere.
+      </p>
+
+      <div class="lens-mock reveal reveal-5" aria-hidden="true">
+        <span class="lens-prompt">/add a kanban board with three columns<span class="lens-cursor"></span></span>
+        <span class="lens-meta"><kbd>⌘K</kbd> focus &nbsp;·&nbsp; <kbd>⌘S</kbd> save</span>
+      </div>
+    </div>
+  </section>
+
+  <section class="steps">
+    <div class="steps-grid">
+      <div class="step">
+        <div class="step-num">01</div>
+        <div class="step-body">
+          <h3>Get a fresh container</h3>
+          <p>Download a blank <code>.html</code>, or import a markdown / PDF / docx you already have. One file, on disk, that you own.</p>
+        </div>
+      </div>
+      <div class="step">
+        <div class="step-num">02</div>
+        <div class="step-body">
+          <h3>Open it. Type into the lens.</h3>
+          <p>The file loads, hydrates from its own snapshot, and shows the lens at the bottom. Type prose to append. Type a slash to issue a command. <code>⌘S</code> writes the new state back to the same file.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="card-section works">
+    <div class="section">
+      <div class="card">
+        <div class="section-eyebrow">Works with every agent</div>
+        <h2>Two surfaces, no lock-in.</h2>
+        <p class="intro">The agent loop inside the container is provider-agnostic. The skill that builds new containers is plain text — paste it into any agent that can author files.</p>
+
+        <div class="surface">
+          <div class="surface-label">Inside the container</div>
+          <div class="chip-row">
+            <span class="chip host"><span class="chip-dot"></span>OpenRouter — any model</span>
+            <span class="chip local"><span class="chip-dot"></span>Local <code style="font-family:var(--font-mono);font-size:12px;color:inherit;">claude -p</code> via bridge</span>
+          </div>
+          <p class="copy-hint">Pick the backend in the container's settings panel. The runtime doesn't care which one produced the edits.</p>
+        </div>
+
+        <div class="surface">
+          <div class="surface-label">To build a rewritable from scratch</div>
+          <div class="chip-row">
+            <span class="chip">Claude Code</span>
+            <span class="chip">Codex</span>
+            <span class="chip">Cursor</span>
+            <span class="chip">any agent with the skill</span>
+          </div>
+          <p class="copy-hint">Paste the skill into your agent. It teaches the agent the components-directory layout, the runtime API, and the hard rules — then asks for what you want to build.</p>
+          <div class="copy-skill-actions">
+            <button class="btn btn-primary" id="copy-skill">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="9" height="10" rx="1.5"/><path d="M3 11V3a1 1 0 0 1 1-1h8"/></svg>
+              <span class="btn-label">Copy the rewritable skill</span>
+            </button>
+            <span class="copy-hint" id="copy-meta">~5 KB · markdown · SKILL.md</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="cli-section">
+    <div class="cli-card">
+      <pre><span class="prompt">$ </span><span class="cmd">npx rwa new</span>                 <span class="comment"># fresh blank container</span>
+<span class="prompt">$ </span><span class="cmd">npx rwa import notes.md</span>     <span class="comment"># convert md / html / csv / docx / pdf</span>
+<span class="prompt">$ </span><span class="cmd">npx rwa import scan.pdf --vision</span>  <span class="comment"># OCR via an OpenRouter vision model</span></pre>
+    </div>
+  </section>
+
+  <section class="demo-teaser">
+    <a href="/demo/html-effectiveness/" class="demo-card">
+      <div class="demo-card-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M12 4v16"/><path d="M3 10h18"/></svg>
+      </div>
+      <div class="demo-card-body">
+        <h3>See 20 examples — original vs. rewritable</h3>
+        <p>Twenty single-file HTML pages, original on the left, the rewritable port on the right. Type ⌘K, change them yourself.</p>
+      </div>
+      <div class="demo-card-arrow">
+        <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9h10m0 0l-4-4m4 4l-4 4"/></svg>
+      </div>
+    </a>
+  </section>
+
+  <section class="faq">
+    <div class="faq-inner">
+      <h2>Questions</h2>
+
+      <details>
+        <summary>What is a rewritable?</summary>
+        <div class="faq-body">
+          <p>A <code>.html</code> file that renders, stores, modifies, and exports itself. Open it in a browser — it runs. Type an instruction — it rewrites its own contents. Press <code>⌘S</code> — it writes the new state back into the same file on disk.</p>
+          <p>The file is the database. The file is the runtime. The file is what you share.</p>
+        </div>
+      </details>
+
+      <details>
+        <summary>Do I need an account?</summary>
+        <div class="faq-body">
+          <p>No. Download a container, open it, use it. The only thing that needs credentials is the agent call — and that's an OpenRouter API key you paste into the container's own settings panel. It lives in <code>sessionStorage</code> and is never persisted to disk or sent anywhere except to the model.</p>
+        </div>
+      </details>
+
+      <details>
+        <summary>What does the agent see when it edits?</summary>
+        <div class="faq-body">
+          <p>Only the document. The bootstrap, the runtime, your API key, your other containers — none of that goes to the model. The agent receives the document text, the list of frozen-zone names, and your instruction. It returns an edit envelope (anchor-based <code>(find, replace)</code> pairs, or a structural DSL plan) that the runtime validates and applies atomically.</p>
+          <p>Failed edits leave the document untouched. There is no silent fallback.</p>
+        </div>
+      </details>
+
+      <details>
+        <summary>Where is my data stored?</summary>
+        <div class="faq-body">
+          <p>In two places: <em>working state</em> lives in the browser's IndexedDB, namespaced per container (so two rewritables open in the same browser never see each other). <em>Durable state</em> is the file itself — on commit, the runtime rewrites the file with an updated snapshot baked in.</p>
+          <p>No server holds your document. There is no cloud account.</p>
+        </div>
+      </details>
+
+      <details>
+        <summary>Does it work offline?</summary>
+        <div class="faq-body">
+          <p>Yes — except for the modify call to the model. Everything else (rendering, undo, commit, the lens, locked regions, the demo gallery if you've downloaded it) runs from the file. If you use the bridge backend with a local <code>claude -p</code> install, even modify works offline against whatever provider your <code>claude</code> CLI is configured for.</p>
+        </div>
+      </details>
+
+      <details>
+        <summary>What about iOS Safari?</summary>
+        <div class="faq-body">
+          <p>It works, but iOS Safari evicts IndexedDB aggressively under storage pressure or after a few days of inactivity. <strong>The exported <code>.html</code> on disk is the only durable artifact on iOS</strong> — commit often.</p>
+          <p>The runtime nudges you after a handful of uncommitted modifies and warns when storage usage climbs. Private/incognito mode shows a blocking banner rather than silently losing your work.</p>
+        </div>
+      </details>
+
+      <details>
+        <summary>Can I lock parts of a document?</summary>
+        <div class="faq-body">
+          <p>Yes. Wrap a region in <code>class="rwa-locked"</code> (or the comment-marker form <code>&lt;!-- rwa:frozen:begin name --&gt;…&lt;!-- rwa:frozen:end name --&gt;</code>) and the runtime refuses to anchor on it, refuses edits that overlap it, and refuses wholesale rewrites that would strip it.</p>
+          <p>The right surface for contract templates, tax forms, press releases — anything where part of the document is fixed and the rest is malleable.</p>
+        </div>
+      </details>
+
+      <details>
+        <summary>What's the difference vs. Claude artifacts?</summary>
+        <div class="faq-body">
+          <p>Artifacts live in a chat session. A rewritable is a file on your filesystem you opened directly — no app, no session, no provider. You can email it, USB-stick it, commit it to git. The recipient opens it and it runs, with your changes baked into the snapshot.</p>
+          <p>The model is also disposable: pick OpenRouter, swap providers, or use your local Claude subscription via the bridge. The container is the same in every case.</p>
+        </div>
+      </details>
+
+      <details>
+        <summary>What's the difference vs. here.now or other hosting?</summary>
+        <div class="faq-body">
+          <p>Hosting publishes a file to a URL. A rewritable <em>is</em> the file — and the file edits itself. The hosted-snapshot share at <code>rewritable.ikangai.com/s/&lt;code&gt;</code> exists for the moments you do want a URL, but the file on your disk remains the durable record.</p>
+        </div>
+      </details>
+
+      <details>
+        <summary>Is it really one file? What does that cost me?</summary>
+        <div class="faq-body">
+          <p>Yes — one self-contained <code>.html</code>, typically 50–200 KB. The cost is the constraints: no React, no npm, no build step, no frameworks. CSS inline, JS inline. CDN imports only when genuinely needed.</p>
+          <p>The reward is that the container behaves like a document instead of like an app — you can read it, edit it by hand, version-control it, send it as an attachment. The agent only sees the document; the runtime stays out of the prompt.</p>
+        </div>
+      </details>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  <div class="footer-inner">
+    <div class="footer-brand">
+      <span class="wordmark-dot"></span>
+      <span>rewritable — the document that owns its own format</span>
+    </div>
+    <nav class="footer-links">
+      <a href="https://github.com/ikangai/rewritable/blob/main/re-write-able-spec.md">Spec</a>
+      <a href="https://github.com/ikangai/rewritable/blob/main/CHANGELOG.md">Changelog</a>
+      <a href="https://github.com/ikangai/rewritable">GitHub</a>
+      <a href="/demo/html-effectiveness/">Gallery</a>
+      <a href="mailto:hello@ikangai.com">Contact</a>
+    </nav>
+  </div>
+</footer>
+
+<script type="text/markdown" id="skill-md">{{SKILL_MD}}</script>
+
+<script>
+  (function() {
+    // Sticky-header border on scroll
+    var header = document.getElementById('page-header');
+    var onScroll = function() {
+      if (window.scrollY > 4) header.classList.add('scrolled');
+      else header.classList.remove('scrolled');
+    };
+    window.addEventListener('scroll', onScroll, { passive: true });
+    onScroll();
+
+    // Copy the rewritable skill
+    var btn = document.getElementById('copy-skill');
+    var skillEl = document.getElementById('skill-md');
+    var label = btn.querySelector('.btn-label');
+    var originalLabel = label.textContent;
+    var resetTimer = null;
+    btn.addEventListener('click', function() {
+      var text = skillEl.textContent;
+      var done = function() {
+        btn.classList.add('copied');
+        label.textContent = 'Copied!';
+        clearTimeout(resetTimer);
+        resetTimer = setTimeout(function() {
+          btn.classList.remove('copied');
+          label.textContent = originalLabel;
+        }, 2000);
+      };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(done).catch(function() {
+          // Fallback for older browsers / insecure origins
+          var ta = document.createElement('textarea');
+          ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+          document.body.appendChild(ta); ta.select();
+          try { document.execCommand('copy'); done(); } catch (e) {}
+          document.body.removeChild(ta);
+        });
+      }
+    });
+
+    // Skill size in copy-meta
+    var meta = document.getElementById('copy-meta');
+    if (meta) {
+      var bytes = new Blob([skillEl.textContent]).size;
+      var kb = (bytes / 1024).toFixed(1);
+      meta.textContent = kb + ' KB · markdown · SKILL.md';
+    }
+  })();
+</script>
+
+</body>
+</html>

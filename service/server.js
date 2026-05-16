@@ -21,6 +21,27 @@ const TRIGGER_HTML = fs.readFileSync(path.join(PUBLIC_DIR, 'new.html'));
 const IMPORT_HTML = fs.readFileSync(path.join(PUBLIC_DIR, 'import.html'));
 const SEED_TEMPLATE = fs.readFileSync(path.join(SEEDS_DIR, 'rewritable.html'), 'utf8');
 
+// Landing page (/). Embeds the rewritable-building SKILL.md inline so the
+// "Copy the rewritable skill" button works without an extra fetch. The skill
+// file is bundled at service/public/build-skill.md and overridable via
+// RWA_SKILL_PATH for ad-hoc swaps. Failure to read the skill is non-fatal —
+// the landing still renders, the copy button just gets an empty payload.
+const LANDING_TEMPLATE = fs.readFileSync(path.join(PUBLIC_DIR, 'landing.html'), 'utf8');
+const SKILL_MARKER = '{{SKILL_MD}}';
+const landingMarkerCount = LANDING_TEMPLATE.split(SKILL_MARKER).length - 1;
+if (landingMarkerCount !== 1) {
+  console.error(`fatal: landing.html must contain exactly one ${SKILL_MARKER}, found ${landingMarkerCount}`);
+  process.exit(1);
+}
+const SKILL_PATH = process.env.RWA_SKILL_PATH || path.join(PUBLIC_DIR, 'build-skill.md');
+let skillBody = '';
+try { skillBody = fs.readFileSync(SKILL_PATH, 'utf8'); }
+catch (err) { console.warn(`landing: skill file unreadable at ${SKILL_PATH}: ${err.message}`); }
+// The skill lives inside <script type="text/markdown">…</script>. The only
+// substring that can break that is a literal </script — defensively encode it.
+const skillSafe = skillBody.replace(/<\/script/gi, '<\\/script');
+const LANDING_HTML = LANDING_TEMPLATE.replace(SKILL_MARKER, skillSafe);
+
 // pdf.js is self-hosted (not loaded from cdnjs) because the inline
 // `<script type="module">` import doesn't validate SRI on the imported URL —
 // integrity= only fires for `<script src=>`. Serving same-origin removes the
@@ -312,7 +333,10 @@ const server = http.createServer((req, res) => {
     return send(200, { 'Content-Type': 'text/plain' }, 'ok\n');
   }
   if (url === '/') {
-    return send(302, { 'Location': '/new' }, '');
+    return send(200, {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'public, max-age=300',
+    }, LANDING_HTML);
   }
   if (url === '/new') {
     return send(200, {
