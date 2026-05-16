@@ -233,25 +233,25 @@ class RwaReservedError extends Error {
   constructor(name) { super(`store name '${name}' is reserved (rwa_* is runtime-only)`); this.name = 'RwaReservedError'; }
 }
 
-function assertUserStore(name) {
+function assertRuntimeDbStore(name) {
   if (typeof name !== 'string' || !name) throw new TypeError('store name must be a non-empty string');
   if (/^rwa_/.test(name)) throw new RwaReservedError(name);
 }
 
-async function userDbGet(store, key) {
-  assertUserStore(store);
+async function runtimeDbGet(store, key) {
+  assertRuntimeDbStore(store);
   return idbGet(store, key);
 }
-async function userDbPut(store, value, key) {
-  assertUserStore(store);
-  return idbPut(store, value, key);
+async function runtimeDbPut(store, key, value) {
+  assertRuntimeDbStore(store);
+  return idbPut(store, value, key);   // internal idbPut keeps (store, value, key) order
 }
-async function userDbDel(store, key) {
-  assertUserStore(store);
+async function runtimeDbDel(store, key) {
+  assertRuntimeDbStore(store);
   return idbDel(store, key);
 }
-async function userDbAll(store) {
-  assertUserStore(store);
+async function runtimeDbAll(store) {
+  assertRuntimeDbStore(store);
   const db = await openDB();
   return new Promise((res, rej) => {
     const tx = db.transaction(store, 'readonly');
@@ -2689,10 +2689,10 @@ document.addEventListener('keydown', e => {
     window.runtime = {
       id: DOC_UUID,
       db: {
-        get: userDbGet,
-        put: userDbPut,
-        del: userDbDel,
-        all: userDbAll,
+        get: runtimeDbGet,
+        put: runtimeDbPut,
+        del: runtimeDbDel,
+        all: runtimeDbAll,
         // open, subscribe — Task 2/3
       },
       // fs — Task 5

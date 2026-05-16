@@ -1073,7 +1073,7 @@ console.log('\n== Test R1.1: window.runtime exists with id + db ==');
 console.log('\n== Test R1.2: db.put on reserved store rejects ==');
 {
   let threw = null;
-  try { await window.runtime.db.put('rwa_doc', { foo: 1 }, 'test-key'); }
+  try { await window.runtime.db.put('rwa_doc', 'test-key', { foo: 1 }); }
   catch (e) { threw = e; }
   check('writing to reserved rwa_* store rejects',
     threw !== null && /reserved/i.test(threw.message || ''));
