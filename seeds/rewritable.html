@@ -169,9 +169,16 @@ const canonLF = s => s == null ? '' : String(s).replace(/\r\n/g, '\n').replace(/
 
 let _db;
 const REQUIRED_STORES = [RWA.DOC, RWA.UNDO, RWA.HIST, RWA.FSA, RWA.STATE];
+// User-declared store registry. Persisted to RWA.STATE so declarations survive
+// reload. The openDB() upgrade handler creates declared stores on every bump.
+// Populated at bootstrap via loadUserStoreDecls(); mutated by runtime.db.open.
+const userStoreDecls = new Map();  // name -> { autoIncrement?: boolean }
+let _dbVersionBumpInFlight = null; // Promise<void> while a bump is queued
 async function openDB() {
   if (_db) return _db;
-  // Open without specifying a version, so we work whatever the existing db version is.
+  // Step 1: probe without a version to learn the current DB version. On first
+  // open this creates an empty v1 DB; subsequent opens see whatever the prior
+  // session left behind. We use this number to compute the next upgrade target.
   const probe = await new Promise((res, rej) => {
     const r = indexedDB.open(RWA.DB);
     r.onsuccess = () => res(r.result);
@@ -180,24 +187,38 @@ async function openDB() {
   });
   // We expect every required store to use out-of-line keys (keyPath === null).
   // If a store is missing — or exists with the wrong schema (in-line keys from
-  // an old prototype) — we need to (re)create it.
+  // an old prototype) — we need to (re)create it. The schema-recreate path is
+  // load-bearing for users coming from rwa-edit prototypes that stored docs
+  // with `keyPath: 'k'`; dropping it would brick their containers.
   const toRecreate = [];
   for (const name of REQUIRED_STORES) {
     if (!probe.objectStoreNames.contains(name)) { toRecreate.push(name); continue; }
     const store = probe.transaction(name, 'readonly').objectStore(name);
     if (store.keyPath !== null) toRecreate.push(name);
   }
-  if (toRecreate.length === 0) { _db = probe; return _db; }
+  // Also bump if any declared user-store is missing from the live schema —
+  // this is how Task 2's runtime.db.open triggers a version bump and how a
+  // reload re-instantiates declared stores from persisted user_stores.
+  const missingUserStores = [...userStoreDecls.keys()].filter(s => !probe.objectStoreNames.contains(s));
+  if (toRecreate.length === 0 && missingUserStores.length === 0) { _db = probe; return _db; }
   const newVersion = probe.version + 1;
   probe.close();
   _db = await new Promise((res, rej) => {
     const r = indexedDB.open(RWA.DB, newVersion);
     r.onupgradeneeded = e => {
       const db = e.target.result;
+      // Required-store schema-recreate (legacy in-line-key migration + first-open).
       toRecreate.forEach(name => {
         if (db.objectStoreNames.contains(name)) db.deleteObjectStore(name);
         db.createObjectStore(name); // out-of-line keys
       });
+      // User-declared stores: create whatever isn't already present. We never
+      // delete user stores here — declarations are additive across sessions.
+      for (const [name, opts] of userStoreDecls) {
+        if (!db.objectStoreNames.contains(name)) {
+          db.createObjectStore(name, opts && opts.autoIncrement ? { autoIncrement: true } : undefined);
+        }
+      }
     };
     r.onsuccess = () => res(r.result);
     r.onerror = () => rej(r.error);
@@ -244,6 +265,19 @@ async function runtimeDbGet(store, key) {
 }
 async function runtimeDbPut(store, key, value) {
   assertRuntimeDbStore(store);
+  // For autoIncrement stores, callers pass a null/undefined key — IDB assigns
+  // a monotonic integer. We route around idbPut() because that helper always
+  // forwards the (possibly null) key to objectStore.put(value, key), which IDB
+  // rejects with DataError when keyPath is null AND no out-of-line key is given.
+  if ((key === null || key === undefined) && userStoreDecls.get(store)?.autoIncrement) {
+    const db = await openDB();
+    return new Promise((res, rej) => {
+      const tx = db.transaction(store, 'readwrite');
+      const req = tx.objectStore(store).put(value);
+      req.onsuccess = () => res(req.result);
+      req.onerror   = () => rej(req.error);
+    });
+  }
   return idbPut(store, value, key);   // internal idbPut keeps (store, value, key) order
 }
 async function runtimeDbDel(store, key) {
@@ -268,7 +302,54 @@ async function runtimeDbAll(store) {
   });
 }
 
-// (db.open, db.subscribe, fs.*, modify/commit/undo wrappers, status, on
+// User-store declarations are persisted under rwa_state['user_stores'] so a
+// reload re-instantiates them via openDB()'s upgrade path. The shape is
+// { [name]: { autoIncrement?: boolean } } — must round-trip through structured
+// clone, so plain JSON-shaped objects only.
+async function loadUserStoreDecls() {
+  const stored = await idbGet(RWA.STATE, 'user_stores');
+  if (stored && typeof stored === 'object') {
+    for (const [name, opts] of Object.entries(stored)) userStoreDecls.set(name, opts || {});
+  }
+}
+async function persistUserStoreDecls() {
+  const out = {};
+  for (const [name, opts] of userStoreDecls) out[name] = opts;
+  await idbPut(RWA.STATE, out, 'user_stores');
+}
+
+// Serialize concurrent runtime.db.open calls: each one needs to close + reopen
+// the connection, and IDB version-bumps can't overlap. The in-flight promise
+// fans out, queues the next bump, then drops the latch.
+async function bumpVersionAndCreateStore(name, opts) {
+  if (_dbVersionBumpInFlight) await _dbVersionBumpInFlight;
+  _dbVersionBumpInFlight = (async () => {
+    if (_db) { _db.close(); _db = null; }
+    userStoreDecls.set(name, opts || {});
+    await openDB();
+    await persistUserStoreDecls();
+  })();
+  try { await _dbVersionBumpInFlight; } finally { _dbVersionBumpInFlight = null; }
+}
+
+async function runtimeDbOpen(name, opts = {}) {
+  assertRuntimeDbStore(name);
+  const db = await openDB();
+  // Idempotent: an already-present store is a no-op even if the caller passes
+  // different opts. We never re-create a store under the same name — that
+  // would silently drop user data.
+  if (db.objectStoreNames.contains(name)) {
+    // Make sure the registry reflects live schema (defensive — should already match).
+    if (!userStoreDecls.has(name)) {
+      userStoreDecls.set(name, opts || {});
+      await persistUserStoreDecls();
+    }
+    return;
+  }
+  await bumpVersionAndCreateStore(name, opts);
+}
+
+// (db.subscribe, fs.*, modify/commit/undo wrappers, status, on
 // land in later tasks of this plan.)
 
 async function getDoc() {
@@ -2669,6 +2750,16 @@ document.addEventListener('keydown', e => {
       rwaShowPrivateModeBanner();
       return;
     }
+    // Spec §7: rehydrate user-declared stores from rwa_state. If any are
+    // missing from the just-opened DB (because they were declared in a prior
+    // session), close + reopen so the upgrade handler creates them before
+    // document code runs. This keeps the invariant "if userStoreDecls knows
+    // about it, _db has the object store" true at every runtime.db.* call.
+    await loadUserStoreDecls();
+    if ([...userStoreDecls.keys()].some(s => !_db.objectStoreNames.contains(s))) {
+      _db.close(); _db = null;
+      await openDB();  // probe-then-upgrade picks up the missing stores
+    }
     // Spec §5.6: rehydrate the dirty-state nudge if a prior session left it ≥threshold.
     const initialCount = await rwaGetDirtyCount();
     if (initialCount >= RWA.NUDGE_THRESHOLD) showCommitNudge(initialCount);
@@ -2693,7 +2784,8 @@ document.addEventListener('keydown', e => {
         put: runtimeDbPut,
         del: runtimeDbDel,
         all: runtimeDbAll,
-        // open, subscribe — Task 2/3
+        open: runtimeDbOpen,
+        // subscribe — Task 3
       },
       // fs — Task 5
       // modify/commit/undo/status/on — Task 4

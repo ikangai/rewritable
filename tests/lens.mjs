@@ -1106,5 +1106,54 @@ console.log('\n== Test R1.5: db.all on reserved store rejects ==');
     threw !== null && /reserved/i.test(threw.message || ''));
 }
 
+// === Phase: runtime.db.open (spec §7) ===
+console.log('\n== Test R2.1: open a new store, round-trip put/get ==');
+{
+  await window.runtime.db.open('tracker_tasks');
+  await window.runtime.db.put('tracker_tasks', 'task-1', { title: 'first' });
+  const got = await window.runtime.db.get('tracker_tasks', 'task-1');
+  check('round-trip via runtime.db', got && got.title === 'first');
+}
+
+console.log('\n== Test R2.2: db.all iterates declared store ==');
+{
+  await window.runtime.db.put('tracker_tasks', 'task-2', { title: 'second' });
+  const all = await window.runtime.db.all('tracker_tasks');
+  check('db.all returns array', Array.isArray(all));
+  check('contains both entries', all.length === 2 && all.every(e => e.key && e.value));
+}
+
+console.log('\n== Test R2.3: db.del removes a record ==');
+{
+  await window.runtime.db.del('tracker_tasks', 'task-1');
+  const all = await window.runtime.db.all('tracker_tasks');
+  check('only one entry remains', all.length === 1 && all[0].key === 'task-2');
+}
+
+console.log('\n== Test R2.4: db.open on reserved name rejects ==');
+{
+  let threw = null;
+  try { await window.runtime.db.open('rwa_evil'); }
+  catch (e) { threw = e; }
+  check('reserved name rejects', threw !== null && /reserved/i.test(threw.message || ''));
+}
+
+console.log('\n== Test R2.5: db.open is idempotent ==');
+{
+  await window.runtime.db.open('tracker_tasks');  // second open
+  const got = await window.runtime.db.get('tracker_tasks', 'task-2');
+  check('existing data preserved across re-open', got && got.title === 'second');
+}
+
+console.log('\n== Test R2.6: db.open with autoIncrement ==');
+{
+  await window.runtime.db.open('events', { autoIncrement: true });
+  // autoIncrement stores accept put without explicit key.
+  await window.runtime.db.put('events', null, { type: 'click' });
+  await window.runtime.db.put('events', null, { type: 'scroll' });
+  const all = await window.runtime.db.all('events');
+  check('autoIncrement assigned keys', all.length === 2 && typeof all[0].key === 'number');
+}
+
 console.log(`\n${pass} pass, ${fail} fail`);
 process.exit(fail > 0 ? 1 : 0);
