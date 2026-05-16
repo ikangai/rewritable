@@ -553,6 +553,19 @@ window.rwaResetDirtyCount = rwaResetDirtyCount;
 window.rwaResetOnCommit = rwaResetOnCommit;
 
 // Spec §5.3: quota awareness. Surface a warning above 80% usage.
+function showQuotaWarning(usedMB, quotaMB) {
+  let t = document.querySelector('.rwa-lens-toast[data-kind="quota-warn"]');
+  if (!t) {
+    t = document.createElement('div');
+    t.className = 'rwa-lens-toast';
+    t.setAttribute('data-kind', 'quota-warn');
+    document.body.appendChild(t);
+  }
+  t.textContent = `storage ${usedMB}/${quotaMB} MB (>80%) — commit & close idle tabs`;
+}
+function clearQuotaWarning() {
+  document.querySelector('.rwa-lens-toast[data-kind="quota-warn"]')?.remove();
+}
 async function rwaCheckQuota() {
   if (!navigator.storage || !navigator.storage.estimate) return;
   let est;
@@ -562,9 +575,12 @@ async function rwaCheckQuota() {
   if (ratio > 0.8) {
     const usedMB = Math.round(est.usage / (1024 * 1024));
     const quotaMB = Math.round(est.quota / (1024 * 1024));
-    setPalSt('warn', `storage ${usedMB}/${quotaMB} MB (>80%) — commit & close idle tabs`);
+    showQuotaWarning(usedMB, quotaMB);
+  } else {
+    clearQuotaWarning();   // self-clear if the user freed quota since the last check
   }
 }
+// Expose for tests only.
 window.rwaCheckQuota = rwaCheckQuota;
 
 const openPal = () => { document.getElementById('rwa-pal').classList.add('open'); requestAnimationFrame(() => document.getElementById('rwa-pal-inp').focus()); setPalSt('', '● ready'); };

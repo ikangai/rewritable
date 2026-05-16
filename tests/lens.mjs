@@ -983,35 +983,47 @@ console.log('\n== Test M1.5: lens direct text and anchored slash bump the counte
 
 // === Phase: quota warning (spec §5.3) ===
 console.log('\n== Test M2.1: warning fires when usage > 80% ==');
-{
-  const origEstimate = window.navigator.storage.estimate?.bind(window.navigator.storage);
+const _origEstimate = window.navigator.storage.estimate?.bind(window.navigator.storage);
+try {
   window.navigator.storage.estimate = async () => ({ usage: 81 * 1024 * 1024, quota: 100 * 1024 * 1024 });
   await window.rwaCheckQuota();
-  const pal = window.document.getElementById('rwa-pal-st');
-  check('palette shows warn class', pal?.className === 'warn');
-  check('message mentions storage / quota / 80%',
-    /storage|quota|80%/i.test(pal?.textContent || ''));
-  if (origEstimate) window.navigator.storage.estimate = origEstimate;
+  const toast = window.document.querySelector('.rwa-lens-toast[data-kind="quota-warn"]');
+  check('toast appears for >80% usage', !!toast);
+  check('toast text mentions storage and 80%',
+    /storage/i.test(toast?.textContent || '') && /80%/.test(toast?.textContent || ''));
+  check('toast text includes used/quota MB',
+    /\d+\/\d+ MB/.test(toast?.textContent || ''));
+} finally {
+  // Clean up toast + restore estimate for downstream tests.
+  window.document.querySelector('.rwa-lens-toast[data-kind="quota-warn"]')?.remove();
+  if (_origEstimate) window.navigator.storage.estimate = _origEstimate;
 }
 
-console.log('\n== Test M2.2: no warning when usage < 80% ==');
+console.log('\n== Test M2.2: no warning when usage < 80% (and pre-existing warning clears) ==');
 {
-  window.navigator.storage.estimate = async () => ({ usage: 10 * 1024 * 1024, quota: 100 * 1024 * 1024 });
-  const pal = window.document.getElementById('rwa-pal-st');
-  if (pal) { pal.className = ''; pal.textContent = ''; }
+  // Pre-populate a warning toast so we can verify clearing.
+  window.navigator.storage.estimate = async () => ({ usage: 81 * 1024 * 1024, quota: 100 * 1024 * 1024 });
   await window.rwaCheckQuota();
-  check('palette not in warn state', pal?.className !== 'warn');
+  check('pre-condition: warning toast present',
+    !!window.document.querySelector('.rwa-lens-toast[data-kind="quota-warn"]'));
+
+  // Now low usage: expect the toast to clear.
+  window.navigator.storage.estimate = async () => ({ usage: 10 * 1024 * 1024, quota: 100 * 1024 * 1024 });
+  await window.rwaCheckQuota();
+  check('warning toast cleared at low usage',
+    !window.document.querySelector('.rwa-lens-toast[data-kind="quota-warn"]'));
 }
 
 console.log('\n== Test M2.3: estimate() unsupported is a no-op ==');
 {
   window.navigator.storage.estimate = undefined;
-  const pal = window.document.getElementById('rwa-pal-st');
-  if (pal) { pal.className = ''; pal.textContent = ''; }
+  // No pre-existing toast.
+  window.document.querySelector('.rwa-lens-toast[data-kind="quota-warn"]')?.remove();
   let threw = false;
   try { await window.rwaCheckQuota(); } catch (_) { threw = true; }
   check('no exception on missing estimate()', !threw);
-  check('no warning surfaced', pal?.className !== 'warn');
+  check('no toast surfaced',
+    !window.document.querySelector('.rwa-lens-toast[data-kind="quota-warn"]'));
 }
 
 console.log(`\n${pass} pass, ${fail} fail`);
