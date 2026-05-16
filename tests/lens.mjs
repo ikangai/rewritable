@@ -49,6 +49,11 @@ const dom = new JSDOM(html, {
     window.sessionStorage.setItem('rwa_apikey', 'test-key');
     window.sessionStorage.setItem('rwa_model', 'test-model');
     window.fetch = (...args) => fetchHandler(...args);
+    // jsdom 25 doesn't expose BroadcastChannel on its window, but Node has it
+    // globally. The seed's runtime.db.subscribe relies on it (spec §7), so
+    // borrow Node's implementation. Same-name channels in the same agent
+    // cluster see each other's messages here, matching real-browser semantics.
+    window.BroadcastChannel = globalThis.BroadcastChannel;
     Object.defineProperty(window.navigator, 'storage', {
       value: { persist: () => Promise.resolve(false) }, configurable: true,
     });
@@ -1221,6 +1226,90 @@ console.log('\n== Test R2.9: declared store survives a simulated reload ==');
     stateRaw && stateRaw.tracker_tasks !== undefined);
   check('user_stores includes events with autoIncrement',
     stateRaw && stateRaw.events && stateRaw.events.autoIncrement === true);
+}
+
+// === Phase: runtime.db.subscribe (spec §7) ===
+console.log('\n== Test R3.1: subscribe fires on local put ==');
+{
+  await window.runtime.db.open('subscribe_test');
+  let called = 0; let lastKey = null;
+  const unsub = window.runtime.db.subscribe('subscribe_test', evt => {
+    called++; lastKey = evt.key;
+  });
+  await window.runtime.db.put('subscribe_test', 'k1', { hi: 1 });
+  // BroadcastChannel is async; allow a tick.
+  await new Promise(r => setTimeout(r, 10));
+  check('subscribe fired once', called === 1);
+  check('event has key', lastKey === 'k1');
+  unsub();
+}
+
+console.log('\n== Test R3.2: unsub stops the callback ==');
+{
+  let called = 0;
+  const unsub = window.runtime.db.subscribe('subscribe_test', () => { called++; });
+  unsub();
+  await window.runtime.db.put('subscribe_test', 'k2', { hi: 2 });
+  await new Promise(r => setTimeout(r, 10));
+  check('callback not called after unsub', called === 0);
+}
+
+console.log('\n== Test R3.3: subscribe on reserved store rejects ==');
+{
+  let threw = null;
+  try { window.runtime.db.subscribe('rwa_hist', () => {}); }
+  catch (e) { threw = e; }
+  check('reserved name rejects', threw !== null && /reserved/i.test(threw.message || ''));
+}
+
+console.log('\n== Test R3.4: subscribe fires on del ==');
+{
+  let lastKind = null; let lastKey = null;
+  const unsub = window.runtime.db.subscribe('subscribe_test', evt => {
+    lastKind = evt.kind; lastKey = evt.key;
+  });
+  await window.runtime.db.del('subscribe_test', 'k1');
+  await new Promise(r => setTimeout(r, 10));
+  check('del fires subscribe with kind=del', lastKind === 'del');
+  check('del event carries key', lastKey === 'k1');
+  unsub();
+}
+
+console.log('\n== Test R3.5: throwing callback does not break put ==');
+{
+  const unsub = window.runtime.db.subscribe('subscribe_test', () => { throw new Error('boom'); });
+  let putError = null;
+  try { await window.runtime.db.put('subscribe_test', 'k3', { hi: 3 }); }
+  catch (e) { putError = e; }
+  await new Promise(r => setTimeout(r, 10));
+  check('put completes despite callback throwing', putError === null);
+  const got = await window.runtime.db.get('subscribe_test', 'k3');
+  check('value stored despite callback throw', got && got.hi === 3);
+  unsub();
+}
+
+console.log('\n== Test R3.6: subscribe rejects non-function callback ==');
+{
+  let threw = null;
+  try { window.runtime.db.subscribe('subscribe_test', 'not a function'); }
+  catch (e) { threw = e; }
+  check('non-function callback throws TypeError',
+    threw !== null && threw.name === 'TypeError');  // .name is realm-safe; jsdom's TypeError ≠ Node's
+}
+
+console.log('\n== Test R3.7: autoIncrement put carries resolved key in event ==');
+{
+  await window.runtime.db.open('subscribe_auto', { autoIncrement: true });
+  let lastKey = null; let lastKind = null;
+  const unsub = window.runtime.db.subscribe('subscribe_auto', evt => {
+    lastKey = evt.key; lastKind = evt.kind;
+  });
+  const resolved = await window.runtime.db.put('subscribe_auto', null, { type: 'click' });
+  await new Promise(r => setTimeout(r, 10));
+  check('autoIncrement put returns resolved key', typeof resolved === 'number');
+  check('event carries the resolved key, not null', lastKey === resolved);
+  check('event has kind=put', lastKind === 'put');
+  unsub();
 }
 
 console.log(`\n${pass} pass, ${fail} fail`);

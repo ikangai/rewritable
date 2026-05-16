@@ -259,6 +259,24 @@ function assertRuntimeDbStore(name) {
   if (/^rwa_/.test(name)) throw new RwaReservedError(name);
 }
 
+// Producer-side BroadcastChannel cache. Each store has one writer channel that
+// runtime.db.{put,del} reuse to fan out events to subscribers. Subscribers
+// open their OWN channel on the same name (see runtimeDbSubscribe) because
+// BroadcastChannel does not deliver a message back to the channel that posted
+// it (per spec: "Messages are received by all channels of the same name, in
+// the same agent cluster, except the source channel"). Channel name is
+// 'rwa_<DOC_UUID>:<store>' — namespaced to the container so cross-container
+// noise is impossible even if two rwa files share an origin.
+const runtimeDbChannels = new Map();   // store -> BroadcastChannel
+function getStoreChannel(store) {
+  let ch = runtimeDbChannels.get(store);
+  if (!ch) {
+    ch = new BroadcastChannel('rwa_' + DOC_UUID + ':' + store);
+    runtimeDbChannels.set(store, ch);
+  }
+  return ch;
+}
+
 async function runtimeDbGet(store, key) {
   assertRuntimeDbStore(store);
   return idbGet(store, key);
@@ -270,27 +288,49 @@ async function runtimeDbPut(store, key, value) {
   // a monotonic integer. We route around idbPut() because that helper always
   // forwards the (possibly null) key to objectStore.put(value, key), which IDB
   // rejects with DataError when keyPath is null AND no out-of-line key is given.
+  let resolvedKey;
   if ((key === null || key === undefined) && decl?.autoIncrement) {
     const db = await openDB();
-    return new Promise((res, rej) => {
+    resolvedKey = await new Promise((res, rej) => {
       const tx = db.transaction(store, 'readwrite');
       const req = tx.objectStore(store).put(value);
       req.onsuccess = () => res(req.result);
       req.onerror   = () => rej(req.error);
     });
+  } else {
+    // Non-autoIncrement stores require an explicit key. Without this guard the
+    // call falls through to idbPut(store, value, null), which surfaces an opaque
+    // DataError from IDB; flag the API misuse up front so callers know to either
+    // pass a key or declare the store with {autoIncrement: true}.
+    if (key === null || key === undefined) {
+      throw new TypeError(`runtime.db.put: key is required for non-autoIncrement store '${store}' (declare with {autoIncrement: true} to omit keys)`);
+    }
+    await idbPut(store, value, key);   // internal idbPut keeps (store, value, key) order
+    resolvedKey = key;
   }
-  // Non-autoIncrement stores require an explicit key. Without this guard the
-  // call falls through to idbPut(store, value, null), which surfaces an opaque
-  // DataError from IDB; flag the API misuse up front so callers know to either
-  // pass a key or declare the store with {autoIncrement: true}.
-  if (key === null || key === undefined) {
-    throw new TypeError(`runtime.db.put: key is required for non-autoIncrement store '${store}' (declare with {autoIncrement: true} to omit keys)`);
-  }
-  return idbPut(store, value, key);   // internal idbPut keeps (store, value, key) order
+  // Fan out AFTER the IDB write resolves so subscribers never observe a key
+  // that the store didn't actually commit. The resolved key matters for
+  // autoIncrement stores — subscribers shouldn't have to guess what IDB picked.
+  getStoreChannel(store).postMessage({ kind: 'put', key: resolvedKey });
+  return resolvedKey;
 }
 async function runtimeDbDel(store, key) {
   assertRuntimeDbStore(store);
-  return idbDel(store, key);
+  await idbDel(store, key);
+  getStoreChannel(store).postMessage({ kind: 'del', key });
+}
+
+function runtimeDbSubscribe(store, callback) {
+  assertRuntimeDbStore(store);
+  if (typeof callback !== 'function') throw new TypeError('callback must be a function');
+  // Open a fresh channel rather than reusing the producer's: a BroadcastChannel
+  // does not receive its own postMessage, so listening on the cached writer
+  // would silently swallow every local event. Same-name channels in the same
+  // agent cluster DO see each other, so this still works in-tab + cross-tab.
+  const ch = new BroadcastChannel('rwa_' + DOC_UUID + ':' + store);
+  const handler = (msg) => { try { callback(msg.data); } catch (_) { /* never let a buggy doc-side callback break the runtime */ } };
+  ch.addEventListener('message', handler);
+  return () => { ch.removeEventListener('message', handler); ch.close(); };
 }
 async function runtimeDbAll(store) {
   assertRuntimeDbStore(store);
@@ -2805,7 +2845,7 @@ document.addEventListener('keydown', e => {
         del: runtimeDbDel,
         all: runtimeDbAll,
         open: runtimeDbOpen,
-        // subscribe — Task 3
+        subscribe: runtimeDbSubscribe,
       },
       // fs — Task 5
       // modify/commit/undo/status/on — Task 4
