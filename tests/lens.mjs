@@ -1620,14 +1620,26 @@ console.log('\n== Test R5.6: reserved-prefix rejection covers all four ops ==');
   check("fs.write('_rwa/...') rejects", threw !== null && /reserved/i.test(threw.message || ''));
 }
 
-console.log('\n== Test R5.7: empty path rejects on all four ops ==');
+console.log('\n== Test R5.7: empty path rejects on read/del (but list allows it) ==');
 {
-  for (const op of ['read', 'del', 'list']) {
+  for (const op of ['read', 'del']) {
     let threw = null;
     try { await window.runtime.fs[op](''); }
     catch (e) { threw = e; }
     check(`fs.${op}('') rejects`, threw !== null && /non-empty/i.test(threw.message || ''));
   }
+  // fs.list('') is the natural root-of-namespace listing — should NOT reject.
+  let listThrew = null;
+  let listResult = null;
+  try { listResult = await window.runtime.fs.list(''); }
+  catch (e) { listThrew = e; }
+  check("fs.list('') does NOT reject", listThrew === null);
+  check("fs.list('') returns an array", Array.isArray(listResult));
+  // fs.list() with no arg behaves the same.
+  let noArgResult = null;
+  try { noArgResult = await window.runtime.fs.list(); }
+  catch (e) { noArgResult = e; }
+  check("fs.list() with no arg returns an array", Array.isArray(noArgResult));
 }
 
 console.log('\n== Test R5.8: missing file produces descriptive error ==');

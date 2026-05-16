@@ -115,19 +115,19 @@ body{font-family:var(--font-ui);background:var(--bg);color:var(--text);min-heigh
 // The nil UUID below is a sentinel — the /new service substitutes a fresh
 // crypto.randomUUID() at request time. If a downloaded file still has all
 // zeros here, the substitution failed and isolation is broken.
-const DOC_UUID = '00000000-0000-0000-0000-000000000000';
+const DOC_UUID = 'cb329e70-2091-4020-91f7-20598f67bb2d';
 
 // The document — a frozen snapshot, hydrated into IndexedDB on first open
 // and rewritten in place on every commit.
 const INLINE_DOC = `<style>
-.hello{display:grid;place-items:center;min-height:calc(100dvh - 200px);text-align:center;padding:24px;}
-.hello h1{font-family:Georgia,'Times New Roman',serif;font-style:italic;font-size:clamp(48px,8vw,96px);line-height:1.05;letter-spacing:-.02em;color:var(--gray-900);}
-.hello p{font-family:var(--font-ui,sans-serif);font-size:17px;color:var(--gray-500);margin-top:20px;max-width:42ch;line-height:1.5;}
-.hello kbd{font-family:var(--font-mono,monospace);font-size:12px;background:var(--gray-100);border:1px solid var(--gray-200);padding:2px 7px;border-radius:6px;color:var(--gray-700);}
+.hello{display:grid;place-items:center;min-height:100dvh;text-align:center;padding:24px;}
+.hello h1{font-family:'Instrument Serif',serif;font-style:italic;font-size:clamp(56px,9vw,112px);line-height:1;letter-spacing:-.02em;background:linear-gradient(135deg,var(--text) 50%,var(--muted));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;}
+.hello p{font-family:'Instrument Serif',serif;font-size:18px;color:var(--muted);margin-top:22px;font-style:italic;max-width:42ch;line-height:1.5;}
+.hello kbd{font-family:'DM Mono',monospace;font-size:11px;background:var(--surf);border:1px solid var(--b2);padding:2px 7px;border-radius:3px;color:var(--accent);font-style:normal;}
 </style>
 <div class="hello">
 <h1>Hello, world.</h1>
-<p>This is a re-writeable document. Type into the lens below and tell it what to become.</p>
+<p>This is a re-writeable document. Press <kbd>⌘K</kbd> and tell it what to become.</p>
 </div>`;
 
 const ANCHORABLE_TAGS = new Set(['P','H1','H2','H3','H4','H5','H6','BLOCKQUOTE','LI','FIGURE','PRE','ASIDE']);

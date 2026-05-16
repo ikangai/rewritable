@@ -998,7 +998,11 @@ async function runtimeFsDel(path) {
 }
 
 async function runtimeFsList(prefix) {
-  assertUserFsPath(prefix);
+  // For list only, empty/undefined means "root of the container namespace" —
+  // it's the natural way to enumerate blobs without knowing subdir names.
+  // read/write/del keep the strict guard (they need a real path).
+  if (prefix === undefined || prefix === '') prefix = '';
+  else assertUserFsPath(prefix);
   const parts = prefix.split('/').filter(Boolean);
   let dir = await opfsRootForContainer();
   try {
