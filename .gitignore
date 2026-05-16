@@ -5,3 +5,8 @@ node_modules/
 cli/seeds/
 .worktrees/
 
+# Local ad-hoc container that `tools/regenerate-refs.mjs` optionally writes
+# alongside the tracked seed + references. Per CLAUDE.md it's "optional" —
+# keep it out of version control so a fresh regen can't enter a commit.
+/rewritable.html
+
