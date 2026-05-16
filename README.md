@@ -29,6 +29,7 @@ Open the file in a browser. It's a document the moment it opens — no build scr
 - **The lens** — a single steerable input docked at the bottom of the viewport. Type prose to append; type a leading `/` to issue a command. Click a block to anchor the lens to it: now prose inserts after that block and `/edit it` rewrites it. The badge on the lens tells you what it's targeting; `Esc` releases.
 - `Cmd+Z` — undo
 - `Cmd+S` — commit the current state back into the file (write-in-place on Chromium; download elsewhere)
+- **Safety net** — after 5 uncommitted modifications the runtime nudges you to commit; if storage usage crosses 80% it warns; private/incognito mode shows a blocking banner rather than silently letting the browser evict your work. iOS Safari is the worst-case here, but the same safety net runs everywhere.
 
 The file is built around an **immutable bootstrap** — a loader, a runtime, and a frozen snapshot of the document — and a **mutable working copy** that lives in IndexedDB. The agent only sees the document; it never sees the runtime. On commit, the bootstrap is rewritten with an updated snapshot, and only the snapshot changes.
 

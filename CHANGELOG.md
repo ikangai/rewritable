@@ -2,6 +2,56 @@
 
 Notable changes to `re-write-able`. The container format is versioned in `re-write-able-spec.md`; the edit protocol in `rwa-edit-spec.md`; the structural-transform DSL in `rwa-edit-dsl-spec.md`. The CLI follows semver in `cli/package.json`.
 
+## 2026-05-16 — mobile-safety net: commit nudge, quota warning, private-mode banner
+
+Closes three iOS Safari safety gaps the spec promised but the seed never delivered. The runtime now nudges before silent data loss, warns before storage exhaustion, and refuses to operate in private mode where IDB can be evicted at any moment. No spec changes — §5.3 (quota awareness), §5.6 (commit nudge), and §9.1 (private-mode unsupported) already described the behavior; this release ships the implementation.
+
+Plan: [`docs/plans/2026-05-16-mobile-safety-net.md`](docs/plans/2026-05-16-mobile-safety-net.md).
+
+### What changed for users
+
+- **Commit nudge.** After 5 uncommitted modifications, a toast appears: *"You have N uncommitted changes. ⌘S to commit."* The counter persists across tab reloads (lives in IDB), so opening a stale tab still surfaces the prompt. Resets to 0 on every successful commit (FSA in-place or download).
+- **Storage-quota warning.** When `navigator.storage.estimate()` reports usage above 80%, a toast surfaces: *"storage 86/95 MB (>80%) — commit & close idle tabs"* (numbers vary). The warning self-clears when usage drops back below the threshold (e.g., after a commit). Checked on boot and after every successful modify.
+- **Private-mode blocking banner.** A full-viewport `role="alert"` overlay with the spec wording *"re-write-able requires normal browsing mode"* appears in private/incognito browsers. The runtime early-exits the bootstrap IIFE — no buildUI, no IDB open, no modify pathway — because every operation past detection would silently lose work. Detection uses two signals OR'd together: `navigator.storage.estimate().quota < 50 MB` (catches iOS Safari private, which caps at single-digit MB) and a catastrophic `openDB()` throw (catches environments where the API isn't available at all).
+
+### What changed for the seed
+
+- New IDB store `rwa_state` added to `REQUIRED_STORES`. Holds the dirty-modification counter at key `dirty_count`. Auto-created on next open of any existing container via the existing schema-recreate path.
+- New `RWA` config entries: `STATE:'rwa_state'`, `NUDGE_THRESHOLD:5`.
+- New helpers in the runtime layer: `rwaGetDirtyCount`, `rwaSetDirtyCount`, `rwaBumpDirtyCount`, `rwaResetDirtyCount`, `rwaResetOnCommit`, `showCommitNudge`, `clearCommitNudge`, `rwaCheckQuota`, `showQuotaWarning`, `clearQuotaWarning`, `rwaDetectPrivateMode`, `rwaShowPrivateModeBanner`.
+- Counter wired into all four modify-success paths (`modify`, `modifyViaBridge`, `runAnchoredCommand`, `synthesizeAndCommit`) immediately after `renderDoc` and `setDirty(true)`. Quota check fires fire-and-forget at the same five sites plus once on boot. All counter writes are `.catch(() => {})`-wrapped — the counter is a UX hint, never blocks the edit.
+- Counter rehydrated on bootstrap: if the persisted count crosses the threshold, the nudge is shown immediately on open.
+- Two new singleton toasts share the existing `.rwa-lens-toast` class, discriminated by `data-kind="commit-nudge"` and `data-kind="quota-warn"`. New CSS for `#rwa-private-mode-banner` (full-viewport `inset:0`, `z-index:9999`, white card).
+- Bootstrap IIFE re-ordered: private-mode detection runs as the first non-trivial statement, before any UI or IDB work. A second detection catches `openDB()` throws and renders the same banner. Both early-return, cleanly short-circuiting all subsequent init (no quota check, no counter rehydrate, no listeners).
+
+### What changed for testing
+
+- **172/172 lens-tests pass** (was 147 — 25 new assertions across phases M1.*–M3.*).
+- **291/291 e2e pass** unchanged.
+- **42/42 conformance pass** unchanged.
+- New phases in `tests/lens.mjs`:
+    - M1.1–M1.5 cover the counter increment, threshold-crossing toast, reset/clear, IDB round-trip, and lens-path coverage (driving `submitLens` for direct text and anchored slash to verify those paths bump the counter).
+    - M2.1–M2.3 cover the quota toast (visible surface), the self-clear branch (pre-populated toast clears when usage drops), and the `estimate()`-unsupported no-op.
+    - M3.1–M3.4 cover detection (true on 1 MB quota, false on 5 GB), banner rendering with the spec wording and `role="alert"`, and safe-default when `estimate()` is absent.
+- Two `fix(safety)` commits in the history document the review cycle: Task 1 originally missed the lens paths (fixed); Task 2 originally surfaced via `setPalSt('warn', …)` which lands in a closed modal palette the user never sees (fixed to use the visible toast surface).
+
+### What changed for references
+
+- `hello.html` and `re-write-able-spec.html` regenerated. Their `INLINE_DOC` content is preserved verbatim; the bootstrap mirrors the new seed. Each retains its distinct DOC_UUID (no clobbering — the v0.7 invariant holds).
+
+### Backward compatibility
+
+- **No edit-protocol changes.** `apply_edits`, `apply_dsl_plan`, `replace_document` envelopes and semantics are unchanged.
+- **No spec changes.** The container spec, edit spec, DSL spec, and lens spec are byte-identical to before this release.
+- **New IDB store `rwa_state` is auto-created** on next open of any pre-mobile-safety container via the existing `openDB()` upgrade path. No migration step required.
+- **Existing containers carry the new runtime** by virtue of regeneration (the references) or by being unmodified (existing user containers re-open with their old runtime; the new safety net activates only after the user regenerates from the seed or imports fresh).
+
+### Known limitations
+
+- **Toast overlap.** `showCommitNudge` and `showQuotaWarning` both render at `.rwa-lens-toast`'s shared coordinates (`bottom:140px; left:50%`). If both fire concurrently they stack at identical Z; the user reads only one. Low-incidence interaction (the user must cross both threshold 5 AND 80% usage in the same step) — deferred polish.
+- **`openPal` is not defensive about missing UI.** In private mode the early-return skips `buildUI`, so `#rwa-pal` does not exist; pressing ⌘K would throw on `null.classList`. The throw goes to console, not the user. Deferred polish.
+- **No automated IIFE-level integration test.** Unit tests cover each helper; the end-to-end "private mode triggers banner AND skips quota+counter init" path is left to the manual browser smoke per `docs/plans/2026-05-16-mobile-safety-net.md#step-43`.
+
 ## 2026-05-16 — bootstrap 0.9: stable block IDs + URL-fragment scroll (web hardening, phase 1)
 
 Re-writeable containers become first-class citizens of the open web. The runtime now backfills a stable `data-rwa-id` on every anchorable block at bootstrap and at every commit, and resolves URL fragments against either a literal `id=` or a runtime-assigned `data-rwa-id`. A link like `https://you.com/notes.html#7k3p2m9q` continues to resolve to the same block after the surrounding text has been rewritten any number of times. Container spec bumped to **v0.9**; rwa-edit/1 stays at v1.4 (no protocol change — `data-rwa-id` is part of the doc text the agent must respect).
