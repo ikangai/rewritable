@@ -218,6 +218,59 @@ const idbDel = (s, k = RWA.KEY) => openDB().then(db => new Promise((res, rej) =>
   r.onsuccess = () => res(); r.onerror = () => rej(r.error);
 }));
 
+// === Public runtime API (spec §7) ===========================================
+// Exposed on window.runtime once the bootstrap IIFE successfully passes
+// private-mode detection and openDB(). Documents read/write their own
+// structured data through runtime.db.*, blobs through runtime.fs.*, drive the
+// modify loop via runtime.modify/commit/undo, and observe state via
+// runtime.status + runtime.on.
+//
+// Reserved-name enforcement: any store name matching ^rwa_ is rejected with
+// RwaReservedError. The runtime owns rwa_doc/rwa_undo/rwa_hist/rwa_fsa/
+// rwa_state and any future rwa_* (spec §5.3).
+
+class RwaReservedError extends Error {
+  constructor(name) { super(`store name '${name}' is reserved (rwa_* is runtime-only)`); this.name = 'RwaReservedError'; }
+}
+
+function assertUserStore(name) {
+  if (typeof name !== 'string' || !name) throw new TypeError('store name must be a non-empty string');
+  if (/^rwa_/.test(name)) throw new RwaReservedError(name);
+}
+
+async function userDbGet(store, key) {
+  assertUserStore(store);
+  return idbGet(store, key);
+}
+async function userDbPut(store, value, key) {
+  assertUserStore(store);
+  return idbPut(store, value, key);
+}
+async function userDbDel(store, key) {
+  assertUserStore(store);
+  return idbDel(store, key);
+}
+async function userDbAll(store) {
+  assertUserStore(store);
+  const db = await openDB();
+  return new Promise((res, rej) => {
+    const tx = db.transaction(store, 'readonly');
+    const os = tx.objectStore(store);
+    const out = [];
+    const req = os.openCursor();
+    req.onsuccess = () => {
+      const cur = req.result;
+      if (!cur) return res(out);
+      out.push({ key: cur.key, value: cur.value });
+      cur.continue();
+    };
+    req.onerror = () => rej(req.error);
+  });
+}
+
+// (db.open, db.subscribe, fs.*, modify/commit/undo wrappers, status, on
+// land in later tasks of this plan.)
+
 async function getDoc() {
   let d = await idbGet(RWA.DOC);
   if (d == null) { d = INLINE_DOC; await idbPut(RWA.DOC, d); }
@@ -2629,6 +2682,22 @@ document.addEventListener('keydown', e => {
       doc = idRes.text;
       await idbPut(RWA.DOC, doc);
     }
+    // Spec §7: expose the public runtime API. Only constructed on the success
+    // path (after private-mode detection + openDB() + block-id seeding) so
+    // documents never see a half-initialized runtime. Private-mode early-return
+    // above leaves window.runtime undefined — that's correct: no IDB, no API.
+    window.runtime = {
+      id: DOC_UUID,
+      db: {
+        get: userDbGet,
+        put: userDbPut,
+        del: userDbDel,
+        all: userDbAll,
+        // open, subscribe — Task 2/3
+      },
+      // fs — Task 5
+      // modify/commit/undo/status/on — Task 4
+    };
     renderDoc(doc);
     scrollToFragment();
     setStatus('ok', '● ready');

@@ -1061,5 +1061,50 @@ console.log('\n== Test M3.4: estimate() unsupported defaults to safe (false) =='
   window.navigator.storage.estimate = orig;
 }
 
+// === Phase: runtime.db basics (spec §7) ===
+console.log('\n== Test R1.1: window.runtime exists with id + db ==');
+{
+  check('window.runtime is an object', typeof window.runtime === 'object' && window.runtime !== null);
+  check('runtime.id is a UUID string',
+    typeof window.runtime.id === 'string' && /^[0-9a-f-]{36}$/.test(window.runtime.id));
+  check('runtime.db has get/put/del/all', ['get','put','del','all'].every(k => typeof window.runtime.db[k] === 'function'));
+}
+
+console.log('\n== Test R1.2: db.put on reserved store rejects ==');
+{
+  let threw = null;
+  try { await window.runtime.db.put('rwa_doc', { foo: 1 }, 'test-key'); }
+  catch (e) { threw = e; }
+  check('writing to reserved rwa_* store rejects',
+    threw !== null && /reserved/i.test(threw.message || ''));
+}
+
+console.log('\n== Test R1.3: db.get on reserved store rejects ==');
+{
+  let threw = null;
+  try { await window.runtime.db.get('rwa_undo', 'no-such-key'); }
+  catch (e) { threw = e; }
+  check('reading from reserved store rejects',
+    threw !== null && /reserved/i.test(threw.message || ''));
+}
+
+console.log('\n== Test R1.4: db.del on reserved store rejects ==');
+{
+  let threw = null;
+  try { await window.runtime.db.del('rwa_state', 'dirty_count'); }
+  catch (e) { threw = e; }
+  check('del on reserved rejects',
+    threw !== null && /reserved/i.test(threw.message || ''));
+}
+
+console.log('\n== Test R1.5: db.all on reserved store rejects ==');
+{
+  let threw = null;
+  try { await window.runtime.db.all('rwa_hist'); }
+  catch (e) { threw = e; }
+  check('all on reserved rejects',
+    threw !== null && /reserved/i.test(threw.message || ''));
+}
+
 console.log(`\n${pass} pass, ${fail} fail`);
 process.exit(fail > 0 ? 1 : 0);
