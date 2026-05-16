@@ -11,6 +11,12 @@ cli/seeds/
 # Environment file holding local secrets (e.g. RWA_OPENROUTER_KEY). Never commit.
 .env
 
+# Published-snapshot storage for the service. The dir itself is tracked
+# (via .gitkeep) so containers always have a writable path, but contents
+# are local/operator state and must never enter version control.
+service/data/*
+!service/data/.gitkeep
+
 # Local ad-hoc container that `tools/regenerate-refs.mjs` optionally writes
 # alongside the tracked seed + references. Per CLAUDE.md it's "optional" —
 # keep it out of version control so a fresh regen can't enter a commit.

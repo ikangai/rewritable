@@ -8,6 +8,12 @@ WORKDIR /app
 COPY service/server.js ./service/
 COPY service/public/ ./service/public/
 COPY seeds/ ./seeds/
+
+# Snapshot publishing writes <short>.html + <short>.json here. Declared as
+# a VOLUME so a host bind-mount or named volume can persist shares across
+# container restarts; without it, every `docker compose up` would wipe them.
+RUN mkdir -p /app/service/data
+VOLUME ["/app/service/data"]
 # Demo tree served from /demo/html-effectiveness/. Scoped to the subdir
 # (not all of demo/) so any local cruft like PDFs sitting in demo/ is
 # never copied into the image.

@@ -11,11 +11,32 @@
     display: flex; align-items: center; justify-content: center;
     background: #0a0a0a; color: #e5e5e5;
   }
-  main { text-align: center; padding: 2rem; }
+  main { text-align: center; padding: 2rem; max-width: 32rem; }
   h1 { font-size: 1.5rem; font-weight: 400; margin: 0 0 .5rem; }
   p  { margin: 0; opacity: .7; font-size: .9rem; }
   p + p { margin-top: 1rem; }
   a  { color: inherit; }
+
+  /* Mirrors the share card on /import. Hidden until publish is triggered. */
+  .share { display: none; margin: 1.5rem 0 0; padding: 1rem;
+           border: 1px solid #222; border-radius: 8px; background: #0f0f0f;
+           text-align: left; font-size: .85rem; }
+  .share.show { display: block; }
+  .share button {
+    background: #b8ff57; color: #0a0a0a; border: 0; border-radius: 4px;
+    padding: .4rem .8rem; font: inherit; cursor: pointer; font-weight: 500;
+  }
+  .share button:disabled { opacity: .5; cursor: progress; }
+  .share .row { display: flex; gap: .5rem; align-items: center; margin-top: .5rem; }
+  .share input { flex: 1; padding: .35rem .5rem; background: #050505;
+                 color: #e5e5e5; border: 1px solid #222; border-radius: 4px;
+                 font: inherit; font-family: ui-monospace, SF Mono, Menlo, monospace;
+                 font-size: .8rem; }
+  .share .hint { opacity: .55; font-size: .75rem; margin-top: .4rem; }
+  .share .err { color: #ff5757; font-size: .8rem; margin-top: .4rem; }
+  .publish-link { display: inline-block; margin-top: 1.25rem; font-size: .9rem;
+                  color: #b8ff57; cursor: pointer; }
+  .publish-link:hover { text-decoration: underline; }
 </style>
 </head>
 <body>
@@ -24,7 +45,96 @@
   <p>if your download did not start, <a id="dl" href="/rewritable.html" download="rewritable.html">click here</a>.</p>
   <p><a href="/import">import an existing markdown file instead</a></p>
   <p><a href="/demo/html-effectiveness/">browse the example gallery</a> — twenty single-file HTML examples, original vs. rewritable side-by-side</p>
+  <p><a id="publish" class="publish-link">publish a hosted snapshot online →</a></p>
+  <div id="share" class="share" aria-live="polite"></div>
 </main>
-<script>document.getElementById('dl').click();</script>
+<script>
+'use strict';
+
+document.getElementById('dl').click();
+
+// Publishing on /new fetches /rewritable.html to grab a fresh container,
+// then POSTs it to /publish. The freshly-fetched container has its own
+// DOC_UUID — by design the published share's UUID won't match the user's
+// just-downloaded copy. They're two distinct containers that happen to
+// share the same INLINE_DOC (the empty seed).
+
+const shareEl = document.getElementById('share');
+const publishLink = document.getElementById('publish');
+
+function renderPending() {
+  shareEl.classList.add('show');
+  shareEl.innerHTML = `
+    <div>Fetching a fresh container and publishing…</div>
+    <div class="row"><button type="button" disabled>Publishing…</button></div>
+  `;
+}
+
+function renderSuccess({ url, expiresAt }) {
+  const expIso = new Date(expiresAt).toISOString().replace('T', ' ').slice(0, 16) + ' UTC';
+  shareEl.classList.add('show');
+  shareEl.innerHTML = `
+    <div>Published. Anyone with this link can open the snapshot:</div>
+    <div class="row">
+      <input id="share-url" readonly value="${url.replace(/"/g, '&quot;')}">
+      <button type="button" id="share-copy">Copy</button>
+    </div>
+    <div class="hint">Expires ${expIso}. The published version has its own DOC_UUID — viewers fork it into their own browser-local IDB when they edit.</div>
+  `;
+  const urlInput = document.getElementById('share-url');
+  const copyBtn = document.getElementById('share-copy');
+  urlInput.addEventListener('focus', () => urlInput.select());
+  copyBtn.addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText(url); }
+    catch { urlInput.select(); document.execCommand('copy'); }
+    const orig = copyBtn.textContent;
+    copyBtn.textContent = 'Copied';
+    setTimeout(() => { copyBtn.textContent = orig; }, 1500);
+  });
+}
+
+function renderError(msg) {
+  shareEl.classList.add('show');
+  shareEl.innerHTML = `
+    <div>Publishing failed:</div>
+    <div class="err">${msg.replace(/[<&]/g, c => c === '<' ? '&lt;' : '&amp;')}</div>
+    <div class="row"><button type="button" id="retry">Try again</button></div>
+  `;
+  document.getElementById('retry').addEventListener('click', publish);
+}
+
+async function publish() {
+  renderPending();
+  let bytes;
+  try {
+    const seedRes = await fetch('/rewritable.html', { cache: 'no-store' });
+    if (!seedRes.ok) return renderError(`seed fetch failed (HTTP ${seedRes.status})`);
+    bytes = await seedRes.text();
+  } catch (err) {
+    return renderError('seed fetch failed: ' + (err && err.message || err));
+  }
+  let res;
+  try {
+    res = await fetch('/publish', {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/html; charset=utf-8' },
+      body: bytes,
+    });
+  } catch (err) {
+    return renderError('network error: ' + (err && err.message || err));
+  }
+  let body;
+  try { body = await res.json(); } catch { body = {}; }
+  if (res.status === 201 && body.url) {
+    renderSuccess({ url: body.url, expiresAt: body.expiresAt });
+  } else if (res.status === 429) {
+    renderError(`rate-limited — try again in ${body.retryAfterSec || '?'}s`);
+  } else {
+    renderError(body.error ? `${body.error}${body.detail ? ': ' + body.detail : ''}` : `HTTP ${res.status}`);
+  }
+}
+
+publishLink.addEventListener('click', e => { e.preventDefault(); publish(); });
+</script>
 </body>
 </html>

@@ -27,6 +27,25 @@
   .status.ok { color: #b8ff57; opacity: 1; }
   .nav { margin-top: 2rem; font-size: .85rem; opacity: .6; }
   .nav a { color: inherit; }
+
+  /* Snapshot-publishing affordance — surfaces after a successful import or
+     on the /new page. Stays out of the flow until populated. */
+  .share { display: none; margin: 1.25rem 0 0; padding: 1rem;
+           border: 1px solid #222; border-radius: 8px; background: #0f0f0f;
+           text-align: left; font-size: .85rem; }
+  .share.show { display: block; }
+  .share button {
+    background: #b8ff57; color: #0a0a0a; border: 0; border-radius: 4px;
+    padding: .4rem .8rem; font: inherit; cursor: pointer; font-weight: 500;
+  }
+  .share button:disabled { opacity: .5; cursor: progress; }
+  .share .row { display: flex; gap: .5rem; align-items: center; margin-top: .5rem; }
+  .share input { flex: 1; padding: .35rem .5rem; background: #050505;
+                 color: #e5e5e5; border: 1px solid #222; border-radius: 4px;
+                 font: inherit; font-family: ui-monospace, SF Mono, Menlo, monospace;
+                 font-size: .8rem; }
+  .share .hint { opacity: .55; font-size: .75rem; margin-top: .4rem; }
+  .share .err { color: #ff5757; font-size: .8rem; margin-top: .4rem; }
 </style>
 </head>
 <body>
@@ -39,6 +58,7 @@
            hidden>
   </div>
   <p id="status" class="status"></p>
+  <div id="share" class="share" aria-live="polite"></div>
   <p class="nav"><a href="/new">start with a blank container instead</a></p>
 </main>
 <!-- marked + papaparse + mammoth + pdf.js versions pinned to match
@@ -332,12 +352,97 @@ function extractParagraphs(items) {
 const dropEl = document.getElementById('drop');
 const pickerEl = document.getElementById('picker');
 const statusEl = document.getElementById('status');
+const shareEl = document.getElementById('share');
 
 function setStatus(msg, kind) {
   statusEl.textContent = msg || '';
   statusEl.className = 'status' + (kind ? ' ' + kind : '');
 }
 function showError(msg) { setStatus(msg, 'error'); dropEl.classList.remove('busy'); }
+
+// Snapshot publishing UI. Shown after a successful conversion: holds the
+// just-built container bytes, POSTs them to /publish on click, surfaces
+// the share URL with a copy button. Re-renders idempotently — calling
+// renderShareIdle() on a fresh import resets any prior state.
+let lastShare = null;  // populated after a successful conversion: { bytes, name }
+
+function renderShareIdle() {
+  if (!lastShare) { shareEl.classList.remove('show'); shareEl.innerHTML = ''; return; }
+  shareEl.classList.add('show');
+  shareEl.innerHTML = `
+    <div>Publish a hosted snapshot — viewers get their own forkable copy. Expires in 24h.</div>
+    <div class="row"><button type="button" id="share-publish">Publish &amp; share</button></div>
+  `;
+  document.getElementById('share-publish').addEventListener('click', publishShare);
+}
+
+function renderSharePending() {
+  shareEl.classList.add('show');
+  shareEl.innerHTML = `
+    <div>Publishing…</div>
+    <div class="row"><button type="button" disabled>Publishing…</button></div>
+  `;
+}
+
+function renderShareSuccess({ url, expiresAt }) {
+  const expIso = new Date(expiresAt).toISOString().replace('T', ' ').slice(0, 16) + ' UTC';
+  shareEl.classList.add('show');
+  shareEl.innerHTML = `
+    <div>Published. Anyone with this link can open the snapshot:</div>
+    <div class="row">
+      <input id="share-url" readonly value="${url.replace(/"/g, '&quot;')}">
+      <button type="button" id="share-copy">Copy</button>
+    </div>
+    <div class="hint">Expires ${expIso}. The viewer's edits land in their browser only — they don't propagate back.</div>
+  `;
+  const urlInput = document.getElementById('share-url');
+  const copyBtn = document.getElementById('share-copy');
+  urlInput.addEventListener('focus', () => urlInput.select());
+  copyBtn.addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText(url); }
+    catch { urlInput.select(); document.execCommand('copy'); }
+    const orig = copyBtn.textContent;
+    copyBtn.textContent = 'Copied';
+    setTimeout(() => { copyBtn.textContent = orig; }, 1500);
+  });
+}
+
+function renderShareError(msg) {
+  shareEl.classList.add('show');
+  shareEl.innerHTML = `
+    <div>Publishing failed:</div>
+    <div class="err">${msg.replace(/[<&]/g, c => c === '<' ? '&lt;' : '&amp;')}</div>
+    <div class="row"><button type="button" id="share-retry">Try again</button></div>
+  `;
+  document.getElementById('share-retry').addEventListener('click', publishShare);
+}
+
+async function publishShare() {
+  if (!lastShare) return;
+  renderSharePending();
+  let res;
+  try {
+    res = await fetch('/publish', {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/html; charset=utf-8' },
+      body: lastShare.bytes,
+    });
+  } catch (err) {
+    return renderShareError('network error: ' + (err && err.message || err));
+  }
+  let body;
+  try { body = await res.json(); }
+  catch { body = {}; }
+  if (res.status === 201 && body.url) {
+    renderShareSuccess({ url: body.url, expiresAt: body.expiresAt });
+  } else if (res.status === 429) {
+    renderShareError(`rate-limited — try again in ${body.retryAfterSec || '?'}s`);
+  } else if (res.status === 413) {
+    renderShareError(`container too large (${body.maxBytes ? Math.round(body.maxBytes / 1024 / 1024) + ' MB' : '?'} cap)`);
+  } else {
+    renderShareError(body.error ? `${body.error}${body.detail ? ': ' + body.detail : ''}` : `HTTP ${res.status}`);
+  }
+}
 
 function triggerDownload(blob, filename) {
   const url = URL.createObjectURL(blob);
@@ -356,6 +461,10 @@ const BINARY = new Set(['docx', 'pdf']);
 
 async function handleFile(file) {
   if (!file) return;
+  // Reset any stale share state from a prior import — a new file means a
+  // new container; the old publish button shouldn't keep dangling.
+  lastShare = null;
+  renderShareIdle();
   const ext = (file.name.split('.').pop() || '').toLowerCase();
   if (!TEXTUAL.has(ext) && !BINARY.has(ext)) {
     return showError(`unsupported format: .${ext || '(none)'} (only .md / .markdown / .csv / .docx / .pdf)`);
@@ -406,6 +515,8 @@ async function handleFile(file) {
     triggerDownload(new Blob([result], { type: 'text/html' }), outName);
     const suffix = warnings.length ? ` (${warnings.length} note${warnings.length === 1 ? '' : 's'} — see console)` : '';
     setStatus(`downloaded ${outName}${suffix}`, 'ok');
+    lastShare = { bytes: result, name: outName };
+    renderShareIdle();
   } catch (err) {
     showError(err && err.message ? err.message : String(err));
   } finally {

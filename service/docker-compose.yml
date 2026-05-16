@@ -8,3 +8,6 @@ services:
     restart: unless-stopped
     ports:
       - "${HOST_PORT:-8080}:80"
+    # Bind-mount so locally-published shares survive container rebuilds.
+    volumes:
+      - ./data:/app/service/data

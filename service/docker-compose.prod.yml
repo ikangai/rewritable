@@ -16,7 +16,14 @@ services:
       - "traefik.http.services.rewritable.loadbalancer.server.port=80"
     networks:
       - router_web
+    # Snapshot publishing storage. Named volume so shares survive image
+    # rebuilds; 24h expiry sweep keeps it from growing unbounded.
+    volumes:
+      - rwa_shares:/app/service/data
 
 networks:
   router_web:
     external: true
+
+volumes:
+  rwa_shares:
