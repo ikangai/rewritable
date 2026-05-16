@@ -896,5 +896,52 @@ console.log('\n== Test L10.1: paste-detection hint shown for slash-leading code 
   check('hint mentions \\\\/ escape', /\\\\\//.test(hint?.textContent || ''));
 }
 
+// === Phase: commit-count nudge (spec §5.6) ===
+console.log('\n== Test M1.1: dirtyCount increments on each successful modify ==');
+{
+  // Reset to a known state.
+  await window.rwaResetDirtyCount?.();
+  check('rwaGetDirtyCount exists', typeof window.rwaGetDirtyCount === 'function');
+  check('starts at 0', (await window.rwaGetDirtyCount()) === 0);
+
+  // Simulate three successful modifies by calling the internal hook.
+  await window.rwaBumpDirtyCount(); // 1
+  await window.rwaBumpDirtyCount(); // 2
+  await window.rwaBumpDirtyCount(); // 3
+  check('count is 3 after three bumps', (await window.rwaGetDirtyCount()) === 3);
+}
+
+console.log('\n== Test M1.2: nudge toast appears at threshold (5) ==');
+{
+  await window.rwaResetDirtyCount();
+  for (let i = 0; i < 4; i++) await window.rwaBumpDirtyCount();
+  check('no toast at count=4',
+    !window.document.querySelector('.rwa-lens-toast[data-kind="commit-nudge"]'));
+  await window.rwaBumpDirtyCount(); // crosses 5
+  const toast = window.document.querySelector('.rwa-lens-toast[data-kind="commit-nudge"]');
+  check('toast appears at count=5', !!toast);
+  check('toast mentions 5 uncommitted changes',
+    /5 uncommitted/i.test(toast?.textContent || ''));
+  check('toast mentions ⌘S', /⌘S|cmd.?s/i.test(toast?.textContent || ''));
+}
+
+console.log('\n== Test M1.3: commit resets the counter and clears toast ==');
+{
+  // Counter still at >=5 from previous test.
+  await window.rwaResetOnCommit();
+  check('count is 0 after reset', (await window.rwaGetDirtyCount()) === 0);
+  check('toast removed',
+    !window.document.querySelector('.rwa-lens-toast[data-kind="commit-nudge"]'));
+}
+
+console.log('\n== Test M1.4: counter survives reload (persisted to IDB) ==');
+{
+  await window.rwaResetDirtyCount();
+  await window.rwaBumpDirtyCount();
+  await window.rwaBumpDirtyCount();
+  const stored = await window.rwaGetDirtyCount();
+  check('count persists at 2', stored === 2);
+}
+
 console.log(`\n${pass} pass, ${fail} fail`);
 process.exit(fail > 0 ? 1 : 0);
