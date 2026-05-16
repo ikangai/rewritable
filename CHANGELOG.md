@@ -2,6 +2,49 @@
 
 Notable changes to `re-write-able`. The container format is versioned in `re-write-able-spec.md`; the edit protocol in `rwa-edit-spec.md`; the structural-transform DSL in `rwa-edit-dsl-spec.md`. The CLI follows semver in `cli/package.json`.
 
+## 2026-05-16 — snapshot publishing: `rewritable.ikangai.com/s/<short>`
+
+The service now hosts anonymous 24h snapshots of any rewritable. Click **Publish & share** on `/new` or `/import`, get back a public URL, hand it to anyone. The published bytes are immutable; each viewer's edits land in their own browser-local IDB, never propagate back to the publisher. No accounts, no paywall, no signup.
+
+Plan: [`docs/plans/2026-05-16-snapshot-publishing.md`](docs/plans/2026-05-16-snapshot-publishing.md).
+
+### What changed for users
+
+- **`/new` page** now exposes a "publish a hosted snapshot online →" link below the auto-download. Click it and the service fetches a fresh container, publishes it, and surfaces the share URL with a copy button + UTC expiry timestamp.
+- **`/import` page** surfaces a "Publish & share" card after a successful conversion. The just-built container bytes are POSTed directly to `/publish` — no re-fetch needed.
+- **Share URLs** look like `https://rewritable.ikangai.com/s/<short>` (8 chars, `[0-9a-z]`). Anyone with the link can open the snapshot; they get a fresh per-share `DOC_UUID` so their browser-local IDB is namespaced separately from the publisher's local copy.
+- **24h expiry.** After 24 hours `GET /s/<short>` returns `410 Gone`. An hourly server-side sweep deletes the underlying files. For longer-lived or collaborative hosting, host the `.html` yourself — any static host works; the file is the app.
+
+### What changed for the service
+
+- **`POST /publish`** endpoint. Accepts a rewritable container body (max 25 MB), validates it (must contain exactly one `DOC_UUID` line plus the `rwa-bootstrap` script tag and the `INLINE_DOC` marker), substitutes a fresh `DOC_UUID`, and atomic-writes `<short>.html` + `<short>.json` to `service/data/`. Returns `201 {short, url, expiresAt}`. Validation failure → `400` with structured `{error, detail}`. Body overflow → `413`.
+- **`GET /s/<short>`** endpoint. Validates short against `[0-9a-z]{8}`, reads the metadata sidecar, serves the bytes with `Cache-Control: public, max-age=300`. `404` missing, `410` expired.
+- **Rate limit.** 10 publishes/hour per IP, sliding window in-memory. Behind Traefik the client IP is read from the leftmost `X-Forwarded-For` hop; direct-to-port requests use the socket peer.
+- **Expiry sweep.** Runs on startup + hourly. Deletes shares older than 24h, orphan `.html` (no metadata sidecar), and corrupt/unreadable metadata. Sweep failures are logged and don't crash the server.
+- **Storage layout.** `service/data/<short>.html` + `service/data/<short>.json`. Named volume `rwa_shares` in prod (`docker-compose.prod.yml`); bind-mounted `./data` in dev. A `.gitkeep` keeps the directory in version control without leaking share contents.
+- **Zero new dependencies.** The service stays Node `http` only.
+
+### What changed for the specs
+
+- No spec changes. Snapshot publishing is a service capability that operates on the byte format the container spec already defines. The fresh `DOC_UUID` per share is consistent with the v0.7 isolation invariant (each container has its own UUID).
+
+### What changed for CLAUDE.md
+
+- `/s/` URL prefix is now a reserved namespace.
+- `service/data/` is documented as operator-readable but never in version control (matches `.gitignore`).
+
+### Backward compatibility
+
+- No container-format or edit-protocol changes. Existing rewritables can be published unchanged.
+- The published bytes differ from what the user uploaded by exactly one substitution — the `DOC_UUID` line. By design: each share is its own container.
+
+### Known limitations
+
+- **Same-origin OPFS isolation gap.** All `/s/<short>` shares co-share `rewritable.ikangai.com` as their origin. Structured IDB stores are namespaced by per-share `DOC_UUID` (`rwa_<DOC_UUID>`), and `runtime.fs.*` namespaces OPFS the same way (`_<DOC_UUID>/`). But non-namespaced OPFS access (direct `navigator.storage.getDirectory()`) is still shared null-origin and would leak across shares. Subdomain isolation (`<short>.s.rewritable.ikangai.com`) is the eventual fix and would require Traefik wildcard routing + cert.
+- **No content moderation.** Anonymous publishing; 24h expiry is the only automated mitigation. The operator can manually delete a `<short>.{html,json}` pair to take down a share early.
+- **No CSRF protection on `/publish`.** Cross-origin POSTs are accepted. The published bytes are public anyway and the per-IP rate limit caps abuse — CSRF doesn't yield privileged action.
+- **No in-container Share button.** A downloaded rewritable can't currently publish itself from its own ⌘S workflow. Use `/import` or `/new` on the service for publishing.
+
 ## 2026-05-16 — public runtime API (spec v0.10): `window.runtime` is now a contract
 
 Container spec bumped to **v0.10**. The §7 surface — previously a sketch — is now wired through the seed and exercised end-to-end by the test harness. Documents inside a re-writeable can finally read and write their own structured data, persist blobs to an isolated OPFS namespace, drive the modify loop programmatically, and observe state changes. The result: trackers, dashboards, multi-store apps become first-class — the seed is no longer the only fully-supported document shape. As a side payload, the OPFS isolation gap from §5.7 is closed; each container's blobs now live under `_<DOC_UUID>/`, mirroring the v0.7 IDB invariant.

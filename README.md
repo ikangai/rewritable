@@ -68,6 +68,10 @@ open    https://rewritable.ikangai.com/demo/html-effectiveness/ # gallery: 20 ex
 
 Or hand-craft: copy `seeds/rewritable.html`, replace the nil `DOC_UUID` with a fresh `crypto.randomUUID()`, save.
 
+## Sharing a snapshot
+
+From `rewritable.ikangai.com/new` or `/import`, click **Publish & share** to put an immutable snapshot at `rewritable.ikangai.com/s/<short>`. Anonymous, 24h expiry, no signup. The published version carries its own `DOC_UUID`, so each viewer's edits land in their own browser-local IDB — they fork the doc locally rather than co-edit. For permanent or collaborative hosting, host the `.html` yourself: any static host works, because the file is the app.
+
 ## The specs
 
 - [`re-write-able-spec.md`](re-write-able-spec.md) — the container spec: architecture, storage model, agent contract, embedding, security, platform behavior. Currently v0.9.
