@@ -44,6 +44,15 @@ body{font-family:var(--font-ui);background:var(--bg);color:var(--text);min-heigh
 .rwa-set-row input,.rwa-set-row select{background:var(--white);border:1px solid var(--gray-200);color:var(--gray-900);font-family:var(--font-ui);font-size:13px;padding:8px 10px;outline:none;border-radius:8px;transition:border-color .15s;}
 .rwa-set-row input:focus,.rwa-set-row select:focus{border-color:var(--gray-400);}
 .rwa-set-row select{appearance:none;-webkit-appearance:none;cursor:pointer;}
+.rwa-set-base-url-line{display:flex;gap:6px;}
+.rwa-set-base-url-line input{flex:1;}
+.rwa-set-base-url-line button{background:var(--gray-100);border:1px solid var(--gray-200);border-radius:8px;padding:6px 12px;cursor:pointer;font-family:var(--font-mono);font-size:11px;color:var(--gray-700);}
+.rwa-set-base-url-line button:hover{background:var(--gray-200);}
+.rwa-set-hint{font-family:var(--font-mono);font-size:10px;line-height:1.5;color:var(--gray-500);}
+.rwa-set-hint:empty{display:none;}
+.rwa-set-hint code{background:var(--gray-100);padding:1px 4px;border-radius:3px;font-size:10px;}
+.rwa-set-hint.ok{color:#15803d;}
+.rwa-set-hint.err{color:#b91c1c;}
 #rwa-pal{position:fixed;inset:0;display:none;align-items:flex-start;justify-content:center;padding-top:13vh;background:rgba(0,0,0,.3);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);z-index:99999;}
 #rwa-pal.open{display:flex;}
 #rwa-pal-box{width:min(540px,92vw);background:var(--white);border:1px solid var(--gray-200);border-radius:var(--radius-sm);overflow:hidden;box-shadow:0 16px 48px rgba(0,0,0,0.12),0 4px 12px rgba(0,0,0,0.06);}
@@ -603,8 +612,21 @@ const RWA = {
   DOC:'rwa_doc', UNDO:'rwa_undo', HIST:'rwa_hist', FSA:'rwa_fsa', STATE:'rwa_state',
   UNDO_CAP:10, HIST_CAP:1000, NUDGE_THRESHOLD:5,
   K_API:'rwa_apikey', K_MODEL:'rwa_model', K_BACKEND:'rwa_backend',
+  // Per-backend base-URL overrides for local OpenAI-compatible servers.
+  // Empty/unset falls back to DEFAULT_*_URL below.
+  K_BASE_URL_OLLAMA:'rwa_base_url_ollama', K_BASE_URL_LMSTUDIO:'rwa_base_url_lmstudio',
   MODEL:'google/gemini-3-flash-preview',
   FILE:'re-write-able-spec.html',
+  // OpenAI-compat localhost defaults — both Ollama and LM Studio ship the
+  // `/v1/chat/completions` shape and reuse the same multi-turn tool-use loop
+  // as OpenRouter. The only differences are the base URL and the absence of
+  // an Authorization header. CORS must be enabled on the local server:
+  //   Ollama:   `OLLAMA_ORIGINS=*` (or specific origin) before `ollama serve`
+  //   LMStudio: Developer panel → "Enable CORS" toggle
+  // Browsers treat http://localhost as a Secure Context so mixed-content does
+  // not block these requests even when the container is served over HTTPS.
+  DEFAULT_OLLAMA_URL:'http://localhost:11434/v1',
+  DEFAULT_LMSTUDIO_URL:'http://localhost:1234/v1',
   // Optional alternative agent backend: a localhost CLI bridge
   // (https://github.com/martintreiber/web_cli_bridge style) that runs
   // arbitrary shell commands. When the user picks "bridge" in settings, ⌘K
@@ -1221,9 +1243,11 @@ function buildUI() {
   <button class="rwa-st-btn pri" id="rwa-st-commit">⌘S</button>
 </div>
 <div id="rwa-set-panel">
-  <div class="rwa-set-row"><label>Backend</label><select id="rwa-backend"><option value="openrouter">OpenRouter (API key)</option><option value="bridge">Bridge (claude -p, localhost)</option></select></div>
+  <div class="rwa-set-row"><label>Backend</label><select id="rwa-backend"><option value="openrouter">OpenRouter (API key)</option><option value="ollama">Ollama (localhost)</option><option value="lmstudio">LM Studio (localhost)</option><option value="bridge">Bridge (claude -p, localhost)</option></select></div>
   <div class="rwa-set-row" id="rwa-set-row-key"><label>OpenRouter Key</label><input type="password" id="rwa-key" placeholder="sk-or-..." autocomplete="off"></div>
-  <div class="rwa-set-row" id="rwa-set-row-model"><label>Model</label><input type="text" id="rwa-model" autocomplete="off"></div>
+  <div class="rwa-set-row" id="rwa-set-row-base-url" style="display:none;"><label>Base URL</label><div class="rwa-set-base-url-line"><input type="text" id="rwa-base-url" autocomplete="off" spellcheck="false"><button type="button" id="rwa-base-url-test">Test</button></div><div id="rwa-base-url-result" class="rwa-set-hint"></div></div>
+  <div class="rwa-set-row" id="rwa-set-row-model"><label>Model</label><input type="text" id="rwa-model" autocomplete="off" list="rwa-model-options"><datalist id="rwa-model-options"></datalist></div>
+  <div class="rwa-set-row" id="rwa-set-row-hint" style="display:none;"><div id="rwa-backend-hint" class="rwa-set-hint"></div></div>
 </div>
 <div id="rwa-pal">
   <div id="rwa-pal-box">
@@ -1254,16 +1278,101 @@ function buildUI() {
   m.oninput = e => sessionStorage.setItem(RWA.K_MODEL, e.target.value.trim() || RWA.MODEL);
 
   const backendEl = document.getElementById('rwa-backend');
+  const baseUrlEl = document.getElementById('rwa-base-url');
+  const baseUrlTestBtn = document.getElementById('rwa-base-url-test');
+  const baseUrlResultEl = document.getElementById('rwa-base-url-result');
+  const hintEl = document.getElementById('rwa-backend-hint');
+  const modelOptsEl = document.getElementById('rwa-model-options');
+
+  const BACKEND_META = {
+    openrouter: {
+      showKey: true, showBaseUrl: false, showModel: true, showHint: false,
+      hintHTML: '',
+    },
+    ollama: {
+      showKey: false, showBaseUrl: true, showModel: true, showHint: true,
+      hintHTML: 'Local Ollama needs CORS allowed. Before <code>ollama serve</code>, set <code>OLLAMA_ORIGINS=*</code> (or just your site origin). On macOS, persist with <code>launchctl setenv OLLAMA_ORIGINS "*"</code> and restart the Ollama app.',
+      defaultUrl: RWA.DEFAULT_OLLAMA_URL,
+      storageKey: RWA.K_BASE_URL_OLLAMA,
+    },
+    lmstudio: {
+      showKey: false, showBaseUrl: true, showModel: true, showHint: true,
+      hintHTML: 'In LM Studio, open the <strong>Developer</strong> tab → enable <code>CORS</code> → click <code>Start Server</code>. Without this, the browser blocks requests from this page.',
+      defaultUrl: RWA.DEFAULT_LMSTUDIO_URL,
+      storageKey: RWA.K_BASE_URL_LMSTUDIO,
+    },
+    bridge: {
+      showKey: false, showBaseUrl: false, showModel: false, showHint: false,
+      hintHTML: '',
+    },
+  };
+
   const syncBackendRows = () => {
-    const isOR = backendEl.value === 'openrouter';
-    document.getElementById('rwa-set-row-key').style.display = isOR ? '' : 'none';
-    document.getElementById('rwa-set-row-model').style.display = isOR ? '' : 'none';
+    const meta = BACKEND_META[backendEl.value] || BACKEND_META.openrouter;
+    document.getElementById('rwa-set-row-key').style.display    = meta.showKey     ? '' : 'none';
+    document.getElementById('rwa-set-row-base-url').style.display = meta.showBaseUrl ? '' : 'none';
+    document.getElementById('rwa-set-row-model').style.display  = meta.showModel   ? '' : 'none';
+    document.getElementById('rwa-set-row-hint').style.display   = meta.showHint    ? '' : 'none';
+    if (meta.showBaseUrl) {
+      baseUrlEl.placeholder = meta.defaultUrl;
+      baseUrlEl.value = sessionStorage.getItem(meta.storageKey) || '';
+      baseUrlResultEl.textContent = '';
+      baseUrlResultEl.className = 'rwa-set-hint';
+    }
+    if (meta.showHint) hintEl.innerHTML = meta.hintHTML;
   };
   backendEl.value = sessionStorage.getItem(RWA.K_BACKEND) || 'openrouter';
   syncBackendRows();
   backendEl.onchange = e => {
     sessionStorage.setItem(RWA.K_BACKEND, e.target.value);
     syncBackendRows();
+  };
+
+  // Persist base-URL edits to the per-backend storage key. Empty string clears
+  // the override so resolveBackendConfig() falls back to DEFAULT_*_URL.
+  baseUrlEl.oninput = e => {
+    const meta = BACKEND_META[backendEl.value];
+    if (!meta?.storageKey) return;
+    const v = e.target.value.trim();
+    if (v) sessionStorage.setItem(meta.storageKey, v);
+    else sessionStorage.removeItem(meta.storageKey);
+  };
+
+  // Test button: probe /v1/models. On success, populate the model datalist so
+  // the model input gets autocomplete from the live server. On failure, show a
+  // short diagnostic — the most common cause is CORS, which the inline hint
+  // already explains how to fix.
+  baseUrlTestBtn.onclick = async () => {
+    baseUrlResultEl.textContent = 'testing…';
+    baseUrlResultEl.className = 'rwa-set-hint';
+    try {
+      const cfg = resolveBackendConfig();
+      if (cfg.kind !== 'openai_compat') throw new Error('not an OpenAI-compatible backend');
+      const models = await listOpenAiCompatModels(cfg);
+      baseUrlResultEl.textContent = '✓ ' + models.length + ' model' + (models.length === 1 ? '' : 's') + ' available';
+      baseUrlResultEl.className = 'rwa-set-hint ok';
+      modelOptsEl.innerHTML = '';
+      for (const id of models) {
+        const opt = document.createElement('option');
+        opt.value = id;
+        modelOptsEl.appendChild(opt);
+      }
+      // If no model is set yet (or the current one isn't in the list), suggest the first.
+      const currentModel = (sessionStorage.getItem(RWA.K_MODEL) || '').trim();
+      const isLocal = backendEl.value === 'ollama' || backendEl.value === 'lmstudio';
+      const stuckOnDefault = isLocal && (currentModel === '' || currentModel === RWA.MODEL);
+      if (stuckOnDefault && models.length > 0) {
+        m.value = models[0];
+        sessionStorage.setItem(RWA.K_MODEL, models[0]);
+      }
+    } catch (err) {
+      const msg = (err && err.message) || String(err);
+      // Browsers surface CORS as a generic "Failed to fetch" with no detail; that's
+      // by far the most common cause from a webpage talking to a local server.
+      const isLikelyCors = /failed to fetch|network|load failed/i.test(msg);
+      baseUrlResultEl.textContent = isLikelyCors ? '✗ blocked (likely CORS — see hint below)' : ('✗ ' + msg.slice(0, 120));
+      baseUrlResultEl.className = 'rwa-set-hint err';
+    }
   };
 
   document.getElementById('rwa-st-cog').onclick = () => document.getElementById('rwa-set-panel').classList.toggle('open');
@@ -2329,36 +2438,84 @@ async function submitLens(text) {
 }
 window.submitLens = submitLens;
 
+// Resolve the user-selected backend into a transport config.
+// kind:'openai_compat' covers openrouter/ollama/lmstudio — same wire protocol,
+// different baseUrl/auth. kind:'bridge' is a separate transport entirely (a
+// localhost shell shim) and is handled by callBridgeSingleShot / modifyViaBridge.
+function resolveBackendConfig() {
+  const backend = sessionStorage.getItem(RWA.K_BACKEND) || 'openrouter';
+  if (backend === 'ollama') {
+    return {
+      backend, kind:'openai_compat',
+      baseUrl: (sessionStorage.getItem(RWA.K_BASE_URL_OLLAMA) || '').trim() || RWA.DEFAULT_OLLAMA_URL,
+      apiKey: null, extraHeaders: {}, requiresKey: false,
+    };
+  }
+  if (backend === 'lmstudio') {
+    return {
+      backend, kind:'openai_compat',
+      baseUrl: (sessionStorage.getItem(RWA.K_BASE_URL_LMSTUDIO) || '').trim() || RWA.DEFAULT_LMSTUDIO_URL,
+      apiKey: null, extraHeaders: {}, requiresKey: false,
+    };
+  }
+  if (backend === 'bridge') {
+    return { backend, kind:'bridge' };
+  }
+  // openrouter (and unknown values default here)
+  return {
+    backend:'openrouter', kind:'openai_compat',
+    baseUrl: 'https://openrouter.ai/api/v1',
+    apiKey: sessionStorage.getItem(RWA.K_API),
+    extraHeaders: {
+      'HTTP-Referer': 'https://github.com/ikangai/rewritable',
+      'X-Title': 're-write-able',
+    },
+    requiresKey: true,
+  };
+}
+
+// Unified OpenAI-compatible POST /chat/completions. Caller supplies the body
+// (model, messages, optional tools/tool_choice). Returns the parsed JSON body.
+async function openAiCompatChat(cfg, body) {
+  const headers = { 'Content-Type': 'application/json', ...(cfg.extraHeaders || {}) };
+  if (cfg.apiKey) headers['Authorization'] = 'Bearer ' + cfg.apiKey;
+  const url = cfg.baseUrl.replace(/\/+$/, '') + '/chat/completions';
+  const r = await fetch(url, { method:'POST', headers, body: JSON.stringify(body) });
+  if (!r.ok) {
+    const e = await r.json().catch(() => ({}));
+    throw new Error((e.error && e.error.message) || r.statusText || ('http ' + r.status));
+  }
+  return r.json();
+}
+
+// GET <baseUrl>/models — used by the settings panel to populate the model
+// suggestions for Ollama/LMStudio. Returns an array of model id strings.
+async function listOpenAiCompatModels(cfg) {
+  const headers = { ...(cfg.extraHeaders || {}) };
+  if (cfg.apiKey) headers['Authorization'] = 'Bearer ' + cfg.apiKey;
+  const url = cfg.baseUrl.replace(/\/+$/, '') + '/models';
+  const r = await fetch(url, { method:'GET', headers });
+  if (!r.ok) throw new Error('http ' + r.status);
+  const data = await r.json();
+  const items = Array.isArray(data?.data) ? data.data : (Array.isArray(data?.models) ? data.models : []);
+  return items.map(m => (typeof m === 'string' ? m : (m.id || m.name || ''))).filter(Boolean);
+}
+
 // rwa-lens/1: single-shot completion helper for anchored slash commands.
 // Unlike modify(), no tool_use loop: the runtime constructs the envelope from
 // the model's plain-text response (one block of HTML), so we don't need tools
 // at all — just a plain chat completion. tool_choice: 'none' is implicit by
 // omitting tools.
 async function callAgentSingleShot(prompt) {
-  const backend = sessionStorage.getItem(RWA.K_BACKEND) || 'openrouter';
-  if (backend === 'bridge') return callBridgeSingleShot(prompt);
-  const key = sessionStorage.getItem(RWA.K_API);
+  const cfg = resolveBackendConfig();
+  if (cfg.kind === 'bridge') return callBridgeSingleShot(prompt);
+  if (cfg.requiresKey && !cfg.apiKey) throw new Error('no API key');
   const model = sessionStorage.getItem(RWA.K_MODEL) || RWA.MODEL;
-  if (!key) throw new Error('no API key');
-  const r = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': 'Bearer ' + key,
-      'HTTP-Referer': 'https://github.com/ikangai/rewritable',
-      'X-Title': 're-write-able',
-    },
-    body: JSON.stringify({
-      model,
-      max_tokens: 32000,
-      messages: [{ role: 'user', content: prompt }],
-    }),
+  const data = await openAiCompatChat(cfg, {
+    model,
+    max_tokens: 32000,
+    messages: [{ role:'user', content: prompt }],
   });
-  if (!r.ok) {
-    const e = await r.json().catch(() => ({}));
-    throw new Error((e.error && e.error.message) || r.statusText);
-  }
-  const data = await r.json();
   const msg = data.choices?.[0]?.message;
   return (msg?.content || '').trim();
 }
@@ -3180,12 +3337,11 @@ function failureToToolResult(err) {
 }
 
 async function modify(instr, lensMeta = null) {
-  const backend = sessionStorage.getItem(RWA.K_BACKEND) || 'openrouter';
-  if (backend === 'bridge') return modifyViaBridge(instr, lensMeta);
+  const cfg = resolveBackendConfig();
+  if (cfg.kind === 'bridge') return modifyViaBridge(instr, lensMeta);
 
-  const key = sessionStorage.getItem(RWA.K_API);
   const model = sessionStorage.getItem(RWA.K_MODEL) || RWA.MODEL;
-  if (!key) {
+  if (cfg.requiresKey && !cfg.apiKey) {
     setPalSt('err', 'no API key — open ⚙ settings');
     document.getElementById('rwa-set-panel').classList.add('open');
     document.getElementById('rwa-key').focus();
@@ -3217,29 +3373,13 @@ async function modify(instr, lensMeta = null) {
     while (attemptsLeft > 0 && newDoc === null) {
       attemptsLeft--;
 
-      const r = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer ' + key,
-          'HTTP-Referer': 'https://github.com/ikangai/rewritable',
-          'X-Title': 're-write-able'
-        },
-        body: JSON.stringify({
-          model,
-          max_tokens: 32000,
-          messages,
-          tools: TOOL_SCHEMAS,
-          tool_choice: 'auto',
-        }),
+      const data = await openAiCompatChat(cfg, {
+        model,
+        max_tokens: 32000,
+        messages,
+        tools: TOOL_SCHEMAS,
+        tool_choice: 'auto',
       });
-
-      if (!r.ok) {
-        const e = await r.json().catch(() => ({}));
-        throw new Error((e.error && e.error.message) || r.statusText);
-      }
-
-      const data = await r.json();
       const msg = data.choices?.[0]?.message;
       if (!msg) throw new Error('empty response');
 

@@ -65,7 +65,7 @@ Every container's private IndexedDB lives under `rwa_<DOC_UUID>` — *not* the s
 | **Per-container IDB** (`rwa_<DOC_UUID>`) | private | `rwa_doc`, `rwa_undo`, `rwa_hist`, `rwa_fsa`, plus document-defined stores |
 | **Shared IDB** (`rwa_shared`) | opt-in | `runtime.shared.*` — composition surface for cross-container reads/writes (spec §5.7, §11.5) |
 | **OPFS** (`_rwa/`) | shared null origin (not yet UUID-namespaced — known gap) | binary blobs |
-| **sessionStorage** | per tab | OpenRouter API key only — never persisted |
+| **sessionStorage** | per tab | API key + backend choice + per-backend base-URL overrides + model name — never persisted |
 | **Filesystem** | the container itself | bootstrap with current `INLINE_DOC` |
 
 **Reserved namespaces** — runtime owns these; documents must not write them directly:
@@ -91,7 +91,22 @@ The runtime drives a **multi-turn tool-use conversation**: on tool-call failure 
 
 The agent receives only the document (LF-canonical text that lives inside `#rwa-doc-mount`) and the list of frozen-zone names; the bootstrap, runtime, and inline snapshot are not in the prompt. The agent must not produce reserved marker substrings (`rwa:frozen:begin`, `rwa:frozen:end`, the rwa: comment prefixes, `data-rwa-frozen`) in `find` or `replace`. **Frozen zones are author-declared invariants**: changing them requires external editing of the container file.
 
-Default model: `google/gemini-3-flash-preview` via OpenRouter. The user can override per session via the settings panel (key + model live in `sessionStorage` only). Tool-use quality varies by model — for difficult edits, switching to a strong tool-using model (Claude Sonnet, GPT-4) at runtime usually helps.
+### Agent backends
+
+The runtime supports four backends, picked in the settings panel. All four route through the same `modify()` lifecycle — the differences are only in how the chat completion is delivered:
+
+| Backend | Transport | Multi-turn tool-use? | Setup |
+|---|---|---|---|
+| `openrouter` (default) | `https://openrouter.ai/api/v1/chat/completions` with `Bearer <key>` | yes | API key in settings |
+| `ollama` | `http://localhost:11434/v1/chat/completions` (override-able) | yes | start `ollama serve` with `OLLAMA_ORIGINS=*` |
+| `lmstudio` | `http://localhost:1234/v1/chat/completions` (override-able) | yes | enable CORS in LM Studio's Developer tab |
+| `bridge` | `POST http://127.0.0.1:8765/run` shelling out to `claude -p` | no (single-shot envelope) | run web_cli_bridge locally |
+
+`openrouter`, `ollama`, and `lmstudio` are the **same OpenAI-compatible transport** routed through `resolveBackendConfig()` → `openAiCompatChat()`. They all participate in the multi-turn tool-use loop (3 retries on `apply_dsl_plan` / `apply_edits` / `replace_document` failure). The base URL for `ollama` and `lmstudio` is overridable in settings (per-backend sessionStorage keys `rwa_base_url_ollama` / `rwa_base_url_lmstudio`); the override lets advanced users point at any OpenAI-compatible server (vLLM, Jan, llama.cpp's server, etc.) but the named backends carry the matching CORS-setup hint inline in the settings panel. The settings panel has a "Test" button that probes `GET <baseUrl>/models` — on success it populates a `<datalist>` so the model input gets autocomplete from the live server; the most common first-run failure is CORS, and the button labels it as such.
+
+`bridge` is a separate transport (the `web_cli_bridge` localhost shim) and runs single-shot: `claude -p` has no mid-stream tool_calls, so the runtime instructs the model to emit one of the rwa-edit/1 envelopes as plain text and dispatches it through the same apply* machinery.
+
+Default model: `google/gemini-3-flash-preview` (OpenRouter). For local backends, the model is picked from the running server's installed list. Tool-use quality varies by model — for difficult edits, switch to a strong tool-using model (Claude Sonnet, GPT-4, or a tool-capable local model like Llama 3.1, Qwen 2.5 Coder, or Mistral Nemo).
 
 ### Commit (`⌘S`)
 

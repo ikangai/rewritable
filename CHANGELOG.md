@@ -2,6 +2,41 @@
 
 Notable changes to `re-write-able`. The container format is versioned in `re-write-able-spec.md`; the edit protocol in `rwa-edit-spec.md`; the structural-transform DSL in `rwa-edit-dsl-spec.md`. The CLI follows semver in `cli/package.json`.
 
+## 2026-05-16 — local model backends: Ollama + LM Studio
+
+The settings panel gains two new backend options that run the rewrite loop entirely on the user's machine. Previously the only options were **OpenRouter** (hosted, paid per token) and **Bridge** (delegating to `claude -p` via a localhost shell shim). Now the runtime can also talk directly to **Ollama** (`localhost:11434`) and **LM Studio** (`localhost:1234`) over their OpenAI-compatible `/v1/chat/completions` endpoint — same multi-turn tool-use loop, same `apply_dsl_plan` / `apply_edits` / `replace_document` envelopes, just a different base URL and no API key.
+
+Design: [`docs/plans/2026-05-16-ollama-lmstudio-backends-design.md`](docs/plans/2026-05-16-ollama-lmstudio-backends-design.md).
+
+### What changed for users
+
+- **Two new backends in ⚙ settings.** Pick `Ollama (localhost)` or `LM Studio (localhost)` from the Backend dropdown. The API-key row disappears (no key required), and a **Base URL** row appears, pre-populated with the localhost default but editable for non-default ports or remote LAN servers. A **Test** button next to it probes `GET <baseUrl>/models`; on success it populates a `<datalist>` so the model input gets autocomplete from the live server.
+- **First-run CORS guidance.** A small inline hint under the backend selector tells you exactly what to enable: `OLLAMA_ORIGINS=*` (or your origin) before `ollama serve`, or LM Studio → Developer → "Enable CORS". Without these, the browser silently blocks the request — the most common first-run failure mode. The Test button labels CORS-blocked responses explicitly rather than showing a generic network error.
+- **Same edit protocol on all three.** The runtime's multi-turn retry loop, tool-call failure feedback, frozen-zone enforcement, and history records are unchanged — `openrouter`, `ollama`, and `lmstudio` all flow through the same `openAiCompatChat()` helper. Picking a local backend doesn't degrade the rewrite loop's behavior; tool-use quality depends on the chosen model.
+- **Persisted preferences.** Backend choice, per-backend base-URL overrides, and the model name persist to `sessionStorage` (per-tab, never written to disk). Defaults are `http://localhost:11434/v1` for Ollama and `http://localhost:1234/v1` for LM Studio.
+
+### What changed for the runtime
+
+- **`resolveBackendConfig()`** new helper in `seeds/rewritable.html`. Maps the `rwa_backend` sessionStorage value into a transport config: `{kind:'openai_compat', baseUrl, apiKey, extraHeaders, requiresKey}` for the three OpenAI-compatible backends, or `{kind:'bridge'}` for the bridge transport. Centralizes the per-backend decisions that were previously inlined at each call site.
+- **`openAiCompatChat(cfg, body)`** new helper. Single `fetch` against `<baseUrl>/chat/completions` with `Authorization: Bearer <key>` only when `cfg.apiKey` is set. `modify()` and `callAgentSingleShot()` both route through this helper now; the OpenRouter-specific `HTTP-Referer` and `X-Title` headers are carried via `cfg.extraHeaders` only for the openrouter backend.
+- **`listOpenAiCompatModels(cfg)`** new helper. `GET <baseUrl>/models`, returns an array of model id strings. Used by the Test button to populate the model `<datalist>`.
+- **Settings UI** (`buildUI()`): backend `<select>` gains `ollama` / `lmstudio` options; new `<input id="rwa-base-url">` with a sibling Test button (`#rwa-base-url-test`) and result line (`#rwa-base-url-result`); new hint row (`#rwa-set-row-hint`) with per-backend CORS guidance; model input gains `list="rwa-model-options"` for autocomplete.
+
+### What changed for the specs
+
+- No spec changes. The edit protocol (rwa-edit/1), DSL (rwa-edit-dsl/1), lens model (rwa-lens/1), and container spec are unchanged — this is a transport-layer addition, not a protocol change.
+
+### What changed for CLAUDE.md
+
+- New **Agent backends** table under "Agent contract" enumerating openrouter / ollama / lmstudio / bridge with their transports, tool-use behavior, and setup requirements.
+- Storage tier table updated: `sessionStorage` now lists "API key + backend choice + per-backend base-URL overrides + model name" rather than just the OpenRouter key.
+
+### Backward compatibility
+
+- OpenRouter remains the default backend for new containers. Containers minted before this change carry their original bootstrap and don't get the new options; new containers from `rwa new`, `/new`, `/import`, and `/s/<short>` get them automatically.
+- All existing sessionStorage keys (`rwa_apikey`, `rwa_model`, `rwa_backend`) retain their semantics. New keys (`rwa_base_url_ollama`, `rwa_base_url_lmstudio`) are only read when their respective backends are selected.
+- Existing tests pass without modification: 291 e2e scenarios + 246 lens scenarios + 42 conformance scenarios.
+
 ## 2026-05-16 — agent-facing skill rewritten for v0.10 + `GET /skill.zip` bundle
 
 The rewritable-building skill that the landing page hands to external agents (Claude, Codex, Cursor, …) was significantly out of date. The shipped copy described the v0.6/v0.7 components-directory build (`meta.json` + separate `document.{html,css,js}` + `scripts/build_container.py`) and the pre-v0.10 `{html, css, js}` modify payload — none of which exist anymore. Worse, the markdown referenced files (`scripts/`, `references/`, `assets/`) the "Copy the rewritable skill" button never delivered, so any agent following the workflow would chase dead pointers.
