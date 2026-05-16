@@ -83,6 +83,11 @@ body{font-family:var(--font-ui);background:var(--bg);color:var(--text);min-heigh
 #rwa-lens[data-busy="true"]::after{content:'';position:absolute;top:16px;right:48px;width:8px;height:8px;border-radius:50%;background:var(--gray-400);animation:rwa-lens-pulse 1.2s ease-in-out infinite;}
 @keyframes rwa-lens-pulse{0%,100%{opacity:.3;transform:scale(1);}50%{opacity:1;transform:scale(1.2);}}
 .rwa-lens-toast{position:fixed;bottom:140px;left:50%;transform:translateX(-50%);background:var(--gray-900);color:var(--white);padding:10px 16px;border-radius:8px;z-index:11;font-size:13px;font-family:var(--font-ui);box-shadow:0 8px 24px rgba(0,0,0,0.12);}
+#rwa-private-mode-banner{position:fixed;inset:0;background:rgba(255,255,255,0.98);z-index:9999;display:flex;align-items:center;justify-content:center;padding:24px;font-family:var(--font-ui);}
+#rwa-private-mode-banner .rwa-pm-card{max-width:480px;text-align:center;padding:32px;border:1px solid var(--gray-200);border-radius:var(--radius);background:var(--white);box-shadow:0 8px 32px rgba(0,0,0,0.08);}
+#rwa-private-mode-banner h2{font-size:18px;font-weight:600;color:var(--gray-900);margin:0 0 12px;}
+#rwa-private-mode-banner p{font-size:14px;color:var(--gray-700);margin:0 0 8px;line-height:1.5;}
+#rwa-private-mode-banner .rwa-pm-detail{font-size:12px;color:var(--gray-500);font-family:var(--font-mono);}
 .rwa-frag-pulse{animation:rwa-frag-pulse 1.6s ease-out;}
 @keyframes rwa-frag-pulse{0%{background:rgba(59,130,246,0.22);}100%{background:transparent;}}
 [data-rwa-anchored]{outline:2px solid var(--gray-900);outline-offset:2px;border-radius:4px;}
@@ -582,6 +587,36 @@ async function rwaCheckQuota() {
 }
 // Expose for tests only.
 window.rwaCheckQuota = rwaCheckQuota;
+
+// Spec §9.1: private/incognito mode is unsupported.
+async function rwaDetectPrivateMode() {
+  if (!navigator.storage || !navigator.storage.estimate) return false;
+  let est;
+  try { est = await navigator.storage.estimate(); } catch (_) { return false; }
+  if (!est || !est.quota) return false;
+  // iOS Safari private mode caps quota at single-digit MB.
+  // 50 MB threshold catches private while leaving real low-disk devices alone.
+  return est.quota < 50 * 1024 * 1024;
+}
+
+function rwaShowPrivateModeBanner() {
+  if (document.getElementById('rwa-private-mode-banner')) return;
+  const banner = document.createElement('div');
+  banner.id = 'rwa-private-mode-banner';
+  banner.setAttribute('role', 'alert');
+  banner.innerHTML = `
+    <div class="rwa-pm-card">
+      <h2>re-write-able requires normal browsing mode</h2>
+      <p>Your browser is in private or incognito mode. Storage is severely limited and may be cleared at any time without warning.</p>
+      <p>Reopen this document in a normal browser window to continue.</p>
+      <p class="rwa-pm-detail">Your work-in-progress is safe in the file on disk — nothing has been lost.</p>
+    </div>`;
+  document.body.appendChild(banner);
+}
+
+// Expose for tests only.
+window.rwaDetectPrivateMode = rwaDetectPrivateMode;
+window.rwaShowPrivateModeBanner = rwaShowPrivateModeBanner;
 
 const openPal = () => { document.getElementById('rwa-pal').classList.add('open'); requestAnimationFrame(() => document.getElementById('rwa-pal-inp').focus()); setPalSt('', '● ready'); };
 const closePal = () => { document.getElementById('rwa-pal').classList.remove('open'); document.getElementById('rwa-pal-inp').value = ''; document.getElementById('rwa-pal-go').disabled = true; };
@@ -2563,10 +2598,24 @@ document.addEventListener('keydown', e => {
 
 (async () => {
   try {
+    // Spec §9.1: private/incognito mode is unsupported. Detect before any other
+    // init (persist, quota check, IDB open) — modify/commit are unsafe in private mode.
+    if (await rwaDetectPrivateMode()) {
+      rwaShowPrivateModeBanner();
+      return;  // do not initialize the rest of the runtime
+    }
     FROZEN = canonLF('<!DOCTYPE html>\n' + document.documentElement.outerHTML);
     buildUI();
     if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
     rwaCheckQuota();  // fire-and-forget; non-blocking
+    // Spec §9.1: secondary signal — IDB open throws. Surface the same banner.
+    try {
+      await openDB();
+    } catch (err) {
+      console.warn('rwa: IDB open failed', err);
+      rwaShowPrivateModeBanner();
+      return;
+    }
     // Spec §5.6: rehydrate the dirty-state nudge if a prior session left it ≥threshold.
     const initialCount = await rwaGetDirtyCount();
     if (initialCount >= RWA.NUDGE_THRESHOLD) showCommitNudge(initialCount);

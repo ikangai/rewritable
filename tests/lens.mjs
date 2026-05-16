@@ -1026,5 +1026,40 @@ console.log('\n== Test M2.3: estimate() unsupported is a no-op ==');
     !window.document.querySelector('.rwa-lens-toast[data-kind="quota-warn"]'));
 }
 
+// === Phase: private-mode detection (spec §9.1) ===
+console.log('\n== Test M3.1: detectPrivateMode returns true on tiny quota ==');
+{
+  window.navigator.storage.estimate = async () => ({ usage: 0, quota: 1 * 1024 * 1024 });
+  const verdict = await window.rwaDetectPrivateMode();
+  check('verdict is true for 1 MB quota', verdict === true);
+}
+
+console.log('\n== Test M3.2: detectPrivateMode returns false on normal quota ==');
+{
+  window.navigator.storage.estimate = async () => ({ usage: 100, quota: 5 * 1024 * 1024 * 1024 });
+  const verdict = await window.rwaDetectPrivateMode();
+  check('verdict is false for 5 GB quota', verdict === false);
+}
+
+console.log('\n== Test M3.3: showPrivateModeBanner renders blocking overlay ==');
+{
+  window.document.getElementById('rwa-private-mode-banner')?.remove();
+  window.rwaShowPrivateModeBanner();
+  const banner = window.document.getElementById('rwa-private-mode-banner');
+  check('banner exists', !!banner);
+  check('banner contains spec wording',
+    /requires normal browsing mode/i.test(banner?.textContent || ''));
+  check('banner has role=alert', banner?.getAttribute('role') === 'alert');
+}
+
+console.log('\n== Test M3.4: estimate() unsupported defaults to safe (false) ==');
+{
+  const orig = window.navigator.storage.estimate;
+  window.navigator.storage.estimate = undefined;
+  const verdict = await window.rwaDetectPrivateMode();
+  check('verdict is false when estimate() unsupported', verdict === false);
+  window.navigator.storage.estimate = orig;
+}
+
 console.log(`\n${pass} pass, ${fail} fail`);
 process.exit(fail > 0 ? 1 : 0);
