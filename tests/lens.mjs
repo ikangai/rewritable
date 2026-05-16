@@ -1445,7 +1445,14 @@ console.log('\n== Test R4.11: re-entrant modify from listener does not throw con
   delete window.__synthesizeAndCommit;
   let listenerErr = null;
   let secondModifyDone = false;
-  const off = window.runtime.on('modify', async () => {
+  // Unsub from inside the callback on the FIRST fire. Otherwise the listener's
+  // own submitLens emits another 'modify', which re-fires this callback, which
+  // submits another modify, … an unbounded chain that could still be running
+  // by the time the next test sets up — surfacing as a flaky concurrent_modify
+  // on whichever subsequent test happens to start first.
+  let off = null;
+  off = window.runtime.on('modify', async () => {
+    if (off) { off(); off = null; }
     try {
       // Schedule another modify from inside the listener.
       await window.submitLens('Second from listener.');
@@ -1460,7 +1467,6 @@ console.log('\n== Test R4.11: re-entrant modify from listener does not throw con
   // (We don't strictly require the second modify to succeed — only that it
   // doesn't fail with concurrent_modify. The runtime may have other reasons it
   // could fail in jsdom; the key invariant is the absence of that specific code.)
-  off();
 }
 
 console.log('\n== Test R4.12: undo fires status event ==');
@@ -1475,6 +1481,118 @@ console.log('\n== Test R4.12: undo fires status event ==');
   await window.runtime.undo();
   check('undo fired status', n >= 1);
   off();
+}
+
+// === Phase: runtime.fs (spec §7, OPFS namespacing) ===
+console.log('\n== Test R5.0: install OPFS stub ==');
+{
+  // Minimal FileSystemDirectoryHandle / FileSystemFileHandle stub.
+  // Tree: Map<path, Uint8Array>. Paths are slash-separated.
+  const tree = new Map();
+  function makeDirHandle(prefix) {
+    return {
+      kind: 'directory',
+      async getDirectoryHandle(name, opts = {}) {
+        const sub = prefix + name + '/';
+        if (!opts.create && ![...tree.keys()].some(k => k.startsWith(sub))) throw new DOMException('NotFoundError');
+        return makeDirHandle(sub);
+      },
+      async getFileHandle(name, opts = {}) {
+        const key = prefix + name;
+        if (!opts.create && !tree.has(key)) throw new DOMException('NotFoundError');
+        return makeFileHandle(key);
+      },
+      async removeEntry(name) {
+        const key = prefix + name;
+        if (tree.has(key)) tree.delete(key);
+        else {
+          for (const k of [...tree.keys()]) if (k.startsWith(prefix + name + '/')) tree.delete(k);
+        }
+      },
+      async *entries() {
+        const seen = new Set();
+        for (const k of tree.keys()) {
+          if (!k.startsWith(prefix)) continue;
+          const rest = k.slice(prefix.length);
+          const head = rest.split('/')[0];
+          if (seen.has(head)) continue;
+          seen.add(head);
+          yield [head, rest.includes('/') ? makeDirHandle(prefix + head + '/') : makeFileHandle(prefix + head)];
+        }
+      },
+    };
+  }
+  function makeFileHandle(key) {
+    return {
+      kind: 'file',
+      async createWritable() {
+        return {
+          async write(blob) {
+            const buf = await new Response(blob).arrayBuffer();
+            tree.set(key, new Uint8Array(buf));
+          },
+          async close() {},
+        };
+      },
+      async getFile() {
+        const bytes = tree.get(key) || new Uint8Array(0);
+        return new Blob([bytes]);
+      },
+    };
+  }
+  // jsdom's navigator.storage is the value we stub during beforeParse (see top
+  // of file). Mutate it via the `window` handle, not bare `navigator` — the
+  // latter would resolve to Node's process-global navigator under Node 25 and
+  // the seed's `navigator.storage.getDirectory` reads would never see this.
+  window.navigator.storage.getDirectory = async () => makeDirHandle('');
+  check('opfs stub installed', typeof window.navigator.storage.getDirectory === 'function');
+}
+
+console.log('\n== Test R5.1: fs.write then fs.read round-trip ==');
+{
+  const blob = new Blob(['hello, world'], { type: 'text/plain' });
+  await window.runtime.fs.write('docs/greeting.txt', blob);
+  const out = await window.runtime.fs.read('docs/greeting.txt');
+  const txt = await out.text();
+  check('round-trip text matches', txt === 'hello, world');
+}
+
+console.log('\n== Test R5.2: fs.del removes the file ==');
+{
+  await window.runtime.fs.del('docs/greeting.txt');
+  let threw = null;
+  try { await window.runtime.fs.read('docs/greeting.txt'); }
+  catch (e) { threw = e; }
+  check('reading deleted file throws', threw !== null);
+}
+
+console.log('\n== Test R5.3: fs.list returns matching paths ==');
+{
+  await window.runtime.fs.write('a/one.txt', new Blob(['1']));
+  await window.runtime.fs.write('a/two.txt', new Blob(['2']));
+  await window.runtime.fs.write('b/three.txt', new Blob(['3']));
+  const a = await window.runtime.fs.list('a/');
+  check('list a/ returns 2 entries', a.length === 2);
+}
+
+console.log('\n== Test R5.4: fs.list with _rwa/ prefix rejects ==');
+{
+  let threw = null;
+  try { await window.runtime.fs.list('_rwa/'); }
+  catch (e) { threw = e; }
+  check('list _rwa/ rejects', threw !== null && /reserved/i.test(threw.message || ''));
+}
+
+console.log('\n== Test R5.5: per-container namespacing (paths are isolated) ==');
+{
+  await window.runtime.fs.write('img/cat.png', new Blob(['CAT']));
+  const root = await window.navigator.storage.getDirectory();
+  const rootDirs = [];
+  for await (const [name, h] of root.entries()) {
+    if (h.kind === 'directory') rootDirs.push(name);
+  }
+  check('root contains the per-container directory',
+    rootDirs.some(n => n.startsWith('_' + window.runtime.id.slice(0, 8))));
 }
 
 console.log(`\n${pass} pass, ${fail} fail`);

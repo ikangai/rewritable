@@ -409,7 +409,106 @@ async function runtimeDbOpen(name, opts = {}) {
   await bumpVersionAndCreateStore(name, opts);
 }
 
-// (fs.* lands in a later task of this plan.)
+// === runtime.fs (OPFS-backed, per-container namespaced) =====================
+// Spec §7: documents persist blobs via runtime.fs.{read,write,del,list}.
+// Spec §5.7: each container's blobs live under `_<DOC_UUID>/` in the shared
+// OPFS so two containers in the same origin can't shadow each other's paths
+// even though OPFS is null-origin under file://.
+//
+// Documents see paths like "img/cat.png"; the runtime transparently rewrites
+// them to "_<DOC_UUID>/img/cat.png" on the way in. The namespace prefix is
+// reserved (the leading underscore + UUID is opaque to the doc) and the
+// runtime rejects any user-supplied path that tries to address `_rwa/` or
+// leading-slash absolutes — those would let a doc trample reserved
+// runtime-only paths or escape the namespace.
+const OPFS_NS = '_' + DOC_UUID + '/';
+
+function assertUserFsPath(path) {
+  if (typeof path !== 'string') throw new TypeError('path must be a string');
+  // `_rwa/` is the reserved runtime path prefix (spec §5.3). Any user-supplied
+  // path that starts with it is rejected up front — a doc that smuggled a blob
+  // there could later collide with a future runtime-owned subtree.
+  if (path.startsWith('_rwa/')) throw new Error("path '_rwa/' is reserved (runtime-only)");
+  // OPFS doesn't have absolute paths; a leading slash usually means the author
+  // confused this for a filesystem-rooted path. Reject so the mistake surfaces
+  // at the call site instead of silently writing to a weird subdirectory.
+  if (path.startsWith('/')) throw new Error("path must be relative (no leading slash)");
+}
+
+// Resolve the per-container OPFS root, creating it on first access. Throws a
+// readable error on platforms that don't expose OPFS (older Safari, Firefox
+// without the flag) so the doc can decide whether to degrade or surface to
+// the user instead of seeing an opaque TypeError on `getDirectory`.
+async function opfsRootForContainer() {
+  if (!navigator.storage || !navigator.storage.getDirectory) {
+    throw new Error('OPFS not supported in this environment');
+  }
+  const root = await navigator.storage.getDirectory();
+  // OPFS_NS ends in '/' to make string concatenation in the stub-side
+  // bookkeeping unambiguous; the real OPFS API takes bare segment names, so
+  // strip the trailing slash before handing it to getDirectoryHandle.
+  return root.getDirectoryHandle(OPFS_NS.replace(/\/$/, ''), { create: true });
+}
+
+// Walk slash-separated `path` to the terminal file handle. `create` is
+// threaded into every directory hop AND the final file hop, so callers
+// distinguish "write/create" from "read/must-exist" with a single flag.
+async function walkToFile(path, { create } = {}) {
+  const parts = path.split('/').filter(Boolean);
+  const name = parts.pop();
+  let dir = await opfsRootForContainer();
+  for (const p of parts) dir = await dir.getDirectoryHandle(p, { create });
+  return dir.getFileHandle(name, { create });
+}
+
+async function runtimeFsWrite(path, blob) {
+  assertUserFsPath(path);
+  const handle = await walkToFile(path, { create: true });
+  const writable = await handle.createWritable();
+  // Mirror the FSA write pattern used elsewhere in the bootstrap: close in a
+  // finally so a partial-write failure still flushes the writer (avoids
+  // dangling write streams that some browsers refuse to GC).
+  try { await writable.write(blob); } finally { await writable.close(); }
+}
+
+async function runtimeFsRead(path) {
+  assertUserFsPath(path);
+  const handle = await walkToFile(path);
+  return handle.getFile();
+}
+
+async function runtimeFsDel(path) {
+  assertUserFsPath(path);
+  const parts = path.split('/').filter(Boolean);
+  const name = parts.pop();
+  let dir = await opfsRootForContainer();
+  // No `create` — if any segment along the way is missing the underlying
+  // getDirectoryHandle throws NotFoundError, which is exactly what we want
+  // for a delete: the file already isn't there.
+  for (const p of parts) dir = await dir.getDirectoryHandle(p);
+  await dir.removeEntry(name);
+}
+
+async function runtimeFsList(prefix) {
+  assertUserFsPath(prefix);
+  const parts = prefix.split('/').filter(Boolean);
+  let dir = await opfsRootForContainer();
+  try {
+    for (const p of parts) dir = await dir.getDirectoryHandle(p);
+  } catch (_) {
+    // A list against a never-written directory is not an error in document
+    // land — most authors will call list() defensively to discover what
+    // exists. Returning [] keeps that idiomatic; reserving a thrown error
+    // for actual path-validity violations (rejected by assertUserFsPath
+    // above).
+    return [];
+  }
+  const out = [];
+  for await (const [name, h] of dir.entries()) {
+    out.push({ name, kind: h.kind });
+  }
+  return out;
+}
 
 // === Runtime event bus (spec §7) ============================================
 // Minimal pub/sub for commit/modify/status. Callbacks are scoped per event
@@ -2974,7 +3073,12 @@ document.addEventListener('keydown', e => {
         open: runtimeDbOpen,
         subscribe: runtimeDbSubscribe,
       },
-      // fs — Task 5
+      fs: {
+        read:  runtimeFsRead,
+        write: runtimeFsWrite,
+        del:   runtimeFsDel,
+        list:  runtimeFsList,
+      },
       modify: runtimeModify,
       commit: runtimeCommit,
       undo:   runtimeUndo,
