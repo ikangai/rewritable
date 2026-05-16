@@ -133,6 +133,8 @@ The runtime owns these — generated documents must not touch them.
 
 Each container's OPFS is namespaced by `_<DOC_UUID>/`. The `runtime.fs.*` API auto-prefixes paths so documents see a private root. The legacy `_rwa/` reservation is still honored for any direct OPFS access that bypasses the runtime API.
 
+**OPFS is unavailable under `file://` origins in Chromium.** `navigator.storage.getDirectory()` throws `SecurityError` ("certain files are unsafe for access within a Web application") when the document is opened directly from disk, even though IDB works fine in the same context. `runtime.fs.*` translates this into a clear error directing the document author to host the container via HTTP (e.g. `node service/server.js`). Containers that need blob storage on disk must currently fall back to storing Blob values in IDB via `runtime.db.*`; a future revision may move that fallback into `runtime.fs.*` itself.
+
 The document interacts with reserved storage only through the runtime API. The runtime is the only writer of reserved stores.
 
 #### Quota awareness

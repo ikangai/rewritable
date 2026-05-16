@@ -77,6 +77,7 @@ Documents that need structured data or blobs no longer have to roll their own ID
 
 - **`runtime.shared.*` is the only piece of §7 not shipped.** Tracked in §11.5 as the next plan.
 - **Direct OPFS access (bypassing `runtime.fs.*`) is still shared null-origin.** The API is the isolation boundary; documents that call `navigator.storage.getDirectory()` directly are opting out of isolation.
+- **OPFS is unavailable under `file://` origins in Chromium.** `navigator.storage.getDirectory()` throws `SecurityError` when the container is opened directly from disk, even though IDB works fine there. `runtime.fs.*` now catches this and throws a clear message pointing the document author to HTTP hosting. Documents that need blob storage on disk should fall back to storing Blob values in IDB via `runtime.db.*` for now. (IDB-backed fallback inside `runtime.fs.*` is tracked for a future revision.)
 - **No mid-stream streaming for `runtime.modify`.** The wrapper awaits the full modify cycle before resolving. Streaming UX is open per the rwa-lens spec §11.2 and remains conservative for now.
 - **Bootstrap meta tag stays at 0.9.** The spec text and CHANGELOG headers reference spec v0.10, but the seed's `<meta name="rwa-bootstrap" content="0.9">` is intentional: the bootstrap shape didn't change, only the API surface added.
 

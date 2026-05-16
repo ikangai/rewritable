@@ -455,7 +455,23 @@ async function opfsRootForContainer() {
   if (!navigator.storage || !navigator.storage.getDirectory) {
     throw new Error('OPFS not supported in this environment');
   }
-  const root = await navigator.storage.getDirectory();
+  let root;
+  try {
+    root = await navigator.storage.getDirectory();
+  } catch (e) {
+    // Chromium blocks OPFS under file:// origins with a SecurityError
+    // ("certain files are unsafe for access within a Web application").
+    // IDB works on file:// but OPFS does not — translate the cryptic native
+    // error into something a document author can act on.
+    if (e?.name === 'SecurityError') {
+      throw new Error(
+        "runtime.fs: OPFS is not available on file:// origins (Chromium policy). " +
+        "Host this container via HTTP — e.g. `node service/server.js` then open " +
+        "http://localhost:8080/ — or use runtime.db.* for storage."
+      );
+    }
+    throw e;
+  }
   // OPFS_NS ends in '/' to make string concatenation in the stub-side
   // bookkeeping unambiguous; the real OPFS API takes bare segment names, so
   // strip the trailing slash before handing it to getDirectoryHandle.
