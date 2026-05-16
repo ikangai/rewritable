@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="rwa-bootstrap" content="0.9">
 <title>02</title>
 <style>
 /* Palette + chrome modeled on playground.ikangai.com — neutral grayscale,
@@ -82,6 +83,8 @@ body{font-family:var(--font-ui);background:var(--bg);color:var(--text);min-heigh
 #rwa-lens[data-busy="true"]::after{content:'';position:absolute;top:16px;right:48px;width:8px;height:8px;border-radius:50%;background:var(--gray-400);animation:rwa-lens-pulse 1.2s ease-in-out infinite;}
 @keyframes rwa-lens-pulse{0%,100%{opacity:.3;transform:scale(1);}50%{opacity:1;transform:scale(1.2);}}
 .rwa-lens-toast{position:fixed;bottom:140px;left:50%;transform:translateX(-50%);background:var(--gray-900);color:var(--white);padding:10px 16px;border-radius:8px;z-index:11;font-size:13px;font-family:var(--font-ui);box-shadow:0 8px 24px rgba(0,0,0,0.12);}
+.rwa-frag-pulse{animation:rwa-frag-pulse 1.6s ease-out;}
+@keyframes rwa-frag-pulse{0%{background:rgba(59,130,246,0.22);}100%{background:transparent;}}
 [data-rwa-anchored]{outline:2px solid var(--gray-900);outline-offset:2px;border-radius:4px;}
 .rwa-locked{position:relative;background:rgba(239,68,68,0.04);border-left:3px solid var(--red);padding-left:8px;}
 .rwa-locked::before{content:'\1F512';position:absolute;top:4px;right:8px;font-size:12px;opacity:.6;}
@@ -107,7 +110,7 @@ body{font-family:var(--font-ui);background:var(--bg);color:var(--text);min-heigh
 // The nil UUID below is a sentinel — the /new service substitutes a fresh
 // crypto.randomUUID() at request time. If a downloaded file still has all
 // zeros here, the substitution failed and isolation is broken.
-const DOC_UUID = '0c0c728e-53c0-4c64-8354-56b543bf25f3';
+const DOC_UUID = 'fd4e250a-7fc2-46ff-b4b6-46ae8dcfa356';
 
 // The document — a frozen snapshot, hydrated into IndexedDB on first open
 // and rewritten in place on every commit.
@@ -777,6 +780,33 @@ function renderDoc(html) {
   m.addEventListener('click', handleMountClick);
 }
 
+// ─── URL fragment scroll (rwa-bootstrap 0.9) ───────────────────────
+// Resolves `location.hash` against either a literal `id=` attribute or a
+// runtime-assigned `data-rwa-id`. On hit, scrolls the target into view and
+// pulses it with a blue-tint background fade so the location is obvious
+// after the scroll. Idempotent — wired to both the initial load (called from
+// the bootstrap IIFE) and `hashchange` (any in-page navigation).
+function scrollToFragment() {
+  if (!location.hash || location.hash.length < 2) return;
+  let raw;
+  try { raw = decodeURIComponent(location.hash.slice(1)); } catch (_) { raw = location.hash.slice(1); }
+  if (!raw) return;
+  const mount = document.getElementById('rwa-doc-mount');
+  if (!mount) return;
+  let el = null;
+  try {
+    const esc = (typeof CSS !== 'undefined' && CSS.escape) ? CSS.escape(raw) : raw.replace(/(["\\])/g, '\\$1');
+    el = mount.querySelector('#' + esc + ', [data-rwa-id="' + esc + '"]');
+  } catch (_) {
+    el = mount.querySelector('[data-rwa-id="' + raw.replace(/"/g, '\\"') + '"]');
+  }
+  if (!el) return;
+  el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  el.classList.add('rwa-frag-pulse');
+  setTimeout(() => { el.classList.remove('rwa-frag-pulse'); }, 1700);
+}
+window.scrollToFragment = scrollToFragment; // expose for tests
+
 // ─── File rebuild ───────────────────────────────────────────────────
 let FROZEN = '';
 const escapeTL = s => canonLF(s)
@@ -1053,6 +1083,11 @@ Rules for replace_document:
   • Provide a reason explaining why a smaller tool was not appropriate.
 
 If the user's input is itself substantial content (a long block of prose, an outline, a list of items), they want it rendered into the document, not summarized. When no surgical anchor exists for substantial content insertion, use replace_document.
+
+Stable block identifiers (data-rwa-id):
+  • Many block-level elements in the doc (p, h1–h6, blockquote, li, figure, pre, aside) carry a \`data-rwa-id="…"\` attribute the runtime assigns. The value is opaque (8 lower-base32 chars).
+  • Preserve these attributes verbatim when editing. If you replace the surrounding text of a block, copy the existing data-rwa-id into your replace string. They are the stable name of that block; URLs link to them.
+  • Never invent new data-rwa-id values. The runtime backfills any block you produce without one. Inventing duplicates would break fragment links to existing blocks.
 
 Always call a tool. Respond with text-only only when you genuinely need to ask for clarification before editing.`;
 
@@ -2146,20 +2181,107 @@ function snapshotsEqual(a, b) {
 }
 
 // Reserved IDs/attributes the runtime owns. The render mount is #rwa-doc-mount
-// (CLAUDE.md §"Reserved namespaces"); data-rwa-id is reserved for v2. A doc
-// that introduces either name shadows the runtime's contract.
+// (CLAUDE.md §"Reserved namespaces"). A doc that uses that ID shadows the
+// runtime's contract.
+//
+// data-rwa-id is intentionally NOT rejected here: as of bootstrap 0.9 the
+// runtime auto-assigns data-rwa-id to anchorable blocks for URL-fragment
+// stability on the web. Stored docs will normally carry these. The agent is
+// instructed (SYSTEM_PROMPT) to preserve existing values verbatim and not
+// invent new ones; injectMissingBlockIds() re-asserts coverage on every
+// commit.
 function findReservedIdViolation(parsedDoc) {
   if (!parsedDoc) return null;
   if (parsedDoc.querySelector('#rwa-doc-mount')) return 'rwa-doc-mount';
-  if (parsedDoc.querySelector('[data-rwa-id]')) return 'data-rwa-id';
   return null;
 }
+
+// rwa-bootstrap 0.9 — stable block identifiers.
+//
+// Every anchorable block (ANCHORABLE_TAGS — p, h1..h6, blockquote, li, figure,
+// pre, aside) carries a `data-rwa-id` attribute the runtime assigns. The ID is
+// the public name of that block; a URL like `notes.html#7k3p2m9q` resolves to
+// it via scrollToFragment(). IDs are part of the canonical document text so
+// they round-trip through commits and undo.
+//
+// Format: 8 chars, RFC 4648 base32 lowercase (a–z, 2–7) from 5 random bytes.
+// 40 bits ≈ 1e12 codes; collision risk in a single doc is negligible.
+function generateBlockId() {
+  const ALPHA = 'abcdefghijklmnopqrstuvwxyz234567';
+  const buf = new Uint8Array(5);
+  crypto.getRandomValues(buf);
+  let bits = 0, val = 0, out = '';
+  for (const b of buf) {
+    val = (val << 8) | b;
+    bits += 8;
+    while (bits >= 5) { bits -= 5; out += ALPHA[(val >>> bits) & 31]; }
+  }
+  return out;
+}
+
+// Inject `data-rwa-id="…"` into every anchorable block that lacks one. Pure
+// string surgery against the source text — preserves whitespace, attribute
+// order, and quoting bytes exactly (the format-stability promise from
+// invariant 11). The scan mirrors buildSourcePositionMap: same tag set, same
+// masking of script/style/comments, same outer-wins skip past nested blocks.
+//
+// Frozen zones (marker form and data-rwa-frozen elements) are skipped — their
+// bytes are author-declared invariants; injecting an attribute inside one
+// would break frozenZonesIntact() / dataRwaFrozenSnapshot() on the next edit.
+//
+// Returns { text, assigned }. If assigned === 0, text === doc byte-for-byte.
+function injectMissingBlockIds(doc) {
+  if (typeof doc !== 'string' || doc.length === 0) return { text: doc, assigned: 0 };
+  const masked = maskRawTextAndComments(doc);
+  const frozenRanges = markerZoneRangesIn(doc);
+  const inFrozen = (pos) => {
+    for (const [s, e] of frozenRanges) if (pos >= s && pos < e) return true;
+    return false;
+  };
+  const tagOpen = /<([a-zA-Z][a-zA-Z0-9]*)\b([^>]*)>/g;
+  const inserts = [];
+  let m;
+  while ((m = tagOpen.exec(masked)) !== null) {
+    const tag = m[1].toUpperCase();
+    if (!ANCHORABLE_TAGS.has(tag)) continue;
+    const closeEnd = findCloseTagEnd(masked, m[1], m.index + m[0].length);
+    if (closeEnd < 0) continue;
+    tagOpen.lastIndex = closeEnd;
+    if (inFrozen(m.index)) continue;
+    const attrs = m[2] || '';
+    if (/\sdata-rwa-id\s*=/.test(attrs)) continue;
+    const pos = m.index + 1 + m[1].length;
+    inserts.push({ pos, text: ' data-rwa-id="' + generateBlockId() + '"' });
+  }
+  if (inserts.length === 0) return { text: doc, assigned: 0 };
+  let out = doc;
+  for (let i = inserts.length - 1; i >= 0; i--) {
+    out = out.slice(0, inserts[i].pos) + inserts[i].text + out.slice(inserts[i].pos);
+  }
+  return { text: out, assigned: inserts.length };
+}
+window.injectMissingBlockIds = injectMissingBlockIds; // expose for tests
 
 // ─── Commit (rwa-edit/1) ────────────────────────────────────────────
 // Single IDB transaction across rwa_doc, rwa_undo, rwa_hist. Reads happen
 // before the transaction (modifyMutex prevents concurrent writes). The
 // transaction itself only writes — three put()s, all atomic.
 async function commitDoc(currentDoc, newDoc, histRecord) {
+  // Web-citizen: backfill data-rwa-id on any anchorable block the agent
+  // produced without one. Pure-attribute injection outside frozen zones; the
+  // shape/balance checks the caller already ran remain valid (no tags added
+  // or removed). Keeps URL-fragment stability invariant: every anchorable
+  // block in the stored doc has a stable name (bootstrap 0.9). Returned so
+  // callers can render the persisted form instead of their pre-inject text.
+  //
+  // Gated on whether the container has already been "id-blessed" (has any
+  // data-rwa-id attribute in its current text). The bootstrap IIFE blesses
+  // every freshly opened container; commits then maintain the invariant.
+  // Test fixtures that install an id-less doc via raw IDB.put stay id-less
+  // so byte-fidelity assertions remain valid.
+  const wasIdBlessed = /\sdata-rwa-id\s*=/.test(currentDoc);
+  const idRes = wasIdBlessed ? injectMissingBlockIds(newDoc) : { text: newDoc, assigned: 0 };
+  const persistDoc = idRes.assigned > 0 ? idRes.text : newDoc;
   const db = await openDB();
   const undoArr = (await idbGet(RWA.UNDO)) || [];
   undoArr.push(currentDoc);
@@ -2167,15 +2289,16 @@ async function commitDoc(currentDoc, newDoc, histRecord) {
   const histArr = (await idbGet(RWA.HIST)) || [];
   histArr.unshift(histRecord);
   const histTrimmed = histArr.slice(0, RWA.HIST_CAP);
-  return new Promise((resolve, reject) => {
+  await new Promise((resolve, reject) => {
     const tx = db.transaction([RWA.DOC, RWA.UNDO, RWA.HIST], 'readwrite');
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error || new Error('transaction error'));
     tx.onabort = () => reject(tx.error || new Error('transaction aborted'));
-    tx.objectStore(RWA.DOC).put(newDoc, RWA.KEY);
+    tx.objectStore(RWA.DOC).put(persistDoc, RWA.KEY);
     tx.objectStore(RWA.UNDO).put(undoArr, RWA.KEY);
     tx.objectStore(RWA.HIST).put(histTrimmed, RWA.KEY);
   });
+  return persistDoc;
 }
 
 // ─── apply_edits / replace_document ─────────────────────────────────
@@ -2264,8 +2387,7 @@ async function applyEdits(envelope, currentDocRaw, lensMeta = null) {
     histRecord.instruction = lensMeta.instruction;
     histRecord.scope = lensMeta.scope;
   }
-  await commitDoc(currentDoc, work, histRecord);
-  return work;
+  return await commitDoc(currentDoc, work, histRecord);
 }
 
 async function replaceDocument(envelope, currentDocRaw, lensMeta = null) {
@@ -2318,8 +2440,7 @@ async function replaceDocument(envelope, currentDocRaw, lensMeta = null) {
     histRecord.instruction = lensMeta.instruction;
     histRecord.scope = lensMeta.scope;
   }
-  await commitDoc(currentDoc, newDoc, histRecord);
-  return newDoc;
+  return await commitDoc(currentDoc, newDoc, histRecord);
 }
 
 // ─── apply_dsl_plan compiler (rwa-edit-dsl/1) ──────────────────────
@@ -2855,13 +2976,25 @@ document.addEventListener('keydown', e => {
     FROZEN = canonLF('<!DOCTYPE html>\n' + document.documentElement.outerHTML);
     buildUI();
     if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
-    renderDoc(await getDoc());
+    let doc = await getDoc();
+    // Web-citizen: ensure every anchorable block has a stable data-rwa-id
+    // before first render so URL-fragment links resolve immediately, without
+    // waiting for the first agent edit. One-shot per container — subsequent
+    // bootstraps see IDs already present and skip the idbPut.
+    const idRes = injectMissingBlockIds(doc);
+    if (idRes.assigned > 0) {
+      doc = idRes.text;
+      await idbPut(RWA.DOC, doc);
+    }
+    renderDoc(doc);
+    scrollToFragment();
     setStatus('ok', '● ready');
   } catch (e) {
     document.body.textContent = 'Bootstrap error: ' + e.message;
     console.error(e);
   }
 })();
+window.addEventListener('hashchange', () => scrollToFragment());
 </script>
 </body>
 </html>
