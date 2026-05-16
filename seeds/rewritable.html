@@ -265,11 +265,12 @@ async function runtimeDbGet(store, key) {
 }
 async function runtimeDbPut(store, key, value) {
   assertRuntimeDbStore(store);
+  const decl = userStoreDecls.get(store);
   // For autoIncrement stores, callers pass a null/undefined key — IDB assigns
   // a monotonic integer. We route around idbPut() because that helper always
   // forwards the (possibly null) key to objectStore.put(value, key), which IDB
   // rejects with DataError when keyPath is null AND no out-of-line key is given.
-  if ((key === null || key === undefined) && userStoreDecls.get(store)?.autoIncrement) {
+  if ((key === null || key === undefined) && decl?.autoIncrement) {
     const db = await openDB();
     return new Promise((res, rej) => {
       const tx = db.transaction(store, 'readwrite');
@@ -277,6 +278,13 @@ async function runtimeDbPut(store, key, value) {
       req.onsuccess = () => res(req.result);
       req.onerror   = () => rej(req.error);
     });
+  }
+  // Non-autoIncrement stores require an explicit key. Without this guard the
+  // call falls through to idbPut(store, value, null), which surfaces an opaque
+  // DataError from IDB; flag the API misuse up front so callers know to either
+  // pass a key or declare the store with {autoIncrement: true}.
+  if (key === null || key === undefined) {
+    throw new TypeError(`runtime.db.put: key is required for non-autoIncrement store '${store}' (declare with {autoIncrement: true} to omit keys)`);
   }
   return idbPut(store, value, key);   // internal idbPut keeps (store, value, key) order
 }
@@ -335,13 +343,25 @@ async function bumpVersionAndCreateStore(name, opts) {
 async function runtimeDbOpen(name, opts = {}) {
   assertRuntimeDbStore(name);
   const db = await openDB();
-  // Idempotent: an already-present store is a no-op even if the caller passes
-  // different opts. We never re-create a store under the same name — that
-  // would silently drop user data.
+  // Idempotent on schema match: an already-present store is a no-op when the
+  // caller's opts agree with the live schema. We never re-create a store under
+  // the same name — that would silently drop user data — and we reject opts
+  // that contradict the live schema so authors aren't surprised by invisible
+  // drift (e.g. db.put(name, null, …) misfiring on a non-autoIncrement store
+  // the registry mistakenly thinks is autoIncrement).
   if (db.objectStoreNames.contains(name)) {
-    // Make sure the registry reflects live schema (defensive — should already match).
-    if (!userStoreDecls.has(name)) {
-      userStoreDecls.set(name, opts || {});
+    const tx = db.transaction(name, 'readonly');
+    const liveAutoInc = !!tx.objectStore(name).autoIncrement;
+    tx.abort?.();   // explicit hygiene; readonly tx would auto-close anyway
+    const wantAutoInc = !!opts.autoIncrement;
+    if (liveAutoInc !== wantAutoInc) {
+      throw new Error(`runtime.db.open: store '${name}' already exists with autoIncrement=${liveAutoInc}, cannot change to ${wantAutoInc}. Pick a different name.`);
+    }
+    // Self-heal: registry may have drifted from a prior reload or a failed
+    // persist; rewrite it from the authoritative live schema.
+    const cur = userStoreDecls.get(name);
+    if (!cur || !!cur.autoIncrement !== liveAutoInc) {
+      userStoreDecls.set(name, { autoIncrement: liveAutoInc });
       await persistUserStoreDecls();
     }
     return;

@@ -1155,5 +1155,73 @@ console.log('\n== Test R2.6: db.open with autoIncrement ==');
   check('autoIncrement assigned keys', all.length === 2 && typeof all[0].key === 'number');
 }
 
+console.log('\n== Test R2.7: db.put with null key on non-autoIncrement store throws clearly ==');
+{
+  await window.runtime.db.open('plain_store');  // non-autoIncrement
+  let threw = null;
+  try { await window.runtime.db.put('plain_store', null, { foo: 1 }); }
+  catch (e) { threw = e; }
+  check('throws on null key',
+    threw !== null && /key is required/i.test(threw.message || ''));
+  check('error mentions the store name',
+    threw !== null && /plain_store/.test(threw.message || ''));
+  check('error mentions autoIncrement hint',
+    threw !== null && /autoIncrement/i.test(threw.message || ''));
+}
+
+console.log('\n== Test R2.8: db.open with mismatched autoIncrement throws ==');
+{
+  await window.runtime.db.open('plain_store');  // existing as non-autoIncrement
+  let threw = null;
+  try { await window.runtime.db.open('plain_store', { autoIncrement: true }); }
+  catch (e) { threw = e; }
+  check('mismatched autoIncrement throws',
+    threw !== null && /autoIncrement/i.test(threw.message || ''));
+  check('error names the store',
+    threw !== null && /plain_store/.test(threw.message || ''));
+}
+
+console.log('\n== Test R2.9: declared store survives a simulated reload ==');
+{
+  // The seed's _db handle is module-scoped inside the bootstrap IIFE, so we
+  // can't close it from out here. Instead we open a brand-new IDB connection
+  // directly against the per-container database and verify both that the
+  // schema (object stores) and the registry (rwa_state['user_stores'])
+  // survived — i.e. that a fresh page load would re-instantiate them.
+  const dbName = 'rwa_' + window.runtime.id;
+  const raw = await new Promise((res, rej) => {
+    const r = window.indexedDB.open(dbName);
+    r.onsuccess = () => res(r.result);
+    r.onerror   = () => rej(r.error);
+  });
+  check('previously declared tracker_tasks store survives in IDB',
+    raw.objectStoreNames.contains('tracker_tasks'));
+  check('previously declared events store survives in IDB',
+    raw.objectStoreNames.contains('events'));
+  check('previously declared plain_store store survives in IDB',
+    raw.objectStoreNames.contains('plain_store'));
+  raw.close();
+
+  // The user_stores entry in rwa_state is what openDB()'s upgrade handler
+  // consults on a fresh load to re-create the user's stores. Verify it's
+  // persisted with the right shape.
+  const stateRaw = await new Promise((res, rej) => {
+    const r = window.indexedDB.open(dbName);
+    r.onsuccess = () => {
+      const tx  = r.result.transaction('rwa_state', 'readonly');
+      const req = tx.objectStore('rwa_state').get('user_stores');
+      req.onsuccess = () => { r.result.close(); res(req.result); };
+      req.onerror   = () => rej(req.error);
+    };
+    r.onerror = () => rej(r.error);
+  });
+  check('user_stores entry exists in rwa_state',
+    stateRaw && typeof stateRaw === 'object');
+  check('user_stores includes tracker_tasks',
+    stateRaw && stateRaw.tracker_tasks !== undefined);
+  check('user_stores includes events with autoIncrement',
+    stateRaw && stateRaw.events && stateRaw.events.autoIncrement === true);
+}
+
 console.log(`\n${pass} pass, ${fail} fail`);
 process.exit(fail > 0 ? 1 : 0);
