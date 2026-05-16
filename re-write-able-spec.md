@@ -131,6 +131,8 @@ The runtime owns these — generated documents must not touch them.
 - HTML element id: `#rwa-doc-mount` (the render target).
 - HTML attribute `data-rwa-id`: runtime-assigned stable identifier on anchorable blocks (§5.9). Documents must not invent or modify these values; the runtime backfills any block produced without one and the agent contract requires verbatim preservation (§6.1).
 
+Each container's OPFS is namespaced by `_<DOC_UUID>/`. The `runtime.fs.*` API auto-prefixes paths so documents see a private root. The legacy `_rwa/` reservation is still honored for any direct OPFS access that bypasses the runtime API.
+
 The document interacts with reserved storage only through the runtime API. The runtime is the only writer of reserved stores.
 
 #### Quota awareness
@@ -228,7 +230,7 @@ The detailed shape of `runtime.shared.*` — naming rules, conflict resolution b
 
 **Async reads.** Every cross-container read is a Promise. Embedders should render a skeleton first and hydrate when the transaction resolves.
 
-**OPFS is not yet namespaced.** Containers that write to `_rwa/` paths still share the null-origin OPFS namespace; collisions are possible. This is a known gap (§11.5).
+Each container's OPFS lives under `_<DOC_UUID>/` and is exposed to the document through `runtime.fs.*`, which auto-prefixes paths. Documents see a clean private root; the on-disk OPFS keeps containers isolated the same way IDB does. Direct OPFS access bypassing the runtime API still shares the null-origin namespace — opt-in to isolation by going through `runtime.fs.*`.
 
 Served over HTTP/HTTPS, each file gets a real origin and `rwa_shared` becomes per-host. The composition surface is a local-disk feature; hosting a re-writeable file behind a URL converts it from a composable artifact into a single-document island.
 
@@ -514,7 +516,7 @@ Container isolation by UUID (§5.7) closes a sharp footgun — every container s
 - **Naming.** `<source>:<topic>` is a convention, not a contract. Should the runtime enforce a namespace prefix (e.g. require keys to begin with the writing container's title or UUID)? Without enforcement, two containers can write the same key by accident and one will overwrite the other.
 - **Conflict and freshness.** When two containers write the same key concurrently, the last write wins. Some compositions need richer semantics — append-only logs, counters, CRDTs. Where is the line between "shared kv store" and "shared toolkit"?
 - **Schema and discovery.** A reader has no way to know which keys exist until a writer publishes one. A schema declaration step (the writer announces `{ key, shape, version }`) would let dashboards enumerate sources, but adds upfront ceremony.
-- **OPFS isolation.** Containers still share the null-origin OPFS namespace under `_rwa/`. Should OPFS be namespaced by `DOC_UUID` like IDB, with a parallel `_rwa_shared/` for opt-in sharing? The same logic that motivated IDB isolation applies, but no production document writes binary blobs yet, so the cost of the gap is currently zero.
+- **OPFS isolation** is closed as of bootstrap 0.10: `runtime.fs.*` namespaces paths under `_<DOC_UUID>/` automatically. (Direct OPFS access bypassing the runtime API is still shared — the API is the isolation boundary.)
 - **Same-host sharing.** Over HTTP, `rwa_shared` is per-origin and works for documents on the same host. Two re-writeables hosted on different domains cannot compose. Whether to bridge them (postMessage between iframes? a small relay?) is a separate question from the local-disk case and may not be worth solving until someone needs it.
 
 Current direction: ship `runtime.shared.put/get/subscribe` as a thin layer over `rwa_shared`, prefix keys with `<DOC_UUID>:` by default to prevent accidental collisions, and let documents opt out of the prefix when they want to publish under a stable name.
@@ -620,6 +622,8 @@ These properties are load-bearing — every change to the runtime, bootstrap, or
 7. Undo history lives in IndexedDB, not in the file. Commits do not carry undo state.
 
 ---
+
+*Spec version 0.10 — public runtime API pass. §7 grows from a sketch into a contract: `runtime.id`, `runtime.db.{get,put,del,all,open,subscribe}`, `runtime.fs.{read,write,del,list}`, `runtime.modify/commit/undo`, the observable `runtime.status`, and `runtime.on('commit'|'modify'|'status', cb)` are all wired through the seed and exercised by the test harness. The bootstrap-0.10 seed implements every entry. OPFS gains per-container namespacing: each container's blobs live under `_<DOC_UUID>/`, `runtime.fs.*` auto-prefixes paths, and §5.7's "OPFS is not yet namespaced" gap is closed (§5.3, §5.7, §11.5 updated). `runtime.shared.*` remains the one piece of §7 deferred — the open questions in §11.5 (naming, conflict resolution, schema/discovery, cross-host bridging) are unchanged and still gate that surface. No changes to the storage model invariants, container UUIDs, or bootstrap byte-identity rules from v0.7/v0.8/v0.9. Reference implementations regenerated against the bootstrap-0.10 seed.*
 
 *Spec version 0.9 — web-citizen pass. §5.3 reserves `data-rwa-id` as a runtime-managed HTML attribute; §5.9 (new) describes its lifecycle and the URL-fragment scroll behavior the bootstrap now ships. The runtime backfills `data-rwa-id` on every anchorable block (`p`, `h1`–`h6`, `blockquote`, `li`, `figure`, `pre`, `aside`) at bootstrap and at every commit, skipping frozen zones. §6.1 (and the seed's `SYSTEM_PROMPT`) instructs the agent to preserve these values verbatim and never invent new ones. The container's identity on the web is now a URL plus a stable fragment; a link like `notes.html#7k3p2m9q` continues to resolve to the same block after the surrounding text gets rewritten any number of times. No changes to the storage model, container UUIDs, or bootstrap invariants from v0.7/v0.8. Reference implementations regenerated against the bootstrap-0.9 seed.*
 

@@ -633,9 +633,16 @@ const canonLF = s => s == null ? '' : String(s).replace(/\r\n/g, '\n').replace(/
 
 let _db;
 const REQUIRED_STORES = [RWA.DOC, RWA.UNDO, RWA.HIST, RWA.FSA, RWA.STATE];
+// User-declared store registry. Persisted to RWA.STATE so declarations survive
+// reload. The openDB() upgrade handler creates declared stores on every bump.
+// Populated at bootstrap via loadUserStoreDecls(); mutated by runtime.db.open.
+const userStoreDecls = new Map();  // name -> { autoIncrement?: boolean }
+let _dbVersionBumpInFlight = null; // Promise<void> while a bump is queued
 async function openDB() {
   if (_db) return _db;
-  // Open without specifying a version, so we work whatever the existing db version is.
+  // Step 1: probe without a version to learn the current DB version. On first
+  // open this creates an empty v1 DB; subsequent opens see whatever the prior
+  // session left behind. We use this number to compute the next upgrade target.
   const probe = await new Promise((res, rej) => {
     const r = indexedDB.open(RWA.DB);
     r.onsuccess = () => res(r.result);
@@ -644,24 +651,38 @@ async function openDB() {
   });
   // We expect every required store to use out-of-line keys (keyPath === null).
   // If a store is missing — or exists with the wrong schema (in-line keys from
-  // an old prototype) — we need to (re)create it.
+  // an old prototype) — we need to (re)create it. The schema-recreate path is
+  // load-bearing for users coming from rwa-edit prototypes that stored docs
+  // with `keyPath: 'k'`; dropping it would brick their containers.
   const toRecreate = [];
   for (const name of REQUIRED_STORES) {
     if (!probe.objectStoreNames.contains(name)) { toRecreate.push(name); continue; }
     const store = probe.transaction(name, 'readonly').objectStore(name);
     if (store.keyPath !== null) toRecreate.push(name);
   }
-  if (toRecreate.length === 0) { _db = probe; return _db; }
+  // Also bump if any declared user-store is missing from the live schema —
+  // this is how Task 2's runtime.db.open triggers a version bump and how a
+  // reload re-instantiates declared stores from persisted user_stores.
+  const missingUserStores = [...userStoreDecls.keys()].filter(s => !probe.objectStoreNames.contains(s));
+  if (toRecreate.length === 0 && missingUserStores.length === 0) { _db = probe; return _db; }
   const newVersion = probe.version + 1;
   probe.close();
   _db = await new Promise((res, rej) => {
     const r = indexedDB.open(RWA.DB, newVersion);
     r.onupgradeneeded = e => {
       const db = e.target.result;
+      // Required-store schema-recreate (legacy in-line-key migration + first-open).
       toRecreate.forEach(name => {
         if (db.objectStoreNames.contains(name)) db.deleteObjectStore(name);
         db.createObjectStore(name); // out-of-line keys
       });
+      // User-declared stores: create whatever isn't already present. We never
+      // delete user stores here — declarations are additive across sessions.
+      for (const [name, opts] of userStoreDecls) {
+        if (!db.objectStoreNames.contains(name)) {
+          db.createObjectStore(name, opts && opts.autoIncrement ? { autoIncrement: true } : undefined);
+        }
+      }
     };
     r.onsuccess = () => res(r.result);
     r.onerror = () => rej(r.error);
@@ -681,6 +702,373 @@ const idbDel = (s, k = RWA.KEY) => openDB().then(db => new Promise((res, rej) =>
   const r = db.transaction(s, 'readwrite').objectStore(s).delete(k);
   r.onsuccess = () => res(); r.onerror = () => rej(r.error);
 }));
+
+// === Public runtime API (spec §7) ===========================================
+// Exposed on window.runtime once the bootstrap IIFE successfully passes
+// private-mode detection and openDB(). Documents read/write their own
+// structured data through runtime.db.*, blobs through runtime.fs.*, drive the
+// modify loop via runtime.modify/commit/undo, and observe state via
+// runtime.status + runtime.on.
+//
+// Reserved-name enforcement: any store name matching ^rwa_ is rejected with
+// RwaReservedError. The runtime owns rwa_doc/rwa_undo/rwa_hist/rwa_fsa/
+// rwa_state and any future rwa_* (spec §5.3).
+
+class RwaReservedError extends Error {
+  constructor(name) { super(`store name '${name}' is reserved (rwa_* is runtime-only)`); this.name = 'RwaReservedError'; }
+}
+
+function assertRuntimeDbStore(name) {
+  if (typeof name !== 'string' || !name) throw new TypeError('store name must be a non-empty string');
+  if (/^rwa_/.test(name)) throw new RwaReservedError(name);
+}
+
+// Producer-side BroadcastChannel cache. Each store has one writer channel that
+// runtime.db.{put,del} reuse to fan out events to subscribers. Subscribers
+// open their OWN channel on the same name (see runtimeDbSubscribe) because
+// BroadcastChannel does not deliver a message back to the channel that posted
+// it (per spec: "Messages are received by all channels of the same name, in
+// the same agent cluster, except the source channel"). Channel name is
+// 'rwa_<DOC_UUID>:<store>' — namespaced to the container so cross-container
+// noise is impossible even if two rwa files share an origin.
+const runtimeDbChannels = new Map();   // store -> BroadcastChannel
+function getStoreChannel(store) {
+  let ch = runtimeDbChannels.get(store);
+  if (!ch) {
+    ch = new BroadcastChannel('rwa_' + DOC_UUID + ':' + store);
+    runtimeDbChannels.set(store, ch);
+  }
+  return ch;
+}
+
+async function runtimeDbGet(store, key) {
+  assertRuntimeDbStore(store);
+  return idbGet(store, key);
+}
+async function runtimeDbPut(store, key, value) {
+  assertRuntimeDbStore(store);
+  const decl = userStoreDecls.get(store);
+  // For autoIncrement stores, callers pass a null/undefined key — IDB assigns
+  // a monotonic integer. We route around idbPut() because that helper always
+  // forwards the (possibly null) key to objectStore.put(value, key), which IDB
+  // rejects with DataError when keyPath is null AND no out-of-line key is given.
+  let resolvedKey;
+  if ((key === null || key === undefined) && decl?.autoIncrement) {
+    const db = await openDB();
+    resolvedKey = await new Promise((res, rej) => {
+      const tx = db.transaction(store, 'readwrite');
+      const req = tx.objectStore(store).put(value);
+      req.onsuccess = () => res(req.result);
+      req.onerror   = () => rej(req.error);
+    });
+  } else {
+    // Non-autoIncrement stores require an explicit key. Without this guard the
+    // call falls through to idbPut(store, value, null), which surfaces an opaque
+    // DataError from IDB; flag the API misuse up front so callers know to either
+    // pass a key or declare the store with {autoIncrement: true}.
+    if (key === null || key === undefined) {
+      throw new TypeError(`runtime.db.put: key is required for non-autoIncrement store '${store}' (declare with {autoIncrement: true} to omit keys)`);
+    }
+    await idbPut(store, value, key);   // internal idbPut keeps (store, value, key) order
+    resolvedKey = key;
+  }
+  // Fan out AFTER the IDB write resolves so subscribers never observe a key
+  // that the store didn't actually commit. The resolved key matters for
+  // autoIncrement stores — subscribers shouldn't have to guess what IDB picked.
+  getStoreChannel(store).postMessage({ kind: 'put', key: resolvedKey });
+  return resolvedKey;
+}
+async function runtimeDbDel(store, key) {
+  assertRuntimeDbStore(store);
+  await idbDel(store, key);
+  getStoreChannel(store).postMessage({ kind: 'del', key });
+}
+
+function runtimeDbSubscribe(store, callback) {
+  assertRuntimeDbStore(store);
+  if (typeof callback !== 'function') throw new TypeError('callback must be a function');
+  // Open a fresh channel rather than reusing the producer's: a BroadcastChannel
+  // does not receive its own postMessage, so listening on the cached writer
+  // would silently swallow every local event. Same-name channels in the same
+  // agent cluster DO see each other, so this still works in-tab + cross-tab.
+  const ch = new BroadcastChannel('rwa_' + DOC_UUID + ':' + store);
+  const handler = (msg) => { try { callback(msg.data); } catch (_) { /* never let a buggy doc-side callback break the runtime */ } };
+  ch.addEventListener('message', handler);
+  return () => { ch.removeEventListener('message', handler); ch.close(); };
+}
+async function runtimeDbAll(store) {
+  assertRuntimeDbStore(store);
+  const db = await openDB();
+  return new Promise((res, rej) => {
+    const tx = db.transaction(store, 'readonly');
+    const os = tx.objectStore(store);
+    const out = [];
+    const req = os.openCursor();
+    req.onsuccess = () => {
+      const cur = req.result;
+      if (!cur) return res(out);
+      out.push({ key: cur.key, value: cur.value });
+      cur.continue();
+    };
+    req.onerror = () => rej(req.error);
+  });
+}
+
+// User-store declarations are persisted under rwa_state['user_stores'] so a
+// reload re-instantiates them via openDB()'s upgrade path. The shape is
+// { [name]: { autoIncrement?: boolean } } — must round-trip through structured
+// clone, so plain JSON-shaped objects only.
+async function loadUserStoreDecls() {
+  const stored = await idbGet(RWA.STATE, 'user_stores');
+  if (stored && typeof stored === 'object') {
+    for (const [name, opts] of Object.entries(stored)) userStoreDecls.set(name, opts || {});
+  }
+}
+async function persistUserStoreDecls() {
+  const out = {};
+  for (const [name, opts] of userStoreDecls) out[name] = opts;
+  await idbPut(RWA.STATE, out, 'user_stores');
+}
+
+// Serialize concurrent runtime.db.open calls: each one needs to close + reopen
+// the connection, and IDB version-bumps can't overlap. The in-flight promise
+// fans out, queues the next bump, then drops the latch.
+async function bumpVersionAndCreateStore(name, opts) {
+  if (_dbVersionBumpInFlight) await _dbVersionBumpInFlight;
+  _dbVersionBumpInFlight = (async () => {
+    if (_db) { _db.close(); _db = null; }
+    userStoreDecls.set(name, opts || {});
+    await openDB();
+    await persistUserStoreDecls();
+  })();
+  try { await _dbVersionBumpInFlight; } finally { _dbVersionBumpInFlight = null; }
+}
+
+async function runtimeDbOpen(name, opts = {}) {
+  assertRuntimeDbStore(name);
+  const db = await openDB();
+  // Idempotent on schema match: an already-present store is a no-op when the
+  // caller's opts agree with the live schema. We never re-create a store under
+  // the same name — that would silently drop user data — and we reject opts
+  // that contradict the live schema so authors aren't surprised by invisible
+  // drift (e.g. db.put(name, null, …) misfiring on a non-autoIncrement store
+  // the registry mistakenly thinks is autoIncrement).
+  if (db.objectStoreNames.contains(name)) {
+    const tx = db.transaction(name, 'readonly');
+    const liveAutoInc = !!tx.objectStore(name).autoIncrement;
+    tx.abort?.();   // explicit hygiene; readonly tx would auto-close anyway
+    const wantAutoInc = !!opts.autoIncrement;
+    if (liveAutoInc !== wantAutoInc) {
+      throw new Error(`runtime.db.open: store '${name}' already exists with autoIncrement=${liveAutoInc}, cannot change to ${wantAutoInc}. Pick a different name.`);
+    }
+    // Self-heal: registry may have drifted from a prior reload or a failed
+    // persist; rewrite it from the authoritative live schema.
+    const cur = userStoreDecls.get(name);
+    if (!cur || !!cur.autoIncrement !== liveAutoInc) {
+      userStoreDecls.set(name, { autoIncrement: liveAutoInc });
+      await persistUserStoreDecls();
+    }
+    return;
+  }
+  await bumpVersionAndCreateStore(name, opts);
+}
+
+// === runtime.fs (OPFS-backed, per-container namespaced) =====================
+// Spec §7: documents persist blobs via runtime.fs.{read,write,del,list}.
+// Spec §5.7: each container's blobs live under `_<DOC_UUID>/` in the shared
+// OPFS so two containers in the same origin can't shadow each other's paths
+// even though OPFS is null-origin under file://.
+//
+// Documents see paths like "img/cat.png"; the runtime transparently rewrites
+// them to "_<DOC_UUID>/img/cat.png" on the way in. The namespace prefix is
+// reserved (the leading underscore + UUID is opaque to the doc) and the
+// runtime rejects any user-supplied path that tries to address `_rwa/` or
+// leading-slash absolutes — those would let a doc trample reserved
+// runtime-only paths or escape the namespace.
+const OPFS_NS = '_' + DOC_UUID + '/';
+
+function assertUserFsPath(path) {
+  if (typeof path !== 'string') throw new TypeError('path must be a string');
+  // An empty path has no meaningful target — downstream behavior is undefined
+  // (the stub silently writes to `prefix + 'undefined'`; real OPFS throws a
+  // cryptic TypeError on the underlying getFileHandle('')). Reject early.
+  if (path === '') throw new Error('path must be non-empty');
+  // `_rwa/` is the reserved runtime path prefix (spec §5.3). Any user-supplied
+  // path that starts with it is rejected up front — a doc that smuggled a blob
+  // there could later collide with a future runtime-owned subtree.
+  if (path.startsWith('_rwa/')) throw new Error("path '_rwa/' is reserved (runtime-only)");
+  // OPFS doesn't have absolute paths; a leading slash usually means the author
+  // confused this for a filesystem-rooted path. Reject so the mistake surfaces
+  // at the call site instead of silently writing to a weird subdirectory.
+  if (path.startsWith('/')) throw new Error("path must be relative (no leading slash)");
+  // `.` / `..` segments aren't traversable in OPFS — real browsers throw a
+  // TypeError on getDirectoryHandle('..') / getFileHandle('.'). Reject early
+  // so the author sees a path-shaped error instead of an opaque DOM exception,
+  // and so we never accidentally let a doc try to escape its own namespace.
+  const segs = path.split('/');
+  if (segs.some(s => s === '.' || s === '..')) {
+    throw new Error("path segments '.' and '..' are not allowed");
+  }
+}
+
+// Resolve the per-container OPFS root, creating it on first access. Throws a
+// readable error on platforms that don't expose OPFS (older Safari, Firefox
+// without the flag) so the doc can decide whether to degrade or surface to
+// the user instead of seeing an opaque TypeError on `getDirectory`.
+async function opfsRootForContainer() {
+  if (!navigator.storage || !navigator.storage.getDirectory) {
+    throw new Error('OPFS not supported in this environment');
+  }
+  const root = await navigator.storage.getDirectory();
+  // OPFS_NS ends in '/' to make string concatenation in the stub-side
+  // bookkeeping unambiguous; the real OPFS API takes bare segment names, so
+  // strip the trailing slash before handing it to getDirectoryHandle.
+  return root.getDirectoryHandle(OPFS_NS.replace(/\/$/, ''), { create: true });
+}
+
+// Walk slash-separated `path` to the terminal file handle. `create` is
+// threaded into every directory hop AND the final file hop, so callers
+// distinguish "write/create" from "read/must-exist" with a single flag.
+async function walkToFile(path, { create } = {}) {
+  const parts = path.split('/').filter(Boolean);
+  const name = parts.pop();
+  let dir = await opfsRootForContainer();
+  for (const p of parts) dir = await dir.getDirectoryHandle(p, { create });
+  return dir.getFileHandle(name, { create });
+}
+
+async function runtimeFsWrite(path, blob) {
+  assertUserFsPath(path);
+  const handle = await walkToFile(path, { create: true });
+  const writable = await handle.createWritable();
+  // Mirror the FSA write pattern used elsewhere in the bootstrap: close in a
+  // finally so a partial-write failure still flushes the writer (avoids
+  // dangling write streams that some browsers refuse to GC).
+  try { await writable.write(blob); } finally { await writable.close(); }
+}
+
+async function runtimeFsRead(path) {
+  assertUserFsPath(path);
+  let handle;
+  try {
+    handle = await walkToFile(path);
+  } catch (e) {
+    // Real OPFS throws a bare NotFoundError with no path context. Documents
+    // that catch this can't tell which path failed without parsing the entire
+    // call site, so we rewrap with the originating path — matches the
+    // descriptive-error style used elsewhere on runtime.*.
+    if (e?.name === 'NotFoundError') throw new Error("runtime.fs.read: no file at '" + path + "'");
+    throw e;
+  }
+  return handle.getFile();
+}
+
+async function runtimeFsDel(path) {
+  assertUserFsPath(path);
+  const parts = path.split('/').filter(Boolean);
+  const name = parts.pop();
+  let dir = await opfsRootForContainer();
+  try {
+    for (const p of parts) dir = await dir.getDirectoryHandle(p);
+    // `{ recursive: true }` lets del work on non-empty directories — real
+    // browsers reject a plain removeEntry on a non-empty dir with
+    // InvalidModificationError. Use recursive so the API is symmetric with
+    // write (which silently creates any intermediate dirs).
+    await dir.removeEntry(name, { recursive: true });
+  } catch (e) {
+    if (e?.name === 'NotFoundError') throw new Error("runtime.fs.del: no file at '" + path + "'");
+    throw e;
+  }
+}
+
+async function runtimeFsList(prefix) {
+  assertUserFsPath(prefix);
+  const parts = prefix.split('/').filter(Boolean);
+  let dir = await opfsRootForContainer();
+  try {
+    for (const p of parts) dir = await dir.getDirectoryHandle(p);
+  } catch (e) {
+    // A list against a never-written directory is not an error in document
+    // land — most authors will call list() defensively to discover what
+    // exists. Return [] for NotFoundError only; any other failure (a
+    // TypeError on an invalid name, a SecurityError under iframe sandboxing)
+    // is a real problem the doc should see, so re-throw it.
+    if (e?.name === 'NotFoundError') return [];
+    throw e;
+  }
+  const out = [];
+  for await (const [name, h] of dir.entries()) {
+    out.push({ name, kind: h.kind });
+  }
+  return out;
+}
+
+// === Runtime event bus (spec §7) ============================================
+// Minimal pub/sub for commit/modify/status. Callbacks are scoped per event
+// name; an event name not in this whitelist throws on subscribe so a typo
+// (or a future event a doc hopes already exists) fails loud at the wire-up
+// site rather than silently never firing.
+const runtimeEvents = {
+  commit: new Set(),
+  modify: new Set(),
+  status: new Set(),
+};
+
+function runtimeOn(event, callback) {
+  if (!Object.prototype.hasOwnProperty.call(runtimeEvents, event)) {
+    throw new Error("unknown event '" + event + "' (use 'commit', 'modify', or 'status')");
+  }
+  if (typeof callback !== 'function') throw new TypeError('callback must be a function');
+  runtimeEvents[event].add(callback);
+  return () => { runtimeEvents[event].delete(callback); };
+}
+
+// Invoke every subscriber for `event`. Callback errors are caught so one buggy
+// listener can't break delivery to the others, and so the synchronous emit
+// inside e.g. setDirty(false) can never propagate an exception into the
+// commit() / modify() success path (which would surface as a fake failure).
+function emitRuntimeEvent(event, payload) {
+  // Snapshot the Set before iterating: a listener subscribing or unsubscribing
+  // during this emit must not perturb the current round (conventional pubsub
+  // semantics — subscribed-during-emit ⇒ skip until next emit).
+  for (const cb of [...runtimeEvents[event]]) {
+    try { cb(payload); } catch (_) { /* swallow user-cb errors */ }
+  }
+}
+
+// === Status surface (spec §7) ==============================================
+// FSA permission state. Tracked here rather than re-derived each call because
+// the permission events that move it (showSaveFilePicker, queryPermission,
+// requestPermission, lost-handle InvalidStateError) are scattered across the
+// commit() path; centralizing the mutation keeps the status snapshot honest.
+//
+// Values:
+//   'unsupported' — no showSaveFilePicker in the runtime (Firefox/Safari)
+//   'prompt'      — handle exists but the user hasn't granted yet this session
+//   'granted'     — user said yes; subsequent writes won't reprompt
+//   'denied'      — user said no
+//   'lost'        — a write threw InvalidStateError (handle no longer valid)
+let _fsaState = (typeof window !== 'undefined' && 'showSaveFilePicker' in window) ? 'prompt' : 'unsupported';
+// Last storage estimate captured by rwaCheckQuota. null until the first
+// successful estimate() — keeps the shape testable on platforms that don't
+// expose navigator.storage.estimate at all.
+let _storageStat = null;
+
+function getStatusSnapshot() {
+  return {
+    dirty: !!document.getElementById('rwa-st-commit')?.classList.contains('dirty'),
+    fsa: _fsaState,
+    storage: _storageStat,
+  };
+}
+
+// === Modify/commit/undo programmatic wrappers (spec §7) ====================
+// Thin wrappers around the internal lifecycle. Wrappers (not direct exposure)
+// so a doc-side caller can't accidentally shadow or swap the internal
+// references that the lens/agent paths rely on.
+async function runtimeModify(instruction) { return modify(instruction); }
+async function runtimeCommit() { return commit(); }
+async function runtimeUndo() { return undo(); }
 
 async function getDoc() {
   let d = await idbGet(RWA.DOC);
@@ -1040,6 +1428,10 @@ async function rwaCheckQuota() {
   let est;
   try { est = await navigator.storage.estimate(); } catch (_) { return; }
   if (!est || !est.quota || !est.usage) return;
+  // Snapshot for runtime.status (spec §7). Captured before the threshold
+  // branch so the status surface stays current even when usage is well below
+  // the warning line.
+  _storageStat = { usage: est.usage, quota: est.quota };
   const ratio = est.usage / est.quota;
   if (ratio > 0.8) {
     const usedMB = Math.round(est.usage / (1024 * 1024));
@@ -2067,6 +2459,15 @@ async function runAnchoredCommand(anchor, instruction) {
         setDirty(true);
         await rwaBumpDirtyCount().catch(() => {});
         rwaCheckQuota();
+        // Defer the emit so by the time listeners run, the `finally` block
+        // below has released `modifyMutex`. Without this, a listener that
+        // synchronously calls `runtime.modify()` from inside its callback
+        // would hit `concurrent_modify` and have the error swallowed by
+        // `emitRuntimeEvent`'s try/catch (Fix I2).
+        queueMicrotask(() => {
+          emitRuntimeEvent('modify', { instruction, lensMeta });
+          emitRuntimeEvent('status', getStatusSnapshot());
+        });
         // Spec §5.4 post-commit anchor branches: single → re-anchor on new
         // block; multi → release with affordance; empty → release silently.
         // The pre-commit anchor (with its start offset) is the stable handle
@@ -2174,6 +2575,14 @@ async function synthesizeAndCommit(envelope, surface, instruction) {
     setDirty(true);
     await rwaBumpDirtyCount().catch(() => {});
     rwaCheckQuota();
+    // Defer the emit so the `finally` below releases `modifyMutex` before any
+    // listener fires; otherwise a listener calling `runtime.modify()` would
+    // hit `concurrent_modify` and that error would be swallowed by
+    // `emitRuntimeEvent`'s try/catch (Fix I2).
+    queueMicrotask(() => {
+      emitRuntimeEvent('modify', { instruction, lensMeta });
+      emitRuntimeEvent('status', getStatusSnapshot());
+    });
     if (prevAnchorStart !== null && sourceMap) {
       const newEntry = sourceMap.find(m => m.start === prevAnchorStart);
       if (newEntry) {
@@ -2864,6 +3273,14 @@ async function modify(instr, lensMeta = null) {
       setDirty(true);
       await rwaBumpDirtyCount().catch(() => {});
       rwaCheckQuota();
+      // Defer the emit so the `finally` below releases `modifyMutex` before
+      // any listener fires; otherwise a listener calling `runtime.modify()`
+      // would hit `concurrent_modify` and that error would be swallowed by
+      // `emitRuntimeEvent`'s try/catch (Fix I2).
+      queueMicrotask(() => {
+        emitRuntimeEvent('modify', { instruction: instr, lensMeta });
+        emitRuntimeEvent('status', getStatusSnapshot());
+      });
       setStatus('ok', '✓ done');
     } else {
       const summary = lastFailure
@@ -2955,6 +3372,14 @@ async function modifyViaBridge(instr, lensMeta = null) {
     setDirty(true);
     await rwaBumpDirtyCount().catch(() => {});
     rwaCheckQuota();
+    // Defer the emit so the `finally` below releases `modifyMutex` before
+    // any listener fires; otherwise a listener calling `runtime.modify()`
+    // would hit `concurrent_modify` and that error would be swallowed by
+    // `emitRuntimeEvent`'s try/catch (Fix I2).
+    queueMicrotask(() => {
+      emitRuntimeEvent('modify', { instruction: instr, lensMeta });
+      emitRuntimeEvent('status', getStatusSnapshot());
+    });
     setStatus('ok', '✓ done');
   } catch (e) {
     if (e instanceof RwaEditError) {
@@ -3012,6 +3437,11 @@ async function undo() {
   renderDoc(p);
   setDirty(true);
   setStatus('ok', '↩ undone');
+  // A doc watching `'status'` for clean→dirty transitions would otherwise
+  // miss the one caused by undo (setDirty(true) above doesn't emit). Stick to
+  // `status` here; spec text in Task 6 will decide whether undo should also
+  // qualify as a 'modify' event (Fix I3).
+  emitRuntimeEvent('status', getStatusSnapshot());
 }
 
 async function commit() {
@@ -3024,6 +3454,11 @@ async function commit() {
         if (h) {
           let p = await h.queryPermission({ mode: 'readwrite' });
           if (p === 'prompt') p = await h.requestPermission({ mode: 'readwrite' });
+          // Mirror the resolved FSA permission state into _fsaState so
+          // runtime.status reflects what the user actually sees post-commit.
+          if (p === 'granted')      _fsaState = 'granted';
+          else if (p === 'denied')  _fsaState = 'denied';
+          else if (p === 'prompt')  _fsaState = 'prompt';
           if (p !== 'granted') {
             // Stale or revoked handle — drop it so the next ⌘S re-prompts.
             await idbDel(RWA.FSA).catch(() => {});
@@ -3033,9 +3468,21 @@ async function commit() {
         } else {
           h = await window.showSaveFilePicker({ suggestedName: RWA.FILE, types: [{ description: 'HTML', accept: { 'text/html': ['.html'] } }] });
           await idbPut(RWA.FSA, h);
+          _fsaState = 'granted';   // showSaveFilePicker only resolves on user pick
         }
-        const w = await h.createWritable(); await w.write(text); await w.close();
-        setDirty(false); await rwaResetOnCommit().catch(() => {}); setStatus('ok', '✓ committed'); return;
+        try {
+          const w = await h.createWritable(); await w.write(text); await w.close();
+        } catch (writeErr) {
+          // InvalidStateError surfaces when the handle is no longer valid
+          // (file moved/deleted, tab restored from bfcache, etc.). Mark the
+          // handle as lost so runtime.status stops claiming 'granted'.
+          if (writeErr && writeErr.name === 'InvalidStateError') _fsaState = 'lost';
+          throw writeErr;
+        }
+        setDirty(false); await rwaResetOnCommit().catch(() => {}); setStatus('ok', '✓ committed');
+        emitRuntimeEvent('commit', null);
+        emitRuntimeEvent('status', getStatusSnapshot());
+        return;
       } catch (e) {
         if (e.name === 'AbortError') { setStatus('', 'cancelled'); return; }
         console.warn('FSA failed, falling back to download:', e);
@@ -3047,6 +3494,8 @@ async function commit() {
     a.click();
     URL.revokeObjectURL(a.href);
     setDirty(false); await rwaResetOnCommit().catch(() => {}); setStatus('ok', '✓ exported');
+    emitRuntimeEvent('commit', null);
+    emitRuntimeEvent('status', getStatusSnapshot());
   } catch (e) {
     setStatus('err', '✗ ' + e.message);
   }
@@ -3080,6 +3529,16 @@ document.addEventListener('keydown', e => {
       rwaShowPrivateModeBanner();
       return;
     }
+    // Spec §7: rehydrate user-declared stores from rwa_state. If any are
+    // missing from the just-opened DB (because they were declared in a prior
+    // session), close + reopen so the upgrade handler creates them before
+    // document code runs. This keeps the invariant "if userStoreDecls knows
+    // about it, _db has the object store" true at every runtime.db.* call.
+    await loadUserStoreDecls();
+    if ([...userStoreDecls.keys()].some(s => !_db.objectStoreNames.contains(s))) {
+      _db.close(); _db = null;
+      await openDB();  // probe-then-upgrade picks up the missing stores
+    }
     // Spec §5.6: rehydrate the dirty-state nudge if a prior session left it ≥threshold.
     const initialCount = await rwaGetDirtyCount();
     if (initialCount >= RWA.NUDGE_THRESHOLD) showCommitNudge(initialCount);
@@ -3093,6 +3552,39 @@ document.addEventListener('keydown', e => {
       doc = idRes.text;
       await idbPut(RWA.DOC, doc);
     }
+    // Spec §7: expose the public runtime API. Only constructed on the success
+    // path (after private-mode detection + openDB() + block-id seeding) so
+    // documents never see a half-initialized runtime. Private-mode early-return
+    // above leaves window.runtime undefined — that's correct: no IDB, no API.
+    window.runtime = {
+      id: DOC_UUID,
+      db: {
+        get: runtimeDbGet,
+        put: runtimeDbPut,
+        del: runtimeDbDel,
+        all: runtimeDbAll,
+        open: runtimeDbOpen,
+        subscribe: runtimeDbSubscribe,
+      },
+      fs: {
+        read:  runtimeFsRead,
+        write: runtimeFsWrite,
+        del:   runtimeFsDel,
+        list:  runtimeFsList,
+      },
+      modify: runtimeModify,
+      commit: runtimeCommit,
+      undo:   runtimeUndo,
+      on:     runtimeOn,
+    };
+    // `status` is a getter so each read returns a fresh snapshot of
+    // dirty/fsa/storage; an enumerable data prop would let stale references
+    // outlive the state change they were observing.
+    Object.defineProperty(window.runtime, 'status', {
+      get: getStatusSnapshot,
+      enumerable: true,
+      configurable: false,
+    });
     renderDoc(doc);
     scrollToFragment();
     setStatus('ok', '● ready');
