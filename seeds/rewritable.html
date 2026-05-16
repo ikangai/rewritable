@@ -425,6 +425,10 @@ const OPFS_NS = '_' + DOC_UUID + '/';
 
 function assertUserFsPath(path) {
   if (typeof path !== 'string') throw new TypeError('path must be a string');
+  // An empty path has no meaningful target — downstream behavior is undefined
+  // (the stub silently writes to `prefix + 'undefined'`; real OPFS throws a
+  // cryptic TypeError on the underlying getFileHandle('')). Reject early.
+  if (path === '') throw new Error('path must be non-empty');
   // `_rwa/` is the reserved runtime path prefix (spec §5.3). Any user-supplied
   // path that starts with it is rejected up front — a doc that smuggled a blob
   // there could later collide with a future runtime-owned subtree.
@@ -433,6 +437,14 @@ function assertUserFsPath(path) {
   // confused this for a filesystem-rooted path. Reject so the mistake surfaces
   // at the call site instead of silently writing to a weird subdirectory.
   if (path.startsWith('/')) throw new Error("path must be relative (no leading slash)");
+  // `.` / `..` segments aren't traversable in OPFS — real browsers throw a
+  // TypeError on getDirectoryHandle('..') / getFileHandle('.'). Reject early
+  // so the author sees a path-shaped error instead of an opaque DOM exception,
+  // and so we never accidentally let a doc try to escape its own namespace.
+  const segs = path.split('/');
+  if (segs.some(s => s === '.' || s === '..')) {
+    throw new Error("path segments '.' and '..' are not allowed");
+  }
 }
 
 // Resolve the per-container OPFS root, creating it on first access. Throws a
@@ -473,7 +485,17 @@ async function runtimeFsWrite(path, blob) {
 
 async function runtimeFsRead(path) {
   assertUserFsPath(path);
-  const handle = await walkToFile(path);
+  let handle;
+  try {
+    handle = await walkToFile(path);
+  } catch (e) {
+    // Real OPFS throws a bare NotFoundError with no path context. Documents
+    // that catch this can't tell which path failed without parsing the entire
+    // call site, so we rewrap with the originating path — matches the
+    // descriptive-error style used elsewhere on runtime.*.
+    if (e?.name === 'NotFoundError') throw new Error("runtime.fs.read: no file at '" + path + "'");
+    throw e;
+  }
   return handle.getFile();
 }
 
@@ -482,11 +504,17 @@ async function runtimeFsDel(path) {
   const parts = path.split('/').filter(Boolean);
   const name = parts.pop();
   let dir = await opfsRootForContainer();
-  // No `create` — if any segment along the way is missing the underlying
-  // getDirectoryHandle throws NotFoundError, which is exactly what we want
-  // for a delete: the file already isn't there.
-  for (const p of parts) dir = await dir.getDirectoryHandle(p);
-  await dir.removeEntry(name);
+  try {
+    for (const p of parts) dir = await dir.getDirectoryHandle(p);
+    // `{ recursive: true }` lets del work on non-empty directories — real
+    // browsers reject a plain removeEntry on a non-empty dir with
+    // InvalidModificationError. Use recursive so the API is symmetric with
+    // write (which silently creates any intermediate dirs).
+    await dir.removeEntry(name, { recursive: true });
+  } catch (e) {
+    if (e?.name === 'NotFoundError') throw new Error("runtime.fs.del: no file at '" + path + "'");
+    throw e;
+  }
 }
 
 async function runtimeFsList(prefix) {
@@ -495,13 +523,14 @@ async function runtimeFsList(prefix) {
   let dir = await opfsRootForContainer();
   try {
     for (const p of parts) dir = await dir.getDirectoryHandle(p);
-  } catch (_) {
+  } catch (e) {
     // A list against a never-written directory is not an error in document
     // land — most authors will call list() defensively to discover what
-    // exists. Returning [] keeps that idiomatic; reserving a thrown error
-    // for actual path-validity violations (rejected by assertUserFsPath
-    // above).
-    return [];
+    // exists. Return [] for NotFoundError only; any other failure (a
+    // TypeError on an invalid name, a SecurityError under iframe sandboxing)
+    // is a real problem the doc should see, so re-throw it.
+    if (e?.name === 'NotFoundError') return [];
+    throw e;
   }
   const out = [];
   for await (const [name, h] of dir.entries()) {

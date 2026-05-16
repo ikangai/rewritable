@@ -1494,19 +1494,30 @@ console.log('\n== Test R5.0: install OPFS stub ==');
       kind: 'directory',
       async getDirectoryHandle(name, opts = {}) {
         const sub = prefix + name + '/';
-        if (!opts.create && ![...tree.keys()].some(k => k.startsWith(sub))) throw new DOMException('NotFoundError');
+        // Two-arg DOMException form: the second arg sets `.name`. Real OPFS
+        // throws DOMException 'NotFoundError' here; the seed's error-wrappers
+        // sniff `e.name === 'NotFoundError'`, so a single-arg DOMException
+        // (which leaves name === 'Error') would bypass the rewrap path.
+        if (!opts.create && ![...tree.keys()].some(k => k.startsWith(sub))) throw new DOMException('NotFoundError', 'NotFoundError');
         return makeDirHandle(sub);
       },
       async getFileHandle(name, opts = {}) {
         const key = prefix + name;
-        if (!opts.create && !tree.has(key)) throw new DOMException('NotFoundError');
+        if (!opts.create && !tree.has(key)) throw new DOMException('NotFoundError', 'NotFoundError');
         return makeFileHandle(key);
       },
-      async removeEntry(name) {
+      async removeEntry(name, opts = {}) {
         const key = prefix + name;
         if (tree.has(key)) tree.delete(key);
         else {
-          for (const k of [...tree.keys()]) if (k.startsWith(prefix + name + '/')) tree.delete(k);
+          // Match real OPFS behavior: removing a missing entry throws
+          // NotFoundError; removing a non-empty directory without
+          // { recursive: true } throws InvalidModificationError.
+          const dirKey = prefix + name + '/';
+          const matches = [...tree.keys()].filter(k => k.startsWith(dirKey));
+          if (matches.length === 0) throw new DOMException('NotFoundError', 'NotFoundError');
+          if (!opts.recursive) throw new DOMException('InvalidModificationError', 'InvalidModificationError');
+          for (const k of matches) tree.delete(k);
         }
       },
       async *entries() {
@@ -1593,6 +1604,51 @@ console.log('\n== Test R5.5: per-container namespacing (paths are isolated) ==')
   }
   check('root contains the per-container directory',
     rootDirs.some(n => n.startsWith('_' + window.runtime.id.slice(0, 8))));
+}
+
+console.log('\n== Test R5.6: reserved-prefix rejection covers all four ops ==');
+{
+  for (const op of ['read', 'del']) {
+    let threw = null;
+    try { await window.runtime.fs[op]('_rwa/foo'); }
+    catch (e) { threw = e; }
+    check(`fs.${op}('_rwa/...') rejects`, threw !== null && /reserved/i.test(threw.message || ''));
+  }
+  let threw = null;
+  try { await window.runtime.fs.write('_rwa/foo', new Blob(['x'])); }
+  catch (e) { threw = e; }
+  check("fs.write('_rwa/...') rejects", threw !== null && /reserved/i.test(threw.message || ''));
+}
+
+console.log('\n== Test R5.7: empty path rejects on all four ops ==');
+{
+  for (const op of ['read', 'del', 'list']) {
+    let threw = null;
+    try { await window.runtime.fs[op](''); }
+    catch (e) { threw = e; }
+    check(`fs.${op}('') rejects`, threw !== null && /non-empty/i.test(threw.message || ''));
+  }
+}
+
+console.log('\n== Test R5.8: missing file produces descriptive error ==');
+{
+  let threw = null;
+  try { await window.runtime.fs.read('does/not/exist.txt'); }
+  catch (e) { threw = e; }
+  check('read missing throws',
+    threw !== null && /no file at/i.test(threw.message || ''));
+  check('error mentions the path',
+    threw !== null && /does\/not\/exist/.test(threw.message || ''));
+}
+
+console.log('\n== Test R5.9: dot-segment rejection ==');
+{
+  for (const p of ['../escape.txt', 'a/../b.txt', './foo.txt']) {
+    let threw = null;
+    try { await window.runtime.fs.read(p); }
+    catch (e) { threw = e; }
+    check(`read('${p}') rejects`, threw !== null && /not allowed/i.test(threw.message || ''));
+  }
 }
 
 console.log(`\n${pass} pass, ${fail} fail`);
