@@ -934,13 +934,51 @@ console.log('\n== Test M1.3: commit resets the counter and clears toast ==');
     !window.document.querySelector('.rwa-lens-toast[data-kind="commit-nudge"]'));
 }
 
-console.log('\n== Test M1.4: counter survives reload (persisted to IDB) ==');
+console.log('\n== Test M1.4: counter round-trips through IDB ==');
 {
   await window.rwaResetDirtyCount();
   await window.rwaBumpDirtyCount();
   await window.rwaBumpDirtyCount();
   const stored = await window.rwaGetDirtyCount();
-  check('count persists at 2', stored === 2);
+  check('count round-trips through IDB at 2', stored === 2);
+}
+
+console.log('\n== Test M1.5: lens direct text and anchored slash bump the counter ==');
+{
+  // Drive a direct-text append through the lens (default state → EOF append
+  // via synthesizeAndCommit). Mirrors L3.4's setup.
+  await window.__setDocForTest('<p>Existing.</p>');
+  // Ensure default state (no anchor) so submitLens routes through
+  // synthesizeAndCommit, not runAnchoredCommand.
+  window.__lensState.anchor = null;
+  window.document.getElementById('rwa-lens').dataset.state = 'default';
+  delete window.__synthesizeAndCommit; // unstub — use the real synthesizeAndCommit
+  await window.rwaResetDirtyCount();
+  const beforeDirect = await window.rwaGetDirtyCount();
+  await window.submitLens('Direct text appended via lens.');
+  await new Promise(r => setTimeout(r, 100));
+  const afterDirect = await window.rwaGetDirtyCount();
+  check('direct text via lens increments counter (synthesizeAndCommit)',
+    afterDirect === beforeDirect + 1);
+
+  // Drive an anchored slash command via runAnchoredCommand. Mirrors L7.4.
+  await window.__setDocForTest('<p>Original.</p>');
+  await window.rwaResetDirtyCount();
+  // Click to anchor.
+  window.document.querySelector('p').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  // Single-shot completion response (no tool_use — runAnchoredCommand wraps
+  // the model's content into the apply_edits envelope itself).
+  fetchHandler = async () => ({
+    ok: true,
+    json: async () => ({
+      choices: [{ message: { role: 'assistant', content: '<p>Tightened.</p>' }}]
+    })
+  });
+  await window.submitLens('/tighten');
+  await new Promise(r => setTimeout(r, 200));
+  const afterAnchored = await window.rwaGetDirtyCount();
+  check('anchored slash command increments counter (runAnchoredCommand)',
+    afterAnchored === 1);
 }
 
 console.log(`\n${pass} pass, ${fail} fail`);

@@ -528,6 +528,8 @@ async function rwaBumpDirtyCount() {
   return n;
 }
 async function rwaResetDirtyCount() { await rwaSetDirtyCount(0); }
+// rwaResetOnCommit is a named commit-hook seam: keep separate from
+// rwaResetDirtyCount so future commit-only logic (e.g., last_commit_ts) lands here.
 async function rwaResetOnCommit()   { await rwaResetDirtyCount(); }
 
 function showCommitNudge(n) {
@@ -1532,6 +1534,8 @@ async function runAnchoredCommand(anchor, instruction) {
         };
         const result = await applyEdits(envelope, await getDoc(), lensMeta);
         renderDoc(result);
+        setDirty(true);
+        await rwaBumpDirtyCount().catch(() => {});
         // Spec §5.4 post-commit anchor branches: single → re-anchor on new
         // block; multi → release with affordance; empty → release silently.
         // The pre-commit anchor (with its start offset) is the stable handle
@@ -1636,6 +1640,8 @@ async function synthesizeAndCommit(envelope, surface, instruction) {
     // and (because the lens may sit inside the mount) calls releaseAnchor, so we
     // must re-resolve the anchor afterwards using the offset captured above.
     renderDoc(result);
+    setDirty(true);
+    await rwaBumpDirtyCount().catch(() => {});
     if (prevAnchorStart !== null && sourceMap) {
       const newEntry = sourceMap.find(m => m.start === prevAnchorStart);
       if (newEntry) {
@@ -2324,7 +2330,7 @@ async function modify(instr, lensMeta = null) {
     if (newDoc !== null) {
       renderDoc(newDoc);
       setDirty(true);
-      await rwaBumpDirtyCount();
+      await rwaBumpDirtyCount().catch(() => {});
       setStatus('ok', '✓ done');
     } else {
       const summary = lastFailure
@@ -2414,7 +2420,7 @@ async function modifyViaBridge(instr, lensMeta = null) {
 
     renderDoc(newDoc);
     setDirty(true);
-    await rwaBumpDirtyCount();
+    await rwaBumpDirtyCount().catch(() => {});
     setStatus('ok', '✓ done');
   } catch (e) {
     if (e instanceof RwaEditError) {
@@ -2495,7 +2501,7 @@ async function commit() {
           await idbPut(RWA.FSA, h);
         }
         const w = await h.createWritable(); await w.write(text); await w.close();
-        setDirty(false); await rwaResetOnCommit(); setStatus('ok', '✓ committed'); return;
+        setDirty(false); await rwaResetOnCommit().catch(() => {}); setStatus('ok', '✓ committed'); return;
       } catch (e) {
         if (e.name === 'AbortError') { setStatus('', 'cancelled'); return; }
         console.warn('FSA failed, falling back to download:', e);
@@ -2506,7 +2512,7 @@ async function commit() {
     a.download = RWA.FILE;
     a.click();
     URL.revokeObjectURL(a.href);
-    setDirty(false); await rwaResetOnCommit(); setStatus('ok', '✓ exported');
+    setDirty(false); await rwaResetOnCommit().catch(() => {}); setStatus('ok', '✓ exported');
   } catch (e) {
     setStatus('err', '✗ ' + e.message);
   }
