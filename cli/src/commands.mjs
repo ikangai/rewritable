@@ -77,15 +77,40 @@ async function readEnvKey(name) {
   return null;
 }
 
-function openFile(target, key) {
-  // When a key is present we open via a file:// URL with `?key=…` so the
-  // bootstrap can lift it into sessionStorage on first paint and scrub the
-  // bar via history.replaceState. Without a key we use the bare path so
-  // the open command is byte-identical to before.
+// Validate-and-return a backend name. Returns null for invalid input rather
+// than throwing — pre-fill is best-effort; an unknown value just means the
+// user sees the default backend (openrouter) on first paint.
+function validBackend(v) {
+  return ['openrouter', 'ollama', 'lmstudio', 'bridge'].includes(v) ? v : null;
+}
+
+// Collect URL-param pre-fills from env / ./.env. Returns an object whose keys
+// match the URL params the bootstrap lifts (key, backend, model). Missing or
+// invalid values are omitted; the bootstrap falls back to its defaults.
+async function collectPrefill() {
+  const out = {};
+  const key     = await readEnvKey('OPENROUTER_API_KEY');
+  const backend = validBackend(await readEnvKey('RWA_BACKEND'));
+  const model   = await readEnvKey('RWA_MODEL');
+  if (key)     out.key = key;
+  if (backend) out.backend = backend;
+  if (model)   out.model = model;
+  return out;
+}
+
+function openFile(target, prefill) {
+  // When any prefill is present we open via a file:// URL with the params so
+  // the bootstrap can lift them into sessionStorage on first paint and scrub
+  // the URL bar via history.replaceState. Without any prefill we use the bare
+  // path so the open command is byte-identical to before.
   let arg;
-  if (key) {
+  const params = prefill || {};
+  const hasAny = params.key || params.backend || params.model;
+  if (hasAny) {
     const u = pathToFileURL(target);
-    u.searchParams.set('key', key);
+    if (params.key) u.searchParams.set('key', params.key);
+    if (params.backend) u.searchParams.set('backend', params.backend);
+    if (params.model) u.searchParams.set('model', params.model);
     arg = u.toString();
   } else {
     arg = target;
@@ -119,9 +144,11 @@ export async function newCmd({ outPath, force, open }) {
   await fs.writeFile(out, result, 'utf8');
   console.log(`wrote ${rel(out)}`);
   if (open) {
-    const key = await readEnvKey('OPENROUTER_API_KEY');
-    if (key) console.error('note: passing OPENROUTER_API_KEY via ?key= URL parameter');
-    openFile(out, key);
+    const prefill = await collectPrefill();
+    if (prefill.key) console.error('note: passing OPENROUTER_API_KEY via ?key= URL parameter');
+    if (prefill.backend) console.error(`note: passing RWA_BACKEND=${prefill.backend} via ?backend= URL parameter`);
+    if (prefill.model) console.error(`note: passing RWA_MODEL=${prefill.model} via ?model= URL parameter`);
+    openFile(out, prefill);
   }
 }
 
@@ -180,8 +207,10 @@ export async function importCmd({ inputPath, outPath, force, open, vision, claud
   await fs.writeFile(out, result, 'utf8');
   console.log(`wrote ${rel(out)}`);
   if (open) {
-    const key = await readEnvKey('OPENROUTER_API_KEY');
-    if (key) console.error('note: passing OPENROUTER_API_KEY via ?key= URL parameter');
-    openFile(out, key);
+    const prefill = await collectPrefill();
+    if (prefill.key) console.error('note: passing OPENROUTER_API_KEY via ?key= URL parameter');
+    if (prefill.backend) console.error(`note: passing RWA_BACKEND=${prefill.backend} via ?backend= URL parameter`);
+    if (prefill.model) console.error(`note: passing RWA_MODEL=${prefill.model} via ?model= URL parameter`);
+    openFile(out, prefill);
   }
 }

@@ -172,15 +172,31 @@ const RWA = {
   BRIDGE_URL:'http://127.0.0.1:8765/run',
 };
 
-// `rwa new -o` / `rwa import -o` can pass an OpenRouter key via `?key=…`.
-// Lift it into sessionStorage on first paint and scrub the URL bar so the
-// key doesn't sit in the location, history, or any later bookmark.
+// `rwa new -o` / `rwa import -o` can pass first-paint configuration via URL
+// params so the user doesn't have to open ⚙ before pressing ⌘K. Supported:
+//   ?key=…       → sessionStorage rwa_apikey   (OpenRouter API key)
+//   ?backend=…   → sessionStorage rwa_backend  (openrouter|ollama|lmstudio|bridge)
+//   ?model=…     → sessionStorage rwa_model    (model name string)
+// Each lifted param is removed from the URL via history.replaceState so the
+// key (and any later bookmark/share of the URL) does not retain the value.
 try {
   const qs = new URLSearchParams(location.search);
   const k = qs.get('key');
   if (k) {
     sessionStorage.setItem(RWA.K_API, k);
     qs.delete('key');
+  }
+  const b = qs.get('backend');
+  if (b && ['openrouter','ollama','lmstudio','bridge'].includes(b)) {
+    sessionStorage.setItem(RWA.K_BACKEND, b);
+    qs.delete('backend');
+  }
+  const md = qs.get('model');
+  if (md) {
+    sessionStorage.setItem(RWA.K_MODEL, md);
+    qs.delete('model');
+  }
+  if (k || b || md) {
     const tail = qs.toString();
     history.replaceState(null, '', location.pathname + (tail ? '?' + tail : '') + location.hash);
   }

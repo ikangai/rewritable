@@ -11,11 +11,13 @@ Usage:
 
 Flags:
   --force, -f    overwrite the destination if it exists
-  --open, -o     open the resulting file in the default app
-                 (if OPENROUTER_API_KEY is set in the environment or in
-                  ./.env, it is appended as ?key=… so the new container
-                  can talk to the agent without manually pasting it.
-                  The bootstrap scrubs the URL on first paint.)
+  --open, -o     open the resulting file in the default app. First-paint
+                 sessionStorage is pre-populated from env / ./.env:
+                   OPENROUTER_API_KEY → ?key=…    (lifted into rwa_apikey)
+                   RWA_BACKEND        → ?backend= (openrouter|ollama|lmstudio|bridge)
+                   RWA_MODEL          → ?model=…  (model name string)
+                 The bootstrap lifts each into sessionStorage and scrubs the
+                 URL bar on first paint, so the values don't sit in history.
   --vision       (import only, .pdf only) send the PDF to OpenRouter and
                  ask the model to convert it to clean HTML. Bypasses the
                  local pdfjs heuristic entirely. Requires OPENROUTER_API_KEY.

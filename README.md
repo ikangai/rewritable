@@ -57,7 +57,13 @@ npx rwa import scan.pdf --claude  # PDF/docx → HTML via local `claude -p` + th
                                   #   pdf/docx skills under ~/.claude/skills/
 ```
 
-`rwa new -o` and `rwa import -o` open the resulting file in the default browser. If `OPENROUTER_API_KEY` is set in the environment (or in `./.env`), it's handed to the container via a `?key=…` URL parameter that the bootstrap lifts into `sessionStorage` and immediately scrubs from the URL — so ⌘K works on first open without visiting the settings panel.
+`rwa new -o` and `rwa import -o` open the resulting file in the default browser. The bootstrap lifts three optional URL params into `sessionStorage` on first paint, then scrubs them from the URL so the values don't sit in browser history. The CLI populates these from environment / `./.env`:
+
+- `OPENROUTER_API_KEY` → `?key=…` (lifted into `rwa_apikey`)
+- `RWA_BACKEND` → `?backend=…` (one of `openrouter`, `ollama`, `lmstudio`, `bridge`)
+- `RWA_MODEL` → `?model=…` (model name string, e.g. `llama3.1:latest` or `qwen2.5-coder-7b-instruct`)
+
+So `RWA_BACKEND=ollama RWA_MODEL=llama3.1:latest rwa new -o` opens a fresh container already wired to your local Ollama. (Base URLs default to `localhost:11434` / `localhost:1234`; override in the ⚙ settings panel if needed.)
 
 ```sh
 # Service — hosted
