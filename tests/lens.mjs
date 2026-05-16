@@ -1312,5 +1312,132 @@ console.log('\n== Test R3.7: autoIncrement put carries resolved key in event =='
   unsub();
 }
 
+// === Phase: runtime.modify/commit/undo + status + on (spec §7) ===
+console.log('\n== Test R4.1: runtime.status reads dirty/fsa/storage ==');
+{
+  const s = window.runtime.status;
+  check('status is an object', typeof s === 'object' && s !== null);
+  check('status.dirty is boolean', typeof s.dirty === 'boolean');
+  check('status.fsa is enum',
+    ['granted','prompt','denied','unsupported','lost'].includes(s.fsa));
+  // storage is either a {usage, quota} record or null when estimate() returned
+  // an unusable result. Either is acceptable here.
+  check('status.storage shape',
+    (s.storage && typeof s.storage.usage === 'number' && typeof s.storage.quota === 'number')
+    || s.storage === null);
+}
+
+console.log('\n== Test R4.2: runtime.on("modify", cb) fires ==');
+{
+  // Reset the doc so submitLens's direct-text path runs cleanly.
+  await window.__setDocForTest('<p>Existing for runtime.modify.</p>');
+  delete window.__synthesizeAndCommit;
+  let n = 0;
+  const off = window.runtime.on('modify', () => n++);
+  // Trigger via the existing test seam.
+  await window.submitLens('Direct prose for runtime.modify test.');
+  await new Promise(r => setTimeout(r, 50));
+  check('modify event fired', n === 1);
+  off();
+}
+
+console.log('\n== Test R4.3: runtime.on("commit", cb) fires on commit ==');
+{
+  // jsdom lacks URL.createObjectURL and showSaveFilePicker; stub the download
+  // path so commit() reaches its success branch (where the emit lives).
+  const origCreateURL = window.URL.createObjectURL;
+  const origRevokeURL = window.URL.revokeObjectURL;
+  window.URL.createObjectURL = () => 'blob:rwa-test/0';
+  window.URL.revokeObjectURL = () => {};
+  let n = 0;
+  const off = window.runtime.on('commit', () => n++);
+  await window.runtime.commit();
+  await new Promise(r => setTimeout(r, 20));
+  check('commit event fired', n === 1);
+  off();
+  window.URL.createObjectURL = origCreateURL;
+  window.URL.revokeObjectURL = origRevokeURL;
+}
+
+console.log('\n== Test R4.4: runtime.undo wraps internal undo ==');
+{
+  await window.__setDocForTest('<p>Baseline.</p>');
+  delete window.__synthesizeAndCommit;
+  const before = (await window.getDoc()) || '';
+  await window.submitLens('Reversible append.');
+  await new Promise(r => setTimeout(r, 50));
+  const after = (await window.getDoc()) || '';
+  check('doc changed', after.length > before.length);
+  await window.runtime.undo();
+  const restored = (await window.getDoc()) || '';
+  check('undo restored prior doc', restored === before);
+}
+
+console.log('\n== Test R4.5: runtime.on("status", cb) fires on dirty change ==');
+{
+  await window.__setDocForTest('<p>Status fire base.</p>');
+  delete window.__synthesizeAndCommit;
+  let n = 0;
+  const off = window.runtime.on('status', () => n++);
+  await window.submitLens('Trigger dirty.');
+  await new Promise(r => setTimeout(r, 50));
+  check('status fired', n >= 1);
+  off();
+}
+
+console.log('\n== Test R4.6: unknown event name throws ==');
+{
+  let threw = null;
+  try { window.runtime.on('not-an-event', () => {}); }
+  catch (e) { threw = e; }
+  check('unknown event rejects', threw !== null);
+}
+
+console.log('\n== Test R4.7: runtime.on returns a working unsub function ==');
+{
+  let n = 0;
+  const off = window.runtime.on('modify', () => n++);
+  check('on returns a function', typeof off === 'function');
+  off();
+  await window.__setDocForTest('<p>After-unsub.</p>');
+  delete window.__synthesizeAndCommit;
+  await window.submitLens('Should not increment.');
+  await new Promise(r => setTimeout(r, 50));
+  check('callback not called after off()', n === 0);
+}
+
+console.log('\n== Test R4.8: runtime.on rejects non-function callback ==');
+{
+  let threw = null;
+  try { window.runtime.on('commit', 'not a function'); }
+  catch (e) { threw = e; }
+  check('non-function callback throws TypeError',
+    threw !== null && threw.name === 'TypeError');  // .name is realm-safe
+}
+
+console.log('\n== Test R4.9: runtime.status getter returns a fresh snapshot ==');
+{
+  const a = window.runtime.status;
+  const b = window.runtime.status;
+  check('two reads return distinct objects', a !== b);
+  // Touching a property on one mustn't be visible on a later read.
+  a.dirty = 'tampered';
+  const c = window.runtime.status;
+  check('snapshot is independent (mutation not retained)', c.dirty !== 'tampered');
+}
+
+console.log('\n== Test R4.10: throwing callback does not block other listeners ==');
+{
+  await window.__setDocForTest('<p>Throw-safety base.</p>');
+  delete window.__synthesizeAndCommit;
+  let goodCount = 0;
+  const offBad  = window.runtime.on('modify', () => { throw new Error('boom'); });
+  const offGood = window.runtime.on('modify', () => { goodCount++; });
+  await window.submitLens('After-throwing-cb.');
+  await new Promise(r => setTimeout(r, 50));
+  check('non-throwing callback still received the event', goodCount === 1);
+  offBad(); offGood();
+}
+
 console.log(`\n${pass} pass, ${fail} fail`);
 process.exit(fail > 0 ? 1 : 0);

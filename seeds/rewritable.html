@@ -409,8 +409,71 @@ async function runtimeDbOpen(name, opts = {}) {
   await bumpVersionAndCreateStore(name, opts);
 }
 
-// (db.subscribe, fs.*, modify/commit/undo wrappers, status, on
-// land in later tasks of this plan.)
+// (fs.* lands in a later task of this plan.)
+
+// === Runtime event bus (spec §7) ============================================
+// Minimal pub/sub for commit/modify/status. Callbacks are scoped per event
+// name; an event name not in this whitelist throws on subscribe so a typo
+// (or a future event a doc hopes already exists) fails loud at the wire-up
+// site rather than silently never firing.
+const runtimeEvents = {
+  commit: new Set(),
+  modify: new Set(),
+  status: new Set(),
+};
+
+function runtimeOn(event, callback) {
+  if (!Object.prototype.hasOwnProperty.call(runtimeEvents, event)) {
+    throw new Error("unknown event '" + event + "' (use 'commit', 'modify', or 'status')");
+  }
+  if (typeof callback !== 'function') throw new TypeError('callback must be a function');
+  runtimeEvents[event].add(callback);
+  return () => { runtimeEvents[event].delete(callback); };
+}
+
+// Invoke every subscriber for `event`. Callback errors are caught so one buggy
+// listener can't break delivery to the others, and so the synchronous emit
+// inside e.g. setDirty(false) can never propagate an exception into the
+// commit() / modify() success path (which would surface as a fake failure).
+function emitRuntimeEvent(event, payload) {
+  for (const cb of runtimeEvents[event]) {
+    try { cb(payload); } catch (_) { /* swallow user-cb errors */ }
+  }
+}
+
+// === Status surface (spec §7) ==============================================
+// FSA permission state. Tracked here rather than re-derived each call because
+// the permission events that move it (showSaveFilePicker, queryPermission,
+// requestPermission, lost-handle InvalidStateError) are scattered across the
+// commit() path; centralizing the mutation keeps the status snapshot honest.
+//
+// Values:
+//   'unsupported' — no showSaveFilePicker in the runtime (Firefox/Safari)
+//   'prompt'      — handle exists but the user hasn't granted yet this session
+//   'granted'     — user said yes; subsequent writes won't reprompt
+//   'denied'      — user said no
+//   'lost'        — a write threw InvalidStateError (handle no longer valid)
+let _fsaState = (typeof window !== 'undefined' && 'showSaveFilePicker' in window) ? 'prompt' : 'unsupported';
+// Last storage estimate captured by rwaCheckQuota. null until the first
+// successful estimate() — keeps the shape testable on platforms that don't
+// expose navigator.storage.estimate at all.
+let _storageStat = null;
+
+function getStatusSnapshot() {
+  return {
+    dirty: !!document.getElementById('rwa-st-commit')?.classList.contains('dirty'),
+    fsa: _fsaState,
+    storage: _storageStat,
+  };
+}
+
+// === Modify/commit/undo programmatic wrappers (spec §7) ====================
+// Thin wrappers around the internal lifecycle. Wrappers (not direct exposure)
+// so a doc-side caller can't accidentally shadow or swap the internal
+// references that the lens/agent paths rely on.
+async function runtimeModify(instruction) { return modify(instruction); }
+async function runtimeCommit() { return commit(); }
+async function runtimeUndo() { return undo(); }
 
 async function getDoc() {
   let d = await idbGet(RWA.DOC);
@@ -770,6 +833,10 @@ async function rwaCheckQuota() {
   let est;
   try { est = await navigator.storage.estimate(); } catch (_) { return; }
   if (!est || !est.quota || !est.usage) return;
+  // Snapshot for runtime.status (spec §7). Captured before the threshold
+  // branch so the status surface stays current even when usage is well below
+  // the warning line.
+  _storageStat = { usage: est.usage, quota: est.quota };
   const ratio = est.usage / est.quota;
   if (ratio > 0.8) {
     const usedMB = Math.round(est.usage / (1024 * 1024));
@@ -1797,6 +1864,8 @@ async function runAnchoredCommand(anchor, instruction) {
         setDirty(true);
         await rwaBumpDirtyCount().catch(() => {});
         rwaCheckQuota();
+        emitRuntimeEvent('modify', { instruction, lensMeta });
+        emitRuntimeEvent('status', getStatusSnapshot());
         // Spec §5.4 post-commit anchor branches: single → re-anchor on new
         // block; multi → release with affordance; empty → release silently.
         // The pre-commit anchor (with its start offset) is the stable handle
@@ -1904,6 +1973,8 @@ async function synthesizeAndCommit(envelope, surface, instruction) {
     setDirty(true);
     await rwaBumpDirtyCount().catch(() => {});
     rwaCheckQuota();
+    emitRuntimeEvent('modify', { instruction, lensMeta });
+    emitRuntimeEvent('status', getStatusSnapshot());
     if (prevAnchorStart !== null && sourceMap) {
       const newEntry = sourceMap.find(m => m.start === prevAnchorStart);
       if (newEntry) {
@@ -2594,6 +2665,8 @@ async function modify(instr, lensMeta = null) {
       setDirty(true);
       await rwaBumpDirtyCount().catch(() => {});
       rwaCheckQuota();
+      emitRuntimeEvent('modify', { instruction: instr, lensMeta });
+      emitRuntimeEvent('status', getStatusSnapshot());
       setStatus('ok', '✓ done');
     } else {
       const summary = lastFailure
@@ -2685,6 +2758,8 @@ async function modifyViaBridge(instr, lensMeta = null) {
     setDirty(true);
     await rwaBumpDirtyCount().catch(() => {});
     rwaCheckQuota();
+    emitRuntimeEvent('modify', { instruction: instr, lensMeta });
+    emitRuntimeEvent('status', getStatusSnapshot());
     setStatus('ok', '✓ done');
   } catch (e) {
     if (e instanceof RwaEditError) {
@@ -2754,6 +2829,11 @@ async function commit() {
         if (h) {
           let p = await h.queryPermission({ mode: 'readwrite' });
           if (p === 'prompt') p = await h.requestPermission({ mode: 'readwrite' });
+          // Mirror the resolved FSA permission state into _fsaState so
+          // runtime.status reflects what the user actually sees post-commit.
+          if (p === 'granted')      _fsaState = 'granted';
+          else if (p === 'denied')  _fsaState = 'denied';
+          else if (p === 'prompt')  _fsaState = 'prompt';
           if (p !== 'granted') {
             // Stale or revoked handle — drop it so the next ⌘S re-prompts.
             await idbDel(RWA.FSA).catch(() => {});
@@ -2763,9 +2843,21 @@ async function commit() {
         } else {
           h = await window.showSaveFilePicker({ suggestedName: RWA.FILE, types: [{ description: 'HTML', accept: { 'text/html': ['.html'] } }] });
           await idbPut(RWA.FSA, h);
+          _fsaState = 'granted';   // showSaveFilePicker only resolves on user pick
         }
-        const w = await h.createWritable(); await w.write(text); await w.close();
-        setDirty(false); await rwaResetOnCommit().catch(() => {}); setStatus('ok', '✓ committed'); return;
+        try {
+          const w = await h.createWritable(); await w.write(text); await w.close();
+        } catch (writeErr) {
+          // InvalidStateError surfaces when the handle is no longer valid
+          // (file moved/deleted, tab restored from bfcache, etc.). Mark the
+          // handle as lost so runtime.status stops claiming 'granted'.
+          if (writeErr && writeErr.name === 'InvalidStateError') _fsaState = 'lost';
+          throw writeErr;
+        }
+        setDirty(false); await rwaResetOnCommit().catch(() => {}); setStatus('ok', '✓ committed');
+        emitRuntimeEvent('commit', null);
+        emitRuntimeEvent('status', getStatusSnapshot());
+        return;
       } catch (e) {
         if (e.name === 'AbortError') { setStatus('', 'cancelled'); return; }
         console.warn('FSA failed, falling back to download:', e);
@@ -2777,6 +2869,8 @@ async function commit() {
     a.click();
     URL.revokeObjectURL(a.href);
     setDirty(false); await rwaResetOnCommit().catch(() => {}); setStatus('ok', '✓ exported');
+    emitRuntimeEvent('commit', null);
+    emitRuntimeEvent('status', getStatusSnapshot());
   } catch (e) {
     setStatus('err', '✗ ' + e.message);
   }
@@ -2848,8 +2942,19 @@ document.addEventListener('keydown', e => {
         subscribe: runtimeDbSubscribe,
       },
       // fs — Task 5
-      // modify/commit/undo/status/on — Task 4
+      modify: runtimeModify,
+      commit: runtimeCommit,
+      undo:   runtimeUndo,
+      on:     runtimeOn,
     };
+    // `status` is a getter so each read returns a fresh snapshot of
+    // dirty/fsa/storage; an enumerable data prop would let stale references
+    // outlive the state change they were observing.
+    Object.defineProperty(window.runtime, 'status', {
+      get: getStatusSnapshot,
+      enumerable: true,
+      configurable: false,
+    });
     renderDoc(doc);
     scrollToFragment();
     setStatus('ok', '● ready');
