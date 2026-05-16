@@ -34,6 +34,8 @@ The file is built around an **immutable bootstrap** — a loader, a runtime, and
 
 **Locked regions.** Wrap content in `class="rwa-locked"` (or `<!-- rwa:frozen:begin name --> … <!-- rwa:frozen:end name -->`) and the runtime refuses to anchor on it, refuses edits that overlap it, and refuses wholesale rewrites that would strip it. The right surface for contract templates, tax forms, press releases — anything where part of the document is fixed and the rest is malleable.
 
+**Web addressable.** Every anchorable block (`p`, `h1`–`h6`, `blockquote`, `li`, `figure`, `pre`, `aside`) carries a runtime-assigned `data-rwa-id="…"` — an 8-character base32 name that survives every edit. A URL like `notes.html#7k3p2m9q` resolves to the same block forever, even after the surrounding text gets rewritten fifty times. Frozen zones are skipped, and the agent is instructed to preserve existing IDs verbatim. This is the floor for re-writeables on the web — each container becomes a node in the read/write web (Berners-Lee model: identity is a URL, fragments are stable, composition happens by referencing rather than by editing each other's source).
+
 Under the lens, the agent edits via **anchor-based surgical edits** (rwa-edit/1): it submits `(find, replace)` pairs against unique substrings, and the runtime applies them as exact string substitutions. The 99% of the document the agent did not need to change is byte-identical because the model never re-emitted it. Structural transforms (insert/delete elements, wrap, mass rename, attribute changes) can also be expressed as a small typed DSL (rwa-edit-dsl/1) that the runtime compiles to the same anchor-based form deterministically. For scaffolding or wholesale redesigns, the model can call `replace_document` instead, with a required reason. All three paths validate frozen zones, structural shape (`<script>`/`<style>` counts), and HTML well-formedness before committing atomically.
 
 The agent backend is selectable in the ⚙ settings panel. **OpenRouter** is the default — a hosted model over HTTPS, paid per token. **Bridge** is the alternative — the runtime shells out to a localhost CLI bridge (`POST 127.0.0.1:8765/run`) that spawns `claude -p`, which uses your existing Claude subscription and whichever model your `claude` CLI is configured for. Same edit envelopes either way; the runtime doesn't care which backend produced them.
@@ -59,13 +61,14 @@ npx rwa import scan.pdf --claude  # PDF/docx → HTML via local `claude -p` + th
 # Service — hosted
 curl -O https://rewritable.ikangai.com/rewritable.html         # blank container
 open    https://rewritable.ikangai.com/import                  # browser: drop md/csv/txt/html/docx/pdf
+open    https://rewritable.ikangai.com/demo/html-effectiveness/ # gallery: 20 example pages, original vs. rewritable
 ```
 
 Or hand-craft: copy `seeds/rewritable.html`, replace the nil `DOC_UUID` with a fresh `crypto.randomUUID()`, save.
 
 ## The specs
 
-- [`re-write-able-spec.md`](re-write-able-spec.md) — the container spec: architecture, storage model, agent contract, embedding, security, platform behavior. Currently v0.8.
+- [`re-write-able-spec.md`](re-write-able-spec.md) — the container spec: architecture, storage model, agent contract, embedding, security, platform behavior. Currently v0.9.
 - [`rwa-edit-spec.md`](rwa-edit-spec.md) — the anchor-based edit protocol the agent uses to modify documents. Currently rwa-edit/1 (v1.4).
 - [`rwa-edit-dsl-spec.md`](rwa-edit-dsl-spec.md) — the structural-transform DSL layered on rwa-edit/1: a small typed vocabulary (`replace`, `insert`, `delete`, `set_attr`) the runtime compiles to anchor-based edits. Currently rwa-edit-dsl/1 (v0.1).
 - [`docs/specs/rwa-lens-spec.md`](docs/specs/rwa-lens-spec.md) — the lens edit model: a single steerable input with default and anchored states, slash-discriminated content vs. instruction, class-declared locks. Currently rwa-lens/1 (v0.9).

@@ -345,6 +345,9 @@ Rules for edits:
   • Never include rwa:frozen:begin, rwa:frozen:end, <!-- rwa:, /* rwa:,
     // rwa:, or data-rwa-frozen in find or replace. Frozen zones are listed
     below; anchor outside them.
+  • Preserve data-rwa-id attributes verbatim — they are runtime-assigned
+    stable block names that URLs link to. When you replace a block's text,
+    copy the existing data-rwa-id through. Never invent new values.
   • Do not add or remove <script> or <style> tags via apply_edits — that
     requires replace_document.
   • If your edit's anchor would be longer than the changed region itself,
@@ -499,7 +502,7 @@ type ReplaceDocumentRecord = {
 | `// rwa:frozen:begin <name>` / `// rwa:frozen:end <name>` | JS | Line-comment frozen-zone fences in JS |
 | `<!-- rwa: … -->` / `/* rwa: … */` / `// rwa: …` | All | Reserved for runtime use; documents must not author. |
 | `data-rwa-frozen` attribute | HTML | Inline frozen-zone declaration on `<script>` / `<style>` elements. |
-| `data-rwa-id` attribute | HTML | **Reserved for v2.** See §17. |
+| `data-rwa-id` attribute | HTML | **Runtime-assigned, document-wide.** Backfilled to every anchorable block (`p`, `h1`–`h6`, `blockquote`, `li`, `figure`, `pre`, `aside`) at bootstrap and at every commit. Skipped inside frozen zones. The agent must preserve existing values verbatim when editing — they are the stable name a URL fragment resolves to. Never invent new values. See container spec §5.9. |
 | `rwa_hist` record `kind` field | IDB | rwa-edit reserves `"edit_batch"` and `"replace_document"`. |
 | `#rwa-doc-mount` | HTML element ID | Render mount, used by the runtime. |
 
@@ -522,7 +525,7 @@ Plausible v2 additions, explicitly out of scope for v1:
 - **Op types beyond `replace`:** `insert_before` / `insert_after` against an anchor; `rename_identifier` for cross-region refactor; structural ops that change the script/style shape pair.
 - **AST-level edits** for the embedded `<script>` and `<style>` content, opt-in.
 - **Capability negotiation.**
-- **`data-rwa-id` semantic anchors.** Author-applied stable IDs the agent can target by attribute value rather than by surrounding text. Useful for documents with hard-to-string-match repetitive structure where neither surrounding-context anchors nor `replace_document` are good fits. The attribute is reserved now (§15) so v1 documents can be authored with v2 forward-compatibility in mind, but no v1 op references it. **Note:** this addresses repetitive-content cases the existing protocol handles via `replace_document`; it is a quality-of-life addition, not a fix for an unspecified concept of "anchor erosion." Within a single batch, anchors are evaluated against the current state and do not degrade across the batch.
+- **`data-rwa-id` as a first-class anchor.** As of bootstrap 0.9 (container spec §5.9) the runtime backfills `data-rwa-id` on every anchorable block — they exist in every v1 document. A future op could target a block by ID directly (e.g. `{ "data_rwa_id": "7k3p2m9q", "replace": "…" }`) instead of by surrounding-text anchor. v1 does not add this op; the surrounding-text anchor is still the protocol surface. **Note:** this addresses repetitive-content cases the existing protocol handles via `replace_document`; it is a quality-of-life addition, not a fix for an unspecified concept of "anchor erosion." Within a single batch, anchors are evaluated against the current state and do not degrade across the batch.
 - **Occurrence indexing.** Considered for v1 and rejected: it makes off-by-one errors silent (matches the wrong region instead of failing loud), requires the model to count occurrences (a known weak spot), and interacts badly with sequential application against a working copy where earlier edits change occurrence counts. The unique-anchor approach with `find_not_unique` failures and surrounding-context retries is more robust. `data-rwa-id` is the v2 path for the cases occurrence indexing was proposed to solve.
 
 v1 stays small on purpose: two ops, one target, exact strings, atomic batches.

@@ -15,14 +15,13 @@ export default {
     try {
       // Construct a doc with two identical "<li>foo</li>" rows, anchored
       // inside an existing structural wrapper so structural shape doesn't
-      // change. The seed's INLINE_DOC has a `<div class="hello">` wrapper;
-      // we replace its h1+p with the duplicated list via replace_document
-      // (cleanest way to set up an arbitrary doc state for the test).
+      // change. Install via setDoc (raw IDB) — replaceDocument would route
+      // through commitDoc, which (as of bootstrap 0.9) backfills data-rwa-id
+      // on anchorable blocks for URL-fragment stability, producing
+      // `<li data-rwa-id="…">foo</li>` and defeating the intent of the find
+      // anchor `<li>foo</li>`. setDoc bypasses that backfill.
       const setupDoc = '<div class="hello"><ul><li>foo</li><li>foo</li></ul></div>';
-      await ctx.replaceDocument(
-        { version: 'rwa-edit/1', doc: setupDoc, reason: 'CONFORM-06 setup' },
-        await ctx.getDoc(),
-      );
+      await ctx.setDoc(setupDoc);
       const docBefore = await ctx.getDoc();
       const result = await expectRwaError(
         ctx.applyEdits(

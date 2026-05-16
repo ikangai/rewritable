@@ -496,34 +496,11 @@ await window.modify('introduce a reserved mount id');
 await new Promise(r => setTimeout(r, 100));
 check('reserved-id replace_document rejected: doc unchanged', (await window.getDoc()) === docBefore12);
 
-// Test 13: replace_document with reserved [data-rwa-id] is rejected.
-console.log('\n== Test 13: reserved data-rwa-id rejected ==');
-fetchHandler = async () => ({
-  ok: true,
-  json: async () => ({
-    choices: [{
-      message: {
-        role: 'assistant', content: '',
-        tool_calls: [{
-          id: 'call_id_v2', type: 'function',
-          function: {
-            name: 'replace_document',
-            arguments: JSON.stringify({
-              version: 'rwa-edit/1',
-              doc: '<style>.x{color:red}</style>\n<section data-rwa-id="claim">v2 squat</section>',
-              reason: 'try to claim a v2-reserved attribute',
-            }),
-          },
-        }],
-      },
-    }],
-  }),
-});
-
-const docBefore13 = await window.getDoc();
-await window.modify('claim data-rwa-id');
-await new Promise(r => setTimeout(r, 100));
-check('reserved-attr replace_document rejected: doc unchanged', (await window.getDoc()) === docBefore13);
+// (Test 13 retired — data-rwa-id is no longer a reserved attribute as of
+// container spec 0.9 / bootstrap 0.9. The runtime assigns it to anchorable
+// blocks for URL-fragment stability; the agent is asked to preserve values
+// verbatim. New positive coverage lives in Tests 116a–c at the tail of this
+// file.)
 
 // Test 14a: apply_edits cannot introduce a reserved id="rwa-doc-mount".
 // Tests 12-13 verify replace_document rejects reserved IDs; this verifies
@@ -557,33 +534,9 @@ await window.modify('apply_edits introducing reserved mount id');
 await new Promise(r => setTimeout(r, 100));
 check('apply_edits with reserved id rejected: doc unchanged', (await window.getDoc()) === docBefore14a);
 
-// Test 14b: apply_edits cannot introduce data-rwa-id (v2 reserved attribute).
-console.log('\n== Test 14b: apply_edits cannot introduce data-rwa-id ==');
-fetchHandler = async () => ({
-  ok: true,
-  json: async () => ({
-    choices: [{
-      message: {
-        role: 'assistant', content: '',
-        tool_calls: [{
-          id: 'call_aev2', type: 'function',
-          function: {
-            name: 'apply_edits',
-            arguments: JSON.stringify({
-              version: 'rwa-edit/1',
-              edits: [{ find: 'parallel-fixed', replace: '<span data-rwa-id="claim">x</span>' }],
-            }),
-          },
-        }],
-      },
-    }],
-  }),
-});
-
-const docBefore14b = await window.getDoc();
-await window.modify('apply_edits introducing data-rwa-id');
-await new Promise(r => setTimeout(r, 100));
-check('apply_edits with data-rwa-id rejected: doc unchanged', (await window.getDoc()) === docBefore14b);
+// (Test 14b retired — data-rwa-id is no longer reserved; an agent edit that
+// introduces one is allowed and merely echoes through commitDoc. See the new
+// positive coverage in Tests 116a–c at the tail of this file.)
 
 // Test 14: replace string containing $& / $$ must be inserted literally.
 // String.prototype.replace honors $&, $$, $`, $' patterns even when the search
@@ -3652,6 +3605,115 @@ check('115b: 2 retry round-trips occurred', fetchCount115b === 2);
 check('115b: tool_result on retry surfaces a code', typeof receivedToolResult115b === 'string' && receivedToolResult115b.includes('"code"'));
 const liCount115b = (after115b.match(/<li>Buy bread<\/li>/g) || []).length;
 check('115b: 2 of 3 list items remain after corrected plan', liCount115b === 2);
+
+// Tests 116a–c: bootstrap 0.9 — runtime-assigned data-rwa-id stable block
+// identifiers + URL fragment scroll resolution. New web-citizen behavior:
+// every anchorable block in a stored doc carries a stable name; a URL of the
+// form file.html#<id> scrolls to that block (CSS pulse highlight); IDs survive
+// apply_edits round-trips so fragment links stay valid across edits.
+console.log('\n== Test 116a: injectMissingBlockIds covers anchorable blocks ==');
+const inject = window.injectMissingBlockIds;
+const sample116a =
+  '<style>.x{}</style>\n' +
+  '<p>alpha</p>\n' +
+  '<h2>beta</h2>\n' +
+  '<div>not-anchorable</div>\n' +
+  '<ul><li>l1</li><li>l2</li></ul>\n' +
+  '<blockquote>q</blockquote>\n' +
+  '<pre>code</pre>\n' +
+  '<figure>f</figure>\n' +
+  '<aside>a</aside>';
+const r116a = inject(sample116a);
+check('116a: inject is exposed as window.injectMissingBlockIds', typeof inject === 'function');
+check('116a: assigned counts every anchorable block (8 expected)',
+  r116a.assigned === 8);
+check('116a: <p> got an id', /<p\s+data-rwa-id="[a-z2-7]{8}">alpha<\/p>/.test(r116a.text));
+check('116a: <h2> got an id', /<h2\s+data-rwa-id="[a-z2-7]{8}">beta<\/h2>/.test(r116a.text));
+check('116a: <div> is untouched (not anchorable)',
+  r116a.text.includes('<div>not-anchorable</div>'));
+check('116a: both <li> elements got ids',
+  (r116a.text.match(/<li\s+data-rwa-id="[a-z2-7]{8}">/g) || []).length === 2);
+check('116a: idempotent — re-running adds nothing',
+  inject(r116a.text).assigned === 0);
+
+console.log('\n== Test 116b: inject skips frozen zones (byte-equality survives) ==');
+const sample116b =
+  '<style>\n/* rwa:frozen:begin theme */\n.k{color:red}\n/* rwa:frozen:end theme */\n</style>\n' +
+  '<p>outside</p>\n' +
+  '<!-- rwa:frozen:begin hello -->\n<p>frozen-prose</p>\n<!-- rwa:frozen:end hello -->\n' +
+  '<aside data-rwa-frozen="note"><p>nested-inside-frozen</p></aside>';
+const r116b = inject(sample116b);
+check('116b: outside <p> got an id', /<p\s+data-rwa-id="[a-z2-7]{8}">outside<\/p>/.test(r116b.text));
+check('116b: <p>frozen-prose</p> inside marker zone untouched',
+  r116b.text.includes('<!-- rwa:frozen:begin hello -->\n<p>frozen-prose</p>\n<!-- rwa:frozen:end hello -->'));
+check('116b: <p>nested-inside-frozen</p> inside data-rwa-frozen aside untouched',
+  r116b.text.includes('<p>nested-inside-frozen</p>'));
+check('116b: aside itself untouched (data-rwa-frozen elements are not re-tagged)',
+  /<aside\s+data-rwa-frozen="note">/.test(r116b.text) &&
+  !/<aside\s+[^>]*data-rwa-id=/.test(r116b.text));
+
+console.log('\n== Test 116c: data-rwa-id survives an apply_edits round-trip ==');
+// Seed an id-blessed doc (mirroring what bootstrap leaves behind in production).
+const idBlessedSeed =
+  '<p data-rwa-id="aaaaaaaa">first</p>\n' +
+  '<p data-rwa-id="bbbbbbbb">second</p>\n' +
+  '<p data-rwa-id="cccccccc">third</p>';
+await seedDoc(idBlessedSeed);
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: {
+      role: 'assistant', content: '',
+      tool_calls: [{ id: '116c', type: 'function', function: {
+        name: 'apply_edits',
+        arguments: JSON.stringify({ version: 'rwa-edit/1',
+          edits: [{
+            find: '<p data-rwa-id="bbbbbbbb">second</p>',
+            replace: '<p data-rwa-id="bbbbbbbb">SECOND-rewritten</p>',
+          }],
+        }),
+      } }],
+    } }],
+  }),
+});
+await window.modify('rewrite second paragraph preserving id');
+await new Promise(r => setTimeout(r, 100));
+const after116c = await window.getDoc();
+check('116c: edited block retains its data-rwa-id', after116c.includes('<p data-rwa-id="bbbbbbbb">SECOND-rewritten</p>'));
+check('116c: untouched blocks retain their ids',
+  after116c.includes('<p data-rwa-id="aaaaaaaa">first</p>') &&
+  after116c.includes('<p data-rwa-id="cccccccc">third</p>'));
+
+console.log('\n== Test 116d: scrollToFragment resolves data-rwa-id, applies pulse ==');
+// Seed a doc with a known id, render it, set location.hash, fire the helper,
+// observe the pulse class. scrollIntoView is a no-op under jsdom but the
+// class application is observable.
+await seedDoc('<p data-rwa-id="target99">target paragraph</p>\n<p>other</p>');
+await window.__setDocForTest('<p data-rwa-id="target99">target paragraph</p>\n<p>other</p>');
+await new Promise(r => setTimeout(r, 20));
+const targetBefore = window.document.querySelector('[data-rwa-id="target99"]');
+check('116d: scrollToFragment is exposed', typeof window.scrollToFragment === 'function');
+check('116d: target element present in DOM', targetBefore !== null);
+// jsdom 25 lacks a native scrollIntoView on Element; provide a no-op so
+// scrollToFragment doesn't throw.
+if (targetBefore && typeof targetBefore.scrollIntoView !== 'function') {
+  targetBefore.scrollIntoView = () => {};
+}
+window.location.hash = '#target99';
+window.scrollToFragment();
+const targetAfter = window.document.querySelector('[data-rwa-id="target99"]');
+check('116d: target receives rwa-frag-pulse class after scrollToFragment',
+  targetAfter && targetAfter.classList.contains('rwa-frag-pulse'));
+
+console.log('\n== Test 116e: hash that does not resolve is a no-op ==');
+window.location.hash = '#no-such-id-anywhere';
+let threw116e = false;
+try { window.scrollToFragment(); } catch (e) { threw116e = true; }
+check('116e: missing-hash call did not throw', threw116e === false);
+
+console.log('\n== Test 116f: bootstrap 0.9 meta tag present ==');
+const metaBootstrap = window.document.querySelector('meta[name="rwa-bootstrap"]');
+check('116f: <meta name="rwa-bootstrap"> tag exists', metaBootstrap !== null);
+check('116f: meta value is "0.9"', metaBootstrap?.getAttribute('content') === '0.9');
 
 console.log('\n== Summary ==');
 console.log(`pass: ${pass}, fail: ${fail}`);

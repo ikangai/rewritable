@@ -128,6 +128,8 @@ The runtime owns these — generated documents must not touch them.
 - IndexedDB databases: each container claims `rwa_<DOC_UUID>` (its own private DB, isolated from other containers — see §5.7). The shared composition database `rwa_shared`, if used, is also runtime-owned.
 - IndexedDB stores within `rwa_<DOC_UUID>`: `rwa_doc`, `rwa_undo`, `rwa_hist`, `rwa_fsa`, and any future store named `rwa_*`.
 - OPFS paths: anything under `_rwa/`.
+- HTML element id: `#rwa-doc-mount` (the render target).
+- HTML attribute `data-rwa-id`: runtime-assigned stable identifier on anchorable blocks (§5.9). Documents must not invent or modify these values; the runtime backfills any block produced without one and the agent contract requires verbatim preservation (§6.1).
 
 The document interacts with reserved storage only through the runtime API. The runtime is the only writer of reserved stores.
 
@@ -252,6 +254,26 @@ host.appendChild(iframe);
 
 A dashboard can embed multiple siblings live and refresh them when their stores change (via `BroadcastChannel`). On export, the dashboard's inline snapshot can include either the embedded documents' last-known state (frozen embeds) or just references to them (live embeds that re-read on next open).
 
+### 5.9 Stable block identifiers and web fragment addressing
+
+On disk a container's identity is its file path; on the web it is its URL. A URL also carries a fragment, and for the web edition of a re-writeable that fragment is load-bearing: it names a block inside the document. So `https://you.com/notes.html#7k3p2m9q` means "the block I called `7k3p2m9q` inside `notes.html`," and it goes on meaning that even after the block's surrounding prose has been re-written fifty times.
+
+To make this real, the runtime maintains a stable identifier on every anchorable block (`p`, `h1`–`h6`, `blockquote`, `li`, `figure`, `pre`, `aside`). The attribute is `data-rwa-id`. The value is opaque — 8 characters of lower-base32 from `crypto.getRandomValues`, e.g. `data-rwa-id="7k3p2m9q"`.
+
+**Lifecycle.**
+
+1. **Backfill on first encounter.** On bootstrap, after `getDoc()`, the runtime walks the document text and assigns a fresh ID to every anchorable block that lacks one. If any were assigned, the runtime persists the augmented text into `rwa_doc` immediately. The same backfill runs at every commit — agent-introduced blocks get IDs before the document hits IDB.
+2. **Frozen zones are skipped.** Marker-form frozen zones (`rwa:frozen:begin/end`) and `data-rwa-frozen` elements are byte-invariant. Injecting an attribute inside one would break the frozen-zone integrity check. The walk skips them entirely.
+3. **Preserved across edits.** IDs are part of the canonical document text. They round-trip through `apply_edits`, `apply_dsl_plan`, `replace_document`, undo, and commit/export. The agent contract (§6.1) instructs the agent to preserve them verbatim and never invent new ones.
+
+**URL fragment resolution.** On load and on `hashchange`, the runtime resolves `location.hash` against either a literal `id=` attribute (author-supplied) or a `data-rwa-id` value (runtime-assigned). On hit it scrolls the target into view and pulses it with a brief background-color fade so the location is obvious after the scroll.
+
+**What this enables.** A re-writeable on the web becomes a node in the read/write web (§4). Other documents — yours or anyone's — can link into specific blocks, embed a sanitized snapshot of one, or annotate one in a separate file linked back. The original is never mutated by external linkage; the linker's commentary lives in the linker's container. This is the Berners-Lee model carried into a single-file format: identity is a URL, fragments are stable, composition happens by referencing rather than by editing each other's source.
+
+**Why this is runtime-managed, not author-managed.** A human author can pick clear `id=` values for top-level headings, and those keep working (the runtime resolves either form). But every paragraph and list item must also be addressable, and asking authors to invent identifiers for every block is not realistic. The runtime takes ownership of the namespace so addressability is free. Documents that need readable IDs on specific elements should keep using the standard `id=` attribute alongside `data-rwa-id`.
+
+**Out of scope (for now).** Cross-document transclusion (`<rwa-include src=...>`), overlay/commentary metadata (`<meta name="rwa-overlay">`), and sandboxed-iframe hosting wrappers are designed against this floor but live in a later spec revision. See `docs/plans/2026-05-15-web-hardening-design.md` for the longer arc.
+
 ---
 
 ## 6. The Agent Contract
@@ -272,6 +294,7 @@ Concrete rules supplied to the agent:
 
 - Return the complete modified document only — no commentary, no markdown fence
 - Preserve substantial user-provided content verbatim — never abbreviate or summarize a paste
+- Preserve `data-rwa-id` attributes verbatim (§5.9). The runtime assigns these to anchorable blocks; they are the stable name a URL fragment resolves to. Copy them through when editing the surrounding text of a block; never invent new values.
 - All CSS inline; JS inline only when the document has interactivity. Prose documents may be JS-free.
 - No React, no build steps, no npm
 - Use `runtime.db.*` for structured data, `runtime.fs.*` for blobs
@@ -597,6 +620,8 @@ These properties are load-bearing — every change to the runtime, bootstrap, or
 7. Undo history lives in IndexedDB, not in the file. Commits do not carry undo state.
 
 ---
+
+*Spec version 0.9 — web-citizen pass. §5.3 reserves `data-rwa-id` as a runtime-managed HTML attribute; §5.9 (new) describes its lifecycle and the URL-fragment scroll behavior the bootstrap now ships. The runtime backfills `data-rwa-id` on every anchorable block (`p`, `h1`–`h6`, `blockquote`, `li`, `figure`, `pre`, `aside`) at bootstrap and at every commit, skipping frozen zones. §6.1 (and the seed's `SYSTEM_PROMPT`) instructs the agent to preserve these values verbatim and never invent new ones. The container's identity on the web is now a URL plus a stable fragment; a link like `notes.html#7k3p2m9q` continues to resolve to the same block after the surrounding text gets rewritten any number of times. No changes to the storage model, container UUIDs, or bootstrap invariants from v0.7/v0.8. Reference implementations regenerated against the bootstrap-0.9 seed.*
 
 *Spec version 0.8 — agent-fidelity pass. §6.1 grows two new pieces. First, an explicit "substantial content as input" rule: when the user pastes a multi-section document or a long list as their ⌘K instruction, the agent must render it as the new content rather than summarize it. The previous wording — "apply the user's instruction to the actual content" — was ambiguous, and Flash-tier models reliably read it as a cue to compress. The new rule pins the behavior: 100 items in, 100 items out. Second, an "output budget" subsection documents the runtime's `max_tokens: 32000` request, large enough to hold a typical 20–40 KB document without truncation. Reference implementations (`hello.html`, `re-write-able-spec.html`, `seeds/rewritable.html`) match. No structural changes; the storage model, container UUIDs, and bootstrap invariants from v0.7 are unchanged.*
 

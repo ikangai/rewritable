@@ -75,7 +75,7 @@ Every container's private IndexedDB lives under `rwa_<DOC_UUID>` — *not* the s
 - OPFS paths: `_rwa/`
 - HTML element ID: `#rwa-doc-mount` (the render mount)
 - Comment prefix substrings inside the doc: `<!-- rwa:`, `/* rwa:`, `// rwa:` and the marker forms `rwa:frozen:begin <name>` / `rwa:frozen:end <name>` (rwa-edit/1, see `rwa-edit-spec.md` §15)
-- HTML attributes: `data-rwa-frozen` (inline frozen-zone declaration), `data-rwa-id` (reserved for v2)
+- HTML attributes: `data-rwa-frozen` (inline frozen-zone declaration); `data-rwa-id` (runtime-assigned stable block identifier — bootstrap 0.9 backfills it on every anchorable block at boot and at every commit, skipping frozen zones; the agent must preserve existing values verbatim; spec §5.9)
 
 **The bootstrap is the anchor.** It is never in IndexedDB and never visible to the agent. If something goes wrong, reload the file — the inline snapshot is the last known good state, and the runtime can be reset by deleting the container's IDB (`rwa_<DOC_UUID>`).
 

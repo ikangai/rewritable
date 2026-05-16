@@ -2,6 +2,95 @@
 
 Notable changes to `re-write-able`. The container format is versioned in `re-write-able-spec.md`; the edit protocol in `rwa-edit-spec.md`; the structural-transform DSL in `rwa-edit-dsl-spec.md`. The CLI follows semver in `cli/package.json`.
 
+## 2026-05-16 — bootstrap 0.9: stable block IDs + URL-fragment scroll (web hardening, phase 1)
+
+Re-writeable containers become first-class citizens of the open web. The runtime now backfills a stable `data-rwa-id` on every anchorable block at bootstrap and at every commit, and resolves URL fragments against either a literal `id=` or a runtime-assigned `data-rwa-id`. A link like `https://you.com/notes.html#7k3p2m9q` continues to resolve to the same block after the surrounding text has been rewritten any number of times. Container spec bumped to **v0.9**; rwa-edit/1 stays at v1.4 (no protocol change — `data-rwa-id` is part of the doc text the agent must respect).
+
+Design document: [`docs/plans/2026-05-15-web-hardening-design.md`](docs/plans/2026-05-15-web-hardening-design.md) (Phase 1 scoped; later phases — transclusion, overlay metadata, sandboxed embedding — sketched).
+
+### What changed for users
+
+- **Every paragraph, heading, list item, blockquote, figure, pre, and aside in a stored doc has a stable name.** The runtime assigns an opaque 8-character base32 ID (`crypto.getRandomValues` → 40 bits, ~1e12 codes — collision risk in a single doc is negligible). Author-supplied `id=` values still work and take priority for resolution.
+- **URLs link to blocks, not just to pages.** Open `your-notes.html#7k3p2m9q` and the runtime scrolls to that block on initial paint, with a brief blue-tint pulse so the location is obvious. `hashchange` events trigger the same behavior — any in-page navigation works.
+- **Frozen zones are skipped.** Comment-fence marker zones (`rwa:frozen:begin/end`) and `data-rwa-frozen` elements are byte-invariant; injecting an attribute inside one would break frozen-zone integrity. The walk excludes them.
+- **IDs survive every edit.** `apply_edits`, `apply_dsl_plan`, `replace_document`, undo, commit, export — the IDs round-trip through all of them. The agent contract instructs the agent to preserve existing values verbatim and never invent new ones.
+
+### What changed for the seed
+
+- New `<meta name="rwa-bootstrap" content="0.9">` in `<head>` — a machine-readable version marker.
+- New `generateBlockId()` — RFC 4648 lower-base32, 8 chars from 5 random bytes.
+- New `injectMissingBlockIds(doc)` — pure string surgery over the source text (preserves whitespace, attribute order, quoting bytes per the format-stability invariant). Mirrors `buildSourcePositionMap`'s scan: same tag set, same masking of script/style/comments, same outer-wins skip past nested anchorables. Returns `{ text, assigned }`; when `assigned === 0` returns the input byte-identical.
+- New `scrollToFragment()` — resolves `location.hash` against `#<id>` and `[data-rwa-id="<id>"]`, scrolls smoothly, adds `.rwa-frag-pulse` for 1.7 s.
+- New `.rwa-frag-pulse` CSS keyframe — blue tint (`rgba(59,130,246,0.22)`) fading to transparent over 1.6 s.
+- `commitDoc()` now backfills IDs on the new doc before persisting, returns the persisted form. Callers consume the return value so re-renders show the augmented text.
+- Bootstrap IIFE runs `injectMissingBlockIds` once before the first render; if anything was assigned, persists to IDB and renders the augmented text. Then calls `scrollToFragment` so deep links work on first paint.
+- `findReservedIdViolation` no longer rejects `data-rwa-id` — the runtime writes those attributes itself, so a doc containing them is the normal state, not a violation. `#rwa-doc-mount` is still rejected (the render mount remains reserved).
+- The `SYSTEM_PROMPT` gains a "Stable block identifiers" section instructing the agent to preserve existing IDs verbatim, copy them through when rewriting a block's text, and never invent new ones.
+
+### What changed for the specs
+
+- `re-write-able-spec.md` → **v0.9**.
+    - §5.3 adds `data-rwa-id` and `#rwa-doc-mount` to the runtime-reserved namespace list.
+    - §5.9 (new) — "Stable block identifiers and web fragment addressing." Lifecycle (backfill on first encounter, skip frozen zones, preserved across edits), URL-fragment resolution, the Berners-Lee read/write-web framing, and what's deliberately out of scope (transclusion, overlay metadata, sandboxed-iframe hosting).
+    - §6.1 (agent contract) adds the verbatim-preservation rule.
+- `rwa-edit-spec.md` reserved-table entry for `data-rwa-id` flips from "Reserved for v2" to "Runtime-assigned, document-wide." The "rules for edits" section gets the preservation rule. §17 (potential v2 additions) reframes `data-rwa-id` as a future first-class anchor — IDs already exist on every block; v1 doesn't add the targeting op.
+- `CLAUDE.md` reserved-namespace entry updated.
+
+### What changed for testing
+
+- **291/291 e2e pass** against the new seed.
+- New tests 116a–f: `injectMissingBlockIds` coverage (anchorable blocks, frozen-zone skip, idempotence), `apply_edits` round-trip preserves IDs, `scrollToFragment` resolves a `data-rwa-id` and applies the pulse, hash that doesn't resolve is a no-op, bootstrap-0.9 meta tag present.
+- Tests 13 and 14b retired — they verified that `data-rwa-id` was rejected as a reserved attribute. That invariant is gone; replaced by the positive coverage in 116a–c.
+- `benchmark/scenarios/conformance/conform-06.mjs` switched setup from `ctx.replaceDocument` (which now backfills IDs and would produce `<li data-rwa-id="…">foo</li>`, defeating the test's `<li>foo</li>` find anchor) to `ctx.setDoc` (raw IDB) so the test's id-less setup persists.
+
+### What changed for references
+
+- `hello.html` and `re-write-able-spec.html` regenerated from the new seed. Their existing `INLINE_DOC` content is preserved (the regen tool extracts it from each ref and re-injects); the bootstrap mirrors the seed.
+
+### Backward compatibility
+
+- **No edit-protocol changes.** `apply_edits`, `apply_dsl_plan`, `replace_document` envelopes and semantics are unchanged. The agent's only new responsibility is to leave existing `data-rwa-id` values alone.
+- **IDB schema unchanged.** The IDs live in the doc text, not in a separate store. Existing containers gain IDs on next bootstrap (one-shot backfill); the augmented text is persisted, so subsequent opens skip the walk.
+- **Existing fragment links keep working.** Pages that already used `id=` for headings continue to scroll correctly — `scrollToFragment` resolves either form.
+
+### Known limitations (carried to Phase 2)
+
+- **If the agent strips an ID by replacing an entire block with a new shape**, the runtime backfills *some* ID — but it's a fresh one. The old fragment link is silently broken. Phase 2 may add a strict mode that rejects edits removing IDs.
+- **Cross-document transclusion (`<rwa-include src=…>`), overlay metadata (`<meta name="rwa-overlay">`), and sandboxed-iframe hosting wrappers** are designed against this floor but not implemented yet. See the design doc.
+
+## 2026-05-15 — hosted gallery at `/demo/html-effectiveness/`
+
+Twenty single-file HTML examples from [thariqs.github.io/html-effectiveness](https://thariqs.github.io/html-effectiveness/) — each imported into a re-writeable container via `rwa import` — are now served by the production service for offline-friendly side-by-side comparison.
+
+### What changed for users
+
+- **New page at `rewritable.ikangai.com/demo/html-effectiveness/`** — a tabbed index across 20 examples (an empty-state explorer, a design system reference, a slide deck, a flowchart with hand-coded SVG, an interactive kanban triage board, a tabbed code explainer, a research feature explainer, and more). Each entry shows the original web version and its rewritable counterpart in side-by-side iframes. URL hash routes the active example (`#01`–`#20`); "open ↗" links bypass the iframe view.
+- **`/new` thank-you page links to the gallery** so first-time users have a discoverable entry into "what does a rewritable look like in practice."
+- All twenty examples retain full interactivity through the import — the light/dark toggle (02), arrow-key slide nav (09), tabbed code panes (14), kanban drag-reorder (18), feature-flag toggles (19), and so on all behave the same on the rewritable side, with the lens chrome floating over the document content.
+
+### What changed for the service
+
+- `service/server.js` reads `demo/html-effectiveness/` recursively at startup into an in-memory `Map`. The request handler hits the map, never the filesystem. Startup log reports `demo: loaded 42 files`.
+- New routes:
+    - `/demo`, `/demo/`, `/demo/html-effectiveness` → 302 → `/demo/html-effectiveness/`
+    - `/demo/html-effectiveness/` → index page
+    - `/demo/html-effectiveness/<asset>` → static asset by path
+- `X-Frame-Options` is overridden to `SAMEORIGIN` on demo paths so the index can iframe the sibling `original/` and `rewritable/` pages — the global `DENY` would block it. `/new`, `/import`, `/rewritable.html` keep `DENY`.
+- `service/Dockerfile` adds `COPY demo/html-effectiveness/ ./demo/html-effectiveness/`. Scope-limited to the subdir so any local cruft in `demo/` (e.g. user PDFs) does not enter the image.
+
+### What changed for the repo
+
+- `demo/html-effectiveness/original/<01..20>.html` — pinned copies of the source pages, downloaded `2026-05-13`.
+- `demo/html-effectiveness/rewritable/<01..20>.html` — same content imported into re-writeable containers via `rwa import`.
+- `demo/html-effectiveness/index.html` — the static tab-navigated comparison index.
+- `demo/html-effectiveness/README.md` — source attribution and the regeneration recipe.
+
+### Backward compatibility
+
+- Strict addition. Existing routes (`/new`, `/import`, `/rewritable.html`, `/health`, `/pdf/*`) and their behavior are unchanged. The legacy `X-Frame-Options: DENY` still applies to all of them.
+- Demo files are baked into the image at build time; no FS access at request time.
+- Production host's `/opt/docker/rewritable/` had a pre-`service/` layout snapshot from April; this deploy upgraded it via `rsync` into the repo's `service/`+`seeds/`+`demo/html-effectiveness/` structure and replaced the top-level `Dockerfile`. Future deploys: `rsync` from the local repo, then `docker compose up -d --build` on the host.
+
 ## 2026-05-13 — default styling aligned with playground.ikangai.com
 
 The seed's bootstrap is re-skinned to match the styling of `playground.ikangai.com` — neutral grayscale, system fonts, and a quieter chrome — so re-writeable containers feel like siblings of the playground rather than a separate visual family. Container spec, edit protocol, and runtime behavior are unchanged; this is a CSS-only change.
