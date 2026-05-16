@@ -436,7 +436,10 @@ function runtimeOn(event, callback) {
 // inside e.g. setDirty(false) can never propagate an exception into the
 // commit() / modify() success path (which would surface as a fake failure).
 function emitRuntimeEvent(event, payload) {
-  for (const cb of runtimeEvents[event]) {
+  // Snapshot the Set before iterating: a listener subscribing or unsubscribing
+  // during this emit must not perturb the current round (conventional pubsub
+  // semantics — subscribed-during-emit ⇒ skip until next emit).
+  for (const cb of [...runtimeEvents[event]]) {
     try { cb(payload); } catch (_) { /* swallow user-cb errors */ }
   }
 }
@@ -1864,8 +1867,15 @@ async function runAnchoredCommand(anchor, instruction) {
         setDirty(true);
         await rwaBumpDirtyCount().catch(() => {});
         rwaCheckQuota();
-        emitRuntimeEvent('modify', { instruction, lensMeta });
-        emitRuntimeEvent('status', getStatusSnapshot());
+        // Defer the emit so by the time listeners run, the `finally` block
+        // below has released `modifyMutex`. Without this, a listener that
+        // synchronously calls `runtime.modify()` from inside its callback
+        // would hit `concurrent_modify` and have the error swallowed by
+        // `emitRuntimeEvent`'s try/catch (Fix I2).
+        queueMicrotask(() => {
+          emitRuntimeEvent('modify', { instruction, lensMeta });
+          emitRuntimeEvent('status', getStatusSnapshot());
+        });
         // Spec §5.4 post-commit anchor branches: single → re-anchor on new
         // block; multi → release with affordance; empty → release silently.
         // The pre-commit anchor (with its start offset) is the stable handle
@@ -1973,8 +1983,14 @@ async function synthesizeAndCommit(envelope, surface, instruction) {
     setDirty(true);
     await rwaBumpDirtyCount().catch(() => {});
     rwaCheckQuota();
-    emitRuntimeEvent('modify', { instruction, lensMeta });
-    emitRuntimeEvent('status', getStatusSnapshot());
+    // Defer the emit so the `finally` below releases `modifyMutex` before any
+    // listener fires; otherwise a listener calling `runtime.modify()` would
+    // hit `concurrent_modify` and that error would be swallowed by
+    // `emitRuntimeEvent`'s try/catch (Fix I2).
+    queueMicrotask(() => {
+      emitRuntimeEvent('modify', { instruction, lensMeta });
+      emitRuntimeEvent('status', getStatusSnapshot());
+    });
     if (prevAnchorStart !== null && sourceMap) {
       const newEntry = sourceMap.find(m => m.start === prevAnchorStart);
       if (newEntry) {
@@ -2665,8 +2681,14 @@ async function modify(instr, lensMeta = null) {
       setDirty(true);
       await rwaBumpDirtyCount().catch(() => {});
       rwaCheckQuota();
-      emitRuntimeEvent('modify', { instruction: instr, lensMeta });
-      emitRuntimeEvent('status', getStatusSnapshot());
+      // Defer the emit so the `finally` below releases `modifyMutex` before
+      // any listener fires; otherwise a listener calling `runtime.modify()`
+      // would hit `concurrent_modify` and that error would be swallowed by
+      // `emitRuntimeEvent`'s try/catch (Fix I2).
+      queueMicrotask(() => {
+        emitRuntimeEvent('modify', { instruction: instr, lensMeta });
+        emitRuntimeEvent('status', getStatusSnapshot());
+      });
       setStatus('ok', '✓ done');
     } else {
       const summary = lastFailure
@@ -2758,8 +2780,14 @@ async function modifyViaBridge(instr, lensMeta = null) {
     setDirty(true);
     await rwaBumpDirtyCount().catch(() => {});
     rwaCheckQuota();
-    emitRuntimeEvent('modify', { instruction: instr, lensMeta });
-    emitRuntimeEvent('status', getStatusSnapshot());
+    // Defer the emit so the `finally` below releases `modifyMutex` before
+    // any listener fires; otherwise a listener calling `runtime.modify()`
+    // would hit `concurrent_modify` and that error would be swallowed by
+    // `emitRuntimeEvent`'s try/catch (Fix I2).
+    queueMicrotask(() => {
+      emitRuntimeEvent('modify', { instruction: instr, lensMeta });
+      emitRuntimeEvent('status', getStatusSnapshot());
+    });
     setStatus('ok', '✓ done');
   } catch (e) {
     if (e instanceof RwaEditError) {
@@ -2817,6 +2845,11 @@ async function undo() {
   renderDoc(p);
   setDirty(true);
   setStatus('ok', '↩ undone');
+  // A doc watching `'status'` for clean→dirty transitions would otherwise
+  // miss the one caused by undo (setDirty(true) above doesn't emit). Stick to
+  // `status` here; spec text in Task 6 will decide whether undo should also
+  // qualify as a 'modify' event (Fix I3).
+  emitRuntimeEvent('status', getStatusSnapshot());
 }
 
 async function commit() {

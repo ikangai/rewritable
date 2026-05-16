@@ -1439,5 +1439,43 @@ console.log('\n== Test R4.10: throwing callback does not block other listeners =
   offBad(); offGood();
 }
 
+console.log('\n== Test R4.11: re-entrant modify from listener does not throw concurrent_modify ==');
+{
+  await window.__setDocForTest('<p>Re-entrance base.</p>');
+  delete window.__synthesizeAndCommit;
+  let listenerErr = null;
+  let secondModifyDone = false;
+  const off = window.runtime.on('modify', async () => {
+    try {
+      // Schedule another modify from inside the listener.
+      await window.submitLens('Second from listener.');
+      secondModifyDone = true;
+    } catch (e) { listenerErr = e; }
+  });
+  await window.submitLens('First.');
+  // Allow the listener-scheduled modify to complete.
+  await new Promise(r => setTimeout(r, 50));
+  check('listener did not get concurrent_modify',
+    listenerErr === null || !/concurrent_modify/i.test(listenerErr.message || listenerErr.code || ''));
+  // (We don't strictly require the second modify to succeed — only that it
+  // doesn't fail with concurrent_modify. The runtime may have other reasons it
+  // could fail in jsdom; the key invariant is the absence of that specific code.)
+  off();
+}
+
+console.log('\n== Test R4.12: undo fires status event ==');
+{
+  await window.__setDocForTest('<p>Undo-emit base.</p>');
+  delete window.__synthesizeAndCommit;
+  let n = 0;
+  // Make a small mod first so undo has something to revert.
+  await window.submitLens('Mod to be undone.');
+  await new Promise(r => setTimeout(r, 50));
+  const off = window.runtime.on('status', () => n++);
+  await window.runtime.undo();
+  check('undo fired status', n >= 1);
+  off();
+}
+
 console.log(`\n${pass} pass, ${fail} fail`);
 process.exit(fail > 0 ? 1 : 0);
