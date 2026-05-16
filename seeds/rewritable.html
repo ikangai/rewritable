@@ -552,6 +552,21 @@ window.rwaBumpDirtyCount = rwaBumpDirtyCount;
 window.rwaResetDirtyCount = rwaResetDirtyCount;
 window.rwaResetOnCommit = rwaResetOnCommit;
 
+// Spec §5.3: quota awareness. Surface a warning above 80% usage.
+async function rwaCheckQuota() {
+  if (!navigator.storage || !navigator.storage.estimate) return;
+  let est;
+  try { est = await navigator.storage.estimate(); } catch (_) { return; }
+  if (!est || !est.quota || !est.usage) return;
+  const ratio = est.usage / est.quota;
+  if (ratio > 0.8) {
+    const usedMB = Math.round(est.usage / (1024 * 1024));
+    const quotaMB = Math.round(est.quota / (1024 * 1024));
+    setPalSt('warn', `storage ${usedMB}/${quotaMB} MB (>80%) — commit & close idle tabs`);
+  }
+}
+window.rwaCheckQuota = rwaCheckQuota;
+
 const openPal = () => { document.getElementById('rwa-pal').classList.add('open'); requestAnimationFrame(() => document.getElementById('rwa-pal-inp').focus()); setPalSt('', '● ready'); };
 const closePal = () => { document.getElementById('rwa-pal').classList.remove('open'); document.getElementById('rwa-pal-inp').value = ''; document.getElementById('rwa-pal-go').disabled = true; };
 
@@ -1536,6 +1551,7 @@ async function runAnchoredCommand(anchor, instruction) {
         renderDoc(result);
         setDirty(true);
         await rwaBumpDirtyCount().catch(() => {});
+        rwaCheckQuota();
         // Spec §5.4 post-commit anchor branches: single → re-anchor on new
         // block; multi → release with affordance; empty → release silently.
         // The pre-commit anchor (with its start offset) is the stable handle
@@ -1642,6 +1658,7 @@ async function synthesizeAndCommit(envelope, surface, instruction) {
     renderDoc(result);
     setDirty(true);
     await rwaBumpDirtyCount().catch(() => {});
+    rwaCheckQuota();
     if (prevAnchorStart !== null && sourceMap) {
       const newEntry = sourceMap.find(m => m.start === prevAnchorStart);
       if (newEntry) {
@@ -2331,6 +2348,7 @@ async function modify(instr, lensMeta = null) {
       renderDoc(newDoc);
       setDirty(true);
       await rwaBumpDirtyCount().catch(() => {});
+      rwaCheckQuota();
       setStatus('ok', '✓ done');
     } else {
       const summary = lastFailure
@@ -2421,6 +2439,7 @@ async function modifyViaBridge(instr, lensMeta = null) {
     renderDoc(newDoc);
     setDirty(true);
     await rwaBumpDirtyCount().catch(() => {});
+    rwaCheckQuota();
     setStatus('ok', '✓ done');
   } catch (e) {
     if (e instanceof RwaEditError) {
@@ -2531,6 +2550,7 @@ document.addEventListener('keydown', e => {
     FROZEN = canonLF('<!DOCTYPE html>\n' + document.documentElement.outerHTML);
     buildUI();
     if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
+    rwaCheckQuota();  // fire-and-forget; non-blocking
     // Spec §5.6: rehydrate the dirty-state nudge if a prior session left it ≥threshold.
     const initialCount = await rwaGetDirtyCount();
     if (initialCount >= RWA.NUDGE_THRESHOLD) showCommitNudge(initialCount);

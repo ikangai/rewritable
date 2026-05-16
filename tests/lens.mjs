@@ -981,5 +981,38 @@ console.log('\n== Test M1.5: lens direct text and anchored slash bump the counte
     afterAnchored === 1);
 }
 
+// === Phase: quota warning (spec §5.3) ===
+console.log('\n== Test M2.1: warning fires when usage > 80% ==');
+{
+  const origEstimate = window.navigator.storage.estimate?.bind(window.navigator.storage);
+  window.navigator.storage.estimate = async () => ({ usage: 81 * 1024 * 1024, quota: 100 * 1024 * 1024 });
+  await window.rwaCheckQuota();
+  const pal = window.document.getElementById('rwa-pal-st');
+  check('palette shows warn class', pal?.className === 'warn');
+  check('message mentions storage / quota / 80%',
+    /storage|quota|80%/i.test(pal?.textContent || ''));
+  if (origEstimate) window.navigator.storage.estimate = origEstimate;
+}
+
+console.log('\n== Test M2.2: no warning when usage < 80% ==');
+{
+  window.navigator.storage.estimate = async () => ({ usage: 10 * 1024 * 1024, quota: 100 * 1024 * 1024 });
+  const pal = window.document.getElementById('rwa-pal-st');
+  if (pal) { pal.className = ''; pal.textContent = ''; }
+  await window.rwaCheckQuota();
+  check('palette not in warn state', pal?.className !== 'warn');
+}
+
+console.log('\n== Test M2.3: estimate() unsupported is a no-op ==');
+{
+  window.navigator.storage.estimate = undefined;
+  const pal = window.document.getElementById('rwa-pal-st');
+  if (pal) { pal.className = ''; pal.textContent = ''; }
+  let threw = false;
+  try { await window.rwaCheckQuota(); } catch (_) { threw = true; }
+  check('no exception on missing estimate()', !threw);
+  check('no warning surfaced', pal?.className !== 'warn');
+}
+
 console.log(`\n${pass} pass, ${fail} fail`);
 process.exit(fail > 0 ? 1 : 0);
