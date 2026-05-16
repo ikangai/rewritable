@@ -1,0 +1,22 @@
+{
+  "timestamp": "2026-05-04T05:37:50.227Z",
+  "scenarios": [
+    "fid-01",
+    "fid-02",
+    "fid-03",
+    "fid-04",
+    "fid-05",
+    "fid-06",
+    "deg-01"
+  ],
+  "v1": {
+    "meanS": 2,
+    "meanT": 2,
+    "medianDrift": 0
+  },
+  "baseline": {
+    "meanS": 2,
+    "meanT": 0,
+    "medianDrift": 0.9406593406593406
+  }
+}
