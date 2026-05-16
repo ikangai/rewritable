@@ -2,6 +2,43 @@
 
 Notable changes to `re-write-able`. The container format is versioned in `re-write-able-spec.md`; the edit protocol in `rwa-edit-spec.md`; the structural-transform DSL in `rwa-edit-dsl-spec.md`. The CLI follows semver in `cli/package.json`.
 
+## 2026-05-16 — agent-facing skill rewritten for v0.10 + `GET /skill.zip` bundle
+
+The rewritable-building skill that the landing page hands to external agents (Claude, Codex, Cursor, …) was significantly out of date. The shipped copy described the v0.6/v0.7 components-directory build (`meta.json` + separate `document.{html,css,js}` + `scripts/build_container.py`) and the pre-v0.10 `{html, css, js}` modify payload — none of which exist anymore. Worse, the markdown referenced files (`scripts/`, `references/`, `assets/`) the "Copy the rewritable skill" button never delivered, so any agent following the workflow would chase dead pointers.
+
+This change rewrites the skill against the actual current architecture (container spec v0.10, rwa-edit/1 v1.4, rwa-lens/1 v0.9) and adds a multi-file bundle at `GET /skill.zip` for agents that prefer files over a single pasted markdown blob.
+
+### What changed for users (agent authors)
+
+- **The Copy button now delivers a working skill.** The new `SKILL.md` is fully self-contained — no references to files outside its own body. The build recipe collapses to three steps: `curl /rewritable.html`, replace the `INLINE_DOC` backticked body (applying the four template-literal escapes: `\\`, `` \` ``, `\${`, `<\/script`), hand the file back.
+- **`window.runtime` is taught as a public contract.** The v0.10 surface — `runtime.id`, `runtime.db.{open,get,put,del,all,subscribe}`, `runtime.fs.{read,write,del,list}`, `runtime.modify/commit/undo`, `runtime.status`, `runtime.on` — is documented with signatures and one-line behavior notes. `RwaReservedError` enforcement on `^rwa_` store names and the `_rwa/` OPFS prefix is spelled out. `runtime.shared.*` is flagged as deferred.
+- **Two worked INLINE_DOC examples** ship inline in the skill text and as standalone files in the zip: a minimal pure-prose document (`page.html`, 792 B) and a runtime.db-backed task tracker with frozen zones (`task-tracker.html`, 3.4 KB) — autoIncrement keys, subscribe→render round-trip, HTML-escape discipline. Both have been smoke-tested end-to-end through the production `cli/src/seed.mjs` splice + a real browser session: runtime API confirmed exposed, IDB persistence confirmed, lens docked correctly, reserved-namespace enforcement confirmed throwing `RwaReservedError`.
+- **"Download skill.zip" button** on the landing page, next to the existing "Copy the rewritable skill" action. Same content; pick whichever fits the agent's ingestion model.
+- **Stale "components-directory layout" copy** on the landing rewritten to describe the actual v0.10 flow (fetch + splice + `window.runtime`).
+
+### What changed for the service
+
+- **`GET /skill.zip`** new endpoint. Returns a STORED-only zip (no compression — the bundle is too small to benefit) built once at startup from the same `skillBody` buffer the landing page inlines, plus every `.html` under `service/public/skill/examples/`. `Content-Type: application/zip`, `Content-Disposition: attachment; filename="rewritable-skill.zip"`, `Cache-Control: public, max-age=300`. The bytes are deterministic across restarts (pinned DOS mtime) so the cache header is honest.
+- **Inline STORED-zip writer** (~70 lines) in `service/server.js`. Uses `node:zlib.crc32` (Node 18.5+) for the required entry CRCs. Zero new dependencies — still Node `http` + `zlib` only.
+- **New asset directory `service/public/skill/examples/`** with two standalone INLINE_DOC body fragments. Each is a complete fragment with a header comment explaining where to splice it.
+- **`service/public/build-skill.md`** rewritten end-to-end: 136 lines (v0.6 framing) → 493 lines (v0.10 self-contained). Largest section is the `window.runtime` API surface; second-largest is the design-tokens table; third is the worked examples.
+- **`service/public/landing.html`** gains the second button using the existing `.btn-secondary` class.
+
+### What changed for the specs
+
+- No spec changes. This is a documentation and packaging update — the underlying container, edit-protocol, DSL, and lens specs are unchanged.
+
+### What changed for CLAUDE.md
+
+- `service/` entry now lists `/skill.zip` among service endpoints.
+- New convention bullet documents the zip build pattern (STORED, deterministic mtime, examples under `service/public/skill/examples/`) and where to edit which file when the skill content changes.
+
+### Backward compatibility
+
+- The "Copy the rewritable skill" button still returns markdown — its byte payload is what changed, not the contract. Agents that already integrated with the copy flow keep working; they just get correct content now.
+- `RWA_SKILL_PATH` continues to override the bundled `build-skill.md` for ad-hoc swaps.
+- `/skill.zip` is purely additive — every other route is unchanged.
+
 ## 2026-05-16 — landing page at `rewritable.ikangai.com/`
 
 The service root now serves a landing page instead of `302`-ing straight to the download. A single URL to share that explains what a rewritable is, the two-step usage flow, the two surfaces (modify loop + build skill), the CLI, the demo gallery, and a FAQ.

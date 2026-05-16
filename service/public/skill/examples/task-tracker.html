@@ -1,0 +1,85 @@
+<!--
+  An artifact using runtime.db — persists a task list to the container's
+  per-container IndexedDB (rwa_<DOC_UUID>) under the document-owned store
+  'app_tasks'. Toggling a checkbox round-trips via runtime.db.get + put.
+
+  Splice this into the INLINE_DOC backticked literal of a fresh container
+  from GET https://rewritable.ikangai.com/rewritable.html. Apply the four
+  escapes (\, `, ${, </script) before splicing — the inner `<li>` template
+  literal contains both backticks and ${...} that need escaping.
+
+  Frozen zones (app-style, app-ui, app-code) declare the parts the
+  edit-time agent must not modify; the data region (<ul id="task-list">)
+  is left unfrozen so the agent can rewrite it on ⌘K if asked.
+-->
+<!-- rwa:frozen:begin app-style -->
+<style>
+  .tasks { max-width: 560px; margin: 48px auto; padding: 0 24px; font-family: var(--font-ui); color: var(--text); }
+  .tasks h1 { font-size: 28px; margin: 0 0 24px; }
+  .tasks form { display: flex; gap: 8px; margin-bottom: 16px; }
+  .tasks input[type=text] { flex: 1; padding: 8px 12px; border: 1px solid var(--b2); border-radius: var(--radius-sm); font: inherit; }
+  .tasks button { padding: 8px 14px; border: 0; background: var(--gray-900); color: white; border-radius: var(--radius-sm); cursor: pointer; }
+  .tasks ul { list-style: none; padding: 0; margin: 0; }
+  .tasks li { display: flex; gap: 8px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--b1); }
+  .tasks li.done { color: var(--muted); text-decoration: line-through; }
+  .tasks label { display: contents; }
+</style>
+<!-- rwa:frozen:end app-style -->
+
+<div class="tasks">
+  <h1>Tasks</h1>
+  <!-- rwa:frozen:begin app-ui -->
+  <form id="task-form">
+    <label for="task-input" class="visually-hidden">New task</label>
+    <input id="task-input" type="text" placeholder="What needs doing?" autocomplete="off">
+    <button type="submit">Add</button>
+  </form>
+  <!-- rwa:frozen:end app-ui -->
+  <ul id="task-list"></ul>
+</div>
+
+<!-- rwa:frozen:begin app-code -->
+<script>
+(async function () {
+  if (typeof window.runtime === 'undefined') return; // private/incognito mode
+  await runtime.db.open('app_tasks', { autoIncrement: true });
+
+  const list = document.getElementById('task-list');
+  const form = document.getElementById('task-form');
+  const input = document.getElementById('task-input');
+
+  function escape(s) {
+    return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]);
+  }
+
+  async function render() {
+    const rows = await runtime.db.all('app_tasks');
+    list.innerHTML = rows
+      .map(r => `<li data-id="${r.key}" class="${r.value.done ? 'done' : ''}">
+        <input type="checkbox" ${r.value.done ? 'checked' : ''}>
+        <span>${escape(r.value.text)}</span>
+      </li>`)
+      .join('');
+  }
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const text = input.value.trim();
+    if (!text) return;
+    await runtime.db.put('app_tasks', null, { text, done: false });
+    input.value = '';
+  });
+
+  list.addEventListener('change', async (e) => {
+    const li = e.target.closest('li');
+    if (!li) return;
+    const id = Number(li.dataset.id);
+    const row = await runtime.db.get('app_tasks', id);
+    await runtime.db.put('app_tasks', id, { ...row, done: e.target.checked });
+  });
+
+  runtime.db.subscribe('app_tasks', render);
+  render();
+})();
+</script>
+<!-- rwa:frozen:end app-code -->

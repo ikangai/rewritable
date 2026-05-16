@@ -456,12 +456,16 @@
             <span class="chip">Cursor</span>
             <span class="chip">any agent with the skill</span>
           </div>
-          <p class="copy-hint">Paste the skill into your agent. It teaches the agent the components-directory layout, the runtime API, and the hard rules — then asks for what you want to build.</p>
+          <p class="copy-hint">Paste the skill into your agent. It teaches the build flow (fetch <code>/rewritable.html</code>, splice your INLINE_DOC body), the <code>window.runtime</code> API, frozen-zone conventions, and the hard rules — then asks for what you want to build.</p>
           <div class="copy-skill-actions">
             <button class="btn btn-primary" id="copy-skill">
               <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="9" height="10" rx="1.5"/><path d="M3 11V3a1 1 0 0 1 1-1h8"/></svg>
               <span class="btn-label">Copy the rewritable skill</span>
             </button>
+            <a class="btn btn-secondary" id="download-skill-zip" href="/skill.zip" download="rewritable-skill.zip">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v9m0 0l-3-3m3 3l3-3"/><path d="M3 13h10"/></svg>
+              <span class="btn-label">Download skill.zip</span>
+            </a>
             <span class="copy-hint" id="copy-meta">~5 KB · markdown · SKILL.md</span>
           </div>
         </div>

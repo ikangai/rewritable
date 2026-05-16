@@ -63,6 +63,7 @@ npx rwa import scan.pdf --claude  # PDF/docx → HTML via local `claude -p` + th
 # Service — hosted
 open    https://rewritable.ikangai.com                         # landing page: pitch, download, copy-the-skill, FAQ
 curl -O https://rewritable.ikangai.com/rewritable.html         # blank container
+curl -O https://rewritable.ikangai.com/skill.zip               # build-skill bundle: SKILL.md + INLINE_DOC examples
 open    https://rewritable.ikangai.com/import                  # browser: drop md/csv/txt/html/docx/pdf
 open    https://rewritable.ikangai.com/demo/html-effectiveness/ # gallery: 20 example pages, original vs. rewritable
 ```
@@ -75,7 +76,7 @@ From `rewritable.ikangai.com/new` or `/import`, click **Publish & share** to put
 
 ## The specs
 
-- [`re-write-able-spec.md`](re-write-able-spec.md) — the container spec: architecture, storage model, agent contract, embedding, security, platform behavior. Currently v0.9.
+- [`re-write-able-spec.md`](re-write-able-spec.md) — the container spec: architecture, storage model, agent contract, embedding, security, platform behavior. Currently v0.10.
 - [`rwa-edit-spec.md`](rwa-edit-spec.md) — the anchor-based edit protocol the agent uses to modify documents. Currently rwa-edit/1 (v1.4).
 - [`rwa-edit-dsl-spec.md`](rwa-edit-dsl-spec.md) — the structural-transform DSL layered on rwa-edit/1: a small typed vocabulary (`replace`, `insert`, `delete`, `set_attr`) the runtime compiles to anchor-based edits. Currently rwa-edit-dsl/1 (v0.1).
 - [`docs/specs/rwa-lens-spec.md`](docs/specs/rwa-lens-spec.md) — the lens edit model: a single steerable input with default and anchored states, slash-discriminated content vs. instruction, class-declared locks. Currently rwa-lens/1 (v0.9).

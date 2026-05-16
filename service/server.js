@@ -42,6 +42,89 @@ catch (err) { console.warn(`landing: skill file unreadable at ${SKILL_PATH}: ${e
 const skillSafe = skillBody.replace(/<\/script/gi, '<\\/script');
 const LANDING_HTML = LANDING_TEMPLATE.replace(SKILL_MARKER, skillSafe);
 
+// Skill bundle (/skill.zip). Same SKILL.md the copy button serves, plus a
+// couple of worked INLINE_DOC body fragments under examples/. Built once at
+// startup; the buffer is small (~30 KB) so STORED (no compression) keeps the
+// code minimal and the bytes deterministic across restarts.
+const SKILL_DIR = path.join(PUBLIC_DIR, 'skill');
+const skillBundleFiles = [['SKILL.md', skillBody || '']];
+try {
+  for (const name of fs.readdirSync(path.join(SKILL_DIR, 'examples')).sort()) {
+    if (!name.endsWith('.html')) continue;
+    const buf = fs.readFileSync(path.join(SKILL_DIR, 'examples', name));
+    skillBundleFiles.push([`examples/${name}`, buf]);
+  }
+} catch (err) {
+  if (err.code !== 'ENOENT') throw err;
+  console.warn(`skill.zip: examples dir missing at ${SKILL_DIR}/examples — bundle will ship SKILL.md only`);
+}
+const SKILL_ZIP = buildStoredZip(skillBundleFiles);
+console.log(`skill.zip: built ${SKILL_ZIP.length} bytes from ${skillBundleFiles.length} entries`);
+
+// Minimal STORED-only zip writer. Format ref: PKZIP APPNOTE.TXT §4.
+// Uses node:zlib.crc32 (Node 18.5+) for the required entry CRCs. Mtime is
+// pinned so successive restarts emit byte-identical archives — lets the
+// landing page cache the link without ETag plumbing.
+function buildStoredZip(entries) {
+  const zlib = require('node:zlib');
+  const DOS_TIME = 0;
+  const DOS_DATE = 23728; // 2026-05-16 00:00, deterministic
+  const parts = [];
+  const central = [];
+  let offset = 0;
+  for (const [name, data] of entries) {
+    const nameBuf = Buffer.from(name, 'utf8');
+    const dataBuf = Buffer.isBuffer(data) ? data : Buffer.from(String(data), 'utf8');
+    const crc = zlib.crc32(dataBuf);
+    const lh = Buffer.alloc(30);
+    lh.writeUInt32LE(0x04034b50, 0);     // local file header signature
+    lh.writeUInt16LE(20, 4);              // version needed
+    lh.writeUInt16LE(0, 6);               // general purpose flags
+    lh.writeUInt16LE(0, 8);               // method: STORED
+    lh.writeUInt16LE(DOS_TIME, 10);
+    lh.writeUInt16LE(DOS_DATE, 12);
+    lh.writeUInt32LE(crc, 14);
+    lh.writeUInt32LE(dataBuf.length, 18); // compressed size
+    lh.writeUInt32LE(dataBuf.length, 22); // uncompressed size
+    lh.writeUInt16LE(nameBuf.length, 26);
+    lh.writeUInt16LE(0, 28);              // extra field length
+    parts.push(lh, nameBuf, dataBuf);
+
+    const ch = Buffer.alloc(46);
+    ch.writeUInt32LE(0x02014b50, 0);      // central directory header signature
+    ch.writeUInt16LE(0x031e, 4);          // version made by (Unix, v2.0)
+    ch.writeUInt16LE(20, 6);              // version needed
+    ch.writeUInt16LE(0, 8);
+    ch.writeUInt16LE(0, 10);
+    ch.writeUInt16LE(DOS_TIME, 12);
+    ch.writeUInt16LE(DOS_DATE, 14);
+    ch.writeUInt32LE(crc, 16);
+    ch.writeUInt32LE(dataBuf.length, 20);
+    ch.writeUInt32LE(dataBuf.length, 24);
+    ch.writeUInt16LE(nameBuf.length, 28);
+    ch.writeUInt16LE(0, 30);
+    ch.writeUInt16LE(0, 32);
+    ch.writeUInt16LE(0, 34);
+    ch.writeUInt16LE(0, 36);
+    ch.writeUInt32LE(0x81a40000, 38);     // external attrs: regular file, mode 0644
+    ch.writeUInt32LE(offset, 42);
+    central.push(Buffer.concat([ch, nameBuf]));
+
+    offset += lh.length + nameBuf.length + dataBuf.length;
+  }
+  const cd = Buffer.concat(central);
+  const eocd = Buffer.alloc(22);
+  eocd.writeUInt32LE(0x06054b50, 0);      // end of central dir signature
+  eocd.writeUInt16LE(0, 4);
+  eocd.writeUInt16LE(0, 6);
+  eocd.writeUInt16LE(central.length, 8);
+  eocd.writeUInt16LE(central.length, 10);
+  eocd.writeUInt32LE(cd.length, 12);
+  eocd.writeUInt32LE(offset, 16);
+  eocd.writeUInt16LE(0, 20);
+  return Buffer.concat([...parts, cd, eocd]);
+}
+
 // pdf.js is self-hosted (not loaded from cdnjs) because the inline
 // `<script type="module">` import doesn't validate SRI on the imported URL —
 // integrity= only fires for `<script src=>`. Serving same-origin removes the
@@ -349,6 +432,14 @@ const server = http.createServer((req, res) => {
       'Content-Type': 'text/html; charset=utf-8',
       'Cache-Control': 'no-store',
     }, IMPORT_HTML);
+  }
+  if (url === '/skill.zip') {
+    return send(200, {
+      'Content-Type': 'application/zip',
+      'Content-Disposition': 'attachment; filename="rewritable-skill.zip"',
+      'Content-Length': String(SKILL_ZIP.length),
+      'Cache-Control': 'public, max-age=300',
+    }, SKILL_ZIP);
   }
   if (url === '/pdf/pdf.min.mjs') {
     return send(200, {
