@@ -2,6 +2,84 @@
 
 Notable changes to `re-write-able`. The container format is versioned in `re-write-able-spec.md`; the edit protocol in `rwa-edit-spec.md`; the structural-transform DSL in `rwa-edit-dsl-spec.md`. The CLI follows semver in `cli/package.json`.
 
+## 2026-05-16 — public runtime API (spec v0.10): `window.runtime` is now a contract
+
+Container spec bumped to **v0.10**. The §7 surface — previously a sketch — is now wired through the seed and exercised end-to-end by the test harness. Documents inside a re-writeable can finally read and write their own structured data, persist blobs to an isolated OPFS namespace, drive the modify loop programmatically, and observe state changes. The result: trackers, dashboards, multi-store apps become first-class — the seed is no longer the only fully-supported document shape. As a side payload, the OPFS isolation gap from §5.7 is closed; each container's blobs now live under `_<DOC_UUID>/`, mirroring the v0.7 IDB invariant.
+
+Plan: [`docs/plans/2026-05-16-public-runtime-api.md`](docs/plans/2026-05-16-public-runtime-api.md). The bootstrap meta tag stays at `rwa-bootstrap` 0.9 — its shape is unchanged; the new API is purely additive.
+
+### What changed for users (document authors)
+
+A new global `window.runtime` is available on every container that boots cleanly (private mode early-returns without setting it). It exposes:
+
+```js
+runtime.id;                                         // string — the container's DOC_UUID
+runtime.db.open(name, { autoIncrement });           // declare a document-owned store (rejects rwa_*)
+runtime.db.get(store, key);                         // read
+runtime.db.put(store, key, value);                  // write (autoIncrement: pass null/undefined for key)
+runtime.db.del(store, key);
+runtime.db.all(store);                              // → [{key, value}, ...]
+runtime.db.subscribe(store, cb);                    // BroadcastChannel-backed; returns unsubscribe fn
+
+runtime.fs.write(path, blob);                       // OPFS, auto-namespaced under _<DOC_UUID>/
+runtime.fs.read(path);                              // → Blob
+runtime.fs.del(path);
+runtime.fs.list(prefix);                            // → [{name, kind}, ...]
+
+runtime.modify(instruction);                        // ⌘K programmatic equivalent
+runtime.commit();                                   // ⌘S
+runtime.undo();                                     // ⌘Z
+
+runtime.status;                                     // observable getter — { dirty, fsa, storage }
+runtime.on('commit' | 'modify' | 'status', cb);     // event subscription; returns unsubscribe fn
+```
+
+Documents that need structured data or blobs no longer have to roll their own IDB/OPFS access. Reserved-namespace enforcement is consistent: `^rwa_` store names and the `_rwa/` OPFS prefix throw `RwaReservedError` on every operation. Path validation rejects empty strings, leading slashes, and `.`/`..` segments with descriptive errors.
+
+### What changed for the seed
+
+- **New IDB versioning strategy.** `openDB()` is now probe-then-upgrade: open without specifying a version to learn the current state, detect missing required or user-declared stores, then close and reopen with `existingVersion + 1` running an upgrade handler that materializes the deltas. Replaces the previous schema-recreate path; the legacy in-line-key branch is preserved as defense-in-depth for any pre-prototype container.
+- **User-store registry** persisted to `rwa_state['user_stores']`. On bootstrap, declarations from prior sessions trigger the upgrade handler before document code runs — `runtime.db.put('mystore', …)` works on the first call after reload without the document re-declaring.
+- **`_dbVersionBumpInFlight` latch** serializes concurrent `runtime.db.open` calls so two simultaneous declarations don't race the version bump.
+- **Producer-side BroadcastChannel cache** plus a separate-channel pattern for subscribers (since BroadcastChannel doesn't deliver self-postMessages). Per-store channels keyed by `'rwa_<DOC_UUID>:<store>'`. autoIncrement keys (assigned by IDB at write time) are captured and forwarded to subscribers in the event payload.
+- **5-value FSA state machine** (`unsupported` / `prompt` / `granted` / `denied` / `lost`) centralized in `commit()`. `'lost'` fires when a `createWritable`/`write`/`close` cycle throws `InvalidStateError`, so subscribers can show a "reattach" affordance.
+- **Storage estimate captured** inside `rwaCheckQuota` (Task 2 of mobile-safety) so `runtime.status.storage` is current after every modify.
+- **Microtask-deferred event emit** at each modify-success site (`queueMicrotask(() => emit(...))`) so the modify mutex is released before listeners run — a listener calling `runtime.modify(...)` re-entrantly no longer hits `concurrent_modify`.
+- **OPFS per-container namespace** `_<DOC_UUID>/` auto-applied by `runtime.fs.*`. Documents see clean relative paths; the on-disk OPFS isolates containers the same way IDB does. Direct OPFS access bypassing the runtime API is still shared null-origin — the API IS the isolation boundary.
+- **Recursive delete** for `runtime.fs.del` (`{ recursive: true }`) so non-empty directory removal works in real browsers.
+
+### What changed for testing
+
+- **244/244 lens** (was 172 — 72 new assertions across R1.* through R5.9, including reload-survival, re-entrance, throw-isolation, mismatched-options rejection, dot-segment rejection, and per-container namespace verification).
+- **291/291 e2e** unchanged.
+- **42/42 conformance** unchanged.
+- Three `fix(api)` commits in the history document the review cycle: Task 1's API parameter order needed flipping (spec says `put(store, key, value)`; impl had inherited `(store, value, key)` from the internal `idbPut`); Task 2's idempotent-open silently accepted mismatched `autoIncrement` opts; Task 5's `runtime.fs.read` raw `DOMException` was rewrapped with path context.
+
+### What changed for the specs
+
+- **§5.3** — new paragraph after the reserved-namespaces list documents the OPFS per-container prefix and the API-as-boundary semantics.
+- **§5.7** — the "OPFS is not yet namespaced — known gap" line is replaced with a description of the closure.
+- **§11.5** — the "OPFS isolation" open-question bullet is rewritten as closed (spec v0.10), noting that direct OPFS access bypassing the runtime API is still shared.
+- **Closing summary** at the end of `re-write-able-spec.md` adds the v0.10 paragraph above the v0.9 entry (reverse-chronological pattern).
+
+### What changed for references
+
+- `hello.html` and `re-write-able-spec.html` regenerated. Three distinct `DOC_UUID`s preserved; bootstrap content mirrors the seed.
+
+### Backward compatibility
+
+- **No edit-protocol changes.** `apply_edits`, `apply_dsl_plan`, `replace_document` envelopes and semantics are unchanged.
+- **No bootstrap shape changes.** The meta tag stays at `rwa-bootstrap` 0.9. Loader, IDB hydration, FROZEN/INLINE_DOC handling, and DOC_UUID byte-identity rules are byte-identical to v0.9.
+- **`openDB()` refactor is backward-compatible.** Pre-existing containers with only `REQUIRED_STORES` and no user declarations open with no version bump (probe succeeds, no upgrade needed).
+- **`runtime.shared.*` is still deferred** — the §11.5 open questions (naming, conflict resolution, schema/discovery, cross-host bridging) are unchanged and still gate that surface.
+
+### Known limitations
+
+- **`runtime.shared.*` is the only piece of §7 not shipped.** Tracked in §11.5 as the next plan.
+- **Direct OPFS access (bypassing `runtime.fs.*`) is still shared null-origin.** The API is the isolation boundary; documents that call `navigator.storage.getDirectory()` directly are opting out of isolation.
+- **No mid-stream streaming for `runtime.modify`.** The wrapper awaits the full modify cycle before resolving. Streaming UX is open per the rwa-lens spec §11.2 and remains conservative for now.
+- **Bootstrap meta tag stays at 0.9.** The spec text and CHANGELOG headers reference spec v0.10, but the seed's `<meta name="rwa-bootstrap" content="0.9">` is intentional: the bootstrap shape didn't change, only the API surface added.
+
 ## 2026-05-16 — mobile-safety net: commit nudge, quota warning, private-mode banner
 
 Closes three iOS Safari safety gaps the spec promised but the seed never delivered. The runtime now nudges before silent data loss, warns before storage exhaustion, and refuses to operate in private mode where IDB can be evicted at any moment. No spec changes — §5.3 (quota awareness), §5.6 (commit nudge), and §9.1 (private-mode unsupported) already described the behavior; this release ships the implementation.

@@ -30,6 +30,7 @@ Open the file in a browser. It's a document the moment it opens — no build scr
 - `Cmd+Z` — undo
 - `Cmd+S` — commit the current state back into the file (write-in-place on Chromium; download elsewhere)
 - **Safety net** — after 5 uncommitted modifications the runtime nudges you to commit; if storage usage crosses 80% it warns; private/incognito mode shows a blocking banner rather than silently letting the browser evict your work. iOS Safari is the worst-case here, but the same safety net runs everywhere.
+- **`window.runtime` API** — documents that need structured data or blobs use a small API the runtime exposes: `runtime.db.{open,get,put,del,all,subscribe}` (per-container IDB, BroadcastChannel-backed events), `runtime.fs.{read,write,del,list}` (OPFS, auto-namespaced under `_<DOC_UUID>/` so containers stay isolated), `runtime.modify/commit/undo` (programmatic ⌘K/⌘S/⌘Z), `runtime.status` (`{dirty, fsa, storage}`), and `runtime.on('commit'|'modify'|'status', cb)` for reacting to lifecycle events. The full surface is in spec §7.
 
 The file is built around an **immutable bootstrap** — a loader, a runtime, and a frozen snapshot of the document — and a **mutable working copy** that lives in IndexedDB. The agent only sees the document; it never sees the runtime. On commit, the bootstrap is rewritten with an updated snapshot, and only the snapshot changes.
 
