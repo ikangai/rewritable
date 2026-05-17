@@ -1,7 +1,7 @@
 # docx + pdf import — design
 
 Date: 2026-05-08
-Status: design, not yet implemented
+Status: shipped 2026-05-08 (CLI + service `/import`)
 
 ## Motivation
 

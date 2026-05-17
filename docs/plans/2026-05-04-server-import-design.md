@@ -1,7 +1,7 @@
 # Server-side `/import` endpoint — design
 
 **Date:** 2026-05-04
-**Status:** Design validated, not yet implemented
+**Status:** shipped 2026-05-04 (md), 2026-05-04 (csv), 2026-05-08 (docx + pdf)
 **Scope:** Add `/import` to the `service/` HTTP server, mirroring the CLI's `rwa import` for markdown only. HTML and TXT are deferred; CSV is a planned follow-up after TXT.
 
 ## Goal

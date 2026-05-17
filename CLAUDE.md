@@ -64,7 +64,7 @@ Every container's private IndexedDB lives under `rwa_<DOC_UUID>` — *not* the s
 |---|---|---|
 | **Per-container IDB** (`rwa_<DOC_UUID>`) | private | `rwa_doc`, `rwa_undo`, `rwa_hist`, `rwa_fsa`, plus document-defined stores |
 | **Shared IDB** (`rwa_shared`) | opt-in | `runtime.shared.*` — composition surface for cross-container reads/writes (spec §5.7, §11.5) |
-| **OPFS** (`_rwa/`) | shared null origin (not yet UUID-namespaced — known gap) | binary blobs |
+| **OPFS** (`_<DOC_UUID>/`) | per-container, in the shared null origin | binary blobs (via `runtime.fs.*`) |
 | **sessionStorage** | per tab | API key + backend choice + per-backend base-URL overrides + model name — never persisted |
 | **Filesystem** | the container itself | bootstrap with current `INLINE_DOC` |
 

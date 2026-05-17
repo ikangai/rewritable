@@ -111,4 +111,4 @@ These are not interactive — just text under the backend selector.
 
 ---
 
-Implementation plan in a follow-up doc at `docs/plans/2026-05-16-ollama-lmstudio-backends-plan.md`.
+**Status:** shipped 2026-05-16 (`e3e0bd8 feat(seed): local model backends — Ollama + LM Studio`, plus `c307076` for CLI env-var pre-fill). Implementation went directly from this design; no separate implementation-plan doc was written.
