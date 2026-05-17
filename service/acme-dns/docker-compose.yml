@@ -1,0 +1,33 @@
+services:
+  acme-dns:
+    # Pinned tag — bump deliberately, never `latest`. See
+    # https://github.com/joohoi/acme-dns/releases for newer tags;
+    # subscribe to the release feed and rebuild on security advisories.
+    image: joohoi/acme-dns:v1.0
+    container_name: acme-dns
+    restart: unless-stopped
+    ports:
+      # Public DNS — must be reachable from the internet so Let's
+      # Encrypt's validators can query TXT records.
+      - "53:53/udp"
+      - "53:53/tcp"
+      # Registration / admin HTTP API. Bound to localhost on the host
+      # (the one-time `curl POST /register` from the VPS itself) and
+      # to the router_web docker network (Traefik reaches it as
+      # http://acme-dns/). Never internet-facing.
+      - "127.0.0.1:8081:80"
+    volumes:
+      - ./config.cfg:/etc/acme-dns/config.cfg:ro
+      - acme_dns_data:/var/lib/acme-dns
+    networks:
+      - router_web
+
+volumes:
+  # Single sqlite file. Back this up — losing it loses every
+  # registration; Traefik would have to re-register and the
+  # corresponding CNAMEs at World4You would need to be updated.
+  acme_dns_data:
+
+networks:
+  router_web:
+    external: true
