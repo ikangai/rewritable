@@ -56,7 +56,7 @@ after:  https://abc12345.rewritable.ikangai.com/       (host-keyed, isolated ori
 
 Before starting any task:
 
-1. **DNS provider compatibility — resolved 2026-05-17.** `ikangai.com` is hosted at World4You (`ns1.world4you.at`, `ns2.world4you.at`). World4You has no `lego` provider, so native DNS-01 against their API is not an option. Path forward is **acme-dns delegation** (Task 1) — a self-hosted acme-dns instance runs on the existing VPS, and a one-time CNAME at World4You delegates only the `_acme-challenge.rewritable.ikangai.com` subdomain to it. World4You is otherwise untouched.
+1. **DNS provider compatibility — resolved 2026-05-17.** `ikangai.com` is hosted at World4You (`ns1.world4you.at`, `ns2.world4you.at`). Two facts made the planning interesting: (a) World4You has no `lego` provider, so native DNS-01 against their API is not an option; (b) their self-serve DNS GUI doesn't expose NS records, so we couldn't delegate `acme-dns.ikangai.com` to a self-hosted acme-dns instance either. The path that shipped: delegate just the ACME-challenge subdomain to the **public `auth.acme-dns.io` service** via a single CNAME at World4You. Traefik's lego calls that service's HTTP API directly. Documented in `service/acme-dns/README.md`. Trade-off: third-party in the cert renewal chain (Risks #1).
 
 2. **Verify HSTS state on the apex.** `curl -sI https://rewritable.ikangai.com/ | grep -i strict-transport-security`. If `includeSubDomains` is set, every `*.rewritable.ikangai.com` host will be HTTPS-only from the moment DNS resolves. Desired; just confirm.
 
@@ -69,134 +69,26 @@ Before starting any task:
 
 ---
 
-### Task 1: Stand up acme-dns and configure Traefik to use it
+### Task 1: Wildcard cert via DNS-01 + acme-dns
 
-**Files:**
-- New: Docker service for acme-dns on the production host (`root@185.164.4.77`), running alongside Traefik
-- New: One A record at World4You for the acme-dns hostname
-- New: One CNAME at World4You delegating the ACME-challenge subdomain
-- Modify: Traefik configuration to add a second cert resolver using the `acmedns` provider
+**Status:** ✅ shipped 2026-05-17.
 
-**Behavior:**
+**What was deployed:**
 
-acme-dns is a tiny Go service (`joohoi/acme-dns`) that holds the ACME-challenge TXT records on your behalf and exposes an HTTP API for ACME clients to update them. The flow:
+- Registered an account with the public `auth.acme-dns.io` service (the public instance run by joohoi, author of acme-dns).
+- Added one CNAME at World4You: `_acme-challenge.rewritable.ikangai.com → <fulldomain>.auth.acme-dns.io.`
+- Added a second cert resolver `letsencrypt-dns` to Traefik (`/opt/docker/router/docker-compose.yml`), alongside the existing HTTP-01 `letsencrypt` resolver. Uses the lego `acme-dns` provider pointing at `https://auth.acme-dns.io`.
+- Dropped the lego accounts JSON at `/opt/docker/router/letsencrypt/acme-dns-accounts.json` (mode 600).
+- Forced first issuance via a throwaway router; verified the resulting cert has SANs `*.rewritable.ikangai.com` and `rewritable.ikangai.com`, issued by Let's Encrypt R13.
+- Removed the throwaway router. Cert persists in `/opt/docker/router/letsencrypt/acme-dns.json`; auto-renews every ~60 days.
 
-1. World4You holds the rest of your DNS, untouched. You add **two one-time records**:
-   - `acme-dns.ikangai.com.   A   185.164.4.77` (the VPS IP)
-   - `_acme-challenge.rewritable.ikangai.com.   CNAME   <random>.acme-dns.ikangai.com.` (the `<random>` value comes from the acme-dns registration step below)
-2. acme-dns runs on the VPS, owns UDP/53 on the public IP, and serves authoritative DNS for `acme-dns.ikangai.com`.
-3. When Traefik needs a wildcard cert, lego's `acmedns` provider POSTs the TXT record value to acme-dns's HTTP API. acme-dns serves it from its DNS server.
-4. Let's Encrypt looks up `_acme-challenge.rewritable.ikangai.com`, follows the CNAME to acme-dns, reads the TXT record, and issues the cert.
+**Runbook for re-running / recovering:** `service/acme-dns/README.md`. Includes the Traefik diff, the CNAME at World4You, credential location, and the steps to re-register if the credentials are ever lost.
 
-**Steps:**
+**What we did NOT ship:** the originally-planned self-hosted acme-dns container on the VPS. World4You's DNS GUI doesn't expose NS records, so we couldn't delegate `acme-dns.ikangai.com` to a local instance. Self-hosted artifacts (`config.cfg`, `docker-compose.yml`) existed briefly in `service/acme-dns/` before being removed; the container was started and torn down without any account ever being registered against it.
 
-a. **Deploy acme-dns.** Add a service to the production docker compose (or its own compose file, alongside Traefik):
+**Diagnostics added during deploy:** `--log.level=INFO` flag on Traefik. Kept (low noise, useful for future issues).
 
-```yaml
-services:
-  acme-dns:
-    image: joohoi/acme-dns:latest
-    restart: unless-stopped
-    ports:
-      - "53:53/udp"           # public DNS
-      - "53:53/tcp"
-      - "127.0.0.1:8081:80"   # admin HTTP API (localhost only)
-    volumes:
-      - ./acme-dns/config.cfg:/etc/acme-dns/config.cfg:ro
-      - acme_dns_data:/var/lib/acme-dns
-```
-
-Minimal `config.cfg`:
-
-```ini
-[general]
-listen = "0.0.0.0:53"
-protocol = "both"
-nsname = "acme-dns.ikangai.com"
-nsadmin = "admin.ikangai.com"
-records = [ "acme-dns.ikangai.com. A 185.164.4.77", "acme-dns.ikangai.com. NS acme-dns.ikangai.com." ]
-
-[database]
-engine = "sqlite3"
-connection = "/var/lib/acme-dns/acme-dns.db"
-
-[api]
-ip = "0.0.0.0"
-disable_registration = false
-port = "80"
-```
-
-Important: confirm nothing else on the VPS is bound to UDP/53. Hetzner's default Ubuntu image doesn't have systemd-resolved listening on the public interface, but `ss -tulpn | grep :53` is worth running first.
-
-b. **Add the A record at World4You:** `acme-dns.ikangai.com. → 185.164.4.77`. Wait for propagation (`dig +short A acme-dns.ikangai.com` returns the VPS IP from a public resolver).
-
-c. **Register an acme-dns account.** Run on the VPS:
-
-```sh
-curl -X POST http://127.0.0.1:8081/register
-```
-
-acme-dns responds with JSON containing `username`, `password`, `fulldomain`, `subdomain`, `allowfrom`. Save this — Traefik needs `username` / `password` / `subdomain`, and you need `fulldomain` for the next step.
-
-d. **Add the CNAME at World4You** using the `fulldomain` value from step c:
-
-```
-_acme-challenge.rewritable.ikangai.com.   CNAME   <fulldomain>.
-```
-
-(`<fulldomain>` looks like `abc12345-d6f3-4b...random.acme-dns.ikangai.com`.) Confirm: `dig +short CNAME _acme-challenge.rewritable.ikangai.com` returns the acme-dns target.
-
-e. **Configure Traefik to use the `acmedns` provider.** Add a second cert resolver alongside the existing HTTP-01 `letsencrypt` resolver:
-
-```yaml
-certificatesResolvers:
-  letsencrypt:                           # existing HTTP-01, unchanged
-    acme:
-      email: <existing>
-      storage: /acme.json
-      httpChallenge:
-        entryPoint: web
-
-  letsencrypt-dns:                       # new — DNS-01 via acme-dns
-    acme:
-      email: <existing>
-      storage: /acme-dns.json
-      dnsChallenge:
-        provider: acme-dns
-        resolvers:
-          - "1.1.1.1:53"
-          - "8.8.8.8:53"
-```
-
-Plus the lego env vars (mounted into Traefik via its env file or docker-compose `environment:`):
-
-```
-ACME_DNS_API_BASE=http://acme-dns.ikangai.com    # or http://acme-dns:80 on the docker network
-ACME_DNS_STORAGE_PATH=/etc/traefik/acme-dns-accounts.json
-```
-
-For first run, prepare `acme-dns-accounts.json` with the credentials from step c so lego doesn't try to register a new account:
-
-```json
-{
-  "rewritable.ikangai.com": {
-    "username": "<from step c>",
-    "password": "<from step c>",
-    "fulldomain": "<from step c>",
-    "subdomain": "<from step c>",
-    "allowfrom": []
-  }
-}
-```
-
-**Verification:**
-
-1. Restart Traefik. Watch logs for `acme: error` lines; first cert issuance against a test domain (a throwaway router for `wildcard-test.rewritable.ikangai.com`) should succeed.
-2. `curl -vI https://wildcard-test.rewritable.ikangai.com/` — confirm the cert chain includes `*.rewritable.ikangai.com` as a SAN.
-3. `dig +trace TXT _acme-challenge.rewritable.ikangai.com` during issuance — confirms the CNAME resolves through to acme-dns.
-4. Remove the throwaway router.
-
-**Rollback:** Remove the new cert resolver block; restart Traefik. HTTP-01 path untouched. acme-dns container can stay running (idle) or be torn down.
+**Rollback:** Remove the `letsencrypt-dns.*` flags + `environment:` block from `/opt/docker/router/docker-compose.yml`; restart Traefik. HTTP-01 path is untouched. The acme-dns account at `auth.acme-dns.io` and the CNAME at World4You can stay dormant (no operational cost).
 
 ---
 
@@ -403,6 +295,7 @@ browser's same-origin policy. ...
 ## Rejected alternatives
 
 - **`<short>.s.rewritable.ikangai.com`** (the `s.` namespace boundary). Four DNS labels is unwieldy; the `s.` label was never load-bearing — it was just a named reserved zone. The 8-char-alphanumeric pattern reservation gives the same forward-compatibility without the extra label.
+- **Self-hosted `joohoi/acme-dns` on the VPS.** Originally the chosen Task 1 path. Would have given us full control of the trust chain (no third-party dependency) and is a well-documented pattern. Rejected on 2026-05-17 because World4You's self-serve DNS GUI doesn't expose NS records, so we couldn't delegate `acme-dns.ikangai.com` to the self-hosted instance. The container was briefly deployed and torn down before any account was registered against it. Reachable again via a World4You support ticket if we ever want to move away from the public service.
 - **Per-share HTTP-01 (no wildcard).** Each share's hostname (`<short>.rewritable.ikangai.com`) could get its own non-wildcard cert issued on demand via HTTP-01 — DNS-01 + acme-dns goes away entirely. Rejected because of LE's 50-certs-per-registered-domain-per-week rate limit (~7 publishes/day ceiling) and 5–30s issuance latency per share. Workable for personal/low-volume use; not workable for any growth pattern.
 - **CSP with hashed bootstrap script.** Would also close the attack, but requires server-side hashing of every published bootstrap and a per-share CSP header — more moving parts than origin isolation. Better as a *defense in depth* on top of subdomain isolation if ever desired.
 - **Server-side bootstrap whitelist.** On `/publish`, replace the publisher's bootstrap bytes with the canonical bootstrap (only keep `INLINE_DOC` content). Cheaper but brittle — bootstrap evolves, and we'd need a versioning story to keep older shares serving correctly. Origin isolation is structural, not policy-based.
@@ -413,10 +306,10 @@ browser's same-origin policy. ...
 
 ## Risks / non-obvious points
 
-1. **acme-dns is a load-bearing piece of the cert renewal chain.** If the acme-dns container dies, falls off the network, or loses its sqlite database, wildcard cert renewals fail and shares eventually serve cert errors. Mitigations: pin the image to a known-good tag (not `latest` in production); volume-mount `/var/lib/acme-dns` so the database survives container rebuilds; back up the volume (it's tiny — single sqlite file) to off-host storage; monitor Traefik's cert-expiry logs; consider a simple healthcheck that alerts if the acme-dns API is unreachable.
-2. **UDP/53 exposure.** acme-dns must answer DNS queries from the public internet on UDP/53. The attack surface is small (it's a focused service that only serves TXT records for its own zone), but a DNS-server-on-public-IP is one more thing to patch when CVEs land. Subscribe to the acme-dns release feed; rebuild on security advisories.
+1. **`auth.acme-dns.io` is a third-party dependency in the cert renewal chain.** If the public service goes down or is compromised, wildcard cert renewals fail or someone else can mint certs for `*.rewritable.ikangai.com`. Mitigations: renewals are every ~60 days with a 30-day overlap window, so brief outages are tolerable and we'd see the failure in Traefik logs before the cert actually expires. If the service has a sustained outage, we can re-register with a different provider (self-hosted acme-dns on the VPS if we ever get NS records at World4You; or migrate DNS to Cloudflare/deSEC) and rotate the CNAME in one step.
+2. **Credentials JSON is the secret in this chain.** `/opt/docker/router/letsencrypt/acme-dns-accounts.json` (mode 600) holds the username/password that can write TXT records under our delegated subdomain. Blast radius is small (one subdomain) but treat the file like an API token. Back up `/root/acme-dns-rewritable-registration.json` (the original registration response) somewhere off-host.
 3. **8-char alphanumeric subdomains are reserved by convention.** Any future subdomain that happens to be 8 lowercase alphanumeric characters will be intercepted by the share router. Document this; carve specific exceptions with higher-priority `Host()` rules if needed.
-4. **Cert renewal cadence.** Wildcard certs renew via DNS-01 every ~60 days. acme-dns must stay reachable from Traefik (HTTP) and from Let's Encrypt's validators (DNS). Monitor Traefik's cert-expiry logs.
+4. **Cert renewal cadence.** Wildcard certs renew via DNS-01 every ~60 days. `auth.acme-dns.io` and Let's Encrypt must both stay reachable from Traefik at renewal time. Monitor Traefik's cert-expiry logs.
 5. **Subdomain takeover risk.** Standard pitfall: if the wildcard DNS record ever points at an IP we stop owning, anyone who later owns that IP can serve content under any `<short>.rewritable.ikangai.com`. Single-host setup makes this unlikely to bite, but worth knowing.
 6. **Local dev story** uses path-keyed URLs as a fallback (wildcard DNS doesn't resolve against `localhost`). Devs testing share isolation must use `/etc/hosts` entries or accept that production has properties dev cannot fully reproduce.
 7. **`/import` cross-origin assumption.** `/import` fetches `/rewritable.html` from the same origin to construct a fresh container. Lives on the apex; never touches subdomain shares. Confirmed — no breakage.
@@ -424,18 +317,18 @@ browser's same-origin policy. ...
 
 ## Cost summary
 
-| Task | Estimate | Risk |
+| Task | Estimate | Status |
 |---|---|---|
-| 1 — acme-dns + DNS-01 resolver | half-day | medium (new piece of infra, but well-trodden pattern) |
-| 2 — Wildcard DNS record at World4You | 5 min | low (already done 2026-05-17) |
-| 3 — server.js routing | 1-2 hours | low |
-| 4 — Traefik labels | 30 min | low |
-| 5 — Legacy 301 | 30 min | low |
-| 6 — Staging verification | 1 hour | low |
-| 7 — Docs | 30 min | low |
+| 1 — DNS-01 resolver via `auth.acme-dns.io` | ~1 hour actual | ✅ shipped 2026-05-17 |
+| 2 — Wildcard DNS record at World4You | already in place | ✅ done |
+| 3 — server.js routing | 1-2 hours | pending |
+| 4 — Traefik labels for share router | 30 min | pending |
+| 5 — Legacy 301 | 30 min | pending |
+| 6 — Staging verification | 1 hour | pending |
+| 7 — Docs | 30 min | pending |
 
-**Total:** one day end to end. acme-dns container setup is the longest single task; everything else is routine.
+**Remaining work:** ~half a day across tasks 3-7. Tasks 3-5 are all in-repo code/config changes (server.js, docker-compose, label additions); Task 6 is the actual share-isolation verification in DevTools; Task 7 is CHANGELOG / CLAUDE.md / README updates.
 
 ---
 
-*Status: design 2026-05-17. DNS provider compatibility resolved (World4You via acme-dns). Wildcard DNS record in place. Implementation requires a Traefik deploy window.*
+*Status: Tasks 1+2 shipped 2026-05-17. Tasks 3-7 pending. Wildcard cert for `*.rewritable.ikangai.com` is live in Traefik's `acme-dns.json` store and will auto-renew.*
