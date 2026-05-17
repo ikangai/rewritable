@@ -10,10 +10,27 @@ services:
       - "80"
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.rewritable.rule=Host(`rewritable.ikangai.com`)"
-      - "traefik.http.routers.rewritable.entrypoints=websecure"
-      - "traefik.http.routers.rewritable.tls.certresolver=letsencrypt"
-      - "traefik.http.services.rewritable.loadbalancer.server.port=80"
+      # Apex router — rewritable.ikangai.com itself. Existing HTTP-01
+      # letsencrypt cert (unchanged from pre-share-isolation).
+      - "traefik.http.routers.rewritable-apex.rule=Host(`rewritable.ikangai.com`)"
+      - "traefik.http.routers.rewritable-apex.entrypoints=websecure"
+      - "traefik.http.routers.rewritable-apex.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.rewritable-apex.service=rewritable-svc"
+      # Share router — <short>.rewritable.ikangai.com where <short> is
+      # exactly 8 lowercase-alphanumeric chars. The 8-char regex reserves
+      # that namespace by convention so future apex-style subdomains
+      # (api., docs., etc.) of non-8-char-lowercase length don't collide.
+      # Uses the wildcard cert (*.rewritable.ikangai.com) issued via
+      # letsencrypt-dns + auth.acme-dns.io. Single-quoted YAML so the
+      # regex backslashes pass through unescaped.
+      - 'traefik.http.routers.rewritable-shares.rule=HostRegexp(`^[0-9a-z]{8}\.rewritable\.ikangai\.com$`)'
+      - "traefik.http.routers.rewritable-shares.entrypoints=websecure"
+      - "traefik.http.routers.rewritable-shares.tls.certresolver=letsencrypt-dns"
+      - "traefik.http.routers.rewritable-shares.tls.domains[0].main=rewritable.ikangai.com"
+      - "traefik.http.routers.rewritable-shares.tls.domains[0].sans=*.rewritable.ikangai.com"
+      - "traefik.http.routers.rewritable-shares.service=rewritable-svc"
+      # Service definition — single backend, shared by both routers.
+      - "traefik.http.services.rewritable-svc.loadbalancer.server.port=80"
     networks:
       - router_web
     # Snapshot publishing storage. Named volume so shares survive image
