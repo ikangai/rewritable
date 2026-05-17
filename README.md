@@ -78,7 +78,7 @@ Or hand-craft: copy `seeds/rewritable.html`, replace the nil `DOC_UUID` with a f
 
 ## Sharing a snapshot
 
-From `rewritable.ikangai.com/new` or `/import`, click **Publish & share** to put an immutable snapshot at `rewritable.ikangai.com/s/<short>`. Anonymous, 24h expiry, no signup. The published version carries its own `DOC_UUID`, so each viewer's edits land in their own browser-local IDB — they fork the doc locally rather than co-edit. For permanent or collaborative hosting, host the `.html` yourself: any static host works, because the file is the app.
+From `rewritable.ikangai.com/new` or `/import`, click **Publish & share** to put an immutable snapshot at `<short>.rewritable.ikangai.com/`. Anonymous, 24h expiry, no signup. Each share lives at its own origin (8-char alphanumeric subdomain) so the browser's same-origin policy isolates every share's IDB, sessionStorage, and OPFS — a malicious publisher's bootstrap can't read or enumerate any other share's storage. The published version carries its own `DOC_UUID`, so each viewer's edits land in their own browser-local IDB at that share's origin — they fork the doc locally rather than co-edit. For permanent or collaborative hosting, host the `.html` yourself: any static host works, because the file is the app.
 
 ## The specs
 

@@ -2,6 +2,43 @@
 
 Notable changes to `re-write-able`. The container format is versioned in `re-write-able-spec.md`; the edit protocol in `rwa-edit-spec.md`; the structural-transform DSL in `rwa-edit-dsl-spec.md`. The CLI follows semver in `cli/package.json`.
 
+## 2026-05-17 — share subdomain isolation: each share gets its own origin
+
+Published snapshots now live at `https://<short>.rewritable.ikangai.com/` instead of `https://rewritable.ikangai.com/s/<short>`. Each share has its own origin, so the browser's same-origin policy structurally isolates every share's IndexedDB, sessionStorage, and OPFS. A malicious publisher's bootstrap can no longer enumerate `indexedDB.databases()` to find — let alone read — any other share's storage, and the OpenRouter API key a viewer typed into one share never leaks into another.
+
+Design + runbook: [`docs/plans/2026-05-17-share-subdomain-isolation.md`](docs/plans/2026-05-17-share-subdomain-isolation.md), [`service/acme-dns/README.md`](service/acme-dns/README.md).
+
+### The threat this closes
+
+Before this change, every `/s/<short>` share served from `rewritable.ikangai.com`. `service/server.js`'s `validateContainer()` only structurally validates the uploaded bytes (DOC_UUID line, bootstrap marker, INLINE_DOC marker); the bootstrap *script content* is never validated. So a publisher could upload a container with arbitrary JS in the bootstrap and trick a victim into opening the resulting `/s/<short>` URL. That JS ran in the `rewritable.ikangai.com` origin — same origin as every other share — so it could read the victim's `sessionStorage` (OpenRouter API key from any earlier legit share), enumerate `indexedDB.databases()`, dump every `rwa_<UUID>` IDB at the origin, and exfiltrate via `fetch()`. UUID-namespacing of IDB and OPFS doesn't help here because the malicious script is *in* the origin and can read everything. Origin isolation is the architectural fix; per-script auditing of bootstrap bytes was rejected as too brittle as the bootstrap evolves.
+
+### What changed for users
+
+- **New share URL shape.** `POST /publish` now returns `https://<short>.rewritable.ikangai.com/` instead of `https://rewritable.ikangai.com/s/<short>`. The URL is barely longer (31 chars vs. 29) and bookmarks/history/copy-link behave naturally per-share.
+- **Legacy URLs keep working.** `https://rewritable.ikangai.com/s/<short>` returns `301 Moved Permanently` to the host-keyed form, with `Cache-Control: public, max-age=86400`. Within the 24h share-expiry window of pre-migration shares, every old URL still resolves to its share. After that the redirect can be removed (or kept indefinitely as cheap insurance).
+- **`/robots.txt` on share hosts** serves `User-agent: *\nDisallow: /` so crawlers stay out of 24h-ephemeral content.
+- **Local dev unchanged.** Wildcard DNS doesn't resolve against `localhost`, so `node service/server.js` in dev keeps the path-keyed `/s/<short>` form working as a fallback when `req.headers.host` looks local (matching `localhost`, `127.0.0.1`, `[::1]`, or `*.local`).
+
+### Infrastructure: DNS-01 wildcard cert via acme-dns
+
+The wildcard cert (`*.rewritable.ikangai.com`) requires DNS-01 challenges (Let's Encrypt forbids HTTP-01 wildcards by policy). World4You — our DNS host — has no `lego` provider and their self-serve GUI doesn't expose NS records, so two non-obvious paths got rejected: native DNS-01 against World4You's API, and a self-hosted `joohoi/acme-dns` instance delegated via NS records (`acme-dns.ikangai.com` → VPS).
+
+The path that shipped delegates *only* the `_acme-challenge.rewritable.ikangai.com` subdomain to the public `auth.acme-dns.io` service via a single CNAME at World4You. Traefik gains a second cert resolver (`letsencrypt-dns`) alongside the existing HTTP-01 `letsencrypt`, configured to talk to `https://auth.acme-dns.io` via lego's `acme-dns` provider. Trade-off: a third party joins the cert renewal chain. Documented in [`service/acme-dns/README.md`](service/acme-dns/README.md); if `auth.acme-dns.io` ever becomes unreliable, we can re-register with a different acme-dns instance and rotate the CNAME in one step.
+
+### Where the changes live
+
+- **DNS at World4You** — one new CNAME (`_acme-challenge.rewritable.ikangai.com → <random>.auth.acme-dns.io.`). The pre-existing wildcard `*.rewritable.ikangai.com → 185.164.4.77` A record handles share-host resolution.
+- **Traefik** (`/opt/docker/router/docker-compose.yml` on the production VPS) — new `letsencrypt-dns` cert resolver + lego env vars (`ACME_DNS_API_BASE`, `ACME_DNS_STORAGE_PATH`) + accounts JSON in the existing `/letsencrypt` volume. Wildcard cert issued by Let's Encrypt R13, stored in `/letsencrypt/acme-dns.json`, auto-renews every ~60 days. Diagnostic `--log.level=INFO` flag added during deploy; kept for future visibility.
+- **Rewritable container** (`service/docker-compose.prod.yml` + the host's `docker-compose.yml`) — two routers now share the `rewritable-svc` service: `rewritable-apex` (Host=`rewritable.ikangai.com`, HTTP-01 cert) and `rewritable-shares` (HostRegexp matching exactly 8-char-alphanumeric share hosts under `rewritable.ikangai.com`, wildcard cert via `letsencrypt-dns`).
+- **Server.js** — new `SHORT_HOST_RE = /^([0-9a-z]{8})\.rewritable\./` + `isLocalHost(host)` helper. `serveShare(short, send)` extracted from the old `/s/<short>` body, now called by both host-keyed and dev-fallback paths. The request handler computes `isShareHost` up front and short-circuits share-host requests: only `/` (serves the share) and `/robots.txt` (returns `Disallow: /`) are valid; every other URL 404s, including all apex routes. `POST /publish` is gated to apex hosts only — a malicious publisher can't bounce `/publish` off a share host to mint a URL relative to a wrong host. `handlePublish()` builds host-keyed URLs in production and path-keyed in local dev. The legacy `/s/<short>` handler 301-redirects to the new form in production, serves path-keyed in dev.
+
+### Non-obvious points
+
+- **The 8-char `[0-9a-z]` namespace is reserved by convention.** Any future subdomain that happens to be exactly 8 lowercase-alphanumeric chars will be intercepted by the share router. Document this constraint; carve specific exceptions with a higher-priority `Host()` rule if needed.
+- **Renamed routers.** The previous single `rewritable` router became `rewritable-apex`; the share router is `rewritable-shares`; both reference an explicit `rewritable-svc` service. Required because with two routers sharing a backend, Traefik's implicit service-from-router-name auto-naming breaks.
+- **Existing share files survive untouched.** The on-disk `<short>.html` + `<short>.json` pairs in `service/data/` are origin-agnostic — they served fine from the new subdomain immediately after deploy without any migration.
+- **`/import` lives on the apex and only fetches `/rewritable.html` from the apex** — never touches subdomain shares. The origin separation doesn't break anything in the import flow.
+
 ## 2026-05-16 — local model backends: Ollama + LM Studio
 
 The settings panel gains two new backend options that run the rewrite loop entirely on the user's machine. Previously the only options were **OpenRouter** (hosted, paid per token) and **Bridge** (delegating to `claude -p` via a localhost shell shim). Now the runtime can also talk directly to **Ollama** (`localhost:11434`) and **LM Studio** (`localhost:1234`) over their OpenAI-compatible `/v1/chat/completions` endpoint — same multi-turn tool-use loop, same `apply_dsl_plan` / `apply_edits` / `replace_document` envelopes, just a different base URL and no API key.

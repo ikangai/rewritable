@@ -321,14 +321,12 @@ browser's same-origin policy. ...
 |---|---|---|
 | 1 — DNS-01 resolver via `auth.acme-dns.io` | ~1 hour actual | ✅ shipped 2026-05-17 |
 | 2 — Wildcard DNS record at World4You | already in place | ✅ done |
-| 3 — server.js routing | 1-2 hours | pending |
-| 4 — Traefik labels for share router | 30 min | pending |
-| 5 — Legacy 301 | 30 min | pending |
-| 6 — Staging verification | 1 hour | pending |
-| 7 — Docs | 30 min | pending |
-
-**Remaining work:** ~half a day across tasks 3-7. Tasks 3-5 are all in-repo code/config changes (server.js, docker-compose, label additions); Task 6 is the actual share-isolation verification in DevTools; Task 7 is CHANGELOG / CLAUDE.md / README updates.
+| 3 — server.js host-keyed routing | ~1 hour actual | ✅ shipped 2026-05-17 (`4b03a65`) |
+| 4 — Traefik labels for share router | ~30 min actual | ✅ shipped 2026-05-17 (`6bea576`) |
+| 5 — Legacy 301 | included in task 3 | ✅ shipped 2026-05-17 (`4b03a65`) |
+| 6 — Staging verification | 30 min actual | ✅ verified 2026-05-17 (publish + DevTools cross-share check confirmed isolation) |
+| 7 — Docs (CHANGELOG, CLAUDE.md, README) | ~30 min actual | ✅ done 2026-05-17 |
 
 ---
 
-*Status: Tasks 1+2 shipped 2026-05-17. Tasks 3-7 pending. Wildcard cert for `*.rewritable.ikangai.com` is live in Traefik's `acme-dns.json` store and will auto-renew.*
+*Status: **fully shipped 2026-05-17**. Published shares now live at `https://<short>.rewritable.ikangai.com/`. Each share has its own origin → browser same-origin policy isolates per-share IDB, sessionStorage, OPFS. The malicious-share cross-storage attack from the original gap analysis is structurally closed. Legacy `/s/<short>` URLs 301-redirect through the 24h share-expiry window. Wildcard cert auto-renews via `letsencrypt-dns` + `auth.acme-dns.io` every ~60 days.*
