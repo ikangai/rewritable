@@ -183,6 +183,23 @@ const SHORT_ALPHABET = '0123456789abcdefghijklmnopqrstuvwxyz';
 const BOOTSTRAP_RE = /<script id="rwa-bootstrap"/;
 const INLINE_DOC_RE = /const INLINE_DOC = `/;
 
+// Share hosts: <short>.rewritable.<tld...>. Each share lives at its own
+// origin so the browser's same-origin policy isolates per-share IDB +
+// sessionStorage + OPFS. The regex tolerates any apex domain (matches dev
+// hostnames like `abc12345.rewritable.local` as well as production
+// `abc12345.rewritable.ikangai.com`).
+const SHORT_HOST_RE = /^([0-9a-z]{8})\.rewritable\./;
+const ROBOTS_TXT = 'User-agent: *\nDisallow: /\n';
+
+// Local dev: wildcard DNS doesn't resolve against localhost, so dev keeps
+// the path-keyed `/s/<short>` URL shape working. Production always uses
+// host-keyed share URLs.
+function isLocalHost(host) {
+  if (!host) return true;
+  const h = host.split(':')[0];
+  return h === 'localhost' || h === '127.0.0.1' || h === '[::1]' || h.endsWith('.local');
+}
+
 function generateShort() {
   // 8 chars from base36 = ~41 bits. crypto.randomBytes is uniform; the % 36
   // step introduces a ~6% bias toward 0-3 vs 4-9/a-z but the address space
@@ -313,6 +330,32 @@ sweepExpired();
 const SWEEP_INTERVAL_MS = 60 * 60 * 1000;
 setInterval(sweepExpired, SWEEP_INTERVAL_MS).unref();
 
+// Serve the bytes of a published share. Used both by host-keyed share
+// requests (the normal production path) and the path-keyed dev fallback.
+function serveShare(short, send) {
+  let meta;
+  try { meta = JSON.parse(fs.readFileSync(path.join(DATA_DIR, `${short}.json`), 'utf8')); }
+  catch (err) {
+    if (err.code === 'ENOENT') return send(404, { 'Content-Type': 'text/plain' }, 'not found\n');
+    console.error('share: metadata read failed', err);
+    return send(500, { 'Content-Type': 'text/plain' }, 'internal error\n');
+  }
+  if (typeof meta.createdAt !== 'number' || Date.now() - meta.createdAt > EXPIRY_MS) {
+    return send(410, { 'Content-Type': 'text/plain' }, 'expired\n');
+  }
+  let body;
+  try { body = fs.readFileSync(path.join(DATA_DIR, `${short}.html`)); }
+  catch (err) {
+    if (err.code === 'ENOENT') return send(404, { 'Content-Type': 'text/plain' }, 'not found\n');
+    console.error('share: bytes read failed', err);
+    return send(500, { 'Content-Type': 'text/plain' }, 'internal error\n');
+  }
+  return send(200, {
+    'Content-Type': 'text/html; charset=utf-8',
+    'Cache-Control': 'public, max-age=300',
+  }, body);
+}
+
 async function handlePublish(req, send) {
   const ip = clientIp(req);
   const rl = checkRateLimit(ip);
@@ -367,7 +410,12 @@ async function handlePublish(req, send) {
 
   const scheme = (req.headers['x-forwarded-proto'] || 'http').split(',')[0].trim();
   const host = req.headers.host || 'localhost';
-  const shareUrl = `${scheme}://${host}/s/${short}`;
+  // Production: host-keyed share URL so each share gets its own origin.
+  // Local dev: path-keyed fallback (wildcard DNS doesn't resolve against
+  // localhost).
+  const shareUrl = isLocalHost(host)
+    ? `${scheme}://${host}/s/${short}`
+    : `${scheme}://${short}.${host}/`;
   return send(201, {
     'Content-Type': 'application/json; charset=utf-8',
     'Cache-Control': 'no-store',
@@ -393,11 +441,14 @@ const server = http.createServer((req, res) => {
   };
 
   const url = req.url.split('?')[0];
+  const reqHost = (req.headers.host || '').toLowerCase();
+  const hostShort = reqHost.match(SHORT_HOST_RE);
+  const isShareHost = !!hostShort;
 
-  // POST /publish is the only non-GET endpoint. Routed before the method
-  // gate so the gate can stay simple. Errors inside the async handler
-  // route through .catch so a thrown exception still responds.
-  if (req.method === 'POST' && url === '/publish') {
+  // POST /publish is the only non-GET endpoint. It lives only on the apex
+  // host — a malicious publisher must not be able to bounce /publish off
+  // a share host and have us mint a URL relative to that wrong host.
+  if (req.method === 'POST' && url === '/publish' && !isShareHost) {
     handlePublish(req, send).catch(err => {
       console.error('publish: unhandled error', err);
       if (!res.headersSent) {
@@ -410,6 +461,20 @@ const server = http.createServer((req, res) => {
 
   if (req.method !== 'GET' && !isHead) {
     return send(405, { 'Allow': 'GET, HEAD, POST', 'Content-Type': 'text/plain' }, 'method not allowed\n');
+  }
+
+  // Share host (<short>.rewritable.<tld>): serves *only* its own bytes
+  // (plus robots.txt). No apex routes are reachable here — the origin must
+  // stay clean of apex content so the browser's same-origin policy isolates
+  // every share's structured storage. Everything else 404s.
+  if (isShareHost) {
+    if (url === '/robots.txt') {
+      return send(200, { 'Content-Type': 'text/plain; charset=utf-8' }, ROBOTS_TXT);
+    }
+    if (url === '/' || url === '') {
+      return serveShare(hostShort[1], send);
+    }
+    return send(404, { 'Content-Type': 'text/plain' }, 'not found\n');
   }
 
   if (url === '/health') {
@@ -483,32 +548,20 @@ const server = http.createServer((req, res) => {
     }
   }
 
-  // Snapshot publishing: serve a published share's bytes.
+  // Legacy /s/<short> URLs (pre-2026-05-17). In production, 301 to the
+  // host-keyed form so the new origin model takes effect; in local dev,
+  // serve path-keyed because wildcard DNS doesn't resolve against
+  // localhost. The Cache-Control on the 301 lets browsers and caches
+  // store the redirect for the 24h share-expiry window.
   if (url.startsWith('/s/')) {
     const m = url.match(/^\/s\/([0-9a-z]{8})$/);
     if (!m) return send(404, { 'Content-Type': 'text/plain' }, 'not found\n');
-    const short = m[1];
-    let meta;
-    try { meta = JSON.parse(fs.readFileSync(path.join(DATA_DIR, `${short}.json`), 'utf8')); }
-    catch (err) {
-      if (err.code === 'ENOENT') return send(404, { 'Content-Type': 'text/plain' }, 'not found\n');
-      console.error('share: metadata read failed', err);
-      return send(500, { 'Content-Type': 'text/plain' }, 'internal error\n');
-    }
-    if (typeof meta.createdAt !== 'number' || Date.now() - meta.createdAt > EXPIRY_MS) {
-      return send(410, { 'Content-Type': 'text/plain' }, 'expired\n');
-    }
-    let body;
-    try { body = fs.readFileSync(path.join(DATA_DIR, `${short}.html`)); }
-    catch (err) {
-      if (err.code === 'ENOENT') return send(404, { 'Content-Type': 'text/plain' }, 'not found\n');
-      console.error('share: bytes read failed', err);
-      return send(500, { 'Content-Type': 'text/plain' }, 'internal error\n');
-    }
-    return send(200, {
-      'Content-Type': 'text/html; charset=utf-8',
-      'Cache-Control': 'public, max-age=300',
-    }, body);
+    if (isLocalHost(reqHost)) return serveShare(m[1], send);
+    const scheme = (req.headers['x-forwarded-proto'] || 'https').split(',')[0].trim();
+    return send(301, {
+      'Location': `${scheme}://${m[1]}.${reqHost}/`,
+      'Cache-Control': 'public, max-age=86400',
+    }, '');
   }
 
   if (url === '/rewritable.html') {
