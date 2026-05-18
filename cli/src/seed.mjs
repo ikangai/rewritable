@@ -105,141 +105,191 @@ export function applySeedSubs(seed, { uuid, title, fileMeta, lensPlaceholder, pa
 // layer so R1 has a second concrete prompt to parameterize over.
 const KIND_DOCUMENT_LENS = 'Write, or describe what you want.';
 
+// v0.2 workflow stub. Implements the UX design at
+// docs/plans/2026-05-18-workflow-ux-design.md. Semantic <ol> / <li>
+// structure, collapsible <details> code, per-step <output> slots, an
+// async function run(ctx, prev) step contract, and a frozen runner.
+// Replaces v1's wf-canvas / wf-node / <script type="text/workflow-node">
+// shape wholesale.
 const KIND_WORKFLOW_BODY = `<!-- rwa:frozen:begin wf-style -->
 <style>
-.wf-canvas{max-width:920px;margin:0 auto;padding:24px 24px 64px;}
-.wf-canvas > header{display:flex;align-items:center;justify-content:space-between;gap:1em;margin:0 0 .5em;}
-.wf-canvas > header h1{margin:0;flex:1;}
-.wf-run{padding:8px 16px;background:var(--gray-900);color:#fff;border:none;border-radius:6px;cursor:pointer;font-family:var(--font-ui);font-size:14px;font-weight:500;transition:background .15s;}
-.wf-run:hover{background:var(--gray-700);}
-.wf-run:disabled{background:var(--gray-300);cursor:not-allowed;}
-.wf-status{margin:.25em 0 1em;font-family:var(--font-mono);font-size:11px;color:var(--gray-500);min-height:1.4em;letter-spacing:.3px;}
-.wf-empty{color:var(--gray-400);font-style:italic;margin:1.5em 0;}
-.wf-nodes:has(.wf-node) .wf-empty{display:none;}
-.wf-nodes{display:flex;flex-direction:column;gap:.5em;}
-.wf-nodes > .wf-node + .wf-node{margin-top:0;}
-.wf-node{border:1px solid var(--gray-200);border-radius:8px;padding:14px 16px;background:var(--gray-50);position:relative;}
-.wf-node > h2{margin:0 0 .25em;font-size:1rem;font-weight:600;color:var(--gray-900);}
-.wf-summary{margin:0;color:var(--gray-600);font-size:13px;line-height:1.45;}
-.wf-node[data-running="true"]{border-color:var(--blue);background:#fff;}
-.wf-node[data-status="ok"]::after{content:"\\2713";position:absolute;top:14px;right:16px;color:var(--green);font-family:var(--font-mono);font-size:14px;}
-.wf-node[data-status="err"]::after{content:"\\2717";position:absolute;top:14px;right:16px;color:var(--red);font-family:var(--font-mono);font-size:14px;}
-@media print{.wf-empty,.wf-run,.wf-status,.wf-node::after{display:none;}}
+.rwa-workflow{max-width:920px;margin:0 auto;padding:24px 24px 64px;}
+.rwa-workflow > header{margin-bottom:1.5em;}
+.rwa-workflow > header h1{margin:0 0 .25em;}
+.rwa-workflow > header > p{margin:0;color:var(--gray-600);font-size:14px;line-height:1.5;}
+.rwa-workflow .placeholder{color:var(--gray-400);font-style:italic;margin:1.5em 0;line-height:1.5;}
+.rwa-flow{list-style:none;padding:0;margin:1em 0;display:flex;flex-direction:column;gap:.5em;}
+.rwa-step{border:1px solid var(--gray-200);border-radius:8px;padding:14px 16px;background:var(--gray-50);position:relative;transition:border-color .15s,background .15s;}
+.rwa-step > header{margin:0;}
+.rwa-step > header h3{margin:0 0 .25em;font-size:1rem;font-weight:600;color:var(--gray-900);}
+.rwa-step > header p{margin:0;color:var(--gray-600);font-size:13px;line-height:1.45;}
+.rwa-step details{margin:.5em 0 0;}
+.rwa-step summary{cursor:pointer;font-family:var(--font-mono);font-size:11px;color:var(--gray-500);padding:2px 0;list-style:none;display:inline-block;user-select:none;}
+.rwa-step summary::before{content:"▸ ";display:inline-block;width:1em;}
+.rwa-step details[open] > summary::before{content:"▾ ";}
+.rwa-step summary::-webkit-details-marker{display:none;}
+.rwa-step summary:hover{color:var(--gray-700);}
+.rwa-step details > script{display:block;white-space:pre-wrap;padding:.5em .75em;margin:.25em 0 0;background:#fff;border:1px solid var(--gray-200);border-radius:4px;font-family:var(--font-mono);font-size:12px;line-height:1.5;color:var(--gray-800);overflow-x:auto;}
+.rwa-step-output{display:block;margin-top:.5em;padding:.5em .75em;background:#fff;border:1px solid var(--gray-200);border-radius:4px;font-family:var(--font-mono);font-size:11px;line-height:1.4;color:var(--gray-800);white-space:pre-wrap;overflow-x:auto;max-height:200px;overflow-y:auto;}
+.rwa-step-output:empty{display:none;}
+.rwa-step.running{border-color:var(--blue);background:#fff;}
+.rwa-step.done{border-color:var(--green);}
+.rwa-step.done::after{content:"✓";position:absolute;top:14px;right:16px;color:var(--green);font-family:var(--font-mono);font-size:14px;}
+.rwa-step.failed{border-color:var(--red);}
+.rwa-step.failed::after{content:"✗";position:absolute;top:14px;right:16px;color:var(--red);font-family:var(--font-mono);font-size:14px;}
+.rwa-step.failed .rwa-step-output{color:var(--red);}
+.rwa-workflow-footer{margin-top:1.5em;display:flex;align-items:center;gap:1em;}
+.rwa-run{padding:8px 16px;background:var(--gray-900);color:#fff;border:none;border-radius:6px;cursor:pointer;font-family:var(--font-ui);font-size:14px;font-weight:500;transition:background .15s;}
+.rwa-run:hover{background:var(--gray-700);}
+.rwa-run:disabled{background:var(--gray-300);cursor:not-allowed;}
+.rwa-run-status{font-family:var(--font-mono);font-size:11px;color:var(--gray-500);min-height:1.4em;letter-spacing:.3px;}
+@media print{.placeholder,.rwa-run,.rwa-run-status{display:none;} .rwa-step::after{display:none;}}
 </style>
 <!-- rwa:frozen:end wf-style -->
-<article class="wf-canvas">
+<article class="rwa-workflow">
 <header>
 <h1>Untitled workflow</h1>
-<!-- rwa:frozen:begin wf-run -->
-<button class="wf-run" type="button">▶ Run</button>
-<!-- rwa:frozen:end wf-run -->
 </header>
-<!-- rwa:frozen:begin wf-status -->
-<p class="wf-status"></p>
-<!-- rwa:frozen:end wf-status -->
-<section class="wf-nodes">
-<p class="wf-empty">No nodes yet. Type a step into the lens below — “fetch the last 5 issues from this repo”, “summarize each in two sentences” — and the agent will scaffold a node.</p>
-</section>
+<p class="placeholder">Describe what you want this workflow to do — the agent will scaffold the steps. For example: <em>"fetch the last 5 issues from anthropics/anthropic-sdk-python and summarize each in two sentences"</em>.</p>
 </article>
-<!-- rwa:frozen:begin wf-runtime -->
+<!-- rwa:frozen:begin runner -->
 <script>
 (function(){
   'use strict';
-  // Workflow runtime (frozen). Walks <script type="text/workflow-node"> blocks
-  // in DOM order; each script body is treated as the body of an async function
-  // that receives \`input\` (the previous node's return value, null for the
-  // first) and returns its result. Stops on first error. Status surfaces in
-  // <p class="wf-status">. State that must survive renderDoc lives on
-  // window.__wf (per docs/specs/rwa-artifact-conventions.md §6).
-  var NS = (window.__wf = window.__wf || { running: false, lastResult: null });
-  function setStatus(s) { var el = document.querySelector('.wf-status'); if (el) el.textContent = s || ''; }
-  function clearNodeStatus() {
-    document.querySelectorAll('.wf-node').forEach(function(n){
-      delete n.dataset.running;
-      delete n.dataset.status;
+  // Workflow runner (frozen). Walks <li class="rwa-step"> in DOM order,
+  // compiles each step's <script type="text/rwa-step"> body — which must
+  // define an async function named "run" with signature run(ctx, prev) —
+  // and invokes them in sequence, threading return values as "prev".
+  // Writes results into the step's <output class="rwa-step-output">.
+  // Sets .running / .done / .failed classes on each <li>. Stops on first
+  // error. State surviving renderDoc lives on window.__rwaWorkflow.
+  var NS = (window.__rwaWorkflow = window.__rwaWorkflow || { running: false, lastResult: null });
+
+  function setStatus(s) {
+    var el = document.querySelector('.rwa-run-status');
+    if (el) el.textContent = s || '';
+  }
+  function clearStepStates() {
+    document.querySelectorAll('li.rwa-step').forEach(function(li){
+      li.classList.remove('running', 'done', 'failed');
+      var out = li.querySelector('.rwa-step-output');
+      if (out) out.textContent = '';
     });
   }
+  function compile(scriptEl) {
+    var src = scriptEl.textContent;
+    return new Function('ctx', 'prev',
+      '"use strict"; return (async () => { ' + src + '\\nreturn typeof run === "function" ? run(ctx, prev) : undefined; })();');
+  }
+  function renderOutput(value) {
+    if (value === undefined) return '';
+    if (typeof value === 'string') return value;
+    try { return JSON.stringify(value, null, 2); }
+    catch (_) { return String(value); }
+  }
+
+  var ctx = {
+    credentials: {
+      get: async function (name) {
+        var key = 'rwa_cred_' + name;
+        var v = sessionStorage.getItem(key);
+        if (v) return v;
+        var entered = prompt('Credential for "' + name + '" (sessionStorage; cleared on tab close):');
+        if (entered) { sessionStorage.setItem(key, entered); return entered; }
+        return null;
+      },
+    },
+  };
+
   async function runWorkflow() {
     if (NS.running) return;
     NS.running = true;
-    var btn = document.querySelector('.wf-run');
+    var btn = document.querySelector('.rwa-run');
     if (btn) btn.disabled = true;
-    clearNodeStatus();
+    clearStepStates();
     setStatus('● running…');
     try {
-      var scripts = Array.from(document.querySelectorAll('script[type="text/workflow-node"]'));
-      if (!scripts.length) { setStatus('no nodes to run'); return; }
-      var input = null;
-      for (var i = 0; i < scripts.length; i++) {
-        var sc = scripts[i];
-        var nodeId = sc.dataset.nodeId || ('n' + (i+1));
-        var nodeEl = document.querySelector('.wf-node[data-node-id="' + nodeId + '"]');
-        if (nodeEl) nodeEl.dataset.running = 'true';
-        setStatus('● node ' + (i+1) + '/' + scripts.length + ' — ' + nodeId);
+      var steps = Array.from(document.querySelectorAll('li.rwa-step'));
+      if (!steps.length) { setStatus('no steps to run'); return; }
+      var prev;
+      for (var i = 0; i < steps.length; i++) {
+        var li = steps[i];
+        var sc = li.querySelector('script[type="text/rwa-step"]');
+        if (!sc) throw new Error('step ' + (i+1) + ': missing <script type="text/rwa-step">');
+        li.classList.add('running');
+        setStatus('● step ' + (i+1) + '/' + steps.length);
         try {
-          // Two acceptable shapes for the script body, in preference order:
-          // (1) Statement list — what the SYSTEM_PROMPT asks for: "return …".
-          // (2) Function expression — what some models emit anyway:
-          //     "async function(input) { … }" or "(input) => { … }".
-          // Try (1) first via IIFE-wrap; on SyntaxError, try (2) by treating
-          // the body as a callable expression and invoking it with input.
-          var body = sc.textContent;
-          var fn;
-          try {
-            fn = new Function('input', '"use strict"; return (async () => { ' + body + '\\n })();');
-          } catch (eSyn) {
-            if (!(eSyn instanceof SyntaxError)) throw eSyn;
-            fn = new Function('input', '"use strict"; return Promise.resolve((' + body + ')(input));');
-          }
-          input = await fn(input);
-          if (nodeEl) { delete nodeEl.dataset.running; nodeEl.dataset.status = 'ok'; }
+          var fn = compile(sc);
+          prev = await fn(ctx, prev);
+          li.classList.remove('running');
+          li.classList.add('done');
+          var out = li.querySelector('.rwa-step-output');
+          if (out) out.textContent = renderOutput(prev);
         } catch (e) {
-          if (nodeEl) { delete nodeEl.dataset.running; nodeEl.dataset.status = 'err'; }
-          throw new Error('node ' + nodeId + ': ' + (e && e.message || e));
+          li.classList.remove('running');
+          li.classList.add('failed');
+          var outErr = li.querySelector('.rwa-step-output');
+          if (outErr) outErr.textContent = 'Error: ' + (e && e.message || e);
+          throw e;
         }
       }
-      NS.lastResult = input;
-      setStatus('✓ done (' + scripts.length + ' node' + (scripts.length===1?'':'s') + ')');
+      NS.lastResult = prev;
+      setStatus('✓ done (' + steps.length + ' step' + (steps.length===1?'':'s') + ')');
     } catch (e) {
-      setStatus('✗ ' + e.message);
+      setStatus('✗ ' + (e && e.message || e));
       console.error(e);
     } finally {
       NS.running = false;
       if (btn) btn.disabled = false;
     }
   }
-  // Re-bind on every render — the previous button is gone after innerHTML swap.
-  var btn = document.querySelector('.wf-run');
+
+  // Re-bind on every renderDoc — the previous button is gone after the
+  // innerHTML swap. The renderer re-executes inline scripts on every render
+  // (per docs/specs/rwa-artifact-conventions.md §6.1), so this IIFE runs
+  // again and re-attaches the click handler to whatever button is current.
+  var btn = document.querySelector('.rwa-run');
   if (btn) btn.addEventListener('click', runWorkflow);
 })();
 </script>
-<!-- rwa:frozen:end wf-runtime -->`;
-const KIND_WORKFLOW_LENS = 'Describe a step, or describe an edit to an existing node.';
-const KIND_WORKFLOW_PAL  = 'modify this workflow...';
+<!-- rwa:frozen:end runner -->`;
+const KIND_WORKFLOW_LENS = 'Describe what you want this workflow to do.';
+const KIND_WORKFLOW_PAL  = 'describe what this workflow does...';
 
-// PRODUCT HEADER for the workflow kind. Names the v1 shape (canvas + node
-// cards + inline JS) and the deliberate v1 omissions so anyone reading the
-// file cold sees both what's here and what isn't.
+// PRODUCT HEADER for the workflow kind (v0.2 — UX-design alignment).
+// Names the canonical shape (ordered list of step cards with inline async
+// run(ctx, prev)), the credential surface (ctx.credentials.get), the CORS
+// reality, and the deliberate v0.2 omissions.
 const KIND_WORKFLOW_HEADER = `// === PRODUCT HEADER ===
-// Product: workflow (substrate-layer scaffold, v1).
+// Product: workflow (substrate-layer scaffold, v0.2).
 //
-// The file renders as a vertical sequence of node cards inside
-// <section class="wf-nodes">. Each <article class="wf-node"> carries a
-// title, a one-sentence summary, and an inline
-// <script type="text/workflow-node"> whose body is the JS that runs when
-// the Run button fires the workflow. The runtime walks nodes in DOM order;
-// output of each node feeds the next as \`input\`. The wf-runtime <script>
-// at the bottom is frozen; the agent edits the node cards via the lens.
+// The file renders as a vertical <ol class="rwa-flow"> of step cards
+// (<li class="rwa-step">). Each step has a <header> (title + one-sentence
+// description), a collapsible <details> wrapping an inert
+// <script type="text/rwa-step"> with the step's inline JS, and an
+// <output class="rwa-step-output"> slot for the last-run result. A frozen
+// runner at the bottom walks the steps on Run click, compiles each
+// script's body (which must define an async function "run" with signature
+// run(ctx, prev)), and threads return values as "prev" into the next
+// step. The runner writes results into the step's output, marks the
+// step .done / .failed, and stops the chain on first error.
 //
-// v1 deliberately ships WITHOUT: credential vault (write \`// TODO\`
-// placeholders and ask the user), skill library / cross-workflow reuse
-// (each workflow ships its own node JS), trigger model (manual Run only),
-// Worker isolation (nodes run in the document context). The trust anchor
-// is workflow review at creation — the user sees each generated node's JS
-// before accepting. Where these v1 omissions are designed for later, see
-// docs/specs/re-write-able-actions-spec-v0.7.md and its lineage; the v1
-// shape lets us learn from real workflows before committing to that
-// surface. See docs/specs/rwa-product-types.md.
+// Credentials: ctx.credentials.get("name") reads sessionStorage with
+// prompt-on-first-use. Never persisted in INLINE_DOC; cleared on tab
+// close. Use readable names: "gmail", "stripe", "github".
+//
+// CORS reality: browser fetch is CORS-bound. CORS-friendly APIs work
+// (Stripe, OpenAI, GitHub, Slack, Linear, OpenRouter). Most consumer
+// SaaS without OAuth proxies (Gmail, etc.) does not.
+//
+// v0.2 deliberately ships WITHOUT: credential vault encryption (sessionStorage
+// only), skill library / cross-workflow reuse, trigger model (manual Run
+// only), Worker isolation, branches / parallel execution, scheduling,
+// retry / resume. The trust anchor is workflow review at creation: the
+// user sees each generated step's JS in the collapsible <details> before
+// accepting. See docs/specs/re-write-able-actions-spec-v0.7.md and its
+// lineage for where the omitted features are designed; see
+// docs/plans/2026-05-18-workflow-ux-design.md for the v0.2 UX spec.
 // === END PRODUCT HEADER ===`;
 
 const KIND_TABLE = {
