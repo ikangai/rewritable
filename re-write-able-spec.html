@@ -102,11 +102,13 @@ body{font-family:var(--font-ui);background:var(--bg);color:var(--text);min-heigh
 [data-rwa-anchored]{outline:2px solid var(--gray-900);outline-offset:2px;border-radius:4px;}
 .rwa-locked{position:relative;background:rgba(239,68,68,0.04);border-left:3px solid var(--red);padding-left:8px;}
 .rwa-locked::before{content:'\1F512';position:absolute;top:4px;right:8px;font-size:12px;opacity:.6;}
+/* === DOCUMENT-PRODUCT DEFAULT: baseline content typography === */
 /* Baseline content typography — applies to anything rendered inside the doc
    mount. Wrapped in :where() so specificity is 0,0,0,0; any <style> declared
    inside INLINE_DOC (the hello variant, the spec doc, imports that ship their
    own styles) always wins. This gives md/csv/docx/pdf imports and agent-written
-   content a clean default look without the doc having to opt in. */
+   content a clean default look without the doc having to opt in.
+   Region scope: doc-product default; see docs/specs/rwa-product-types.md. */
 :where(#rwa-doc-mount){font-family:var(--font-ui);color:var(--gray-900);line-height:1.65;}
 :where(#rwa-doc-mount) article{max-width:720px;margin:64px auto;padding:0 32px;}
 :where(#rwa-doc-mount) h1{font-size:2.25rem;font-weight:600;letter-spacing:-.02em;line-height:1.2;margin:1.8em 0 .5em;color:var(--gray-900);}
@@ -133,6 +135,7 @@ body{font-family:var(--font-ui);background:var(--bg);color:var(--text);min-heigh
 :where(#rwa-doc-mount) th,:where(#rwa-doc-mount) td{border-bottom:1px solid var(--gray-200);padding:.5em .75em;text-align:left;vertical-align:top;}
 :where(#rwa-doc-mount) th{font-weight:600;color:var(--gray-700);background:var(--gray-50);}
 :where(#rwa-doc-mount) kbd{font-family:var(--font-mono);font-size:.85em;background:var(--gray-100);border:1px solid var(--gray-200);border-radius:4px;padding:.1em .4em;color:var(--gray-700);}
+/* === END DOCUMENT-PRODUCT DEFAULT: baseline content typography === */
 /* Print: hide runtime chrome, let @page own the margins, and protect block
    integrity (don't strand headings, split tables, etc.). The article padding
    is collapsed because @page already owns the paper margin. */
@@ -165,8 +168,10 @@ body{font-family:var(--font-ui);background:var(--bg);color:var(--text);min-heigh
 // zeros here, the substitution failed and isolation is broken.
 const DOC_UUID = '1694e7c0-abaa-4c28-8a56-7d0953d922bc';
 
+// === DOCUMENT-PRODUCT DEFAULT: INLINE_DOC starter stub ===
 // The document — a frozen snapshot, hydrated into IndexedDB on first open
 // and rewritten in place on every commit.
+// Region scope: doc-product default; see docs/specs/rwa-product-types.md.
 const INLINE_DOC = `<style>
 .rwa-doc{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);min-height:100dvh;}
 .rwa-doc-header{display:flex;align-items:center;gap:12px;padding:11px 24px;border-bottom:1px solid var(--b1);position:sticky;top:0;z-index:50;background:color-mix(in srgb,var(--bg) 88%,transparent);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);}
@@ -641,9 +646,15 @@ runtime.status = {                  // observable
 </main>
 </div>
 </div>`;
+// === END DOCUMENT-PRODUCT DEFAULT: INLINE_DOC starter stub ===
 
+// === DOCUMENT-PRODUCT DEFAULT: ANCHORABLE_TAGS ===
+// Prose-block anchoring vocabulary. Drives lens click-to-anchor and
+// data-rwa-id backfill. Region scope: doc-product default; see
+// docs/specs/rwa-product-types.md.
 const ANCHORABLE_TAGS = new Set(['P','H1','H2','H3','H4','H5','H6','BLOCKQUOTE','LI','FIGURE','PRE','ASIDE']);
 window.ANCHORABLE_TAGS = ANCHORABLE_TAGS; // expose for tests
+// === END DOCUMENT-PRODUCT DEFAULT: ANCHORABLE_TAGS ===
 
 // ─── Storage ────────────────────────────────────────────────────────
 const RWA = {
@@ -1707,6 +1718,11 @@ async function renderHistoryPanel(panel) {
 // not by emitting a full rewritten document. unchanged regions are byte-
 // identical because the model never re-emits them.
 
+// === DOCUMENT-PRODUCT DEFAULT: SYSTEM_PROMPT ===
+// The prompt below is calibrated for prose-doc editing. Non-doc product
+// types (workflow, multi-agent workspace) need an override hook to supply
+// their own framing — see docs/specs/rwa-product-types.md and audit R1
+// at docs/runtime-product-agnosticism-audit.md.
 const SYSTEM_PROMPT = `You are editing a rewritable HTML document. Apply the user's request as a small set of surgical edits via tool calls.
 
 You have three tools:
@@ -1718,7 +1734,13 @@ Preference: structural change → apply_dsl_plan. Content change → apply_edits
 
 Rules for apply_dsl_plan:
   • version is "rwa-edit-dsl/1". ops is a non-empty array.
-  • Each op is one of: replace { find, replace, region?, all? }, insert { content, after | before }, delete { target }, set_attr { anchor, attr, value }, replace_document { doc, reason } (sole-op only).
+  • Each op MUST be a flat JSON object with an "op" field naming the op type, plus its op-specific fields. The exact shapes:
+      {"op":"replace","find":"...","replace":"..."}                    (optional: "region":"...","all":true)
+      {"op":"insert","content":"...","after":"..."}    OR    {"op":"insert","content":"...","before":"..."}
+      {"op":"delete","target":"..."}
+      {"op":"set_attr","anchor":"<tag ...","attr":"...","value":"..."}
+      {"op":"replace_document","doc":"...","reason":"..."}              (must be the sole op in the plan)
+  • Do NOT nest the op type as a JSON key. {"delete":{"target":"..."}} is WRONG; the correct shape is {"op":"delete","target":"..."}.
   • Anchors and find/target/anchor strings must be uniquely locatable in the doc (extend with surrounding context if not).
   • set_attr.anchor MUST start with < and end BEFORE the closing > of the target element's opening tag (e.g. \`<p class="callout"\` — no trailing >). The compiler reads up to the next > to determine the full opening tag.
   • For repeated patterns (e.g. wrap each card in a section), emit one op per match with disambiguating context, OR use replace with all=true.
@@ -1745,6 +1767,7 @@ Stable block identifiers (data-rwa-id):
   • Never invent new data-rwa-id values. The runtime backfills any block you produce without one. Inventing duplicates would break fragment links to existing blocks.
 
 Always call a tool. Respond with text-only only when you genuinely need to ask for clarification before editing.`;
+// === END DOCUMENT-PRODUCT DEFAULT: SYSTEM_PROMPT ===
 
 const TOOL_SCHEMAS = [
   {
