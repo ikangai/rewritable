@@ -105,47 +105,127 @@ export function applySeedSubs(seed, { uuid, title, fileMeta, lensPlaceholder, pa
 // layer so R1 has a second concrete prompt to parameterize over.
 const KIND_DOCUMENT_LENS = 'Write, or describe what you want.';
 
-const KIND_WORKFLOW_BODY = `<style>
-.wf-stage{margin:1.5em 0;padding-top:1em;border-top:1px solid var(--gray-200);}
-.wf-stage h2{margin:0 0 .5em;font-size:1.1rem;font-weight:600;color:var(--gray-700);}
-.wf-stage ul{margin:0;padding-left:1.25em;}
-.wf-empty{color:var(--gray-400);font-style:italic;}
-@media print{.wf-empty{display:none;}}
+const KIND_WORKFLOW_BODY = `<!-- rwa:frozen:begin wf-style -->
+<style>
+.wf-canvas{max-width:920px;margin:0 auto;padding:24px 24px 64px;}
+.wf-canvas > header{display:flex;align-items:center;justify-content:space-between;gap:1em;margin:0 0 .5em;}
+.wf-canvas > header h1{margin:0;flex:1;}
+.wf-run{padding:8px 16px;background:var(--gray-900);color:#fff;border:none;border-radius:6px;cursor:pointer;font-family:var(--font-ui);font-size:14px;font-weight:500;transition:background .15s;}
+.wf-run:hover{background:var(--gray-700);}
+.wf-run:disabled{background:var(--gray-300);cursor:not-allowed;}
+.wf-status{margin:.25em 0 1em;font-family:var(--font-mono);font-size:11px;color:var(--gray-500);min-height:1.4em;letter-spacing:.3px;}
+.wf-empty{color:var(--gray-400);font-style:italic;margin:1.5em 0;}
+.wf-nodes{display:flex;flex-direction:column;gap:.5em;}
+.wf-nodes > .wf-node + .wf-node{margin-top:0;}
+.wf-node{border:1px solid var(--gray-200);border-radius:8px;padding:14px 16px;background:var(--gray-50);position:relative;}
+.wf-node > h2{margin:0 0 .25em;font-size:1rem;font-weight:600;color:var(--gray-900);}
+.wf-summary{margin:0;color:var(--gray-600);font-size:13px;line-height:1.45;}
+.wf-node[data-running="true"]{border-color:var(--blue);background:#fff;}
+.wf-node[data-status="ok"]::after{content:"\\2713";position:absolute;top:14px;right:16px;color:var(--green);font-family:var(--font-mono);font-size:14px;}
+.wf-node[data-status="err"]::after{content:"\\2717";position:absolute;top:14px;right:16px;color:var(--red);font-family:var(--font-mono);font-size:14px;}
+@media print{.wf-empty,.wf-run,.wf-status,.wf-node::after{display:none;}}
 </style>
-<article>
+<!-- rwa:frozen:end wf-style -->
+<article class="wf-canvas">
+<header>
 <h1>Untitled workflow</h1>
-<p class="wf-empty">A workflow over items. Add to <em>Inbox</em>, then describe stage moves to the lens.</p>
-<section class="wf-stage">
-<h2>Inbox</h2>
-<ul></ul>
+<!-- rwa:frozen:begin wf-run -->
+<button class="wf-run" type="button">▶ Run</button>
+<!-- rwa:frozen:end wf-run -->
+</header>
+<!-- rwa:frozen:begin wf-status -->
+<p class="wf-status"></p>
+<!-- rwa:frozen:end wf-status -->
+<section class="wf-nodes">
+<p class="wf-empty">No nodes yet. Type a step into the lens below — “fetch the last 5 issues from this repo”, “summarize each in two sentences” — and the agent will scaffold a node.</p>
 </section>
-<section class="wf-stage">
-<h2>In progress</h2>
-<ul></ul>
-</section>
-<section class="wf-stage">
-<h2>Done</h2>
-<ul></ul>
-</section>
-</article>`;
-const KIND_WORKFLOW_LENS = 'Add an item, or describe a stage move.';
+</article>
+<!-- rwa:frozen:begin wf-runtime -->
+<script>
+(function(){
+  'use strict';
+  // Workflow runtime (frozen). Walks <script type="text/workflow-node"> blocks
+  // in DOM order; each script body is treated as the body of an async function
+  // that receives \`input\` (the previous node's return value, null for the
+  // first) and returns its result. Stops on first error. Status surfaces in
+  // <p class="wf-status">. State that must survive renderDoc lives on
+  // window.__wf (per docs/specs/rwa-artifact-conventions.md §6).
+  var NS = (window.__wf = window.__wf || { running: false, lastResult: null });
+  function setStatus(s) { var el = document.querySelector('.wf-status'); if (el) el.textContent = s || ''; }
+  function clearNodeStatus() {
+    document.querySelectorAll('.wf-node').forEach(function(n){
+      delete n.dataset.running;
+      delete n.dataset.status;
+    });
+  }
+  async function runWorkflow() {
+    if (NS.running) return;
+    NS.running = true;
+    var btn = document.querySelector('.wf-run');
+    if (btn) btn.disabled = true;
+    clearNodeStatus();
+    setStatus('● running…');
+    try {
+      var scripts = Array.from(document.querySelectorAll('script[type="text/workflow-node"]'));
+      if (!scripts.length) { setStatus('no nodes to run'); return; }
+      var input = null;
+      for (var i = 0; i < scripts.length; i++) {
+        var sc = scripts[i];
+        var nodeId = sc.dataset.nodeId || ('n' + (i+1));
+        var nodeEl = document.querySelector('.wf-node[data-node-id="' + nodeId + '"]');
+        if (nodeEl) nodeEl.dataset.running = 'true';
+        setStatus('● node ' + (i+1) + '/' + scripts.length + ' — ' + nodeId);
+        try {
+          var fn = new Function('input', '"use strict"; return (async () => { ' + sc.textContent + '\\n })();');
+          input = await fn(input);
+          if (nodeEl) { delete nodeEl.dataset.running; nodeEl.dataset.status = 'ok'; }
+        } catch (e) {
+          if (nodeEl) { delete nodeEl.dataset.running; nodeEl.dataset.status = 'err'; }
+          throw new Error('node ' + nodeId + ': ' + (e && e.message || e));
+        }
+      }
+      NS.lastResult = input;
+      setStatus('✓ done (' + scripts.length + ' node' + (scripts.length===1?'':'s') + ')');
+    } catch (e) {
+      setStatus('✗ ' + e.message);
+      console.error(e);
+    } finally {
+      NS.running = false;
+      if (btn) btn.disabled = false;
+    }
+  }
+  // Re-bind on every render — the previous button is gone after innerHTML swap.
+  var btn = document.querySelector('.wf-run');
+  if (btn) btn.addEventListener('click', runWorkflow);
+})();
+</script>
+<!-- rwa:frozen:end wf-runtime -->`;
+const KIND_WORKFLOW_LENS = 'Describe a step, or describe an edit to an existing node.';
 const KIND_WORKFLOW_PAL  = 'modify this workflow...';
 
-// PRODUCT HEADER for the workflow kind. Three sentences explicitly flagging
-// this is a substrate-layer scaffold, not a true graph-layer workflow — so
-// anyone reading the file cold sees the caveat that the spec keeps honest.
-// The caveat lives in the file because the runtime can't enforce it; it's
-// agent-and-reader-facing context.
+// PRODUCT HEADER for the workflow kind. Names the v1 shape (canvas + node
+// cards + inline JS) and the deliberate v1 omissions so anyone reading the
+// file cold sees both what's here and what isn't.
 const KIND_WORKFLOW_HEADER = `// === PRODUCT HEADER ===
-// Product: workflow (substrate-layer scaffold).
+// Product: workflow (substrate-layer scaffold, v1).
 //
-// This file uses substrate primitives — INLINE_DOC body with three stages
-// (Inbox / In progress / Done), apply_edits against <li> elements — to
-// express workflow-shaped editing. True graph-layer workflows with per-item
-// state, stage-transition automation, and batch dispatch are deferred to
-// rwa-graph/1 (not yet in-repo). The agent uses the prose-doc SYSTEM_PROMPT
-// against workflow-shaped content; expect rougher edges than a fully
-// graph-layer implementation. See docs/specs/rwa-product-types.md.
+// The file renders as a vertical sequence of node cards inside
+// <section class="wf-nodes">. Each <article class="wf-node"> carries a
+// title, a one-sentence summary, and an inline
+// <script type="text/workflow-node"> whose body is the JS that runs when
+// the Run button fires the workflow. The runtime walks nodes in DOM order;
+// output of each node feeds the next as \`input\`. The wf-runtime <script>
+// at the bottom is frozen; the agent edits the node cards via the lens.
+//
+// v1 deliberately ships WITHOUT: credential vault (write \`// TODO\`
+// placeholders and ask the user), skill library / cross-workflow reuse
+// (each workflow ships its own node JS), trigger model (manual Run only),
+// Worker isolation (nodes run in the document context). The trust anchor
+// is workflow review at creation — the user sees each generated node's JS
+// before accepting. Where these v1 omissions are designed for later, see
+// docs/specs/re-write-able-actions-spec-v0.7.md and its lineage; the v1
+// shape lets us learn from real workflows before committing to that
+// surface. See docs/specs/rwa-product-types.md.
 // === END PRODUCT HEADER ===`;
 
 const KIND_TABLE = {
