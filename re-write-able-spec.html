@@ -189,6 +189,18 @@ const LEGACY_PAL_PLACEHOLDER = 'modify this document...';
 const PRODUCT_KIND = 'document';
 // === END PRODUCT KIND ===
 
+// === PRODUCT: lens click-to-anchor === (audit R3 scoped)
+// Click-to-anchor inside #rwa-doc-mount walks up to the nearest
+// ANCHORABLE_TAGS ancestor and parks the lens there. Useful for prose
+// documents (anchor on a paragraph, ask the agent to rewrite that
+// paragraph). Wrong for workflow files where every <li> in a stage is
+// anchorable — a click intended to inspect an item would instead lock
+// the lens onto it and route the next /command through the anchored
+// single-block prompt path. CLI substitutes `false` for kinds where
+// whole-doc lens semantics are the primary stance.
+const LENS_CLICK_TO_ANCHOR = true;
+// === END PRODUCT: lens click-to-anchor ===
+
 // Per-container identity — namespaces IndexedDB so file:// docs don't collide.
 // Generated at creation time; preserved across commits because buildFile only
 // rewrites the INLINE_DOC literal contents.
@@ -2382,6 +2394,12 @@ if (typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent)) {
 // live mount produces the same order via the same outer-wins traversal — so
 // the i-th live anchorable corresponds to map[i].
 function handleMountClick(e) {
+  // Audit R3 (scoped): respect the per-kind click-to-anchor flag. When
+  // false (e.g. workflow files), all clicks pass through without anchoring
+  // — the lens stays in default state and every command runs against the
+  // whole document. Anchored-state UX (badge, single-block prompts) remains
+  // wired but dormant for those kinds.
+  if (!LENS_CLICK_TO_ANCHOR) return;
   const mount = document.getElementById('rwa-doc-mount');
   if (!mount) return;
   // Phase 8: reject the click outright if any ancestor up to the mount carries

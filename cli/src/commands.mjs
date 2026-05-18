@@ -146,10 +146,11 @@ export async function newCmd({ outPath, force, open, kind }) {
     uuid: crypto.randomUUID(),
     title,
     fileMeta,
-    lensPlaceholder: overrides.lensPlaceholder,
-    palPlaceholder:  overrides.palPlaceholder,
-    productHeader:   overrides.productHeader,
-    productKind:     resolvedKind,   // audit R1: substitute PRODUCT_KIND const
+    lensPlaceholder:    overrides.lensPlaceholder,
+    palPlaceholder:     overrides.palPlaceholder,
+    productHeader:      overrides.productHeader,
+    productKind:        resolvedKind,                    // audit R1
+    lensClickToAnchor:  overrides.lensClickToAnchor,     // audit R3 scoped
   });
   if (overrides.body != null) result = replaceInlineDoc(result, overrides.body);
   await fs.writeFile(out, result, 'utf8');

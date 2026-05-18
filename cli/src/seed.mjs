@@ -30,8 +30,12 @@ const PRODUCT_HEADER_RE = /\/\/ === PRODUCT HEADER ===[\s\S]*?\/\/ === END PRODU
 // keeps the registry visible in every emitted file — agents and humans alike
 // can introspect what alternates exist.
 const PRODUCT_KIND_RE = /const PRODUCT_KIND = '[^']*';/;
+// Audit R3 scoped: boolean toggle for click-to-anchor inside the doc mount.
+// `true` for prose-doc kinds; `false` for kinds where every block is
+// anchorable and a stray click would lock the lens onto an item.
+const LENS_CLICK_TO_ANCHOR_RE = /const LENS_CLICK_TO_ANCHOR = (?:true|false);/;
 
-export function applySeedSubs(seed, { uuid, title, fileMeta, lensPlaceholder, palPlaceholder, productHeader, productKind }) {
+export function applySeedSubs(seed, { uuid, title, fileMeta, lensPlaceholder, palPlaceholder, productHeader, productKind, lensClickToAnchor }) {
   // All three required substitution sites must appear exactly once. A
   // regression in the seed (title removed, FILE renamed, etc.) would
   // otherwise silently no-op and ship a CLI emitting partially-substituted
@@ -49,10 +53,11 @@ export function applySeedSubs(seed, { uuid, title, fileMeta, lensPlaceholder, pa
     }
   }
   for (const { value, re, label } of [
-    { value: lensPlaceholder, re: LENS_PLACEHOLDER_RE,        label: 'LENS_PLACEHOLDER const' },
-    { value: palPlaceholder,  re: LEGACY_PAL_PLACEHOLDER_RE,  label: 'LEGACY_PAL_PLACEHOLDER const' },
-    { value: productHeader,   re: PRODUCT_HEADER_RE,          label: 'PRODUCT HEADER block' },
-    { value: productKind,     re: PRODUCT_KIND_RE,            label: 'PRODUCT_KIND const' },
+    { value: lensPlaceholder,   re: LENS_PLACEHOLDER_RE,        label: 'LENS_PLACEHOLDER const' },
+    { value: palPlaceholder,    re: LEGACY_PAL_PLACEHOLDER_RE,  label: 'LEGACY_PAL_PLACEHOLDER const' },
+    { value: productHeader,     re: PRODUCT_HEADER_RE,          label: 'PRODUCT HEADER block' },
+    { value: productKind,       re: PRODUCT_KIND_RE,            label: 'PRODUCT_KIND const' },
+    { value: lensClickToAnchor, re: LENS_CLICK_TO_ANCHOR_RE,    label: 'LENS_CLICK_TO_ANCHOR const' },
   ]) {
     if (value == null) continue;
     const matches = seed.match(new RegExp(re.source, 'g')) || [];
@@ -76,6 +81,10 @@ export function applySeedSubs(seed, { uuid, title, fileMeta, lensPlaceholder, pa
   }
   if (productKind != null) {
     out = out.replace(PRODUCT_KIND_RE, () => `const PRODUCT_KIND = '${escapeJsString(productKind)}';`);
+  }
+  if (lensClickToAnchor != null) {
+    // Boolean literal — coerce to a literal token, not a JSON string.
+    out = out.replace(LENS_CLICK_TO_ANCHOR_RE, () => `const LENS_CLICK_TO_ANCHOR = ${lensClickToAnchor ? 'true' : 'false'};`);
   }
   return out;
 }
@@ -145,12 +154,14 @@ const KIND_TABLE = {
     lensPlaceholder: null,     // pass through seed default
     palPlaceholder: null,      // pass through seed default
     productHeader: null,       // pass through seed default
+    lensClickToAnchor: null,   // pass through seed default (true)
   },
   workflow: {
     body: KIND_WORKFLOW_BODY,
     lensPlaceholder: KIND_WORKFLOW_LENS,
     palPlaceholder: KIND_WORKFLOW_PAL,
     productHeader: KIND_WORKFLOW_HEADER,
+    lensClickToAnchor: false,  // audit R3 scoped — workflow stages are <li>-anchorable
   },
   // app, workspace: reserved — wire when the templates land. The CLI rejects
   // unknown kinds explicitly rather than silently emitting a document.
