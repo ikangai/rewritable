@@ -1,15 +1,20 @@
 #!/usr/bin/env node
-import { newCmd, importCmd, version } from '../src/commands.mjs';
+import { newCmd, importCmd, version, KNOWN_KINDS } from '../src/commands.mjs';
 
 const HELP = `rwa — single-file re-writeable documents
 
 Usage:
   rwa new [path]              create a fresh rwa document
-                              (default: ./rewritable.html)
+                              (default: ./rewritable.html, --kind=document)
   rwa import <input> [path]   convert a md/html/txt file into an rwa document
                               (default: <input-basename>.html, in input's dir)
 
 Flags:
+  --kind <name>  (new only) starter kind: document (default) or workflow.
+                 'document' is the canonical prose container — substrate
+                 layer. 'workflow' scaffolds three stages (Inbox / In
+                 progress / Done) and swaps the lens placeholder for the
+                 workflow framing. See docs/specs/rwa-product-types.md.
   --force, -f    overwrite the destination if it exists
   --open, -o     open the resulting file in the default app. First-paint
                  sessionStorage is pre-populated from env / ./.env:
@@ -69,9 +74,21 @@ const verb = args[0];
       process.exitCode = 2;
       return;
     }
-    const positional = rest.filter((a, i) => !a.startsWith('-') && rest[i - 1] !== '--model' && rest[i - 1] !== '--timeout');
+    const kindIdx = rest.indexOf('--kind');
+    const kind = kindIdx >= 0 ? rest[kindIdx + 1] : undefined;
+    if (kindIdx >= 0 && (!kind || kind.startsWith('-'))) {
+      console.error('rwa: --kind requires a name (e.g. --kind workflow)');
+      process.exitCode = 2;
+      return;
+    }
+    if (kind && !KNOWN_KINDS.includes(kind)) {
+      console.error(`rwa: unknown --kind "${kind}". Known: ${KNOWN_KINDS.join(', ')}.`);
+      process.exitCode = 2;
+      return;
+    }
+    const positional = rest.filter((a, i) => !a.startsWith('-') && rest[i - 1] !== '--model' && rest[i - 1] !== '--timeout' && rest[i - 1] !== '--kind');
     if (verb === 'new') {
-      await newCmd({ outPath: positional[0], force, open });
+      await newCmd({ outPath: positional[0], force, open, kind });
     } else if (verb === 'import') {
       if (!positional[0]) {
         console.error('rwa import: missing <input> argument');

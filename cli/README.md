@@ -25,7 +25,14 @@ rwa import page.html out.html
 
 ### `rwa new`
 
-Writes a fresh rwa container with a unique per-file `DOC_UUID`, a filename-derived `<title>`, and the seed's "Hello, world." starter content. Press `⌘K` in the browser to make it become anything.
+Writes a fresh rwa container with a unique per-file `DOC_UUID`, a filename-derived `<title>`, and the seed's "Untitled" starter content. Press `⌘K` in the browser to make it become anything.
+
+Pass `--kind <name>` to scaffold a different primary stance at first paint:
+
+- `--kind document` (default) — prose container; lens placeholder *"Write, or describe what you want."*
+- `--kind workflow` — three-stage scaffold (Inbox / In progress / Done); lens placeholder *"Add an item, or describe a stage move."*
+
+The product-kind taxonomy is documented at `docs/specs/rwa-product-types.md` in the main repo. The substrate runtime is unchanged across kinds — only the `INLINE_DOC` body and lens placeholder vary at emit time.
 
 ### `rwa import <input> [path]`
 
@@ -44,6 +51,7 @@ Output defaults to `<input-basename>.html` in the input's directory. Conversion 
 |---|---|
 | `--force`, `-f` | overwrite the destination if it exists |
 | `--open`, `-o` | open the resulting file in the default app |
+| `--kind <name>` | (`rwa new` only) starter kind: `document` (default), `workflow` |
 | `--version` | print version |
 | `--help`, `-h` | usage |
 

@@ -4,7 +4,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
 
-import { loadSeed, applySeedSubs, replaceInlineDoc } from './seed.mjs';
+import { loadSeed, applySeedSubs, replaceInlineDoc, kindOverrides, KNOWN_KINDS } from './seed.mjs';
 import { convert } from './import.mjs';
 import { convertPdfViaVision } from './import-vision.mjs';
 import { convertViaClaudeCli } from './import-claude.mjs';
@@ -130,19 +130,26 @@ function openFile(target, prefill) {
   child.unref();
 }
 
-export async function newCmd({ outPath, force, open }) {
+export async function newCmd({ outPath, force, open, kind }) {
   const out = path.resolve(outPath || './rewritable.html');
   await ensureWritable(out, force);
   const seed = await loadSeed(SEED_CANDIDATES);
   const fileMeta = path.basename(out);
   const title = titleFromBasename(path.basename(out, path.extname(out)));
-  const result = applySeedSubs(seed, {
+  // R9-minimal: kind defaults to 'document' (current behavior — no overrides
+  // applied, byte-identical to pre-flag emit). For other kinds, kindOverrides
+  // supplies the INLINE_DOC body and lens placeholder; SYSTEM_PROMPT is
+  // intentionally left alone (audit R1).
+  const overrides = kindOverrides(kind || 'document');
+  let result = applySeedSubs(seed, {
     uuid: crypto.randomUUID(),
     title,
     fileMeta,
+    lensPlaceholder: overrides.lensPlaceholder,
   });
+  if (overrides.body != null) result = replaceInlineDoc(result, overrides.body);
   await fs.writeFile(out, result, 'utf8');
-  console.log(`wrote ${rel(out)}`);
+  console.log(`wrote ${rel(out)}${kind && kind !== 'document' ? ` (kind: ${kind})` : ''}`);
   if (open) {
     const prefill = await collectPrefill();
     if (prefill.key) console.error('note: passing OPENROUTER_API_KEY via ?key= URL parameter');
@@ -151,6 +158,8 @@ export async function newCmd({ outPath, force, open }) {
     openFile(out, prefill);
   }
 }
+
+export { KNOWN_KINDS };
 
 export async function importCmd({ inputPath, outPath, force, open, vision, claude, model, timeoutSec }) {
   if (vision && claude) {
