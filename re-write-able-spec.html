@@ -3005,8 +3005,18 @@ function computeShape(parsedDoc) {
   const topLevelTypes = body
     ? [...new Set(Array.from(body.children).map(el => el.tagName.toLowerCase()))].sort().join(',')
     : '';
+  // Only count *executable* scripts toward the shape. Scripts with custom
+  // MIME types (e.g. text/workflow-node, application/json) carry data, not
+  // behavior — adding or removing them doesn't change what the document
+  // does when loaded. Workflow product kinds rely on this: node cards add a
+  // <script type="text/workflow-node"> per node, and the shape-check would
+  // otherwise reject every add/remove of a node as structural drift.
+  const EXEC_TYPES = new Set(['', 'text/javascript', 'application/javascript', 'module']);
+  const scripts = Array.from(parsedDoc.querySelectorAll('script'))
+    .filter(s => EXEC_TYPES.has((s.getAttribute('type') || '').toLowerCase()))
+    .length;
   return {
-    scripts: parsedDoc.querySelectorAll('script').length,
+    scripts,
     styles: parsedDoc.querySelectorAll('style').length,
     topLevelTypes,
   };
