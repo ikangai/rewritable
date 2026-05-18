@@ -140,7 +140,8 @@ export async function newCmd({ outPath, force, open, kind }) {
   // applied, byte-identical to pre-flag emit). For other kinds, kindOverrides
   // supplies the INLINE_DOC body and lens placeholder; SYSTEM_PROMPT is
   // intentionally left alone (audit R1).
-  const overrides = kindOverrides(kind || 'document');
+  const resolvedKind = kind || 'document';
+  const overrides = kindOverrides(resolvedKind);
   let result = applySeedSubs(seed, {
     uuid: crypto.randomUUID(),
     title,
@@ -148,6 +149,7 @@ export async function newCmd({ outPath, force, open, kind }) {
     lensPlaceholder: overrides.lensPlaceholder,
     palPlaceholder:  overrides.palPlaceholder,
     productHeader:   overrides.productHeader,
+    productKind:     resolvedKind,   // audit R1: substitute PRODUCT_KIND const
   });
   if (overrides.body != null) result = replaceInlineDoc(result, overrides.body);
   await fs.writeFile(out, result, 'utf8');

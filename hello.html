@@ -87,6 +87,7 @@ body{font-family:var(--font-ui);background:var(--bg);color:var(--text);min-heigh
 #rwa-lens-hist-panel .rwa-hist-row:last-child{border-bottom:0;}
 #rwa-lens-hist-panel .rwa-hist-meta{display:flex;gap:8px;align-items:center;margin-bottom:4px;color:var(--gray-400);font-size:11px;font-family:var(--font-mono);}
 #rwa-lens-hist-panel .rwa-hist-surface{background:var(--gray-100);color:var(--gray-600);padding:2px 8px;border-radius:100px;font-size:9px;letter-spacing:.5px;text-transform:uppercase;font-family:var(--font-mono);}
+#rwa-lens-hist-panel .rwa-hist-actor{background:var(--gray-50);color:var(--gray-500);padding:2px 8px;border-radius:100px;font-size:9px;letter-spacing:.3px;font-family:var(--font-mono);max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 #rwa-lens-hist-panel .rwa-hist-instr{color:var(--gray-900);word-wrap:break-word;}
 #rwa-lens-hist-panel .rwa-hist-empty{color:var(--gray-400);font-style:italic;padding:12px 0;}
 #rwa-lens[data-busy="true"]::after{content:'';position:absolute;top:16px;right:48px;width:8px;height:8px;border-radius:50%;background:var(--gray-400);animation:rwa-lens-pulse 1.2s ease-in-out infinite;}
@@ -178,6 +179,15 @@ body{font-family:var(--font-ui);background:var(--bg);color:var(--text);min-heigh
 const LENS_PLACEHOLDER = 'Write, or describe what you want.';
 const LEGACY_PAL_PLACEHOLDER = 'modify this document...';
 // === END PRODUCT: lens copy ===
+
+// === PRODUCT KIND ===
+// The active product kind for this container. Determines which entry from
+// the SYSTEM_PROMPTS registry (defined further down) the agent loop selects.
+// CLI substitutes the string value at file-creation; defaults to 'document'.
+// Audit R1: keyed by product kind today; extend with actor-role keying
+// for multi-agent workspaces (audit R7).
+const PRODUCT_KIND = 'document';
+// === END PRODUCT KIND ===
 
 // Per-container identity — namespaces IndexedDB so file:// docs don't collide.
 // Generated at creation time; preserved across commits because buildFile only
@@ -1258,6 +1268,7 @@ async function renderHistoryPanel(panel) {
       return '<div class="rwa-hist-row">'
         + '<div class="rwa-hist-meta">'
         + '<span class="rwa-hist-surface">' + escHtml(surface) + '</span>'
+        + (e.actor ? '<span class="rwa-hist-actor" title="' + escHtml(e.actor) + '">' + escHtml(e.actor) + '</span>' : '')
         + (scopeStr ? '<span>' + escHtml(scopeStr) + '</span>' : '')
         + '<span>' + escHtml(fmtTs(e.ts)) + '</span>'
         + '</div>'
@@ -1275,13 +1286,13 @@ async function renderHistoryPanel(panel) {
 // not by emitting a full rewritten document. unchanged regions are byte-
 // identical because the model never re-emits them.
 
-// === DOCUMENT-PRODUCT DEFAULT: SYSTEM_PROMPT ===
-// The prompt below is calibrated for prose-doc editing. Non-doc product
-// types (workflow, multi-agent workspace) need an override hook to supply
-// their own framing — see docs/specs/rwa-product-types.md and audit R1
-// at docs/runtime-product-agnosticism-audit.md.
-const SYSTEM_PROMPT = `You are editing a rewritable HTML document. Apply the user's request as a small set of surgical edits via tool calls.
-
+// === PRODUCT: SYSTEM_PROMPT registry === (selects from PRODUCT_KIND above)
+// Audit R1 lands here: the agent prompt is a registry keyed by product kind,
+// not a single hardcoded constant. Shared rules (tools, DSL syntax, frozen
+// zones, data-rwa-id) live in SYSTEM_PROMPT_RULES; per-kind framing wraps
+// them with kind-specific opening text and (where useful) structural
+// guidance. SYSTEM_PROMPT resolves at module load time via PRODUCT_KIND.
+const SYSTEM_PROMPT_RULES = `
 You have three tools:
   • apply_dsl_plan — preferred for STRUCTURAL transforms. Submit a sequence of typed ops (replace, insert, delete, set_attr) compiled deterministically to anchored edits. The runtime guarantees bytes outside change regions stay byte-identical. Use for: insert/delete elements, mass rename, wrap/unwrap, change a class or attribute, reorder.
   • apply_edits — preferred for CONTENT transforms. Submit (find, replace) pairs. Each find must be a non-empty literal substring that appears exactly once in the doc. Use for: prose rewrites, value updates, fine-grained text changes, translations, typo fixes.
@@ -1324,7 +1335,25 @@ Stable block identifiers (data-rwa-id):
   • Never invent new data-rwa-id values. The runtime backfills any block you produce without one. Inventing duplicates would break fragment links to existing blocks.
 
 Always call a tool. Respond with text-only only when you genuinely need to ask for clarification before editing.`;
-// === END DOCUMENT-PRODUCT DEFAULT: SYSTEM_PROMPT ===
+
+const SYSTEM_PROMPTS = {
+  document: `You are editing a rewritable HTML document. Apply the user's request as a small set of surgical edits via tool calls.
+${SYSTEM_PROMPT_RULES}`,
+
+  workflow: `You are editing a rewritable HTML workflow. Apply the user's request as a small set of surgical edits via tool calls.
+
+The workflow renders three stages — Inbox, In progress, Done — as <section class="wf-stage"> blocks, each with an <h2> heading and a <ul> of items (<li> elements that the runtime tags with data-rwa-id attributes).
+
+Common operations:
+  • Add an item: insert a new <li>…</li> into the target stage's <ul>. Do NOT invent a data-rwa-id; the runtime backfills on commit.
+  • Move an item between stages: delete the source <li data-rwa-id="…">…</li> and insert an identical <li> (with the same data-rwa-id verbatim) into the target stage's <ul>. Anchor the insert on the closing "</ul>" of the target stage so the item lands at the end of that stage's list.
+  • For stage moves and item additions, prefer apply_edits over apply_dsl_plan — pair-of-substitutions is less drift-prone than a multi-op typed plan when the edits touch distant regions of the doc.
+  • The lens placeholder ("Add an item, or describe a stage move.") and the three-stage scaffold are the primary stance, but this is a substrate-layer artifact. True graph-layer workflow semantics (stage-transition automation, batch dispatch, per-item state machines) live in rwa-graph/1 (not in-repo yet) and are not enforced by the runtime here.
+${SYSTEM_PROMPT_RULES}`,
+};
+
+const SYSTEM_PROMPT = SYSTEM_PROMPTS[PRODUCT_KIND] || SYSTEM_PROMPTS.document;
+// === END PRODUCT: SYSTEM_PROMPT registry ===
 
 const TOOL_SCHEMAS = [
   {
@@ -2046,11 +2075,14 @@ async function submitLens(text) {
     } else {
       // Default-state slash command: thread lensMeta so the rwa_hist record
       // carries surface='default-command' (Invariant 6 — every lens-originated
-      // commit names the surface that produced it).
+      // commit names the surface that produced it). Audit R2: actor names
+      // the agent that will produce the edit (the active model id, or
+      // bridge:claude-p when the bridge transport is selected).
       await modify(instruction, {
         surface: 'default-command',
         instruction,
         scope: { type: 'document' },
+        actor: getActiveActor(),
       });
     }
   } else {
@@ -2072,6 +2104,19 @@ async function submitLens(text) {
   }
 }
 window.submitLens = submitLens;
+
+// Audit R2: identity of the actor producing this edit. Captured at lensMeta
+// construction so the rwa_hist record names *who did what*. For the three
+// OpenAI-compatible backends this is the active model id; for the bridge
+// backend it's a sentinel naming the transport (claude -p doesn't expose a
+// model name). The field is free-form by design — future multi-agent
+// workspaces (audit R7) can carry richer identifiers (e.g. signed source
+// keys per the action-spec) without changing the rwa_hist schema.
+function getActiveActor() {
+  const backend = sessionStorage.getItem(RWA.K_BACKEND) || 'openrouter';
+  if (backend === 'bridge') return 'bridge:claude-p';
+  return sessionStorage.getItem(RWA.K_MODEL) || RWA.MODEL;
+}
 
 // Resolve the user-selected backend into a transport config.
 // kind:'openai_compat' covers openrouter/ollama/lmstudio — same wire protocol,
@@ -2265,6 +2310,7 @@ async function runAnchoredCommand(anchor, instruction) {
           surface: 'anchored-command',
           instruction,
           scope: { type: 'block', block_id: String(anchor.start) },
+          actor: getActiveActor(),   // audit R2
         };
         const result = await applyEdits(envelope, await getDoc(), lensMeta);
         renderDoc(result);
@@ -2360,12 +2406,18 @@ async function synthesizeAndCommit(envelope, surface, instruction) {
     // Phase 9.1: build lensMeta so the rwa_hist record carries surface,
     // instruction, and the scope (block-anchored or eof). Scope is captured
     // pre-commit because lensState.anchor may be cleared by renderDoc below.
+    // Audit R2: actor is 'user:lens' here because synthesizeAndCommit is the
+    // direct-text path (no agent call) — the lens itself produces the edit
+    // by wrapping the user's prose. The command paths (default-command /
+    // anchored-command) attribute to getActiveActor() because those run
+    // through the agent loop.
     const lensMeta = {
       surface,
       instruction,
       scope: lensState.anchor
         ? { type: 'block', block_id: String(lensState.anchor.start) }
         : { type: 'eof' },
+      actor: 'user:lens',
     };
     let result;
     if (!envelope) {
@@ -2692,6 +2744,7 @@ async function applyEdits(envelope, currentDocRaw, lensMeta = null) {
     histRecord.surface = lensMeta.surface;
     histRecord.instruction = lensMeta.instruction;
     histRecord.scope = lensMeta.scope;
+    if (lensMeta.actor != null) histRecord.actor = lensMeta.actor;   // audit R2
   }
   return await commitDoc(currentDoc, work, histRecord);
 }
@@ -2745,6 +2798,7 @@ async function replaceDocument(envelope, currentDocRaw, lensMeta = null) {
     histRecord.surface = lensMeta.surface;
     histRecord.instruction = lensMeta.instruction;
     histRecord.scope = lensMeta.scope;
+    if (lensMeta.actor != null) histRecord.actor = lensMeta.actor;   // audit R2
   }
   return await commitDoc(currentDoc, newDoc, histRecord);
 }
@@ -2972,6 +3026,15 @@ function failureToToolResult(err) {
 }
 
 async function modify(instr, lensMeta = null) {
+  // Audit R2: every commit through the agent loop is attributed. Lens
+  // callers set actor explicitly (getActiveActor() for command paths,
+  // 'user:lens' for text paths). Non-lens callers — chiefly runtime.modify
+  // from in-document JS — pass no lensMeta; default actor to the active
+  // model id so their commits still land in rwa_hist with attribution.
+  const meta = { ...(lensMeta || {}) };
+  if (meta.actor == null) meta.actor = getActiveActor();
+  lensMeta = meta;
+
   const cfg = resolveBackendConfig();
   if (cfg.kind === 'bridge') return modifyViaBridge(instr, lensMeta);
 

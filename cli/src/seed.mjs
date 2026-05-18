@@ -25,8 +25,13 @@ const FILE_RE = /(FILE\s*:\s*)'[^']*'/;
 const LENS_PLACEHOLDER_RE = /const LENS_PLACEHOLDER = '[^']*';/;
 const LEGACY_PAL_PLACEHOLDER_RE = /const LEGACY_PAL_PLACEHOLDER = '[^']*';/;
 const PRODUCT_HEADER_RE = /\/\/ === PRODUCT HEADER ===[\s\S]*?\/\/ === END PRODUCT HEADER ===/;
+// Audit R1: the active product kind selects which SYSTEM_PROMPTS entry the
+// agent loop uses. Substituting just the kind name (not the full prompt body)
+// keeps the registry visible in every emitted file — agents and humans alike
+// can introspect what alternates exist.
+const PRODUCT_KIND_RE = /const PRODUCT_KIND = '[^']*';/;
 
-export function applySeedSubs(seed, { uuid, title, fileMeta, lensPlaceholder, palPlaceholder, productHeader }) {
+export function applySeedSubs(seed, { uuid, title, fileMeta, lensPlaceholder, palPlaceholder, productHeader, productKind }) {
   // All three required substitution sites must appear exactly once. A
   // regression in the seed (title removed, FILE renamed, etc.) would
   // otherwise silently no-op and ship a CLI emitting partially-substituted
@@ -47,6 +52,7 @@ export function applySeedSubs(seed, { uuid, title, fileMeta, lensPlaceholder, pa
     { value: lensPlaceholder, re: LENS_PLACEHOLDER_RE,        label: 'LENS_PLACEHOLDER const' },
     { value: palPlaceholder,  re: LEGACY_PAL_PLACEHOLDER_RE,  label: 'LEGACY_PAL_PLACEHOLDER const' },
     { value: productHeader,   re: PRODUCT_HEADER_RE,          label: 'PRODUCT HEADER block' },
+    { value: productKind,     re: PRODUCT_KIND_RE,            label: 'PRODUCT_KIND const' },
   ]) {
     if (value == null) continue;
     const matches = seed.match(new RegExp(re.source, 'g')) || [];
@@ -67,6 +73,9 @@ export function applySeedSubs(seed, { uuid, title, fileMeta, lensPlaceholder, pa
   }
   if (productHeader != null) {
     out = out.replace(PRODUCT_HEADER_RE, () => productHeader);
+  }
+  if (productKind != null) {
+    out = out.replace(PRODUCT_KIND_RE, () => `const PRODUCT_KIND = '${escapeJsString(productKind)}';`);
   }
   return out;
 }
