@@ -159,6 +159,26 @@ body{font-family:var(--font-ui);background:var(--bg);color:var(--text);min-heigh
 <script id="rwa-bootstrap">
 'use strict';
 
+// === PRODUCT HEADER ===
+// Product: document (substrate layer).
+// Prose container edited via apply_edits / apply_dsl_plan against the
+// document body. The runtime's defaults — INLINE_DOC stub, lens copy,
+// SYSTEM_PROMPT, click-to-anchor on ANCHORABLE_TAGS — are calibrated
+// for this kind. See docs/specs/rwa-product-types.md for the layer-cake
+// and how non-document kinds substitute their own values at file-creation
+// time via the CLI.
+// === END PRODUCT HEADER ===
+
+// === PRODUCT: lens copy ===
+// Default placeholder text for the lens textarea and the legacy ⌘K
+// command palette. Hoisted to a single source of truth across the three
+// render sites (textarea declaration, palette declaration, releaseAnchor
+// reset) so the per-kind substitution lands everywhere. CLI substitutes
+// the two const values; see cli/src/seed.mjs KIND_TABLE.
+const LENS_PLACEHOLDER = 'Write, or describe what you want.';
+const LEGACY_PAL_PLACEHOLDER = 'modify this document...';
+// === END PRODUCT: lens copy ===
+
 // Per-container identity — namespaces IndexedDB so file:// docs don't collide.
 // Generated at creation time; preserved across commits because buildFile only
 // rewrites the INLINE_DOC literal contents.
@@ -168,10 +188,10 @@ body{font-family:var(--font-ui);background:var(--bg);color:var(--text);min-heigh
 // zeros here, the substitution failed and isolation is broken.
 const DOC_UUID = '4f6b3cdb-dc22-4882-a7a6-ced47f7d5e8d';
 
-// === DOCUMENT-PRODUCT DEFAULT: INLINE_DOC starter stub ===
+// === PRODUCT: INLINE_DOC stub === (see PRODUCT HEADER above for kind)
 // The document — a frozen snapshot, hydrated into IndexedDB on first open
-// and rewritten in place on every commit.
-// Region scope: doc-product default; see docs/specs/rwa-product-types.md.
+// and rewritten in place on every commit. Body content varies per kind;
+// CLI substitutes at file-creation time. See docs/specs/rwa-product-types.md.
 const INLINE_DOC = `<style>
 /* The 'placeholder' class fades the invitation copy and removes it from
    print, so an unwritten doc prints as a clean page with just the heading
@@ -183,7 +203,7 @@ const INLINE_DOC = `<style>
 <h1>Untitled</h1>
 <p class="placeholder">Start writing, or ask the lens below to draft something for you.</p>
 </article>`;
-// === END DOCUMENT-PRODUCT DEFAULT: INLINE_DOC starter stub ===
+// === END PRODUCT: INLINE_DOC stub ===
 
 // === DOCUMENT-PRODUCT DEFAULT: ANCHORABLE_TAGS ===
 // Prose-block anchoring vocabulary. Drives lens click-to-anchor and
@@ -856,7 +876,7 @@ function buildUI() {
   <div id="rwa-pal-box">
     <div class="rwa-pal-top">
       <span class="rwa-pal-sig">⌘K</span>
-      <input id="rwa-pal-inp" placeholder="modify this document..." autocomplete="off" spellcheck="false">
+      <input id="rwa-pal-inp" placeholder="${LEGACY_PAL_PLACEHOLDER}" autocomplete="off" spellcheck="false">
       <button id="rwa-pal-go" disabled>Run ↵</button>
     </div>
     <div class="rwa-pal-foot">
@@ -868,7 +888,7 @@ function buildUI() {
 <div id="rwa-lens" data-state="default">
   <button type="button" id="rwa-lens-hist-btn" aria-label="show history" title="show history"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/><path d="M12 7v5l3 2"/></svg></button>
   <div id="rwa-lens-badge" hidden></div>
-  <textarea id="rwa-lens-input" rows="1" placeholder="Write, or describe what you want." spellcheck="false"></textarea>
+  <textarea id="rwa-lens-input" rows="1" placeholder="${LENS_PLACEHOLDER}" spellcheck="false"></textarea>
   <div id="rwa-lens-paste-hint" hidden></div>
   <div id="rwa-lens-hint"></div>
 </div>
@@ -2004,7 +2024,7 @@ function releaseAnchor() {
   }
   lensState.anchor = null;
   const input = lens.querySelector('#rwa-lens-input');
-  if (input) input.placeholder = 'Write, or describe what you want.';
+  if (input) input.placeholder = LENS_PLACEHOLDER;
 }
 window.releaseAnchor = releaseAnchor;
 if (typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent)) {

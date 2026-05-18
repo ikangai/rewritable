@@ -146,6 +146,8 @@ export async function newCmd({ outPath, force, open, kind }) {
     title,
     fileMeta,
     lensPlaceholder: overrides.lensPlaceholder,
+    palPlaceholder:  overrides.palPlaceholder,
+    productHeader:   overrides.productHeader,
   });
   if (overrides.body != null) result = replaceInlineDoc(result, overrides.body);
   await fs.writeFile(out, result, 'utf8');

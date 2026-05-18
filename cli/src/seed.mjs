@@ -14,20 +14,25 @@ export async function loadSeed(candidates) {
 const UUID_RE = /const DOC_UUID = '[0-9a-f-]{36}';/;
 const TITLE_RE = /<title>[^<]*<\/title>/;
 const FILE_RE = /(FILE\s*:\s*)'[^']*'/;
-// R9-minimal: per-product-kind lens placeholder override. Matches the
-// rwa-lens-input <textarea> opening tag's placeholder attribute, anchoring
-// on the stable id+rows prefix so a copy change to the default text doesn't
-// silently break substitution. Mirrors the existing pattern (regex match on
-// a known seed substring; no template marker in the seed).
-const LENS_PLACEHOLDER_RE = /(id="rwa-lens-input"\s+rows="\d+"\s+)placeholder="[^"]*"/;
+// R9-minimal v0.1.1: per-product-kind substitution sites. The seed hoists
+// the lens-copy strings to const declarations (single source of truth across
+// the textarea declaration, the legacy palette, and releaseAnchor's reset
+// path) so a per-kind override lands everywhere. The PRODUCT HEADER region
+// is a comment block at the top of the bootstrap that names the kind and
+// flags substrate-vs-graph caveats for non-document kinds (workflow today,
+// app/workspace later). Each region is anchored on its marker pair so a
+// seed-side rename can't silently break substitution.
+const LENS_PLACEHOLDER_RE = /const LENS_PLACEHOLDER = '[^']*';/;
+const LEGACY_PAL_PLACEHOLDER_RE = /const LEGACY_PAL_PLACEHOLDER = '[^']*';/;
+const PRODUCT_HEADER_RE = /\/\/ === PRODUCT HEADER ===[\s\S]*?\/\/ === END PRODUCT HEADER ===/;
 
-export function applySeedSubs(seed, { uuid, title, fileMeta, lensPlaceholder }) {
+export function applySeedSubs(seed, { uuid, title, fileMeta, lensPlaceholder, palPlaceholder, productHeader }) {
   // All three required substitution sites must appear exactly once. A
   // regression in the seed (title removed, FILE renamed, etc.) would
   // otherwise silently no-op and ship a CLI emitting partially-substituted
-  // containers. Lens placeholder is verified the same way but only when a
-  // caller passed an override — keeps backwards compatibility with existing
-  // newCmd / importCmd callers that don't set it.
+  // containers. Optional per-kind subs are verified the same way but only
+  // when a caller passes an override — keeps backwards compatibility with
+  // existing newCmd / importCmd callers that don't set them.
   for (const { re, label } of [
     { re: UUID_RE, label: 'DOC_UUID' },
     { re: TITLE_RE, label: '<title>' },
@@ -38,17 +43,30 @@ export function applySeedSubs(seed, { uuid, title, fileMeta, lensPlaceholder }) 
       throw new Error(`seed must contain exactly one ${label} line, found ${matches.length}`);
     }
   }
-  if (lensPlaceholder != null) {
-    const matches = seed.match(new RegExp(LENS_PLACEHOLDER_RE.source, 'g')) || [];
+  for (const { value, re, label } of [
+    { value: lensPlaceholder, re: LENS_PLACEHOLDER_RE,        label: 'LENS_PLACEHOLDER const' },
+    { value: palPlaceholder,  re: LEGACY_PAL_PLACEHOLDER_RE,  label: 'LEGACY_PAL_PLACEHOLDER const' },
+    { value: productHeader,   re: PRODUCT_HEADER_RE,          label: 'PRODUCT HEADER block' },
+  ]) {
+    if (value == null) continue;
+    const matches = seed.match(new RegExp(re.source, 'g')) || [];
     if (matches.length !== 1) {
-      throw new Error(`seed must contain exactly one lens-placeholder line, found ${matches.length}`);
+      throw new Error(`seed must contain exactly one ${label}, found ${matches.length}`);
     }
   }
   let out = seed.replace(UUID_RE, `const DOC_UUID = '${uuid}';`);
   if (title != null) out = out.replace(TITLE_RE, `<title>${escapeHtml(title)}</title>`);
   if (fileMeta != null) out = out.replace(FILE_RE, (_m, prefix) => `${prefix}'${escapeJsString(fileMeta)}'`);
+  // Function-form replacements so a `$` in the substitute value isn't
+  // interpreted by String.replace as a backreference.
   if (lensPlaceholder != null) {
-    out = out.replace(LENS_PLACEHOLDER_RE, (_m, prefix) => `${prefix}placeholder="${escapeHtmlAttr(lensPlaceholder)}"`);
+    out = out.replace(LENS_PLACEHOLDER_RE, () => `const LENS_PLACEHOLDER = '${escapeJsString(lensPlaceholder)}';`);
+  }
+  if (palPlaceholder != null) {
+    out = out.replace(LEGACY_PAL_PLACEHOLDER_RE, () => `const LEGACY_PAL_PLACEHOLDER = '${escapeJsString(palPlaceholder)}';`);
+  }
+  if (productHeader != null) {
+    out = out.replace(PRODUCT_HEADER_RE, () => productHeader);
   }
   return out;
 }
@@ -93,10 +111,38 @@ const KIND_WORKFLOW_BODY = `<style>
 </section>
 </article>`;
 const KIND_WORKFLOW_LENS = 'Add an item, or describe a stage move.';
+const KIND_WORKFLOW_PAL  = 'modify this workflow...';
+
+// PRODUCT HEADER for the workflow kind. Three sentences explicitly flagging
+// this is a substrate-layer scaffold, not a true graph-layer workflow — so
+// anyone reading the file cold sees the caveat that the spec keeps honest.
+// The caveat lives in the file because the runtime can't enforce it; it's
+// agent-and-reader-facing context.
+const KIND_WORKFLOW_HEADER = `// === PRODUCT HEADER ===
+// Product: workflow (substrate-layer scaffold).
+//
+// This file uses substrate primitives — INLINE_DOC body with three stages
+// (Inbox / In progress / Done), apply_edits against <li> elements — to
+// express workflow-shaped editing. True graph-layer workflows with per-item
+// state, stage-transition automation, and batch dispatch are deferred to
+// rwa-graph/1 (not yet in-repo). The agent uses the prose-doc SYSTEM_PROMPT
+// against workflow-shaped content; expect rougher edges than a fully
+// graph-layer implementation. See docs/specs/rwa-product-types.md.
+// === END PRODUCT HEADER ===`;
 
 const KIND_TABLE = {
-  document: { body: null,                lensPlaceholder: null /* keep seed default */ },
-  workflow: { body: KIND_WORKFLOW_BODY,  lensPlaceholder: KIND_WORKFLOW_LENS },
+  document: {
+    body: null,                // pass through seed default
+    lensPlaceholder: null,     // pass through seed default
+    palPlaceholder: null,      // pass through seed default
+    productHeader: null,       // pass through seed default
+  },
+  workflow: {
+    body: KIND_WORKFLOW_BODY,
+    lensPlaceholder: KIND_WORKFLOW_LENS,
+    palPlaceholder: KIND_WORKFLOW_PAL,
+    productHeader: KIND_WORKFLOW_HEADER,
+  },
   // app, workspace: reserved — wire when the templates land. The CLI rejects
   // unknown kinds explicitly rather than silently emitting a document.
 };
@@ -137,13 +183,6 @@ export function replaceInlineDoc(seed, newDoc) {
 
 function escapeHtml(s) {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-}
-
-// Attribute-context escape: same as escapeHtml minus the `>` rewrite (already
-// allowed inside attribute values per the HTML spec) plus `&` first. Used for
-// the lens placeholder substitution since it lands inside a quoted attribute.
-function escapeHtmlAttr(s) {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
 }
 
 function escapeJsString(s) {
