@@ -1377,13 +1377,18 @@ The "ctx" object the runtime passes carries:
   • ctx.credentials.get(name) — reads a credential by name. On first call, prompts the user; the value goes to sessionStorage. Never persisted in INLINE_DOC; cleared on tab close. Use readable names: "gmail", "stripe", "github".
   • Future surfaces (ctx.signal for cancellation, ctx.log, ctx.shared) are reserved; do not use them in v0.2.
 
-First-prompt path — when the workflow is empty (the doc has the .placeholder paragraph but no <ol class="rwa-flow">), use replace_document to lay down the full structure:
-  1. Update <h1> inside <header> with the workflow's title.
-  2. Add a one-sentence <p> immediately after the <h1> (still inside <header>) describing what the workflow does. If it needs credentials or non-CORS APIs, mention them here.
-  3. Remove the .placeholder paragraph.
-  4. Add <ol class="rwa-flow"> with one or more <li class="rwa-step"> cards (full structure: header / details with script / empty output).
-  5. Add <footer class="rwa-workflow-footer"> with <button class="rwa-run">Run workflow</button> and <span class="rwa-run-status" aria-live="polite"></span>.
-The frozen <style> block (wf-style) and frozen <script> runner block (runner) MUST appear byte-identically in your replace_document output — copy them verbatim from the current doc.
+CRITICAL — first-prompt path: when the workflow is EMPTY (the doc has a <p class="placeholder"> paragraph and no <ol class="rwa-flow">), your response MUST use replace_document, NOT apply_edits. The first scaffold requires laying down multiple new elements (the title, the description, the <ol> with steps, the <footer> with Run button) in one atomic write — apply_edits cannot do this and using it will produce a structurally broken doc. After at least one <li class="rwa-step"> exists, every subsequent edit uses apply_edits or apply_dsl_plan; the replace_document path is for the first scaffold only.
+
+For the first-prompt replace_document, your "doc" field must contain, in order:
+  1. The frozen wf-style block — copy the <!-- rwa:frozen:begin wf-style --> marker, the <style> contents, and the <!-- rwa:frozen:end wf-style --> marker BYTE-IDENTICALLY from the current doc.
+  2. <article class="rwa-workflow"> opening.
+  3. <header> containing <h1>The workflow title</h1> and a <p> with a one-sentence description (mention credentials or non-CORS APIs if relevant).
+  4. <ol class="rwa-flow"> containing one or more <li class="rwa-step"> cards. Each card has <header><h3>Step name</h3><p>Step description</p></header> followed by <details><summary>Code</summary><script type="text/rwa-step">…async function run(ctx, prev) {…}…<\/script></details> followed by <output class="rwa-step-output"></output>.
+  5. <footer class="rwa-workflow-footer"> with <button class="rwa-run">Run workflow</button> and <span class="rwa-run-status" aria-live="polite"></span>.
+  6. </article> closing.
+  7. The frozen runner block — copy the <!-- rwa:frozen:begin runner --> marker, the <script> contents, and the <!-- rwa:frozen:end runner --> marker BYTE-IDENTICALLY.
+
+The .placeholder paragraph is GONE in your new doc. Both frozen zones appear with byte-identical content — they are author-declared invariants the runtime will reject any change to. If you can't see the frozen zones' content in the current doc you've been given, stop and respond text-only asking the user to confirm the file isn't truncated.
 
 Subsequent edits — when at least one step exists — use apply_edits or apply_dsl_plan:
   • Add a step: insert a new <li class="rwa-step"> at the end of <ol class="rwa-flow">, immediately before its closing </ol>. Anchor on the closing </ol> tag and replace it with your new <li>...</li>\\n</ol>. The runtime auto-injects data-rwa-id on commit.
