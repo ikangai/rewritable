@@ -138,12 +138,21 @@ const KIND_WORKFLOW_BODY = `<!-- rwa:frozen:begin wf-style -->
 .rwa-step.failed{border-color:var(--red);}
 .rwa-step.failed::after{content:"✗";position:absolute;top:14px;right:16px;color:var(--red);font-family:var(--font-mono);font-size:14px;}
 .rwa-step.failed .rwa-step-output{color:var(--red);}
+.rwa-step.dragging{opacity:.4;}
+.rwa-step.drop-target{border-color:var(--blue);background:#eef6ff;}
+.rwa-step-delete{position:absolute;top:8px;right:8px;width:24px;height:24px;border:none;background:transparent;color:var(--gray-300);cursor:pointer;font-size:18px;line-height:1;border-radius:4px;padding:0;opacity:0;transition:color .15s,background .15s,opacity .15s;}
+.rwa-step:hover .rwa-step-delete{opacity:1;color:var(--gray-500);}
+.rwa-step-delete:hover{background:var(--gray-200);color:var(--red);}
+.rwa-step.running .rwa-step-delete,.rwa-step.done .rwa-step-delete,.rwa-step.failed .rwa-step-delete{display:none;}
+.rwa-step-insert{display:block;margin:0 auto;padding:2px 14px;background:transparent;color:var(--gray-300);border:1px dashed var(--gray-200);border-radius:4px;cursor:pointer;font-size:14px;line-height:1.2;font-weight:400;font-family:var(--font-mono);opacity:0;transition:color .15s,border-color .15s,background .15s,opacity .15s;}
+.rwa-flow:hover .rwa-step-insert,.rwa-step-insert:focus{opacity:1;}
+.rwa-step-insert:hover{color:var(--gray-700);border-color:var(--gray-400);background:var(--gray-50);}
 .rwa-workflow-footer{margin-top:1.5em;display:flex;align-items:center;gap:1em;}
 .rwa-run{padding:8px 16px;background:var(--gray-900);color:#fff;border:none;border-radius:6px;cursor:pointer;font-family:var(--font-ui);font-size:14px;font-weight:500;transition:background .15s;}
 .rwa-run:hover{background:var(--gray-700);}
 .rwa-run:disabled{background:var(--gray-300);cursor:not-allowed;}
 .rwa-run-status{font-family:var(--font-mono);font-size:11px;color:var(--gray-500);min-height:1.4em;letter-spacing:.3px;}
-@media print{.placeholder,.rwa-run,.rwa-run-status{display:none;} .rwa-step::after{display:none;}}
+@media print{.placeholder,.rwa-run,.rwa-run-status,.rwa-step-delete,.rwa-step-insert{display:none;} .rwa-step::after{display:none;}}
 </style>
 <!-- rwa:frozen:end wf-style -->
 <article class="rwa-workflow">
@@ -244,12 +253,171 @@ const KIND_WORKFLOW_BODY = `<!-- rwa:frozen:begin wf-style -->
     }
   }
 
+  // ---- Visual gestures (Phase 4 of workflow v0.2) ----
+  // Five gestures wire up here. Show/hide code is native <details> (no JS).
+  // Run is the .rwa-run click handler bound below. The remaining three
+  // (drag-to-reorder, ⋮-delete, +-insert-between) synthesize apply_edits
+  // envelopes and commit through runtime.applyEnvelope so they flow
+  // through the substrate's audit log, frozen-zone checks, shape-check,
+  // and undo stack. ⌘Z reverts them like any other commit.
+
+  function findStepInDoc(doc, dataRwaId) {
+    // v0.2 step shape: <li class="rwa-step" data-rwa-id="X"> ... </li>, no
+    // nested <li>. The runtime backfills data-rwa-id; attribute order may
+    // vary across substrate versions, so try both common orderings.
+    var patterns = [
+      '<li data-rwa-id="' + dataRwaId + '" class="rwa-step">',
+      '<li class="rwa-step" data-rwa-id="' + dataRwaId + '">',
+    ];
+    for (var i = 0; i < patterns.length; i++) {
+      var idx = doc.indexOf(patterns[i]);
+      if (idx >= 0) {
+        var close = doc.indexOf('</li>', idx + patterns[i].length);
+        if (close < 0) return null;
+        return { outerHTML: doc.substring(idx, close + 5), start: idx, end: close + 5 };
+      }
+    }
+    return null;
+  }
+
+  // Drag-to-reorder. Mutex via DRAGGED_ID — set on dragstart, read on drop.
+  var DRAGGED_ID = null;
+  function attachDragReorder(li) {
+    if (li.dataset.rwaDragWired === '1') return;
+    li.dataset.rwaDragWired = '1';
+    li.draggable = true;
+    li.addEventListener('dragstart', function (e) {
+      var id = li.dataset.rwaId;
+      if (!id) { e.preventDefault(); return; }
+      DRAGGED_ID = id;
+      try { e.dataTransfer.setData('text/rwa-step-id', id); } catch (_) {}
+      e.dataTransfer.effectAllowed = 'move';
+      li.classList.add('dragging');
+    });
+    li.addEventListener('dragover', function (e) {
+      if (!DRAGGED_ID || DRAGGED_ID === li.dataset.rwaId) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      li.classList.add('drop-target');
+    });
+    li.addEventListener('dragleave', function () { li.classList.remove('drop-target'); });
+    li.addEventListener('dragend', function () {
+      li.classList.remove('dragging');
+      document.querySelectorAll('.drop-target').forEach(function (el) { el.classList.remove('drop-target'); });
+      DRAGGED_ID = null;
+    });
+    li.addEventListener('drop', async function (e) {
+      e.preventDefault();
+      li.classList.remove('drop-target');
+      var sourceId = DRAGGED_ID || (e.dataTransfer && e.dataTransfer.getData && e.dataTransfer.getData('text/rwa-step-id'));
+      var targetId = li.dataset.rwaId;
+      if (!sourceId || !targetId || sourceId === targetId) return;
+      try {
+        var doc = await window.getDoc();
+        var srcMatch = findStepInDoc(doc, sourceId);
+        var tgtMatch = findStepInDoc(doc, targetId);
+        if (!srcMatch || !tgtMatch) { console.error('drag-reorder: step not in doc'); return; }
+        // Two-edit envelope: remove src <li>...<\/li>\\n; insert it right before
+        // target's opening tag. The two finds resolve against the original doc;
+        // replaces apply sequentially (substrate enforces this per rwa-edit-spec §5.1).
+        var envelope = {
+          version: 'rwa-edit/1',
+          edits: [
+            { find: srcMatch.outerHTML + '\\n', replace: '' },
+            { find: tgtMatch.outerHTML, replace: srcMatch.outerHTML + '\\n' + tgtMatch.outerHTML },
+          ],
+        };
+        await window.runtime.applyEnvelope(envelope, {
+          surface: 'visual:wf-drag-reorder',
+          instruction: 'reorder step',
+        });
+      } catch (err) { console.error('drag-reorder failed:', err); }
+    });
+  }
+
+  // Delete step (× button). Confirm + commit via apply_edits.
+  function attachDeleteButton(li) {
+    if (li.querySelector(':scope > .rwa-step-delete')) return;
+    var del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'rwa-step-delete';
+    del.title = 'Delete step';
+    del.setAttribute('aria-label', 'Delete step');
+    del.textContent = '×';
+    del.addEventListener('click', async function (e) {
+      e.stopPropagation();
+      var id = li.dataset.rwaId;
+      if (!id) return;
+      var h3 = li.querySelector('h3');
+      var title = (h3 && h3.textContent) || 'this step';
+      if (!confirm('Delete "' + title + '"?')) return;
+      try {
+        var doc = await window.getDoc();
+        var match = findStepInDoc(doc, id);
+        if (!match) { console.error('delete: step not in doc'); return; }
+        var envelope = {
+          version: 'rwa-edit/1',
+          edits: [{ find: match.outerHTML + '\\n', replace: '' }],
+        };
+        await window.runtime.applyEnvelope(envelope, {
+          surface: 'visual:wf-delete-step',
+          instruction: 'delete step: ' + title,
+        });
+      } catch (err) { console.error('delete-step failed:', err); }
+    });
+    li.appendChild(del);
+  }
+
+  // Insert-between (+ button between cards). Opens the lens with a
+  // pre-filled prompt that anchors the agent's insertion on the preceding
+  // step's title. No substrate change needed — the lens flow handles it.
+  function attachInsertButtons() {
+    var ol = document.querySelector('ol.rwa-flow');
+    if (!ol) return;
+    // Drop existing insert buttons from a previous attach pass.
+    ol.querySelectorAll(':scope > .rwa-step-insert').forEach(function (b) { b.remove(); });
+    var steps = Array.from(ol.querySelectorAll(':scope > li.rwa-step'));
+    steps.forEach(function (li) {
+      var h3 = li.querySelector('h3');
+      var title = (h3 && h3.textContent) || '';
+      var ins = document.createElement('button');
+      ins.type = 'button';
+      ins.className = 'rwa-step-insert';
+      ins.title = 'Insert a step after this one';
+      ins.setAttribute('aria-label', 'Insert step here');
+      ins.textContent = '+';
+      ins.dataset.afterStepTitle = title;
+      ins.addEventListener('click', function (ev) {
+        var afterTitle = ev.currentTarget.dataset.afterStepTitle || '';
+        var input = document.getElementById('rwa-lens-input');
+        if (!input) return;
+        var prefix = afterTitle
+          ? '/insert a step after the "' + afterTitle.replace(/"/g, '\\\\"') + '" step that '
+          : '/insert a step that ';
+        input.value = prefix;
+        input.focus();
+        try { input.setSelectionRange(prefix.length, prefix.length); } catch (_) {}
+      });
+      li.insertAdjacentElement('afterend', ins);
+    });
+  }
+
+  function attachGestures() {
+    document.querySelectorAll('li.rwa-step').forEach(function (li) {
+      attachDragReorder(li);
+      attachDeleteButton(li);
+    });
+    attachInsertButtons();
+  }
+
   // Re-bind on every renderDoc — the previous button is gone after the
   // innerHTML swap. The renderer re-executes inline scripts on every render
   // (per docs/specs/rwa-artifact-conventions.md §6.1), so this IIFE runs
-  // again and re-attaches the click handler to whatever button is current.
+  // again and re-attaches the click handler + all gestures to the freshly
+  // rendered DOM.
   var btn = document.querySelector('.rwa-run');
   if (btn) btn.addEventListener('click', runWorkflow);
+  attachGestures();
 })();
 </script>
 <!-- rwa:frozen:end runner -->`;

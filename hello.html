@@ -756,6 +756,18 @@ function getStatusSnapshot() {
 async function runtimeModify(instruction) { return modify(instruction); }
 async function runtimeCommit() { return commit(); }
 async function runtimeUndo() { return undo(); }
+// Direct envelope application — for product-kind UIs (the workflow's visual
+// gestures, future app artifacts) that synthesize their own apply_edits
+// envelopes without going through the agent loop. Commits through
+// synthesizeAndCommit so the audit log, frozen-zone checks, shape-check,
+// undo stack, and runtime events all fire as if the edit came from the lens.
+// Surface labels the originator (e.g. "visual:wf-drag-reorder") so rwa_hist
+// distinguishes client-driven edits from agent-driven ones.
+async function runtimeApplyEnvelope(envelope, options) {
+  options = options || {};
+  if (!envelope || typeof envelope !== 'object') throw new TypeError('runtime.applyEnvelope: envelope is required');
+  return synthesizeAndCommit(envelope, options.surface || 'runtime:apply-envelope', options.instruction || '');
+}
 
 async function getDoc() {
   let d = await idbGet(RWA.DOC);
@@ -3515,6 +3527,7 @@ document.addEventListener('keydown', e => {
       modify: runtimeModify,
       commit: runtimeCommit,
       undo:   runtimeUndo,
+      applyEnvelope: runtimeApplyEnvelope,
       on:     runtimeOn,
     };
     // `status` is a getter so each read returns a fresh snapshot of
