@@ -773,42 +773,42 @@ is the substrate-layer change that unblocks chat-style UIs at the
 skill layer above." It should ship before serious multi-agent
 workspace work.
 
-### Versioning-lineage gap
+### Versioning-lineage status (resolved 2026-05-18)
 
-`re-write-able-actions-spec-v0.7.md` is the v0.7 of a drafting cycle
-whose earlier drafts (v0.6, v0.6.1, plus the v0.10 main spec's
-lens-lock semantics) are not committed to the repo. The v0.7
-spec references them at load-bearing points:
+When this addendum was first written, the v0.7 actions spec
+referenced earlier drafts (v0.6, v0.6.1, the v0.10 main-spec lens-
+lock) that weren't in the repo, leaving v0.7's load-bearing
+cross-references dangling. As of 2026-05-18 the full drafting
+lineage is in-repo under `docs/specs/`:
 
-- v0.6 §2.1 (skill input/output schemas) — referenced at
-  `re-write-able-actions-spec-v0.7.md` §2.1.
-- v0.6 §2.2 (reserved namespaces, including `skills:*`) —
-  referenced at §3.5.
-- v0.6 §2.4 (defense-in-depth proxies, default mode) — referenced
-  at §4.1, §6.1.
-- v0.6 §4.1 (capability-scan curation pattern) — referenced at
-  §3.7.
-- v0.6 §5.4 (in-edit autonomous-trigger skip rules) — referenced
-  at §5.3.
-- v0.6 §8.2 (no cross-container access) — referenced at §3.6.
-- v0.6.1 §4 (in-edit timeout disambiguation) — referenced at §5.3.
-- v0.6 invariants 10 (install as privileged moment) and 12 (manual
-  trigger + ⌘S persistence) — referenced at §7.
-- v0.10 main-spec lens-lock — referenced at §5.3.
+  - `re-write-able-actions-spec.md` (v0.1, origin)
+  - `re-write-able-actions-spec-v0.2.md`
+  - `re-write-able-actions-spec-v0.3.md`
+  - `re-write-able-actions-spec-v0.4.md` (defense-in-depth proxies
+    land here — the §2.4 reference v0.7 §6.1's Shape A defense path
+    actually depends on)
+  - `re-write-able-actions-spec-v0.5.md`
+  - `re-write-able-actions-spec-v0.6.md` (complete spec with full
+    security model)
+  - `re-write-able-actions-spec-v0.6.1-patch.md` (five-issue patch)
+  - `re-write-able-actions-spec-v0.7.md` (canonical cluster pass)
 
-Until those antecedents are committed, any agent reading v0.7
-encounters dangling section references. This is not a blocker for
-the audit re-grades above (v0.7 stands on its own for the install
-dialog, permission grammar, and Worker-mode design), but it is a
-blocker for fully grounding R7's implementation work: §6.1's Shape A
-attack-shape defense path refers to v0.6 §2.4's proxy mechanisms,
-and an implementer needs that text to know what defense-in-depth
-proxies are.
+Plus the v0.7 working-method companions
+(`-v0.7-working-method.md` + addendum + two patches). All v0.7's
+cross-references now resolve except one minor imprecision: §5.3's
+"v0.10 main spec's lens-lock semantics" is satisfied transitively
+by `rwa-edit-spec.md` §5.5 (modify mutex source-of-truth) plus
+`docs/specs/rwa-lens-spec.md` (lens UI reflection of the mutex)
+rather than by content in `re-write-able-spec.md` v0.10 itself.
+The behavior is documented; only the pointer is at the wrong file.
+Worth correcting on v0.7's next pass (or in a v0.8 bump) — not
+blocking.
 
-Recommended follow-up: land v0.6 and v0.6.1 antecedents under
-`docs/specs/` alongside v0.7. The drafting cycle's working method
-also lives in those earlier drafts and is worth preserving for
-future audits.
+R6 / R7 / §3(4) re-grades above stand unchanged. With the
+antecedents in-repo, R7's implementation work is genuinely
+grounded — an implementer following v0.7 §6.1's Shape A defense
+path can now read v0.4 / v0.6 §2.4 and find the defense-in-depth
+proxy mechanism they're supposed to implement.
 
 ### What the addendum does not change
 
