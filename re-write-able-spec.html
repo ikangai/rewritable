@@ -1822,15 +1822,34 @@ A workflow renders as a vertical sequence of node cards inside <section class="w
   • <p class="wf-summary"> with one sentence describing what the node does
   • <script type="text/workflow-node" data-node-id="..."> whose body is the inline JS that runs when the node fires
 
-The script body is wrapped at runtime as the body of an async function that receives "input" (the previous node's return value, or null for the first node) and returns its result. The body may use "await", the global "runtime.*" API (db, fs, modify), "fetch(...)", "console.log", and standard browser globals. Do NOT use ESM import/export syntax (the tag is a classic script, not a module). Do NOT wrap the body in "function () { ... }" — the runtime wraps it. When the user clicks Run, the runtime walks nodes in DOM order; output of each node feeds the next as "input". Side-effect-only nodes can return null.
+The script body is wrapped at runtime as the body of an async function that receives "input" (the previous node's return value, or null for the first node) and returns its result. The body may use "await", the global "runtime.*" API (db, fs, modify), "fetch(...)", "console.log", and standard browser globals. Do NOT use ESM import/export syntax (the tag is a classic script, not a module). When the user clicks Run, the runtime walks nodes in DOM order; output of each node feeds the next as "input". Side-effect-only nodes can return null.
+
+The script body MUST be statements only — NOT a function declaration or expression. The runtime wraps the body in an async function for you. Concrete examples:
+
+  GOOD — body is statements that may use \`return\`:
+      return "hello";
+
+  GOOD — body uses \`await\` directly (no async wrapper needed):
+      const data = await fetch("https://api.example.com/x").then(r => r.json());
+      return data.items;
+
+  GOOD — side-effect node, no return needed:
+      console.log("input was:", input);
+
+  BAD — do NOT wrap in a function declaration. Runtime throws "Function statements require a function name":
+      async function(input) { return "hello"; }
+
+  BAD — do NOT wrap in an arrow function:
+      (input) => { return "hello"; }
 
 Workflow operations:
-  • Add a node: insert a new <article class="wf-node" data-node-id="<8 lower-base32 chars>"> at the end of <section class="wf-nodes"> (immediately before its closing </section>). Pick a fresh 8-char data-node-id (a–z, 0–5) that does not collide with any existing one in the doc. Include the <h2>, the <p class="wf-summary">, and the <script type="text/workflow-node"> with the SAME data-node-id on both the <article> and the <script>. When adding the FIRST node, also delete the <p class="wf-empty"> placeholder line.
+  • Add a node: insert a new <article class="wf-node" data-node-id="<8 lower-base32 chars>"> immediately BEFORE the <p class="wf-empty"> placeholder inside <section class="wf-nodes">. Do NOT delete the wf-empty placeholder — it stays in the section permanently; the stylesheet auto-hides it whenever any wf-node sibling exists. Pick a fresh 8-char data-node-id (a–z, 0–5) that does not collide with any existing one in the doc. Include the <h2>, the <p class="wf-summary">, and the <script type="text/workflow-node"> with the SAME data-node-id on both the <article> and the <script>. With apply_edits: copy the wf-empty placeholder's opening tag verbatim from the doc as your find anchor (e.g. <p data-rwa-id="…" class="wf-empty">) and replace it with your new <article>…</article> followed by the same opening tag verbatim — the placeholder is preserved, your node lands directly above it.
   • Edit a node: anchor on the existing <article class="wf-node" data-node-id="X"> for the node the user means. Preserve the data-node-id verbatim on both the <article> and the inner <script>; replace the inner contents (title, summary, script body) as needed.
   • Reorder a node: delete the <article class="wf-node" data-node-id="X"> at its current position and insert an identical one before or after another <article>.
   • Remove a node: delete the <article class="wf-node" data-node-id="X"> wholesale.
 
-Credentials (v1 has no vault): for any node that needs a token, an API key, or other secret, write a clearly-labeled placeholder rather than a real value. Pattern:
+Credentials (v1 has no vault): emit the credential-TODO pattern ONLY when the node actually needs a credential (fetch with auth, API key, OAuth token, SMTP password). For pure-compute nodes — anything that doesn't make an authenticated network call, doesn't read a secret, doesn't sign a request — write the logic directly with no credential boilerplate. A node that "returns the string 'hello'" or "uppercases the input" or "calls a public unauthenticated API" needs no credential and no TODO.
+When a credential IS needed, use this pattern:
     // TODO: replace with a real credential. v1 has no vault.
     const token = 'YOUR_TOKEN_HERE';
 Or surface a console.log + a TODO. Never hardcode anything that resembles a real secret.

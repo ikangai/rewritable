@@ -115,6 +115,7 @@ const KIND_WORKFLOW_BODY = `<!-- rwa:frozen:begin wf-style -->
 .wf-run:disabled{background:var(--gray-300);cursor:not-allowed;}
 .wf-status{margin:.25em 0 1em;font-family:var(--font-mono);font-size:11px;color:var(--gray-500);min-height:1.4em;letter-spacing:.3px;}
 .wf-empty{color:var(--gray-400);font-style:italic;margin:1.5em 0;}
+.wf-nodes:has(.wf-node) .wf-empty{display:none;}
 .wf-nodes{display:flex;flex-direction:column;gap:.5em;}
 .wf-nodes > .wf-node + .wf-node{margin-top:0;}
 .wf-node{border:1px solid var(--gray-200);border-radius:8px;padding:14px 16px;background:var(--gray-50);position:relative;}
@@ -176,7 +177,20 @@ const KIND_WORKFLOW_BODY = `<!-- rwa:frozen:begin wf-style -->
         if (nodeEl) nodeEl.dataset.running = 'true';
         setStatus('● node ' + (i+1) + '/' + scripts.length + ' — ' + nodeId);
         try {
-          var fn = new Function('input', '"use strict"; return (async () => { ' + sc.textContent + '\\n })();');
+          // Two acceptable shapes for the script body, in preference order:
+          // (1) Statement list — what the SYSTEM_PROMPT asks for: "return …".
+          // (2) Function expression — what some models emit anyway:
+          //     "async function(input) { … }" or "(input) => { … }".
+          // Try (1) first via IIFE-wrap; on SyntaxError, try (2) by treating
+          // the body as a callable expression and invoking it with input.
+          var body = sc.textContent;
+          var fn;
+          try {
+            fn = new Function('input', '"use strict"; return (async () => { ' + body + '\\n })();');
+          } catch (eSyn) {
+            if (!(eSyn instanceof SyntaxError)) throw eSyn;
+            fn = new Function('input', '"use strict"; return Promise.resolve((' + body + ')(input));');
+          }
           input = await fn(input);
           if (nodeEl) { delete nodeEl.dataset.running; nodeEl.dataset.status = 'ok'; }
         } catch (e) {
