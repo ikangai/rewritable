@@ -341,4 +341,4 @@ These properties are load-bearing — every change to the lens model should pres
 
 ---
 
-*Spec version 0.9 — final draft, shipping wording. Companion to re-write-able core spec v0.8 and rwa-edit-spec.md v1.4.*
+*Spec version 0.9 — final draft, shipping wording. Companion to re-write-able core spec v0.10 and rwa-edit-spec.md v1.4.*
