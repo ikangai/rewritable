@@ -17,7 +17,7 @@ export default {
       const big = 'x'.repeat(8 * 1024 + 1);
       const result = await expectRwaError(
         ctx.applyEdits(
-          { version: 'rwa-edit/1', edits: [{ find: 'Hello, world.', replace: big }] },
+          { version: 'rwa-edit/1', edits: [{ find: 'Untitled', replace: big }] },
           docBefore,
         ),
         'replace_too_large',

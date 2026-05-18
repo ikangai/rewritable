@@ -22,14 +22,16 @@ export default {
       const uuid0 = uuidLine(file0);
       if (!uuid0) return { pass: false, reason: 'DOC_UUID line not found in initial file' };
 
-      // Apply a few edits.
+      // Apply a few edits. The chain swaps "writing," → "editing," → "thinking,"
+      // so the second edit anchors on the output of the first (rule: each edit
+      // sees the post-prior-edit working copy).
       let cur = await ctx.getDoc();
       cur = await ctx.applyEdits(
-        { version: 'rwa-edit/1', edits: [{ find: 'Hello', replace: 'Hi' }] },
+        { version: 'rwa-edit/1', edits: [{ find: 'writing', replace: 'editing' }] },
         cur,
       );
       cur = await ctx.applyEdits(
-        { version: 'rwa-edit/1', edits: [{ find: 'Hi,', replace: 'Hey,' }] },
+        { version: 'rwa-edit/1', edits: [{ find: 'editing,', replace: 'thinking,' }] },
         cur,
       );
 

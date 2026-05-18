@@ -16,7 +16,7 @@ export default {
       const docBefore = await ctx.getDoc();
       const result = await expectRwaError(
         ctx.applyEdits(
-          { version: 'rwa-edit/2', edits: [{ find: 'Hello, world.', replace: 'Goodbye.' }] },
+          { version: 'rwa-edit/2', edits: [{ find: 'Untitled', replace: 'Goodbye.' }] },
           docBefore,
         ),
         'version_unsupported',

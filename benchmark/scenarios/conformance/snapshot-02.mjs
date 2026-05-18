@@ -17,7 +17,7 @@ export default {
     try {
       const file0 = ctx.window.buildFile(await ctx.getDoc());
       await ctx.applyEdits(
-        { version: 'rwa-edit/1', edits: [{ find: 'Hello', replace: 'Goodbye' }] },
+        { version: 'rwa-edit/1', edits: [{ find: 'Untitled', replace: 'Goodbye' }] },
         await ctx.getDoc(),
       );
       const file1 = ctx.window.buildFile(await ctx.getDoc());

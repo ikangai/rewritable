@@ -13,18 +13,18 @@ export default {
   async run({ harness }) {
     const ctx = await harness.fresh();
     try {
-      // Sequential edits: Hello → Hi → Hey → Howdy
+      // Sequential edits: writing → editing → thinking → planning
       let cur = await ctx.getDoc();
       cur = await ctx.applyEdits(
-        { version: 'rwa-edit/1', edits: [{ find: 'Hello', replace: 'Hi' }] },
+        { version: 'rwa-edit/1', edits: [{ find: 'writing', replace: 'editing' }] },
         cur,
       );
       cur = await ctx.applyEdits(
-        { version: 'rwa-edit/1', edits: [{ find: 'Hi,', replace: 'Hey,' }] },
+        { version: 'rwa-edit/1', edits: [{ find: 'editing,', replace: 'thinking,' }] },
         cur,
       );
       cur = await ctx.applyEdits(
-        { version: 'rwa-edit/1', edits: [{ find: 'Hey,', replace: 'Howdy,' }] },
+        { version: 'rwa-edit/1', edits: [{ find: 'thinking,', replace: 'planning,' }] },
         cur,
       );
 
@@ -32,13 +32,13 @@ export default {
       if (hist.length !== 3) {
         return { pass: false, reason: `expected hist.length=3, got ${hist.length}` };
       }
-      // Newest-first: hist[0] is the Howdy edit, hist[2] is the Hello edit.
+      // Newest-first: hist[0] is the planning edit, hist[2] is the writing edit.
       const findOf = (i) => hist[i]?.envelope?.edits?.[0]?.find;
       const replaceOf = (i) => hist[i]?.envelope?.edits?.[0]?.replace;
-      if (findOf(0) !== 'Hey,' || replaceOf(0) !== 'Howdy,') {
+      if (findOf(0) !== 'thinking,' || replaceOf(0) !== 'planning,') {
         return { pass: false, reason: `hist[0] envelope wrong: find=${findOf(0)} replace=${replaceOf(0)}` };
       }
-      if (findOf(2) !== 'Hello' || replaceOf(2) !== 'Hi') {
+      if (findOf(2) !== 'writing' || replaceOf(2) !== 'editing') {
         return { pass: false, reason: `hist[2] envelope wrong: find=${findOf(2)} replace=${replaceOf(2)}` };
       }
       for (let i = 0; i < 3; i++) {

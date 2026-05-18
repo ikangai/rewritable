@@ -24,14 +24,14 @@ export default {
       // without depending on either.
       const before = await ctx.getDoc();
       const after = await ctx.applyEdits(
-        { version: 'rwa-edit/1', edits: [{ find: 'Hello', replace: 'Hi' }] },
+        { version: 'rwa-edit/1', edits: [{ find: 'writing', replace: 'editing' }] },
         before,
       );
       const fromIDB = await ctx.getDoc();
       if (fromIDB !== after) {
         return { pass: false, reason: `applyEdits returned doc differs from IDB state` };
       }
-      if (!fromIDB.includes('Hi,')) return { pass: false, reason: 'edit did not land in IDB' };
+      if (!fromIDB.includes('editing,')) return { pass: false, reason: 'edit did not land in IDB' };
       // Verify FSA is not required: window.showSaveFilePicker is undefined.
       if (typeof ctx.window.showSaveFilePicker === 'function') {
         return { pass: false, reason: 'jsdom unexpectedly implements showSaveFilePicker — invalidates this scenario' };

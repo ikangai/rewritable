@@ -19,16 +19,16 @@ export default {
     const ctx = await harness.fresh();
     try {
       const docBefore = await ctx.getDoc();
-      // The seed has one top-level <div class="hello">. Adding a top-level
-      // <section> after it should change the structural shape (top-level
-      // element count goes from 1 to 2).
-      const find = '</div>';
+      // The seed ends with the blank doc's </article>. Adding a top-level
+      // <section> after it changes the structural shape (top-level element
+      // count increases by one).
+      const find = '</article>';
       if (!docBefore.endsWith(find)) {
-        return { pass: false, reason: `seed default did not end with </div>, got ${JSON.stringify(docBefore.slice(-30))}` };
+        return { pass: false, reason: `seed default did not end with </article>, got ${JSON.stringify(docBefore.slice(-30))}` };
       }
       const result = await expectRwaError(
         ctx.applyEdits(
-          { version: 'rwa-edit/1', edits: [{ find, replace: '</div><section>new</section>' }] },
+          { version: 'rwa-edit/1', edits: [{ find, replace: '</article><section>new</section>' }] },
           docBefore,
         ),
         'structural_shape_changed',

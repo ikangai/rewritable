@@ -24,10 +24,10 @@ export default {
       // 1. Direct applyEdits — runs to completion.
       const seedDoc = await ctx.getDoc();
       const docAfterDirect = await ctx.applyEdits(
-        { version: 'rwa-edit/1', edits: [{ find: 'Hello', replace: 'Hi' }] },
+        { version: 'rwa-edit/1', edits: [{ find: 'writing', replace: 'editing' }] },
         seedDoc,
       );
-      if (!docAfterDirect.includes('Hi,')) {
+      if (!docAfterDirect.includes('editing,')) {
         return { pass: false, reason: 'direct applyEdits did not modify doc' };
       }
 
@@ -49,7 +49,7 @@ export default {
                     name: 'apply_edits',
                     arguments: JSON.stringify({
                       version: 'rwa-edit/1',
-                      edits: [{ find: 'Hi,', replace: 'Hey,' }],
+                      edits: [{ find: 'editing,', replace: 'thinking,' }],
                     }),
                   },
                 }],
@@ -64,8 +64,8 @@ export default {
         return { pass: false, reason: 'modify() did not reach fetch — mutex was held by prior applyEdits' };
       }
       const finalDoc = await ctx.getDoc();
-      if (!finalDoc.includes('Hey,')) {
-        return { pass: false, reason: `modify did not commit Hey, got ${JSON.stringify(finalDoc.slice(0, 80))}` };
+      if (!finalDoc.includes('thinking,')) {
+        return { pass: false, reason: `modify did not commit thinking, got ${JSON.stringify(finalDoc.slice(0, 80))}` };
       }
       return { pass: true, reason: 'applyEdits ran without acquiring the modify mutex' };
     } finally {

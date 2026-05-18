@@ -21,7 +21,7 @@ export default {
       const loneHigh = '\uD800'; // unpaired high surrogate
       try {
         const result = await ctx.applyEdits(
-          { version: 'rwa-edit/1', edits: [{ find: 'Hello', replace: 'H' + loneHigh + 'i' }] },
+          { version: 'rwa-edit/1', edits: [{ find: 'Untitled', replace: 'H' + loneHigh + 'i' }] },
           docBefore,
         );
         // If the runtime accepted it, check whether the replacement was

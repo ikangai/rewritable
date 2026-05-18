@@ -46,7 +46,7 @@ export default {
                     name: 'apply_edits',
                     arguments: JSON.stringify({
                       version: 'rwa-edit/1',
-                      edits: [{ find: 'Hello', replace: 'Hi' }],
+                      edits: [{ find: 'Untitled', replace: 'Edited' }],
                     }),
                   },
                 }],

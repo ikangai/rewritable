@@ -19,7 +19,7 @@ export default {
         ctx.applyEdits(
           {
             version: 'rwa-edit/1',
-            edits: [{ find: 'Hello, world.', replace: '<span data-rwa-frozen="x">Hello</span>' }],
+            edits: [{ find: 'Untitled', replace: '<span data-rwa-frozen="x">Untitled</span>' }],
           },
           docBefore,
         ),

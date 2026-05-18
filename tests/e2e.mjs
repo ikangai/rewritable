@@ -70,10 +70,10 @@ console.log('== Bootstrap loaded ==');
 check('window.modify is a function', typeof window.modify === 'function');
 check('window.applyEdits is a function', typeof window.applyEdits === 'function');
 check('window.replaceDocument is a function', typeof window.replaceDocument === 'function');
-check('mount has rendered content', window.document.getElementById('rwa-doc-mount')?.innerHTML.includes('Hello, world.'));
+check('mount has rendered content', window.document.getElementById('rwa-doc-mount')?.innerHTML.includes('Untitled'));
 
 const initialDoc = await window.getDoc();
-check('initial doc contains Hello, world.', initialDoc.includes('Hello, world.'));
+check('initial doc contains Untitled placeholder', initialDoc.includes('Untitled'));
 
 // Test 1: apply_edits success path.
 console.log('\n== Test 1: apply_edits success path ==');
@@ -89,7 +89,7 @@ fetchHandler = async () => ({
             name: 'apply_edits',
             arguments: JSON.stringify({
               version: 'rwa-edit/1',
-              edits: [{ find: 'Hello, world.', replace: 'Goodbye, world.' }],
+              edits: [{ find: 'Untitled', replace: 'Goodbye, world.' }],
             }),
           },
         }],
@@ -103,7 +103,7 @@ await new Promise(r => setTimeout(r, 100));
 
 const docAfter1 = await window.getDoc();
 check('doc was edited (Goodbye, world. present)', docAfter1.includes('Goodbye, world.'));
-check('doc was edited (Hello, world. removed)', !docAfter1.includes('Hello, world.'));
+check('doc was edited (Untitled removed)', !docAfter1.includes('Untitled'));
 check('mount re-rendered', window.document.getElementById('rwa-doc-mount').innerHTML.includes('Goodbye, world.'));
 
 const undoStack = await new Promise((res, rej) => {
@@ -113,7 +113,7 @@ const undoStack = await new Promise((res, rej) => {
     r.onerror = () => rej(r.error);
   });
 });
-check('undo stack has prior doc', Array.isArray(undoStack) && undoStack.length === 1 && undoStack[0].includes('Hello, world.'));
+check('undo stack has prior doc', Array.isArray(undoStack) && undoStack.length === 1 && undoStack[0].includes('Untitled'));
 
 // Test 2: find_not_unique → multi-turn retry → success.
 console.log('\n== Test 2: find_not_unique → retry → success ==');
@@ -121,7 +121,8 @@ let callCount = 0;
 fetchHandler = async (url, opts) => {
   callCount++;
   if (callCount === 1) {
-    // First attempt: ambiguous anchor — `font-family` appears in 4 CSS rules.
+    // First attempt: ambiguous anchor — `placeholder` appears multiple times
+    // in the seed default (CSS rule, print rule, comment, class attribute).
     return {
       ok: true,
       json: async () => ({
@@ -134,7 +135,7 @@ fetchHandler = async (url, opts) => {
                 name: 'apply_edits',
                 arguments: JSON.stringify({
                   version: 'rwa-edit/1',
-                  edits: [{ find: 'font-family', replace: 'FONT-FAMILY' }],
+                  edits: [{ find: 'placeholder', replace: 'PLACEHOLDER' }],
                 }),
               },
             }],

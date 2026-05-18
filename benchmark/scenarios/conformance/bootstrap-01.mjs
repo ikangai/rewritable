@@ -17,7 +17,7 @@ export default {
       const docBefore = await ctx.getDoc();
       // 'rwa-doc-mount' is the runtime's mount-point id (CLAUDE.md reserved
       // namespaces). Lives in the bootstrap HTML — must NOT appear in the
-      // seed's INLINE_DOC default (Hello, world. + .hello CSS).
+      // seed's INLINE_DOC default (blank "Untitled" article).
       if (docBefore.includes('rwa-doc-mount')) {
         return { pass: false, reason: 'seed default unexpectedly contains rwa-doc-mount — fixture invalid' };
       }

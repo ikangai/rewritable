@@ -102,12 +102,51 @@ body{font-family:var(--font-ui);background:var(--bg);color:var(--text);min-heigh
 [data-rwa-anchored]{outline:2px solid var(--gray-900);outline-offset:2px;border-radius:4px;}
 .rwa-locked{position:relative;background:rgba(239,68,68,0.04);border-left:3px solid var(--red);padding-left:8px;}
 .rwa-locked::before{content:'\1F512';position:absolute;top:4px;right:8px;font-size:12px;opacity:.6;}
+/* Baseline content typography — applies to anything rendered inside the doc
+   mount. Wrapped in :where() so specificity is 0,0,0,0; any <style> declared
+   inside INLINE_DOC (the hello variant, the spec doc, imports that ship their
+   own styles) always wins. This gives md/csv/docx/pdf imports and agent-written
+   content a clean default look without the doc having to opt in. */
+:where(#rwa-doc-mount){font-family:var(--font-ui);color:var(--gray-900);line-height:1.65;}
+:where(#rwa-doc-mount) article{max-width:720px;margin:64px auto;padding:0 32px;}
+:where(#rwa-doc-mount) h1{font-size:2.25rem;font-weight:600;letter-spacing:-.02em;line-height:1.2;margin:1.8em 0 .5em;color:var(--gray-900);}
+:where(#rwa-doc-mount) article > h1:first-child{margin-top:0;}
+:where(#rwa-doc-mount) h2{font-size:1.6rem;font-weight:600;letter-spacing:-.015em;line-height:1.25;margin:1.8em 0 .5em;color:var(--gray-900);}
+:where(#rwa-doc-mount) h3{font-size:1.25rem;font-weight:600;line-height:1.3;margin:1.6em 0 .4em;color:var(--gray-900);}
+:where(#rwa-doc-mount) h4{font-size:1.05rem;font-weight:600;line-height:1.4;margin:1.4em 0 .4em;color:var(--gray-900);}
+:where(#rwa-doc-mount) h5,:where(#rwa-doc-mount) h6{font-size:1rem;font-weight:600;margin:1.2em 0 .3em;color:var(--gray-700);}
+:where(#rwa-doc-mount) p{font-size:1rem;margin:0 0 1em;color:var(--gray-800);}
+:where(#rwa-doc-mount) ul,:where(#rwa-doc-mount) ol{margin:0 0 1em;padding-left:1.5em;color:var(--gray-800);}
+:where(#rwa-doc-mount) li{margin:.2em 0;}
+:where(#rwa-doc-mount) li > p{margin:.2em 0;}
+:where(#rwa-doc-mount) blockquote{margin:1em 0;padding:.25em 0 .25em 1em;border-left:3px solid var(--gray-300);color:var(--gray-600);font-style:italic;}
+:where(#rwa-doc-mount) hr{border:0;border-top:1px solid var(--gray-200);margin:2em 0;}
+:where(#rwa-doc-mount) a{color:var(--blue);text-decoration:underline;text-underline-offset:2px;text-decoration-thickness:1px;}
+:where(#rwa-doc-mount) a:hover{text-decoration-thickness:2px;}
+:where(#rwa-doc-mount) code{font-family:var(--font-mono);font-size:.92em;background:var(--gray-100);padding:.1em .35em;border-radius:4px;color:var(--gray-800);}
+:where(#rwa-doc-mount) pre{font-family:var(--font-mono);font-size:.9rem;background:var(--gray-50);border:1px solid var(--gray-200);border-radius:8px;padding:14px 16px;overflow-x:auto;margin:0 0 1em;line-height:1.5;}
+:where(#rwa-doc-mount) pre code{background:transparent;padding:0;border-radius:0;font-size:inherit;}
+:where(#rwa-doc-mount) img{max-width:100%;height:auto;border-radius:6px;}
+:where(#rwa-doc-mount) figure{margin:1.5em 0;}
+:where(#rwa-doc-mount) figcaption{font-size:.875em;color:var(--gray-500);margin-top:.5em;text-align:center;}
+:where(#rwa-doc-mount) table{border-collapse:collapse;width:100%;margin:1em 0;font-size:.95em;}
+:where(#rwa-doc-mount) th,:where(#rwa-doc-mount) td{border-bottom:1px solid var(--gray-200);padding:.5em .75em;text-align:left;vertical-align:top;}
+:where(#rwa-doc-mount) th{font-weight:600;color:var(--gray-700);background:var(--gray-50);}
+:where(#rwa-doc-mount) kbd{font-family:var(--font-mono);font-size:.85em;background:var(--gray-100);border:1px solid var(--gray-200);border-radius:4px;padding:.1em .4em;color:var(--gray-700);}
+/* Print: hide runtime chrome, let @page own the margins, and protect block
+   integrity (don't strand headings, split tables, etc.). The article padding
+   is collapsed because @page already owns the paper margin. */
+@page{margin:18mm;}
 @media print{
-  /* Hide all runtime chrome: status indicator, settings panel, lens. */
   #rwa-runtime{display:none!important;}
-  body{background:#fff!important;color:#000!important;min-height:0!important;padding-bottom:0!important;}
-  /* Let the document's own padding/margins control the page layout. */
+  body{background:#fff!important;color:#000!important;min-height:0!important;padding-bottom:0!important;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
   #rwa-doc-mount{margin:0!important;padding:0!important;}
+  :where(#rwa-doc-mount) article{margin:0 auto!important;padding:0!important;max-width:none!important;}
+  :where(#rwa-doc-mount) h1,:where(#rwa-doc-mount) h2,:where(#rwa-doc-mount) h3,:where(#rwa-doc-mount) h4,:where(#rwa-doc-mount) h5,:where(#rwa-doc-mount) h6{break-after:avoid;page-break-after:avoid;}
+  :where(#rwa-doc-mount) figure,:where(#rwa-doc-mount) pre,:where(#rwa-doc-mount) blockquote,:where(#rwa-doc-mount) table,:where(#rwa-doc-mount) img{break-inside:avoid;page-break-inside:avoid;}
+  :where(#rwa-doc-mount) tr,:where(#rwa-doc-mount) li{break-inside:avoid;page-break-inside:avoid;}
+  :where(#rwa-doc-mount) p{orphans:3;widows:3;}
+  :where(#rwa-doc-mount) a{color:#000!important;}
 }
 </style>
 </head>
@@ -129,15 +168,16 @@ const DOC_UUID = '4f6b3cdb-dc22-4882-a7a6-ced47f7d5e8d';
 // The document — a frozen snapshot, hydrated into IndexedDB on first open
 // and rewritten in place on every commit.
 const INLINE_DOC = `<style>
-.hello{display:grid;place-items:center;min-height:100dvh;text-align:center;padding:24px;}
-.hello h1{font-family:'Instrument Serif',serif;font-style:italic;font-size:clamp(56px,9vw,112px);line-height:1;letter-spacing:-.02em;background:linear-gradient(135deg,var(--text) 50%,var(--muted));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;}
-.hello p{font-family:'Instrument Serif',serif;font-size:18px;color:var(--muted);margin-top:22px;font-style:italic;max-width:42ch;line-height:1.5;}
-.hello kbd{font-family:'DM Mono',monospace;font-size:11px;background:var(--surf);border:1px solid var(--b2);padding:2px 7px;border-radius:3px;color:var(--accent);font-style:normal;}
+/* The 'placeholder' class fades the invitation copy and removes it from
+   print, so an unwritten doc prints as a clean page with just the heading
+   at the top. Baseline article + typography come from the bootstrap. */
+.placeholder{color:var(--gray-400);font-style:italic;}
+@media print{.placeholder{display:none;}}
 </style>
-<div class="hello">
-<h1>Hello, world.</h1>
-<p>This is a re-writeable document. Press <kbd>⌘K</kbd> and tell it what to become.</p>
-</div>`;
+<article>
+<h1>Untitled</h1>
+<p class="placeholder">Start writing, or ask the lens below to draft something for you.</p>
+</article>`;
 
 const ANCHORABLE_TAGS = new Set(['P','H1','H2','H3','H4','H5','H6','BLOCKQUOTE','LI','FIGURE','PRE','ASIDE']);
 window.ANCHORABLE_TAGS = ANCHORABLE_TAGS; // expose for tests

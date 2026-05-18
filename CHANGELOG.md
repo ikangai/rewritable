@@ -2,6 +2,37 @@
 
 Notable changes to `re-write-able`. The container format is versioned in `re-write-able-spec.md`; the edit protocol in `rwa-edit-spec.md`; the structural-transform DSL in `rwa-edit-dsl-spec.md`. The CLI follows semver in `cli/package.json`.
 
+## 2026-05-18 — blank doc redesign + baseline content typography + print stylesheet
+
+Fresh containers now open as a clean "Untitled" document rather than a centered hello-world splash, and `seeds/rewritable.html` ships a baseline content stylesheet plus a full `@media print` rule set that every document inherits for free.
+
+### Empty document
+
+A new container's `INLINE_DOC` is a minimal `<article>` with an `<h1>Untitled</h1>` and an italic, low-contrast placeholder paragraph ("Start writing, or ask the lens below to draft something for you."). The placeholder is `.placeholder`-classed and hidden under `@media print`, so an unwritten doc prints as a clean page with just the heading at the top — no instructional copy bleed-through. Replaces the previous Georgia-italic full-viewport hello splash, which printed as a half-empty centered headline and didn't read as "this is a document".
+
+### Baseline content stylesheet
+
+The seed bootstrap now styles `:where(#rwa-doc-mount) article, h1…h6, p, ul/ol, blockquote, pre, code, hr, table, img, figure, kbd` with a clean system-font default. Wrapped in `:where()` so specificity is 0 — any `<style>` block inside an `INLINE_DOC` (the spec doc, custom-styled documents, imports that ship their own CSS) always wins. The article defaults to `max-width: 720px; margin: 64px auto; padding: 0 32px;` so every doc gets real page-like margins without opting in.
+
+Why this matters for imports: `rwa import file.md` and `/import` previously produced an `<article>` wrapped over the converted HTML *with no stylesheet*, so the body rendered as browser-default Times New Roman with no margins. With the baseline in place, markdown/csv/docx/pdf imports now look like a styled document the moment they open.
+
+### Print stylesheet
+
+`seeds/rewritable.html` now ships `@page { margin: 18mm; }` plus a `@media print` block that:
+
+- Hides `#rwa-runtime` (status indicator, settings panel, lens).
+- Resets `body` to white/black and removes the `padding-bottom: 160px` lens reservation.
+- Collapses the baseline `article` margin/padding so `@page` owns the paper margin.
+- Sets `break-after: avoid` on all headings (no stranded H1/H2 at page-end).
+- Sets `break-inside: avoid` on figures, pre, blockquote, table, tr, li, img.
+- Sets `orphans: 3; widows: 3` on paragraphs.
+- Forces link color to black so blue underlines don't ink poorly on monochrome printers.
+- Forces `-webkit-print-color-adjust: exact` so document-defined colors survive.
+
+### Test harness updates
+
+Conformance and e2e tests that anchored on the old `Hello, world.` / `<div class="hello">` seed default were updated to anchor on the new seed's strings (`Untitled`, `writing`/`editing`/`thinking`/`planning` for chain tests, `placeholder` for the ambiguous-anchor retry test, `</article>` for the structural-shape-change test). Behaviorally identical — the tests still exercise the same protocol failure modes; they just point at the new seed's content. 42/42 conformance and 291/291 e2e/lens tests pass.
+
 ## 2026-05-17 — share subdomain isolation: each share gets its own origin
 
 Published snapshots now live at `https://<short>.rewritable.ikangai.com/` instead of `https://rewritable.ikangai.com/s/<short>`. Each share has its own origin, so the browser's same-origin policy structurally isolates every share's IndexedDB, sessionStorage, and OPFS. A malicious publisher's bootstrap can no longer enumerate `indexedDB.databases()` to find — let alone read — any other share's storage, and the OpenRouter API key a viewer typed into one share never leaks into another.

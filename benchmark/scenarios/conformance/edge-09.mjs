@@ -60,7 +60,7 @@ export default {
                     name: 'apply_edits',
                     arguments: JSON.stringify({
                       version: 'rwa-edit/1',
-                      edits: [{ find: 'Hello', replace: 'Hi' }],
+                      edits: [{ find: 'writing', replace: 'editing' }],
                     }),
                   },
                 }],
@@ -72,7 +72,7 @@ export default {
       await ctx.modify('second call');
       if (!fetchHit) return { pass: false, reason: 'second modify did not reach fetch — mutex held after first failed' };
       const docFinal = await ctx.getDoc();
-      if (!docFinal.includes('Hi,')) return { pass: false, reason: 'second modify did not commit' };
+      if (!docFinal.includes('editing,')) return { pass: false, reason: 'second modify did not commit' };
       return { pass: true, reason: 'mutex released after network failure; second modify succeeded; no spurious hist entry' };
     } finally {
       ctx.dispose();

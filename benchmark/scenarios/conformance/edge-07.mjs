@@ -39,7 +39,7 @@ export default {
       let rejected = false;
       try {
         await ctx.applyEdits(
-          { version: 'rwa-edit/1', edits: [{ find: 'Hello', replace: 'Hi' }] },
+          { version: 'rwa-edit/1', edits: [{ find: 'Untitled', replace: 'Edited' }] },
           before,
         );
       } catch (err) {
