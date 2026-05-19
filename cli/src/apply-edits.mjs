@@ -22,6 +22,23 @@
 //      of <script>/<style> tags — enough to catch the realistic accidental-
 //      damage signal (a model emitting an inline <script> in a content
 //      edit) without pulling in a parser.
+//
+// ## Other known v1 scope-downs vs seed
+//
+// The seed (seeds/rewritable.html ~lines 2825-2910) enforces additional
+// invariants the CLI does NOT in v1. Tracked in cli/TODO.md for v2:
+//
+//   - MAX_REPLACE = 8KB per-edit cap (seed throws 'replace_too_large')
+//   - MAX_DOC = 1MB whole-doc cap (seed throws 'target_size_exceeded')
+//   - isWellFormed lone-surrogate guard on find/replace/doc
+//   - canonLF normalization of find/replace before matching
+//     (CRLF-containing anchors fail with find_not_found in the CLI but
+//     match correctly in the browser)
+//   - Class-lock violation check (class_lock_violation / class_lock_uncovered)
+//   - Reserved-id violation (reserved_id_used) — including data-rwa-id injection
+//   - HTML parse-validity post-apply (parse_error_post_apply)
+//   - data-rwa-frozen snapshot equality (attribute-form frozen zone preservation)
+//     [already partially noted; here for completeness]
 
 export class RwaEditError extends Error {
   constructor(code, editIndex = null, context = {}) {

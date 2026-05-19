@@ -53,3 +53,24 @@ Currently a non-global regex that matches the first `const PRODUCT_KIND = '...'`
 ## Cross-cutting — `replace_document` audit comment
 
 Open question 1 from design v0.3: should CLI-driven edits emit an audit comment like `<!-- rwa:cli-edit 2026-05-19T... actor:cli:<model-id> -->` distinguishing from human edits? Currently CLI edits are indistinguishable from human edits in `git diff`. Pending design decision.
+
+## Task 4 (`cli/src/apply-edits.mjs`) — additional seed parity gaps
+
+Beyond the three documented scope-downs (structural-shape regex, marker-form-only frozen zones, reserved-substring split from frozen-zone), the CLI's apply pipeline omits the following seed invariants. All are tracked for v2:
+
+- **`MAX_REPLACE` cap (8KB per edit)** — seed throws `replace_too_large`. DoS surface: a model emitting a 5MB `replace` succeeds in the CLI today; the runtime would reject on load.
+- **`MAX_DOC` cap (1MB whole doc)** — seed throws `target_size_exceeded`. Same DoS surface for the whole-doc path.
+- **`isWellFormed` lone-surrogate guard** — seed rejects invalid UTF-16 in `find`/`replace`/`doc`. CLI passes them through.
+- **`canonLF` normalization** — seed normalizes `find`/`replace`/`doc` to LF before matching. CLI's literal `indexOf` means CRLF-anchored envelopes from some model tokenizers fail with `find_not_found` even when the browser would succeed.
+- **Class-lock checks** — `class_lock_violation`, `class_lock_uncovered`. CLI doesn't enforce.
+- **Reserved-id violation** — `reserved_id_used`. CLI doesn't enforce. A model can inject arbitrary `data-rwa-id` values (e.g. `<article data-rwa-id="hacked">`); the runtime backfills on next commit but these shadow runtime-assigned IDs until then.
+- **`parse_error_post_apply`** — seed parses the post-apply doc as HTML and rejects on parse error. CLI relies on `structural_shape_changed` (script/style count) which is a weaker check.
+- **`data-rwa-frozen` attribute-form preservation** — currently tracked as a `test.todo` in `apply-edits.test.mjs`; listing here for completeness.
+
+## Cross-cutting — apply-time tool_result feedback in agent loop
+
+The CLI's agent loop in `cli/src/agent-loop.mjs` only retries on `no_tool_call` (model emitted plain text) and `invalid_json` (tool arguments aren't parseable). Apply-time failures (`find_not_found`, `frozen_zone_violation`, etc.) surface as `envelope_error` exit 3 with no retry.
+
+The browser runtime (`seeds/rewritable.html:3220-3286`) feeds apply errors back to the model as `tool_result` (via `failureToToolResult`) and retries with the corrective context. Bringing this to the CLI would meaningfully improve robustness against models that emit "close-but-not-unique" envelopes — the model can refine its anchor and succeed on retry. Currently those models hard-fail.
+
+Tracked for v2. Affects `cli/src/agent-loop.mjs` and possibly the `runAgentLoop` API (would need an `applyFn` callback parameter).

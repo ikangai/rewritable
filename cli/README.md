@@ -67,7 +67,7 @@ rwa edit notes.html --plan plan.json
 
 All three paths funnel through the same `applyPlan` splice/write code path: extract `INLINE_DOC`, apply the edit (with frozen-zone + reserved-marker + structural-shape checks), and atomic-rename the file in place.
 
-The agent loop drives a multi-turn tool-use conversation with up to 3 retry attempts on `find_not_found`, `find_not_unique`, `frozen_zone_violation`, `structural_shape_changed`, `dsl_compile_error`, or malformed envelopes. After exhaustion the failure surfaces with `agent_error/no_envelope_after_retries`.
+The agent loop retries up to 3 times when the model emits plain text instead of a tool call (`no_tool_call`) or when the tool arguments aren't valid JSON (`invalid_json`). Apply-time failures (`frozen_zone_violation`, `find_not_found`, `find_not_unique`, `structural_shape_changed`, `reserved_substring`, `dsl_compile_error`) surface immediately as `envelope_error` (exit 3) without retrying through the model. This differs from the browser runtime, which feeds apply failures back as `tool_result` for the model to recover from — bringing that behavior to the CLI is tracked as a v2 follow-up in `cli/TODO.md`. After 3 exhausted retries the failure surfaces as `agent_error/no_envelope_after_retries` (exit 4).
 
 #### Backend flags (instruction path only)
 
