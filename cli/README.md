@@ -23,7 +23,7 @@ rwa import notes.md         # → ./notes.html
 rwa import page.html out.html
 
 rwa edit notes.html "Add a section on testing"      # instruction → agent loop
-echo '{"tool":"apply_edits", ...}' | rwa edit notes.html
+echo '{"version":"rwa-edit/1","edits":[...]}' | rwa edit notes.html
 rwa edit notes.html --plan plan.json                # envelope from a file
 ```
 
@@ -58,7 +58,7 @@ Programmatic edit entry point. Applies an `rwa-edit/1` tool envelope (`apply_edi
 rwa edit notes.html "Add a section on testing"
 
 # 2. Piped envelope — read a tool envelope as JSON from stdin.
-echo '{"tool":"apply_edits","args":{"version":"rwa-edit/1","edits":[{"find":"old","replace":"new"}]}}' \
+echo '{"version":"rwa-edit/1","edits":[{"find":"old","replace":"new"}]}' \
   | rwa edit notes.html
 
 # 3. --plan <file> — read the envelope from a file. Use `--plan -` to force stdin.
@@ -102,8 +102,8 @@ The agent loop drives a multi-turn tool-use conversation with up to 3 retry atte
 | `0` | success | edit applied / file written |
 | `1` | usage_error | bad arguments, missing input, unknown backend, conflicting input sources |
 | `2` | file_error | target not found, read/write failure, not a rewritable container |
-| `3` | envelope_error | malformed JSON, unknown tool, version mismatch, missing required fields |
-| `4` | agent_error | `apply_edits`/DSL/`replace_document` rejected (frozen-zone violation, find_not_found, etc.); agent loop exhausted retries; backend error; missing API key |
+| `3` | envelope_error | malformed JSON, ambiguous/unknown shape, version mismatch, missing required fields, apply-time failures (`frozen_zone_violation`, `find_not_found`, `find_not_unique`, `structural_shape_changed`, `reserved_substring`, `dsl_compile_error`) |
+| `4` | agent_error | agent loop exhausted retries (`no_envelope_after_retries`), backend HTTP/network error (`backend_error`), or missing API key (`no_api_key`) |
 
 Exit codes 1–4 are emitted by `rwa edit` and are stable. Other verbs (`new`, `import`) use `0`/`1`/`2` only — `2` for argument or format issues, `1` for everything else. The `--json` flag (edit only) turns every stderr line into a single-line JSON object suitable for piping into a structured log or wrapper script.
 

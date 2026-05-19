@@ -71,7 +71,7 @@ One line per file/dir. Versions and changelogs live in the specs and `git log`.
 - `seeds/rewritable.html` — **canonical bootstrap seed**. The service and the CLI both read this to emit fresh containers.
 - `re-write-able-spec.html`, `hello.html` — worked-example references. Bootstrap mirrors `seeds/rewritable.html`.
 - `service/` — zero-dep Node HTTP service: landing page, `/new`, `/import`, `/publish` (host-keyed shares), `/skill.zip`.
-- `cli/` — `rwa` npm package. `rwa new` and `rwa import <file>`. Offline-first.
+- `cli/` — `rwa` npm package. `rwa new`, `rwa import <file>`, and `rwa edit <file>`. Offline-first.
 - `tests/` — jsdom + fake-indexeddb harness for the rwa-edit/1 modify pathway.
 - `benchmark/` — fidelity + conformance harness. `npm run conformance`, `npm run fidelity:stub`, `npm run fidelity:dsl`.
 - `README.md` — short pitch.
