@@ -1318,6 +1318,7 @@ async function renderHistoryPanel(panel) {
 // zones, data-rwa-id) live in SYSTEM_PROMPT_RULES; per-kind framing wraps
 // them with kind-specific opening text and (where useful) structural
 // guidance. SYSTEM_PROMPT resolves at module load time via PRODUCT_KIND.
+// rwa:extract:begin SYSTEM_PROMPT_RULES
 const SYSTEM_PROMPT_RULES = `
 You have three tools:
   • apply_dsl_plan — preferred for STRUCTURAL transforms. Submit a sequence of typed ops (replace, insert, delete, set_attr) compiled deterministically to anchored edits. The runtime guarantees bytes outside change regions stay byte-identical. Use for: insert/delete elements, mass rename, wrap/unwrap, change a class or attribute, reorder.
@@ -1361,7 +1362,9 @@ Stable block identifiers (data-rwa-id):
   • Never invent new data-rwa-id values. The runtime backfills any block you produce without one. Inventing duplicates would break fragment links to existing blocks.
 
 Always call a tool. Respond with text-only only when you genuinely need to ask for clarification before editing.`;
+// rwa:extract:end SYSTEM_PROMPT_RULES
 
+// rwa:extract:begin SYSTEM_PROMPTS
 const SYSTEM_PROMPTS = {
   document: `You are editing a rewritable HTML document. Apply the user's request as a small set of surgical edits via tool calls.
 ${SYSTEM_PROMPT_RULES}`,
@@ -1477,10 +1480,12 @@ Concurrency & iteration (workflow v0.4) — two composable structural primitives
     • Nest parallel directly inside parallel without a foreach in between — that's almost always a foreach.
 ${SYSTEM_PROMPT_RULES}`,
 };
+// rwa:extract:end SYSTEM_PROMPTS
 
 const SYSTEM_PROMPT = SYSTEM_PROMPTS[PRODUCT_KIND] || SYSTEM_PROMPTS.document;
 // === END PRODUCT: SYSTEM_PROMPT registry ===
 
+// rwa:extract:begin TOOL_SCHEMAS
 const TOOL_SCHEMAS = [
   {
     type: 'function',
@@ -1590,6 +1595,7 @@ const TOOL_SCHEMAS = [
     }
   }
 ];
+// rwa:extract:end TOOL_SCHEMAS
 
 // ─── Validator (rwa-edit/1) ─────────────────────────────────────────
 class RwaEditError extends Error {
