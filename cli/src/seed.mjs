@@ -155,6 +155,13 @@ const KIND_WORKFLOW_BODY = `<!-- rwa:frozen:begin wf-style -->
 .rwa-step.pinned{border-left:3px solid var(--blue);padding-left:13px;}
 .rwa-step.stale{border-left:3px solid var(--yellow);padding-left:13px;}
 .rwa-step.pinned.stale{border-left:3px solid var(--blue);}
+.rwa-step.rwa-foreach{border-left:3px dashed var(--gray-400);padding-left:13px;}
+.rwa-step.rwa-foreach > ol.rwa-flow{margin:.5em 0 0;padding-left:0;}
+.rwa-iter-count{display:inline-block;margin-left:6px;padding:1px 6px;font-size:10px;font-weight:500;border-radius:3px;background:var(--gray-700);color:#fff;font-family:var(--font-mono);letter-spacing:.3px;}
+.rwa-parallel{width:100%;border-collapse:separate;border-spacing:8px;margin:.5em 0;}
+.rwa-parallel > tbody > tr > td.rwa-step{vertical-align:top;width:1%;min-width:200px;max-width:340px;}
+.rwa-parallel > tbody > tr > td.rwa-step::before{content:attr(data-rwa-label);position:absolute;top:-10px;left:8px;padding:1px 6px;background:var(--gray-100);border:1px solid var(--gray-200);border-radius:3px;font-family:var(--font-mono);font-size:10px;font-weight:500;color:var(--gray-600);text-transform:uppercase;letter-spacing:.4px;}
+@media (max-width:720px){.rwa-parallel,.rwa-parallel>tbody,.rwa-parallel>tbody>tr,.rwa-parallel>tbody>tr>td.rwa-step{display:block;width:auto;max-width:none;}.rwa-parallel>tbody>tr>td.rwa-step{margin:.5em 0;}}
 .rwa-step-badge{display:inline-block;margin-left:6px;padding:1px 6px;font-size:10px;font-weight:500;border-radius:3px;letter-spacing:.3px;text-transform:uppercase;vertical-align:middle;font-family:var(--font-mono);}
 .rwa-badge-pinned{background:var(--blue);color:#fff;}
 .rwa-badge-stale{background:var(--yellow);color:#fff;}
@@ -196,11 +203,12 @@ const KIND_WORKFLOW_BODY = `<!-- rwa:frozen:begin wf-style -->
     // v0.4: also clears parallel cells and foreach containers.
     document.querySelectorAll('li.rwa-step, td.rwa-step').forEach(function(node){
       node.classList.remove('running', 'done', 'failed');
-      // For each step, find its own output slot (immediate child preferred).
       var out = node.querySelector(':scope > output.rwa-step-output')
         || node.querySelector('output.rwa-step-output');
       if (out) out.textContent = '';
     });
+    // Remove any stale iter-count chips from previous run.
+    document.querySelectorAll('.rwa-iter-count').forEach(function (c) { c.remove(); });
   }
   function compile(scriptEl) {
     var src = scriptEl.textContent;
@@ -445,8 +453,20 @@ const KIND_WORKFLOW_BODY = `<!-- rwa:frozen:begin wf-style -->
     var innerNodes = flowChildren(innerOl);
     var perIter = [];
     node.classList.add('running');
+    // Iteration counter chip: shows "1/N", "2/N", ... in the foreach header.
+    var header = node.querySelector(':scope > header');
+    var counter = null;
+    if (header) {
+      counter = document.createElement('span');
+      counter.className = 'rwa-iter-count';
+      counter.textContent = '0/' + prev.length;
+      var h3 = header.querySelector('h3');
+      if (h3) h3.appendChild(counter);
+      else header.appendChild(counter);
+    }
     try {
       for (var i = 0; i < prev.length; i++) {
+        if (counter) counter.textContent = (i + 1) + '/' + prev.length;
         var iterCtx = Object.assign({}, ctx, {
           iter: { index: i, item: prev[i], total: prev.length, parent: ctx.iter || undefined },
         });
