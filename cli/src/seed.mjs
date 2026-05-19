@@ -152,7 +152,20 @@ const KIND_WORKFLOW_BODY = `<!-- rwa:frozen:begin wf-style -->
 .rwa-run:hover{background:var(--gray-700);}
 .rwa-run:disabled{background:var(--gray-300);cursor:not-allowed;}
 .rwa-run-status{font-family:var(--font-mono);font-size:11px;color:var(--gray-500);min-height:1.4em;letter-spacing:.3px;}
-@media print{.placeholder,.rwa-run,.rwa-run-status,.rwa-step-delete,.rwa-step-insert{display:none;} .rwa-step::after{display:none;}}
+.rwa-step.pinned{border-left:3px solid var(--blue);padding-left:13px;}
+.rwa-step.stale{border-left:3px solid var(--yellow);padding-left:13px;}
+.rwa-step.pinned.stale{border-left:3px solid var(--blue);}
+.rwa-step-badge{display:inline-block;margin-left:6px;padding:1px 6px;font-size:10px;font-weight:500;border-radius:3px;letter-spacing:.3px;text-transform:uppercase;vertical-align:middle;font-family:var(--font-mono);}
+.rwa-badge-pinned{background:var(--blue);color:#fff;}
+.rwa-badge-stale{background:var(--yellow);color:#fff;}
+.rwa-step-toolbar{position:absolute;top:6px;right:36px;display:flex;gap:2px;opacity:0;transition:opacity .15s;z-index:1;}
+.rwa-step:hover .rwa-step-toolbar,.rwa-step:focus-within .rwa-step-toolbar{opacity:1;}
+.rwa-step-toolbar button{width:22px;height:22px;border:1px solid var(--gray-200);background:#fff;border-radius:4px;cursor:pointer;font-size:11px;padding:0;line-height:1;color:var(--gray-600);display:inline-flex;align-items:center;justify-content:center;}
+.rwa-step-toolbar button:hover:not([disabled]){background:var(--gray-50);color:var(--gray-900);}
+.rwa-step-toolbar button[disabled]{opacity:.4;cursor:not-allowed;}
+.rwa-step.pinned .rwa-pin-btn{color:var(--blue);border-color:var(--blue);}
+.rwa-step.running .rwa-step-toolbar{display:none;}
+@media print{.placeholder,.rwa-run,.rwa-run-status,.rwa-step-delete,.rwa-step-insert,.rwa-step-toolbar{display:none;} .rwa-step::after{display:none;}}
 </style>
 <!-- rwa:frozen:end wf-style -->
 <article class="rwa-workflow">
@@ -197,6 +210,92 @@ const KIND_WORKFLOW_BODY = `<!-- rwa:frozen:begin wf-style -->
     catch (_) { return String(value); }
   }
 
+  // v0.3: pin / dirty / test-step. State lives on the <li>:
+  //   data-pinned-output  — JSON string; runner short-circuits run().
+  //   data-last-output    — JSON string; cached for the per-step ▶ button.
+  //   data-last-run-hash  — 8-char hex; mismatch with current ⇒ .stale.
+  // 32-bit FNV-1a hash (Math.imul guards against overflow on 32-bit ints).
+  function hashStr(s) {
+    var h = 0x811c9dc5;
+    for (var i = 0; i < s.length; i++) {
+      h ^= s.charCodeAt(i);
+      h = Math.imul(h, 16777619) >>> 0;
+    }
+    return ('00000000' + h.toString(16)).slice(-8);
+  }
+  function stepBodyOf(li) {
+    var sc = li.querySelector('script[type="text/rwa-step"]');
+    return sc ? sc.textContent : '';
+  }
+  function cacheOutput(li, value) {
+    try {
+      var s = JSON.stringify(value);
+      if (s !== undefined) li.dataset.lastOutput = s;
+    } catch (_) { /* not JSON-serializable; skip */ }
+  }
+  function prevHashFor(li, allSteps) {
+    var idx = allSteps.indexOf(li);
+    if (idx === 0) return 'init';
+    var prevLi = allSteps[idx - 1];
+    if (prevLi.dataset.pinnedOutput != null) {
+      return hashStr('pin:' + prevLi.dataset.pinnedOutput);
+    }
+    return prevLi.dataset.lastRunHash || 'never';
+  }
+  function currentHashFor(li, allSteps) {
+    return hashStr(stepBodyOf(li) + '::' + prevHashFor(li, allSteps));
+  }
+  function syncBadges(li) {
+    var header = li.querySelector(':scope > header');
+    if (!header) return;
+    var existing = header.querySelectorAll(':scope > .rwa-step-badge');
+    existing.forEach(function (e) { e.remove(); });
+    if (li.classList.contains('pinned')) {
+      var bP = document.createElement('span');
+      bP.className = 'rwa-step-badge rwa-badge-pinned';
+      bP.textContent = 'pinned';
+      header.appendChild(bP);
+    }
+    if (li.classList.contains('stale')) {
+      var bS = document.createElement('span');
+      bS.className = 'rwa-step-badge rwa-badge-stale';
+      bS.textContent = 'stale';
+      header.appendChild(bS);
+    }
+  }
+  function syncPinnedClasses() {
+    document.querySelectorAll('li.rwa-step').forEach(function (li) {
+      if (li.dataset.pinnedOutput != null) li.classList.add('pinned');
+      else li.classList.remove('pinned');
+    });
+  }
+  // Pin button enabled when there's something to pin (cached or already
+  // pinned). The attached handler reads current state, so we just keep the
+  // disabled attribute and title in sync with dataset.
+  function refreshPinButtonStates() {
+    document.querySelectorAll('li.rwa-step').forEach(function (li) {
+      var btn = li.querySelector(':scope > .rwa-step-toolbar > .rwa-pin-btn');
+      if (!btn) return;
+      var isPinned = li.dataset.pinnedOutput != null;
+      var hasCache = li.dataset.lastOutput != null;
+      btn.disabled = !isPinned && !hasCache;
+      btn.title = isPinned
+        ? 'Unpin this step'
+        : (hasCache ? 'Pin this step\\'s output' : 'Run this step first to enable pinning');
+    });
+  }
+  function recomputeStaleness() {
+    var allSteps = Array.from(document.querySelectorAll('li.rwa-step'));
+    allSteps.forEach(function (li) {
+      var stored = li.dataset.lastRunHash;
+      if (!stored) { li.classList.remove('stale'); syncBadges(li); return; }
+      var current = currentHashFor(li, allSteps);
+      if (stored !== current) li.classList.add('stale');
+      else li.classList.remove('stale');
+      syncBadges(li);
+    });
+  }
+
   var ctx = {
     credentials: {
       get: async function (name) {
@@ -225,6 +324,25 @@ const KIND_WORKFLOW_BODY = `<!-- rwa:frozen:begin wf-style -->
         var li = steps[i];
         var sc = li.querySelector('script[type="text/rwa-step"]');
         if (!sc) throw new Error('step ' + (i+1) + ': missing <script type="text/rwa-step">');
+        // Pin short-circuit: skip run(), return the parsed pinned value.
+        // Does NOT update data-last-run-hash — pin is its own state, and
+        // staleness should still reflect "code drifted from last actual run."
+        if (li.dataset.pinnedOutput != null) {
+          try {
+            prev = JSON.parse(li.dataset.pinnedOutput);
+          } catch (eP) {
+            li.classList.add('failed');
+            var outPinErr = li.querySelector('.rwa-step-output');
+            if (outPinErr) outPinErr.textContent = 'Error: pinned value is not valid JSON';
+            throw new Error('step ' + (i+1) + ': pinned value is not valid JSON');
+          }
+          li.classList.add('done');
+          var outPin = li.querySelector('.rwa-step-output');
+          if (outPin) outPin.textContent = renderOutput(prev);
+          cacheOutput(li, prev);
+          setStatus('● step ' + (i+1) + '/' + steps.length + ' (pinned)');
+          continue;
+        }
         li.classList.add('running');
         setStatus('● step ' + (i+1) + '/' + steps.length);
         try {
@@ -234,6 +352,9 @@ const KIND_WORKFLOW_BODY = `<!-- rwa:frozen:begin wf-style -->
           li.classList.add('done');
           var out = li.querySelector('.rwa-step-output');
           if (out) out.textContent = renderOutput(prev);
+          cacheOutput(li, prev);
+          li.dataset.lastRunHash = currentHashFor(li, steps);
+          li.classList.remove('stale');
         } catch (e) {
           li.classList.remove('running');
           li.classList.add('failed');
@@ -250,6 +371,10 @@ const KIND_WORKFLOW_BODY = `<!-- rwa:frozen:begin wf-style -->
     } finally {
       NS.running = false;
       if (btn) btn.disabled = false;
+      // Run-state changes can flip staleness for downstream steps; refresh
+      // the visual indicators so the cascade is accurate.
+      recomputeStaleness();
+      refreshPinButtonStates();
     }
   }
 
@@ -262,22 +387,27 @@ const KIND_WORKFLOW_BODY = `<!-- rwa:frozen:begin wf-style -->
   // and undo stack. ⌘Z reverts them like any other commit.
 
   function findStepInDoc(doc, dataRwaId) {
-    // v0.2 step shape: <li class="rwa-step" data-rwa-id="X"> ... </li>, no
-    // nested <li>. The runtime backfills data-rwa-id; attribute order may
-    // vary across substrate versions, so try both common orderings.
-    var patterns = [
-      '<li data-rwa-id="' + dataRwaId + '" class="rwa-step">',
-      '<li class="rwa-step" data-rwa-id="' + dataRwaId + '">',
-    ];
-    for (var i = 0; i < patterns.length; i++) {
-      var idx = doc.indexOf(patterns[i]);
-      if (idx >= 0) {
-        var close = doc.indexOf('</li>', idx + patterns[i].length);
-        if (close < 0) return null;
-        return { outerHTML: doc.substring(idx, close + 5), start: idx, end: close + 5 };
-      }
-    }
-    return null;
+    // v0.3: <li class="rwa-step" data-rwa-id="X"> may carry extra runner
+    // attributes (data-pinned-output, data-last-output, data-last-run-hash)
+    // in any order. Match by requiring both class="rwa-step" and the target
+    // data-rwa-id, regardless of position or surrounding attributes.
+    var idEscaped = dataRwaId.replace(/[.*+?^\${}()|[\\]\\\\]/g, '\\\\$&');
+    var re = new RegExp(
+      '<li\\\\b(?=[^>]*\\\\bdata-rwa-id="' + idEscaped + '")(?=[^>]*\\\\bclass="rwa-step")[^>]*>'
+    );
+    var m = re.exec(doc);
+    if (!m) return null;
+    var idx = m.index;
+    var openTag = m[0];
+    var close = doc.indexOf('</li>', idx + openTag.length);
+    if (close < 0) return null;
+    return {
+      outerHTML: doc.substring(idx, close + 5),
+      openTag: openTag,
+      bodyAndClose: doc.substring(idx + openTag.length, close + 5),
+      start: idx,
+      end: close + 5,
+    };
   }
 
   // Drag-to-reorder. Mutex via DRAGGED_ID — set on dragstart, read on drop.
@@ -402,12 +532,163 @@ const KIND_WORKFLOW_BODY = `<!-- rwa:frozen:begin wf-style -->
     });
   }
 
+  // v0.3: rewrite the <li>'s opening tag through the substrate's audit
+  // pipeline. Pinning is a user gesture that should be persisted (an
+  // unpin tomorrow needs to remember what was pinned today), so route
+  // through runtime.applyEnvelope like the other visual gestures.
+  //
+  // Subtle: runWorkflow mutates the live DOM with data-last-output and
+  // data-last-run-hash but those aren't in IDB until the next commit.
+  // If we only commit data-pinned-output, the next render replays
+  // IDB and wipes the run state — leaving step's .stale check with no
+  // baseline. So we snapshot the live <li>'s runner attrs at click time
+  // and commit them together with the pin gesture.
+  async function setPinnedAttribute(li, valueJson /* string or null */) {
+    var id = li.dataset.rwaId;
+    if (!id) return false;
+    var doc = await window.getDoc();
+    var match = findStepInDoc(doc, id);
+    if (!match) { console.warn('pin: step not in doc'); return false; }
+    // Snapshot the live runner-managed state. valueJson overrides pinned.
+    var snap = {};
+    if (li.dataset.lastOutput != null) snap['data-last-output'] = li.dataset.lastOutput;
+    if (li.dataset.lastRunHash != null) snap['data-last-run-hash'] = li.dataset.lastRunHash;
+    if (valueJson != null) snap['data-pinned-output'] = valueJson;
+    // Strip any existing runner attrs from the IDB openTag.
+    var newOpen = match.openTag
+      .replace(/\\s+data-pinned-output="[^"]*"/, '')
+      .replace(/\\s+data-last-output="[^"]*"/, '')
+      .replace(/\\s+data-last-run-hash="[^"]*"/, '');
+    // Re-add the snapshot. Encode HTML entities in values.
+    var keys = Object.keys(snap);
+    if (keys.length > 0) {
+      var attrsStr = '';
+      for (var k = 0; k < keys.length; k++) {
+        var name = keys[k];
+        var encoded = String(snap[name])
+          .replace(/&/g, '&amp;')
+          .replace(/"/g, '&quot;')
+          .replace(/</g, '&lt;');
+        attrsStr += ' ' + name + '="' + encoded + '"';
+      }
+      newOpen = newOpen.replace(/>$/, attrsStr + '>');
+    }
+    var newOuter = newOpen + match.bodyAndClose;
+    if (newOuter === match.outerHTML) return true;
+    var envelope = {
+      version: 'rwa-edit/1',
+      edits: [{ find: match.outerHTML, replace: newOuter }],
+    };
+    await window.runtime.applyEnvelope(envelope, {
+      surface: 'visual:wf-' + (valueJson != null ? 'pin' : 'unpin') + '-step',
+      instruction: (valueJson != null ? 'pin' : 'unpin') + ' step',
+    });
+    return true;
+  }
+
+  // ▶ Test runs ONE step against the upstream's cached (or pinned) output.
+  // Does not persist through applyEnvelope — the run is transient like
+  // runWorkflow's mutations. ⌘S captures it if the user wants to.
+  async function testStep(li) {
+    if (NS.running) return;
+    var allSteps = Array.from(document.querySelectorAll('li.rwa-step'));
+    var idx = allSteps.indexOf(li);
+    if (idx < 0) return;
+    var sc = li.querySelector('script[type="text/rwa-step"]');
+    if (!sc) return;
+    li.classList.remove('done', 'failed', 'stale');
+    li.classList.add('running');
+    syncBadges(li);
+    try {
+      var prev;
+      if (idx > 0) {
+        var prevLi = allSteps[idx - 1];
+        var src = prevLi.dataset.pinnedOutput != null
+          ? prevLi.dataset.pinnedOutput
+          : prevLi.dataset.lastOutput;
+        if (src != null) {
+          try { prev = JSON.parse(src); } catch (_) { prev = src; }
+        }
+      }
+      var fn = compile(sc);
+      var result = await fn(ctx, prev);
+      li.classList.remove('running');
+      li.classList.add('done');
+      var out = li.querySelector('.rwa-step-output');
+      if (out) out.textContent = renderOutput(result);
+      cacheOutput(li, result);
+      li.dataset.lastRunHash = currentHashFor(li, allSteps);
+      // Downstream may now be stale relative to this fresh upstream.
+      recomputeStaleness();
+      refreshPinButtonStates();
+    } catch (e) {
+      li.classList.remove('running');
+      li.classList.add('failed');
+      var outErr = li.querySelector('.rwa-step-output');
+      if (outErr) outErr.textContent = 'Error: ' + (e && e.message || e);
+      recomputeStaleness();
+      refreshPinButtonStates();
+    }
+  }
+
+  // ▶/📌 toolbar on each step. Hover-revealed, sits left of the existing
+  // × delete button. Pin button is disabled when there's nothing to pin
+  // (no cached output yet and not currently pinned).
+  function attachStepToolbar(li) {
+    if (li.querySelector(':scope > .rwa-step-toolbar')) return;
+    var toolbar = document.createElement('span');
+    toolbar.className = 'rwa-step-toolbar';
+    var testBtn = document.createElement('button');
+    testBtn.type = 'button';
+    testBtn.className = 'rwa-test-btn';
+    testBtn.title = 'Test this step (uses upstream\\'s cached output)';
+    testBtn.setAttribute('aria-label', 'Test this step');
+    testBtn.textContent = '▶';
+    testBtn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      testStep(li);
+    });
+    var pinBtn = document.createElement('button');
+    pinBtn.type = 'button';
+    pinBtn.className = 'rwa-pin-btn';
+    var isPinned = li.dataset.pinnedOutput != null;
+    pinBtn.title = isPinned ? 'Unpin this step' : 'Pin this step\\'s output';
+    pinBtn.setAttribute('aria-label', 'Pin or unpin step');
+    pinBtn.textContent = '📌';
+    if (!isPinned && li.dataset.lastOutput == null) {
+      pinBtn.disabled = true;
+      pinBtn.title = 'Run this step first to enable pinning';
+    }
+    pinBtn.addEventListener('click', async function (e) {
+      e.stopPropagation();
+      try {
+        if (li.dataset.pinnedOutput != null) {
+          await setPinnedAttribute(li, null);
+        } else {
+          var cached = li.dataset.lastOutput;
+          if (cached == null) return;
+          try { JSON.parse(cached); } catch (_) { return; }
+          await setPinnedAttribute(li, cached);
+        }
+      } catch (err) {
+        console.error('pin-toggle failed:', err);
+      }
+    });
+    toolbar.appendChild(testBtn);
+    toolbar.appendChild(pinBtn);
+    li.appendChild(toolbar);
+  }
+
   function attachGestures() {
+    syncPinnedClasses();
     document.querySelectorAll('li.rwa-step').forEach(function (li) {
       attachDragReorder(li);
       attachDeleteButton(li);
+      attachStepToolbar(li);
     });
     attachInsertButtons();
+    recomputeStaleness();
+    refreshPinButtonStates();
   }
 
   // Re-bind on every renderDoc — the previous button is gone after the
