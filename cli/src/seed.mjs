@@ -149,6 +149,8 @@ const KIND_WORKFLOW_BODY = `<!-- rwa:frozen:begin wf-style -->
 .rwa-step-insert:hover{color:var(--gray-700);border-color:var(--gray-400);background:var(--gray-50);}
 .rwa-workflow-footer{margin-top:1.5em;display:flex;align-items:center;gap:1em;}
 .rwa-run{padding:8px 16px;background:var(--gray-900);color:#fff;border:none;border-radius:6px;cursor:pointer;font-family:var(--font-ui);font-size:14px;font-weight:500;transition:background .15s;}
+.rwa-run.rwa-run-cancel{background:var(--red);}
+.rwa-run.rwa-run-cancel:hover{background:#dc2626;}
 .rwa-run:hover{background:var(--gray-700);}
 .rwa-run:disabled{background:var(--gray-300);cursor:not-allowed;}
 .rwa-run-status{font-family:var(--font-mono);font-size:11px;color:var(--gray-500);min-height:1.4em;letter-spacing:.3px;}
@@ -398,6 +400,9 @@ const KIND_WORKFLOW_BODY = `<!-- rwa:frozen:begin wf-style -->
     });
   }
 
+  // v0.11: AbortController per Run, exposed as ctx.signal. The base ctx
+  // is built once; signal is overwritten at each Run via Object.assign so
+  // a stale signal from a previous Run doesn't leak into the next.
   var ctx = {
     credentials: {
       get: async function (name) {
@@ -409,7 +414,18 @@ const KIND_WORKFLOW_BODY = `<!-- rwa:frozen:begin wf-style -->
         return null;
       },
     },
+    signal: undefined,  // set at Run-start
   };
+  // Helper used by every runner entry-point to bail out cooperatively at
+  // step boundaries. Step bodies that pass ctx.signal to fetch() get
+  // immediate cancellation; otherwise the next boundary catches it.
+  function throwIfAborted(c) {
+    if (c && c.signal && c.signal.aborted) {
+      var e = new Error('abort_signaled');
+      e.code = 'abort_signaled';
+      throw e;
+    }
+  }
 
   // v0.4: workflow runner is a recursive tree-walker over three primitives.
   // Spec: docs/specs/rwa-workflow-spec.md.
@@ -500,6 +516,8 @@ const KIND_WORKFLOW_BODY = `<!-- rwa:frozen:begin wf-style -->
     return columns;
   }
   async function runLeaf(node, prev, ctx) {
+    // v0.11: cooperative cancellation check at the step boundary.
+    throwIfAborted(ctx);
     var sc = node.querySelector(':scope > details > script[type="text/rwa-step"]')
       || node.querySelector('script[type="text/rwa-step"]');
     if (!sc) throw RwaWorkflowError('step_missing_script', 'no <script type="text/rwa-step">');
@@ -552,6 +570,7 @@ const KIND_WORKFLOW_BODY = `<!-- rwa:frozen:begin wf-style -->
     }
   }
   async function runForeach(node, prev, ctx) {
+    throwIfAborted(ctx);
     // v0.5: container pin short-circuit. Skip iteration entirely.
     if (node.dataset.pinnedOutput != null) {
       var pinned;
@@ -624,6 +643,7 @@ const KIND_WORKFLOW_BODY = `<!-- rwa:frozen:begin wf-style -->
     }
   }
   async function runParallel(node, prev, ctx) {
+    throwIfAborted(ctx);
     // v0.5: container pin short-circuit. Skip Promise.all entirely.
     if (node.dataset.pinnedOutput != null) {
       var pinnedP;
@@ -705,8 +725,15 @@ const KIND_WORKFLOW_BODY = `<!-- rwa:frozen:begin wf-style -->
   async function runWorkflow() {
     if (NS.running) return;
     NS.running = true;
+    // v0.11: fresh AbortController per Run. ctx.signal is shared with
+    // every step body that opts in (e.g. fetch(url, { signal: ctx.signal })).
+    // The runner also checks ctx.signal.aborted at each step boundary
+    // so unaware code still halts at the next safe point.
+    var controller = new AbortController();
+    ctx.signal = controller.signal;
+    NS.abortController = controller;
     var btn = document.querySelector('.rwa-run');
-    if (btn) btn.disabled = true;
+    setRunButtonState('running');
     clearStepStates();
     setStatus('● running…');
     try {
@@ -723,13 +750,39 @@ const KIND_WORKFLOW_BODY = `<!-- rwa:frozen:begin wf-style -->
       NS.lastResult = prev;
       setStatus('✓ done (' + nodes.length + ' node' + (nodes.length===1?'':'s') + ')');
     } catch (e) {
-      setStatus('✗ ' + (e && (e.code || e.message) || e));
-      console.error(e);
+      var code = (e && (e.code || e.message)) || e;
+      if (code === 'abort_signaled') setStatus('✗ cancelled');
+      else setStatus('✗ ' + code);
+      if (code !== 'abort_signaled') console.error(e);
     } finally {
       NS.running = false;
-      if (btn) btn.disabled = false;
+      NS.abortController = null;
+      setRunButtonState('idle');
       recomputeStaleness();
       refreshPinButtonStates();
+    }
+  }
+  // v0.11: toggle the .rwa-run button between Run / Cancel. The button
+  // stays the same element so existing click bindings keep working; we
+  // just swap its text + a class. Clicking while running aborts.
+  function setRunButtonState(state) {
+    var btn = document.querySelector('.rwa-run');
+    if (!btn) return;
+    if (state === 'running') {
+      btn.classList.add('rwa-run-cancel');
+      btn.textContent = 'Cancel';
+      btn.disabled = false;
+    } else {
+      btn.classList.remove('rwa-run-cancel');
+      btn.textContent = btn.dataset.runLabel || 'Run workflow';
+      btn.disabled = false;
+    }
+  }
+  function handleRunButtonClick() {
+    if (NS.running) {
+      if (NS.abortController) NS.abortController.abort();
+    } else {
+      runWorkflow();
     }
   }
 
@@ -1182,7 +1235,11 @@ const KIND_WORKFLOW_BODY = `<!-- rwa:frozen:begin wf-style -->
   // again and re-attaches the click handler + all gestures to the freshly
   // rendered DOM.
   var btn = document.querySelector('.rwa-run');
-  if (btn) btn.addEventListener('click', runWorkflow);
+  if (btn) {
+    // v0.11: stash the idle label so the Cancel/Run toggle can restore it.
+    btn.dataset.runLabel = (btn.textContent || '').trim() || 'Run workflow';
+    btn.addEventListener('click', handleRunButtonClick);
+  }
   attachGestures();
 })();
 </script>

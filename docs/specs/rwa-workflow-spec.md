@@ -2,7 +2,7 @@
 
 ## Status
 
-Version 0.10 (current). Defines the HTML shape and execution semantics
+Version 0.11 (current). Defines the HTML shape and execution semantics
 of the **workflow** product type. The workflow product lives at the
 substrate layer (per `docs/specs/rwa-product-types.md`); this spec is
 layered on top of the substrate spec (`re-write-able-spec.md`) and
@@ -276,8 +276,8 @@ interface Ctx {
     get(name: string): Promise<string | null>;
   };
   iter?: IterCtx;
+  signal: AbortSignal;   // v0.11: shared across all steps in one Run; fires when user clicks Cancel
   // Reserved (do NOT use yet):
-  // signal?: AbortSignal;
   // log?: (msg: string) => void;
   // shared?: any;
 }
@@ -289,7 +289,15 @@ interface Ctx {
   `sessionStorage` under key `rwa_cred_<name>`. Returns `null` if
   the user dismisses the prompt. Cleared on tab close.
 - `ctx.iter` is present only inside a foreach iteration (§3.2).
-- Reserved fields MUST NOT be relied upon in v0.4. The runner
+- `ctx.signal` (v0.11) is an `AbortSignal` shared across all steps in
+  a single Run. It fires when the user clicks Cancel (the button that
+  replaces Run during execution). Step bodies SHOULD pass it to any
+  long-running async operation (`fetch(url, { signal: ctx.signal })`).
+  The runner checks `ctx.signal.aborted` at every step boundary and
+  throws `abort_signaled` if set — even if the user code didn't
+  observe the signal. A new Run gets a fresh signal; the previous
+  Run's signal stays aborted forever.
+- Reserved fields MUST NOT be relied upon yet. The runner
   MAY add them but their semantics are not specified here.
 
 ## 5. Per-step state attributes
@@ -359,6 +367,7 @@ fixed `code` string accessible via `err.code`.
 | `step_missing_script` | A linear step or parallel cell lacks a `<script type="text/rwa-step">` child. |
 | `step_script_no_run` | Step body executed but did not define an async function named `run`. |
 | `pinned_value_invalid_json` | A leaf node has `data-pinned-output` but the value is not valid JSON. |
+| `abort_signaled` | The runner detected `ctx.signal.aborted` at a step boundary (v0.11). User clicked Cancel; pipeline halts; the in-flight step's `.failed` class is set with this code as the message. |
 
 User-code exceptions (anything thrown from inside `run(ctx, prev)`)
 propagate unchanged with their original `message` and `code`. The
@@ -402,14 +411,14 @@ the bottom of `KIND_WORKFLOW_BODY` in `cli/src/seed.mjs`.
   step body.
 - Dynamic parallelism (spawning N parallel branches based on a
   runtime value). Use a foreach for this pattern.
-- `ctx.signal`, `ctx.log`, `ctx.shared`.
+- `ctx.log`, `ctx.shared`.
 
 (Container-level **pin** shipped in v0.5 — see §5.1. Per-cell
 **`data-allow-failure`** shipped in v0.6 — see §3.3. Container-level
 **test-step** shipped in v0.7 — runner contract §7. Container-level
 **dirty/stale tracking** shipped in v0.8 — see §5.1. **Multi-row
 parallel** shipped in v0.9 — see §3.3. **`ctx.iter.parent`** shipped
-in v0.10 — see §3.2.)
+in v0.10 — see §3.2. **`ctx.signal`** shipped in v0.11 — see §4.)
 
 ## 9. Composition example
 
@@ -487,6 +496,15 @@ Reading the structure top-to-bottom:
    per repo.
 
 ---
+
+Spec version 0.11 — adds `ctx.signal` for cancellation (§4). A fresh
+`AbortSignal` accompanies each Run and is shared across all steps;
+the runner checks `ctx.signal.aborted` at every step boundary and
+throws `abort_signaled` if set. Step bodies SHOULD pass it to
+long-running operations (`fetch(url, { signal: ctx.signal })`). UI
+surface: the Run button morphs into a Cancel button while a Run is
+in flight; clicking it calls `controller.abort()` and the
+in-flight step halts.
 
 Spec version 0.10 — promotes `ctx.iter.parent` (§3.2) from reserved
 to shipped. Nested foreach iterations now expose an upward chain to
