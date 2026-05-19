@@ -2,7 +2,7 @@
 
 ## Status
 
-Version 0.9 (current). Defines the HTML shape and execution semantics
+Version 0.10 (current). Defines the HTML shape and execution semantics
 of the **workflow** product type. The workflow product lives at the
 substrate layer (per `docs/specs/rwa-product-types.md`); this spec is
 layered on top of the substrate spec (`re-write-able-spec.md`) and
@@ -157,7 +157,12 @@ inner `<ol class="rwa-flow">`'s steps execute top-to-bottom with:
 
 **Iteration scope:** `ctx.iter` is the *innermost* enclosing
 foreach's iter. Inner foreaches shadow outer ones. `ctx.iter.parent`
-is reserved for v0.5; in v0.4, accessing it returns `undefined`.
+(v0.10) holds the next outer enclosing foreach's iter — same shape
+`{ index, item, total, parent }`. It is `undefined` at the
+top-level foreach. The chain walks upward arbitrarily deep:
+`ctx.iter.parent.parent` is the grandparent, and so on. Cells in a
+parallel block inside a foreach see `ctx.iter` of the enclosing
+foreach (parallel does NOT introduce its own iter).
 
 **Empty array:** If V is `[]`, the foreach runs zero iterations
 and its output is `[]`. Not an error.
@@ -259,12 +264,19 @@ dispatches per-node.
 The runner passes a `ctx` object into every step's `run(ctx, prev)`:
 
 ```ts
+interface IterCtx {
+  index: number;
+  item: unknown;
+  total: number;
+  parent?: IterCtx;  // v0.10: enclosing foreach's iter, or undefined at top-level
+}
+
 interface Ctx {
   credentials: {
     get(name: string): Promise<string | null>;
   };
-  iter?: { index: number; item: unknown; total: number };
-  // Reserved (do NOT use in v0.4):
+  iter?: IterCtx;
+  // Reserved (do NOT use yet):
   // signal?: AbortSignal;
   // log?: (msg: string) => void;
   // shared?: any;
@@ -390,14 +402,14 @@ the bottom of `KIND_WORKFLOW_BODY` in `cli/src/seed.mjs`.
   step body.
 - Dynamic parallelism (spawning N parallel branches based on a
   runtime value). Use a foreach for this pattern.
-- `ctx.iter.parent` chain for outer-iteration access.
 - `ctx.signal`, `ctx.log`, `ctx.shared`.
 
 (Container-level **pin** shipped in v0.5 — see §5.1. Per-cell
 **`data-allow-failure`** shipped in v0.6 — see §3.3. Container-level
 **test-step** shipped in v0.7 — runner contract §7. Container-level
 **dirty/stale tracking** shipped in v0.8 — see §5.1. **Multi-row
-parallel** shipped in v0.9 — see §3.3.)
+parallel** shipped in v0.9 — see §3.3. **`ctx.iter.parent`** shipped
+in v0.10 — see §3.2.)
 
 ## 9. Composition example
 
@@ -475,6 +487,14 @@ Reading the structure top-to-bottom:
    per repo.
 
 ---
+
+Spec version 0.10 — promotes `ctx.iter.parent` (§3.2) from reserved
+to shipped. Nested foreach iterations now expose an upward chain to
+outer iters' `{index, item, total}` via `ctx.iter.parent`,
+`ctx.iter.parent.parent`, etc. Top-level foreach has
+`ctx.iter.parent === undefined`. The runner already set the field in
+v0.4; this version formalizes it in the spec and adds a conformance
+scenario.
 
 Spec version 0.9 — adds multi-row parallel (§3.3 "Multi-row case").
 `<table class="rwa-parallel">` may now contain multiple `<tr>` rows;
