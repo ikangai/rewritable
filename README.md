@@ -77,6 +77,24 @@ open    https://rewritable.ikangai.com/demo/html-effectiveness/ # gallery: 20 ex
 
 Or hand-craft: copy `seeds/rewritable.html`, replace the nil `DOC_UUID` with a fresh `crypto.randomUUID()`, save.
 
+## Updating in place
+
+`rwa edit` applies an `rwa-edit/1` envelope to an existing container from the command line — same edit grammar as ⌘K, but scriptable. Three invocation forms; all converge on the same atomic splice/write path.
+
+```sh
+# Instruction → agent loop → envelope → applied
+rwa edit notes.html "Add a section on testing"
+
+# Pipe a tool envelope from stdin (no model call)
+echo '{"version":"rwa-edit/1","edits":[{"find":"old","replace":"new"}]}' \
+  | rwa edit notes.html
+
+# Or read the envelope from a file
+rwa edit notes.html --plan plan.json
+```
+
+The instruction path uses the same backend as the browser (OpenRouter / Ollama / LM Studio; configure via `--backend` flag or `RWA_*` env vars). The plan path is deterministic — no API key, no network — meant for skills and CI that compose envelopes in code. Frozen zones, reserved-substring rules, structural-shape checks, and atomic writes apply to both. Full reference: [`cli/README.md`](cli/README.md).
+
 ## Sharing a snapshot
 
 From `rewritable.ikangai.com/new` or `/import`, click **Publish & share** to put an immutable snapshot at `<short>.rewritable.ikangai.com/`. Anonymous, 24h expiry, no signup. Each share lives at its own origin (8-char alphanumeric subdomain) so the browser's same-origin policy isolates every share's IDB, sessionStorage, and OPFS — a malicious publisher's bootstrap can't read or enumerate any other share's storage. The published version carries its own `DOC_UUID`, so each viewer's edits land in their own browser-local IDB at that share's origin — they fork the doc locally rather than co-edit. For permanent or collaborative hosting, host the `.html` yourself: any static host works, because the file is the app.

@@ -2,6 +2,47 @@
 
 Notable changes to `re-write-able`. The container format is versioned in `re-write-able-spec.md`; the edit protocol in `rwa-edit-spec.md`; the structural-transform DSL in `rwa-edit-dsl-spec.md`. The CLI follows semver in `cli/package.json`.
 
+## 2026-05-19 — `rwa edit`: programmatic edit CLI
+
+A new `rwa edit <file>` verb lets skills, CI jobs, and scripts apply `rwa-edit/1` envelopes to a rewritable file from outside the browser. Same edit grammar as ⌘K: frozen-zone enforcement, reserved-substring detection, structural-shape check, atomic write. Three invocation forms — positional instruction (runs the agent loop), piped envelope on stdin, or `--plan <file>` from disk — all converge on the same `applyPlan` splice/write path.
+
+Design: [`docs/plans/2026-05-19-rwa-edit-cli-design.md`](docs/plans/2026-05-19-rwa-edit-cli-design.md). Implementation plan: [`docs/plans/2026-05-19-rwa-edit-cli-plan.md`](docs/plans/2026-05-19-rwa-edit-cli-plan.md). Per-task review verdicts and follow-ups are tracked in [`cli/TODO.md`](cli/TODO.md).
+
+### What ships in v1
+
+- **Plan path** (deterministic): pipe an `apply_edits`, `apply_dsl_plan`, or `replace_document` envelope; the CLI validates shape + version + per-shape required fields, runs it through the same DSL compile + apply pipeline the browser uses, and writes the file atomically (temp + `datasync` + `rename`). No API key required. Frozen-zone preservation and reserved-substring guards are enforced exactly as in the browser; `replace_document` envelopes additionally must preserve every marker-form frozen zone byte-identically.
+- **Instruction path** (agent-driven): a positional instruction string triggers a multi-turn tool-use loop against an OpenAI-compatible backend. Same retry budget (3), same system prompt + tool schemas as the browser — extracted at runtime from the bundled seed via three `// rwa:extract:begin/end <NAME>` marker pairs added to `seeds/rewritable.html`. Backends: `openrouter` (default, requires `RWA_OPENROUTER_KEY` or `--api-key`), `ollama`, `lmstudio`. The browser-only `bridge` transport is intentionally excluded — invoke `claude` directly from the CLI if you need that path.
+- **Stable exit codes**: `0` success, `1` usage_error, `2` file_error, `3` envelope_error, `4` agent_error. Each carries a `subcode` — `find_not_unique`, `frozen_zone_violation`, `version_mismatch`, `missing_reason`, `no_envelope_after_retries`, `no_api_key`, etc. `--json` flag emits one structured object per line on stderr (`{code, subcode, details}` plus `{phase:"retry", attempt, reason}` during agent retries) for skills and CI.
+- **Atomic write**: `<file>.rwa-tmp-<pid>` + `FileHandle.datasync()` + `rename` so a crash mid-write can't corrupt the rewritable. The exported `.html` on disk remains the only durable artifact — the CLI must not be able to corrupt it.
+
+### Skill consumption pattern
+
+The plan path is the building block for skills that maintain rewritable artifacts. A skill composes an `apply_dsl_plan` envelope in code:
+
+```js
+const plan = {
+  version: 'rwa-edit-dsl/1',
+  ops: [{ op: 'insert', before: '<!-- diary:entries:end -->', content: '<section data-rwa-date="...">...</section>' }]
+};
+const child = spawn('rwa', ['edit', '.dev-diary/diary.html'], { stdio: ['pipe', 'inherit', 'inherit'] });
+child.stdin.write(JSON.stringify(plan)); child.stdin.end();
+```
+
+and pipes it to `rwa edit`. Deterministic, no model call, no API key — the skill knows the entry structure so it never needs to invoke the agent for routine appends. The full consumption pattern (including first-time creation via `rwa new` + `replace_document` envelope) is in the design doc.
+
+### Spec → CLI alignment, with explicit scope-downs
+
+The CLI mirrors the seed's edit grammar deliberately, with each divergence documented inline:
+
+- **DSL compiler** is a publish-time snapshot of `benchmark/oracles/dsl-compiler.mjs`. The `prepublishOnly` script runs `cmp` against the canonical source *before* the `cp` so developer-introduced drift fails the publish loudly. Adds a fourth aligned site to the existing three (spec / runtime / benchmark) — the trade is intentional, called out in CLAUDE.md's "CLI conventions" section.
+- **Apply pipeline** (`apply-edits`, frozen-zone, reserved-substring, structural-shape) is hand-mirrored in `cli/src/apply-edits.mjs`. The header comment enumerates v1 parity gaps vs. the seed: no `MAX_REPLACE`/`MAX_DOC` byte caps, no `canonLF` line-ending normalization, no class-lock checks, no `parse_error_post_apply`, no `data-rwa-id` injection guard, no attribute-form `data-rwa-frozen` enforcement (a `test.todo` documents the gap). Marker-form frozen zones, reserved-substring detection, and the structural-shape regex (script/style top-level tag counts) all match the seed. Tracked for v2 in [`cli/TODO.md`](cli/TODO.md).
+- **Agent loop** (`cli/src/agent-loop.mjs`) retries on `no_tool_call` (model emitted plain text) and `invalid_json` (tool arguments aren't parseable) — three attempts, then `no_envelope_after_retries`. Apply-time failures surface as `envelope_error` exit 3 with no retry; this diverges from the seed runtime, which feeds apply failures back as `tool_result` and lets the model recover. Bringing apply-time feedback to the CLI is tracked as v2 work.
+- **User message + request body** match the seed's `buildUserPrompt` shape: `User request:\n<inst>\n\nFrozen zones in the current doc: <names or (none)>\n\n<DOC>\n<doc>\n</DOC>`. Request body sends `max_tokens: 32000` and `tool_choice: 'auto'`.
+
+### Tests
+
+72 new tests (plus 1 documented `test.todo` for the attribute-form gap) under `cli/tests/`, covering the apply pipeline, envelope validation, CLI dispatch, agent loop with retries, mock-backend instruction-path E2E, and atomic-write behavior. A bundled `cli/tests/helpers/mock-backend.mjs` exercises the full agent loop against an in-process OpenAI-compatible HTTP server — no network, no API keys required for CI. All 246 lens + 291 e2e + 62 conformance scenarios remain green; the seed edit (adding the three extract-marker pairs) is non-behavioral and tested by the existing runtime harness.
+
 ## 2026-05-18 — blank doc redesign + baseline content typography + print stylesheet
 
 Fresh containers now open as a clean "Untitled" document rather than a centered hello-world splash, and `seeds/rewritable.html` ships a baseline content stylesheet plus a full `@media print` rule set that every document inherits for free.
