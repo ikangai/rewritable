@@ -174,6 +174,38 @@ test('Authorization header sent when apiKey provided', async () => {
   } finally { await stop(); }
 });
 
+test('invalid_json retry — assistant echo trims unconsumed parallel tool_calls', async () => {
+  const { baseUrl, stop, requests } = await startMockBackend([
+    {
+      tool_calls: [
+        { id: 'c1', type: 'function', function: { name: 'apply_edits', arguments: '{bad json' } },
+        { id: 'c2', type: 'function', function: { name: 'apply_edits', arguments: '{"version":"rwa-edit/1","edits":[]}' } }
+      ]
+    },
+    {
+      tool_calls: [{
+        id: 'c3', type: 'function',
+        function: { name: 'apply_edits', arguments: JSON.stringify({ version: 'rwa-edit/1', edits: [{ find: 'x', replace: 'y' }] }) }
+      }]
+    }
+  ]);
+  try {
+    const result = await runAgentLoop({
+      systemPrompt: 't', toolSchemas: [], currentDoc: '<article>x</article>',
+      instruction: 'change x to y', backend: { baseUrl, model: 'm', apiKey: 'k' }
+    });
+    assert.equal(result.envelope.edits[0].find, 'x');
+    // The second attempt's request body must include the assistant echo with only c1 (the bad call we responded to), not c2.
+    const secondAttempt = requests[1];
+    const echoedAssistantMsg = secondAttempt.messages.find(m =>
+      m.role === 'assistant' && Array.isArray(m.tool_calls)
+    );
+    assert.ok(echoedAssistantMsg, 'second attempt should echo the assistant turn');
+    assert.equal(echoedAssistantMsg.tool_calls.length, 1, 'tool_calls trimmed to 1');
+    assert.equal(echoedAssistantMsg.tool_calls[0].id, 'c1', 'only the consumed call echoed');
+  } finally { await stop(); }
+});
+
 test('onRetry is optional — no callback works fine', async () => {
   const { baseUrl, stop } = await startMockBackend([
     { content: 'oops' },

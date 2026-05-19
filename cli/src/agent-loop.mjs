@@ -9,6 +9,9 @@
 // Parallel tool_calls are not supported: the loop takes tool_calls[0] and
 // ignores the rest. The seed's modify() loop is also single-call-per-turn, so
 // this matches existing behavior. Multi-call dispatching is a v2 concern.
+//
+// Note: fetch has no timeout. Callers (Task 7's CLI process or the bridge
+// transport) are responsible for any timeout/cancellation.
 
 const RETRY_BUDGET = 3;
 
@@ -65,9 +68,9 @@ export async function runAgentLoop({
         message: 'malformed response: no message in choices[0]',
       });
     }
-    messages.push(message);
 
     if (!message.tool_calls || message.tool_calls.length === 0) {
+      messages.push(message);
       if (onRetry) onRetry({ attempt, reason: 'no_tool_call' });
       messages.push({
         role: 'user',
@@ -81,16 +84,29 @@ export async function runAgentLoop({
     let envelope;
     try {
       envelope = JSON.parse(call.function.arguments);
-    } catch {
+    } catch (e) {
       if (onRetry) onRetry({ attempt, reason: 'invalid_json', toolName: call.function.name });
+      // Before echoing the assistant message, trim tool_calls to only the one we're responding to.
+      // Required by OpenAI-compatible providers: every tool_use id in the assistant message must
+      // have a matching tool_result on the next turn. Echoing unconsumed parallel tool_calls
+      // causes 400s on Anthropic-backed providers. Matches seeds/rewritable.html:3262.
+      const echoMessage = message.tool_calls.length > 1
+        ? { ...message, tool_calls: [call] }
+        : message;
+      messages.push(echoMessage);
       messages.push({
         role: 'tool',
         tool_call_id: call.id,
-        content: 'Invalid JSON in tool arguments. Re-emit valid JSON.',
+        content: JSON.stringify({
+          ok: false,
+          code: 'malformed_envelope',
+          message: `invalid JSON in tool arguments: ${e.message}`,
+        }),
       });
       continue;
     }
 
+    messages.push(message);
     return { envelope, toolName: call.function.name, messages };
   }
 
