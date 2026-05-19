@@ -872,6 +872,13 @@ const KIND_WORKFLOW_BODY = `<!-- rwa:frozen:begin wf-style -->
   }
   async function testStep(node) {
     if (NS.running) return;
+    // v0.7: container test-step. Dispatch on node type — for foreach /
+    // parallel containers, call their dedicated runners against the
+    // upstream's cached value. The runner functions own classes /
+    // output rendering / caching, so this path is just wiring.
+    if (isForeach(node) || isParallel(node)) {
+      return testContainer(node);
+    }
     var sc = node.querySelector(':scope > details > script[type="text/rwa-step"]')
       || node.querySelector('script[type="text/rwa-step"]');
     if (!sc) return;
@@ -919,29 +926,77 @@ const KIND_WORKFLOW_BODY = `<!-- rwa:frozen:begin wf-style -->
     }
   }
 
+  // v0.7: container test-step. Runs the whole subtree against the
+  // upstream's cached value via the same runForeach / runParallel paths
+  // that runWorkflow uses.
+  async function testContainer(node) {
+    if (NS.running) return;
+    NS.running = true;
+    var btn = document.querySelector('.rwa-run');
+    if (btn) btn.disabled = true;
+    try {
+      var prev;
+      var upstream = findTestUpstream(node);
+      if (upstream) {
+        var src = upstream.dataset.pinnedOutput != null
+          ? upstream.dataset.pinnedOutput
+          : upstream.dataset.lastOutput;
+        if (src != null) {
+          try { prev = JSON.parse(src); } catch (_) { prev = src; }
+        }
+      }
+      // Clear classes/output on this subtree before running. We don't
+      // clear the WHOLE doc — only the descendants of this container.
+      var subtreeNodes = node.querySelectorAll('li.rwa-step, td.rwa-step, table.rwa-parallel');
+      subtreeNodes.forEach(function (n) {
+        n.classList.remove('running', 'done', 'failed');
+        var out = null;
+        for (var k = 0; k < n.children.length; k++) {
+          if (n.children[k].tagName === 'OUTPUT') { out = n.children[k]; break; }
+        }
+        if (out) out.textContent = '';
+      });
+      // Also clear the container's own visible output + class.
+      node.classList.remove('done', 'failed');
+      for (var k0 = 0; k0 < node.children.length; k0++) {
+        if (node.children[k0].tagName === 'OUTPUT') { node.children[k0].textContent = ''; break; }
+      }
+      await runNode(node, prev, ctx);
+      recomputeStaleness();
+      refreshPinButtonStates();
+    } catch (e) {
+      console.error('test-container failed:', e);
+      // runForeach / runParallel already marked the node .failed
+    } finally {
+      NS.running = false;
+      if (btn) btn.disabled = false;
+    }
+  }
+
   // ▶/📌 toolbar on each step. Hover-revealed, sits left of the existing
   // × delete button. Pin button is disabled when there's nothing to pin
   // (no cached output yet and not currently pinned).
-  // v0.5: containers (foreach <li>, parallel <table>) get a pin button
-  // but no test button — test-step on containers is deferred to v0.6.
+  // v0.5: containers (foreach <li>, parallel <table>) get a pin button.
+  // v0.7: containers also get a test (▶) button — runs the container's
+  // subtree against upstream's cached value.
   function attachStepToolbar(node) {
     if (node.querySelector(':scope > .rwa-step-toolbar')) return;
     var isContainer = (node.matches && node.matches('li.rwa-step.rwa-foreach, table.rwa-parallel'));
     var toolbar = document.createElement('span');
     toolbar.className = 'rwa-step-toolbar';
-    if (!isContainer) {
-      var testBtn = document.createElement('button');
-      testBtn.type = 'button';
-      testBtn.className = 'rwa-test-btn';
-      testBtn.title = 'Test this step (uses upstream\\'s cached output)';
-      testBtn.setAttribute('aria-label', 'Test this step');
-      testBtn.textContent = '▶';
-      testBtn.addEventListener('click', function (e) {
-        e.stopPropagation();
-        testStep(node);
-      });
-      toolbar.appendChild(testBtn);
-    }
+    var testBtn = document.createElement('button');
+    testBtn.type = 'button';
+    testBtn.className = 'rwa-test-btn';
+    testBtn.title = isContainer
+      ? 'Test this container (runs subtree against upstream\\'s cached output)'
+      : 'Test this step (uses upstream\\'s cached output)';
+    testBtn.setAttribute('aria-label', isContainer ? 'Test this container' : 'Test this step');
+    testBtn.textContent = '▶';
+    testBtn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      testStep(node);
+    });
+    toolbar.appendChild(testBtn);
     var pinBtn = document.createElement('button');
     pinBtn.type = 'button';
     pinBtn.className = 'rwa-pin-btn';

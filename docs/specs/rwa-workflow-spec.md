@@ -2,7 +2,7 @@
 
 ## Status
 
-Version 0.6 (current). Defines the HTML shape and execution semantics
+Version 0.7 (current). Defines the HTML shape and execution semantics
 of the **workflow** product type. The workflow product lives at the
 substrate layer (per `docs/specs/rwa-product-types.md`); this spec is
 layered on top of the substrate spec (`re-write-able-spec.md`) and
@@ -330,6 +330,11 @@ A conformant runner implementation MUST:
 - Provide a per-leaf `▶ Test` affordance that runs that leaf
   against the closest upstream's cached value (`data-last-output`
   or `data-pinned-output`).
+- Provide a per-container `▶ Test` affordance (v0.7) that runs the
+  full subtree of the container against its upstream's cached
+  value. For a foreach, this iterates the cached array; for a
+  parallel block, this fires all cells concurrently. Same upstream
+  resolution as for leaves.
 - Provide a per-leaf `📌 Pin/Unpin` affordance that commits via
   `runtime.applyEnvelope`, snapshotting the live DOM's other
   runner attrs into the commit so they survive IDB replay.
@@ -344,7 +349,7 @@ A conformant runner implementation MUST:
 The reference implementation lives in the frozen runner block at
 the bottom of `KIND_WORKFLOW_BODY` in `cli/src/seed.mjs`.
 
-## 8. Non-goals (deferred to v0.7+)
+## 8. Non-goals (deferred to v0.8+)
 
 - Multi-row parallel tables (each column its own internal pipeline
   meeting at row boundaries).
@@ -354,8 +359,6 @@ the bottom of `KIND_WORKFLOW_BODY` in `cli/src/seed.mjs`.
   step body.
 - Dynamic parallelism (spawning N parallel branches based on a
   runtime value). Use a foreach for this pattern.
-- Container-level test-step (running just a foreach or parallel
-  table without re-running the whole pipeline above).
 - Container-level dirty/stale tracking (a foreach or parallel
   pinned to a value whose body has been edited shows no warning;
   user must manually unpin to see code drift).
@@ -363,7 +366,8 @@ the bottom of `KIND_WORKFLOW_BODY` in `cli/src/seed.mjs`.
 - `ctx.signal`, `ctx.log`, `ctx.shared`.
 
 (Container-level **pin** shipped in v0.5 — see §5.1. Per-cell
-**`data-allow-failure`** shipped in v0.6 — see §3.3.)
+**`data-allow-failure`** shipped in v0.6 — see §3.3. Container-level
+**test-step** shipped in v0.7 — runner contract §7.)
 
 ## 9. Composition example
 
@@ -441,6 +445,11 @@ Reading the structure top-to-bottom:
    per repo.
 
 ---
+
+Spec version 0.7 — adds container-level test-step (§7). The ▶ button
+on a foreach card or parallel table runs that container against its
+upstream's cached value — without re-running the whole pipeline.
+Container dirty/stale tracking still deferred to v0.8+.
 
 Spec version 0.6 — adds per-cell `data-allow-failure` (§3.3). A
 parallel cell can now opt into failure containment; its rejection
