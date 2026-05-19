@@ -88,20 +88,26 @@ documents are also where the other product types' outputs typically
 converge — workflow per-item results and workspace converged outputs
 both land here.
 
-### 2. Workflow — graph layer (over substrate)
+### 2. Workflow — substrate layer
 
-A multi-step process: items move through stages (e.g. `inbox →
-in-progress → done`), each stage may invoke an agent task on the item,
-and per-item state is the durable artifact. Requires a graph layer
-above the substrate — a stage model, per-item state machine, batch
-dispatch, in-flight lens-lock semantics. This layer's spec
-(`rwa-graph/1`) is referenced by `re-write-able-actions-spec-v0.7.md`
-§5.3 but not yet committed to the repo. Until it lands, workflows are
-expressible only as ad-hoc patterns inside artifacts (see app type).
+A linear/branching pipeline of code-defined steps. INLINE_DOC's body
+is a tree of three composable primitives — *linear* steps, *foreach*
+containers, and *parallel* blocks — and a frozen `<script>` runner
+walks the tree when Run is clicked. The document itself IS the
+workflow; no separate graph runtime, no server. Spec:
+`docs/specs/rwa-workflow-spec.md` (v0.4). Reference implementation:
+`cli/src/seed.mjs`'s `KIND_WORKFLOW_BODY`. Emit via
+`rwa new --kind workflow`.
 
-Once `rwa-graph/1` lands, workflows compose with documents (per-item
-output, substrate layer) and optionally with the skill layer
-(per-stage agents as permissioned skills).
+Earlier drafts of this taxonomy positioned workflow at a separate
+"graph layer" (`rwa-graph/1`, deferred). v0.4 (2026-05-19) committed
+the simpler substrate-layer framing: a tree-of-steps shape with
+recursive composition is enough for the linear pipelines, fan-out
+fetches, and per-item iterations users actually build. The deferred
+graph layer remains relevant for *multi-stage* workflows where items
+move through `inbox → in-progress → done` lanes with durable per-item
+state — that's a strictly different product than v0.4's tree-of-steps
+and would compose on top of the substrate workflow when it lands.
 
 ### 3. App — substrate layer
 

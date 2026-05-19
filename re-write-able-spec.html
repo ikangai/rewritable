@@ -1903,6 +1903,39 @@ Concrete script-body examples — the body of <script type="text/rwa-step"> defi
 
   BAD — do NOT use ESM import/export. The tag is a classic script, not a module:
       export default async function run(ctx, prev) { ... }
+
+Concurrency & iteration (workflow v0.4) — two composable structural primitives extend the linear pipeline. Both nest freely with each other and with linear steps.
+
+  • FOREACH — runs the next pipeline once per item in the upstream array. Use when the user says "for each X, do Y" or similar list-iteration intent. The shape is an <li class="rwa-step rwa-foreach"> whose body is a nested <ol class="rwa-flow"> containing the loop body. The step preceding a foreach MUST return an array; non-array upstream throws foreach_upstream_not_array. The inner pipeline sees prev = currentItem for the first step, and ctx.iter = { index, item, total } in every step. Output is an array of per-iteration final outputs.
+
+      Example HTML — wrap two existing steps in a for-each over the first step's array output:
+        <li class="rwa-step rwa-foreach">
+          <header><h3>For each repo</h3><p>Iterates the repos array.</p></header>
+          <ol class="rwa-flow">
+            <li class="rwa-step">…</li>
+            <li class="rwa-step">…</li>
+          </ol>
+          <output class="rwa-step-output"></output>
+        </li>
+
+  • PARALLEL — fans out into N independent branches, all sharing the same upstream prev, all running concurrently via Promise.all. Use when the user wants to fetch from multiple sources at once, or compute multiple independent things from the same input. The shape is a <table class="rwa-parallel"> with a single <tbody><tr> containing N <td class="rwa-step"> cells. Each cell MUST carry a data-rwa-label matching ^[a-z][a-z0-9_]{0,31}$ (lowercase snake_case, ≤32 chars), unique within the row. Output is an object keyed by label: { [label]: cellReturn, … }.
+
+      Example HTML — three parallel fetches:
+        <table class="rwa-parallel">
+          <tbody><tr>
+            <td class="rwa-step" data-rwa-label="gmail"><header><h3>Fetch Gmail</h3></header><details>...<script type="text/rwa-step">async function run(ctx, prev) { … }<\/script></details><output class="rwa-step-output"></output></td>
+            <td class="rwa-step" data-rwa-label="slack"><header><h3>Fetch Slack</h3></header><details>...<script type="text/rwa-step">async function run(ctx, prev) { … }<\/script></details><output class="rwa-step-output"></output></td>
+            <td class="rwa-step" data-rwa-label="linear"><header><h3>Fetch Linear</h3></header><details>...<script type="text/rwa-step">async function run(ctx, prev) { … }<\/script></details><output class="rwa-step-output"></output></td>
+          </tr></tbody>
+        </table>
+
+  Composition — foreach can contain parallel (each iteration spawns its own parallel block); parallel cells can contain foreaches; foreaches nest. ctx.iter is the innermost enclosing foreach's iter; outer iters are shadowed.
+
+  Do NOT:
+    • Use parallel for steps that depend on each other's outputs — sequence them inside one cell, or use linear steps.
+    • Add data-rwa-label to linear steps (<li class="rwa-step">) — it's parallel-cell-only.
+    • Add the rwa-foreach class to a step that has its own <script> body — foreach containers don't have inline script.
+    • Nest parallel directly inside parallel without a foreach in between — that's almost always a foreach.
 ${SYSTEM_PROMPT_RULES}`,
 };
 
