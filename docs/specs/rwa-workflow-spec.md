@@ -2,7 +2,7 @@
 
 ## Status
 
-Version 0.8 (current). Defines the HTML shape and execution semantics
+Version 0.9 (current). Defines the HTML shape and execution semantics
 of the **workflow** product type. The workflow product lives at the
 substrate layer (per `docs/specs/rwa-product-types.md`); this spec is
 layered on top of the substrate spec (`re-write-able-spec.md`) and
@@ -114,13 +114,17 @@ The spec is normative for §2 (data flow), §3 (`ctx` object), §4
   row MUST be unique.
 - A cell MAY carry `data-allow-failure="true"` (v0.6). When set,
   a thrown rejection from that cell does NOT halt the pipeline;
-  instead, the cell's slot in the output object becomes
-  `{ __error: "<message>", __code: "<code or null>" }` and
-  sibling cells / downstream steps continue. Without this
-  attribute, the cell's rejection halts the parallel block per
-  the default semantics in §3.3.
+  instead, the next cell in the column receives the error object
+  `{ __error: "<message>", __code: "<code or null>" }` as its `prev`
+  (multi-row), or that slot in the parallel block's output becomes
+  the error object (single-row). Without this attribute, the cell's
+  rejection halts the parallel block per the default semantics in
+  §3.3.
 - A v0.4 parallel block has **one row** (`<tr>`) containing N
-  cells. Multi-row parallel pipelines remain deferred (see §8).
+  cells. v0.9 (§3.3 "Multi-row" subsection) extends this: multiple
+  rows are allowed, each row must have the same number of cells,
+  cells in the same column must share `data-rwa-label`. Columns
+  run as independent sequential pipelines in parallel.
 - The `<tbody>` element is required for valid HTML (browsers
   auto-insert it; serialized HTML must include it explicitly so
   the runner can `:scope > tbody > tr > td.rwa-step`).
@@ -166,21 +170,41 @@ Downstream sees this array as `prev`.
 ### 3.3 Parallel
 
 **Upstream contract:** Any value (object, array, primitive,
-undefined). All cells receive identical `prev`.
+undefined). All columns receive identical `prev` as the input to
+their first cell.
 
 **`prev` sharing:** The runner MUST pass the same JavaScript value
-reference to every cell. Cells MUST treat `prev` as read-only;
-mutating it produces undefined behavior across siblings (one cell
-may see another's mutation depending on timing).
+reference to every column's first cell. Columns MUST treat `prev`
+as read-only; mutating it produces undefined behavior across
+columns (one column may see another's mutation depending on timing).
+Within a single column, each cell receives the previous cell's
+return value as its `prev` (sequential threading).
 
-**Execution:** The runner launches all cells via
-`Promise.all([cell0Run(prev), cell1Run(prev), ...])`. Cells do
-not see each other's intermediate state or results.
+**Execution:** The runner launches each column as an async sequential
+pipeline of its cells, then waits on all columns via `Promise.all`.
+Columns do not see each other's intermediate state or results.
 
-**Output:** `{ [data-rwa-label]: cellReturn, ... }` — an object
-keyed by each cell's `data-rwa-label`, values are the cells'
-return values. Cell order in the object reflects insertion order
-of the cells in the `<tr>` (left-to-right).
+**Single-row case (v0.4 default):** Each column has exactly one cell.
+Equivalent to `Promise.all([cell0Run(prev), cell1Run(prev), ...])`.
+
+**Multi-row case (v0.9):** When `<tbody>` contains more than one
+`<tr>`:
+- Every row MUST have the same number of cells; otherwise
+  `parallel_row_mismatch` is thrown.
+- All cells in column N (i.e., the Nth `<td class="rwa-step">` of
+  every row) MUST carry the same `data-rwa-label`; otherwise
+  `parallel_label_mismatch` is thrown.
+- Each column runs as a sequential pipeline: cell 0 (top row)
+  receives the parallel block's `prev`; each subsequent cell
+  receives the previous cell's return value.
+- The label registered for the column is the shared
+  `data-rwa-label` value; labels MUST still be unique across
+  columns.
+- The output object is `{ [colLabel]: lastCellInColumn.return, ... }`.
+
+**Output:** `{ [data-rwa-label]: columnLastReturn, ... }` — an
+object keyed by column label. Single-row reduces to `cellReturn`
+since each column has one cell.
 
 **Error semantics:**
 
@@ -194,11 +218,16 @@ of the cells in the `<tr>` (left-to-right).
 - **Per-cell `data-allow-failure="true"` (v0.6):** The cell's
   rejection is contained. The cell still shows `.failed` with the
   error message in its `<output>`, but the parallel block does NOT
-  reject. The cell's slot in the output object is replaced with
-  `{ __error: "<message>", __code: "<code or null>" }`; sibling
-  cells continue normally; downstream sees the partial result and
-  runs as usual. Reserved keys `__error` and `__code` minimize
-  collision risk with real cell-output shapes.
+  reject.
+  - Single-row: the cell's slot in the output object becomes
+    `{ __error: "<message>", __code: "<code or null>" }`; sibling
+    columns continue normally.
+  - Multi-row (v0.9): the NEXT cell down in the column receives the
+    error object as `prev` and runs normally. If no allow-failure
+    cell tolerates it (e.g., the last cell in a column without the
+    attribute fails), the column's promise rejects per the default.
+  - Reserved keys `__error` and `__code` minimize collision risk
+    with real cell-output shapes.
 
 - **Mixed:** If multiple cells reject and at least one of them
   lacks `data-allow-failure`, the parallel block rejects with the
@@ -312,7 +341,9 @@ fixed `code` string accessible via `err.code`.
 | Code | Meaning |
 |---|---|
 | `foreach_upstream_not_array` | Step preceding a foreach returned a non-array value. The foreach cannot iterate. |
-| `parallel_label_invalid` | A parallel cell is missing `data-rwa-label`, or the value doesn't match `^[a-z][a-z0-9_]{0,31}$`, or duplicates another label in the same `<tr>`. Detected at runtime when the parallel block is first reached (NOT at boot). |
+| `parallel_label_invalid` | A parallel cell is missing `data-rwa-label`, or the value doesn't match `^[a-z][a-z0-9_]{0,31}$`, or duplicates another column's label. Detected at runtime when the parallel block is first reached (NOT at boot). |
+| `parallel_row_mismatch` | Multi-row parallel block: not all rows have the same number of `<td class="rwa-step">` cells. |
+| `parallel_label_mismatch` | Multi-row parallel block: cells in the same column carry different `data-rwa-label` values across rows. |
 | `step_missing_script` | A linear step or parallel cell lacks a `<script type="text/rwa-step">` child. |
 | `step_script_no_run` | Step body executed but did not define an async function named `run`. |
 | `pinned_value_invalid_json` | A leaf node has `data-pinned-output` but the value is not valid JSON. |
@@ -351,10 +382,8 @@ A conformant runner implementation MUST:
 The reference implementation lives in the frozen runner block at
 the bottom of `KIND_WORKFLOW_BODY` in `cli/src/seed.mjs`.
 
-## 8. Non-goals (deferred to v0.9+)
+## 8. Non-goals (deferred to v0.10+)
 
-- Multi-row parallel tables (each column its own internal pipeline
-  meeting at row boundaries).
 - Inter-cell communication within a parallel block.
 - Branching / conditional execution (`if (prev) { ... } else { ... }`
   at the structural level). Use code-level branching inside a
@@ -367,7 +396,8 @@ the bottom of `KIND_WORKFLOW_BODY` in `cli/src/seed.mjs`.
 (Container-level **pin** shipped in v0.5 — see §5.1. Per-cell
 **`data-allow-failure`** shipped in v0.6 — see §3.3. Container-level
 **test-step** shipped in v0.7 — runner contract §7. Container-level
-**dirty/stale tracking** shipped in v0.8 — see §5.1.)
+**dirty/stale tracking** shipped in v0.8 — see §5.1. **Multi-row
+parallel** shipped in v0.9 — see §3.3.)
 
 ## 9. Composition example
 
@@ -445,6 +475,14 @@ Reading the structure top-to-bottom:
    per repo.
 
 ---
+
+Spec version 0.9 — adds multi-row parallel (§3.3 "Multi-row case").
+`<table class="rwa-parallel">` may now contain multiple `<tr>` rows;
+each table column becomes an independent sequential pipeline. Cells
+in column N must share `data-rwa-label` (the column's identity).
+Columns run via `Promise.all`. Output object shape unchanged from
+v0.4: `{ [label]: column.lastReturn }`. New errors:
+`parallel_row_mismatch`, `parallel_label_mismatch`.
 
 Spec version 0.8 — adds container dirty/stale tracking (§5.1, §5
 attributes table). Recursive structural fingerprint: edits to inner

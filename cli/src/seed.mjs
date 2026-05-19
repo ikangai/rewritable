@@ -445,23 +445,59 @@ const KIND_WORKFLOW_BODY = `<!-- rwa:frozen:begin wf-style -->
     });
   }
   function parallelCells(table) {
+    // All cells in DOM order (top-to-bottom, left-to-right). Used by
+    // nodeFingerprint for staleness — order in fingerprint string
+    // doesn't need to be column-grouped.
     return Array.from(table.querySelectorAll(':scope > tbody > tr > td.rwa-step'));
   }
-  function validateParallelLabels(cells) {
-    var seen = {};
+  // v0.9: extract columns from a multi-row parallel table. Each column
+  // is { label, cells[] } where cells are top-to-bottom in DOM order.
+  // Validates row count, column-label consistency, and overall label
+  // uniqueness. Single-row degenerates to one cell per column.
+  function parallelColumns(table) {
     var labelRe = /^[a-z][a-z0-9_]{0,31}$/;
-    for (var i = 0; i < cells.length; i++) {
-      var lbl = cells[i].dataset.rwaLabel;
-      if (!lbl || !labelRe.test(lbl)) {
-        throw RwaWorkflowError('parallel_label_invalid',
-          'cell ' + i + ': data-rwa-label missing or invalid (got ' + JSON.stringify(lbl) + ')');
+    var tbody = table.querySelector(':scope > tbody');
+    if (!tbody) throw RwaWorkflowError('parallel_empty', 'parallel <table> has no <tbody>');
+    var rows = Array.from(tbody.querySelectorAll(':scope > tr'));
+    if (rows.length === 0) throw RwaWorkflowError('parallel_empty', 'parallel <table> has no rows');
+    // Each row's cells. All rows must be the same length.
+    var rowCells = rows.map(function (tr) {
+      return Array.from(tr.querySelectorAll(':scope > td.rwa-step'));
+    });
+    var colCount = rowCells[0].length;
+    if (colCount === 0) throw RwaWorkflowError('parallel_empty', 'parallel row has no <td class="rwa-step"> cells');
+    for (var r = 1; r < rowCells.length; r++) {
+      if (rowCells[r].length !== colCount) {
+        throw RwaWorkflowError('parallel_row_mismatch',
+          'row ' + r + ' has ' + rowCells[r].length + ' cells, expected ' + colCount);
       }
-      if (seen[lbl]) {
-        throw RwaWorkflowError('parallel_label_invalid',
-          'cell ' + i + ': duplicate label "' + lbl + '"');
-      }
-      seen[lbl] = true;
     }
+    // Build columns. Validate per-column label consistency + format.
+    var columns = [];
+    for (var c = 0; c < colCount; c++) {
+      var colCells = rowCells.map(function (row) { return row[c]; });
+      var label = colCells[0].dataset.rwaLabel;
+      if (!label || !labelRe.test(label)) {
+        throw RwaWorkflowError('parallel_label_invalid',
+          'column ' + c + ': data-rwa-label missing or invalid (got ' + JSON.stringify(label) + ')');
+      }
+      for (var k = 1; k < colCells.length; k++) {
+        if (colCells[k].dataset.rwaLabel !== label) {
+          throw RwaWorkflowError('parallel_label_mismatch',
+            'column ' + c + ' row ' + k + ': label "' + colCells[k].dataset.rwaLabel + '" differs from row 0 label "' + label + '"');
+        }
+      }
+      columns.push({ label: label, cells: colCells });
+    }
+    // Label uniqueness across columns.
+    var seen = {};
+    for (var ci = 0; ci < columns.length; ci++) {
+      if (seen[columns[ci].label]) {
+        throw RwaWorkflowError('parallel_label_invalid', 'duplicate column label "' + columns[ci].label + '"');
+      }
+      seen[columns[ci].label] = true;
+    }
+    return columns;
   }
   async function runLeaf(node, prev, ctx) {
     var sc = node.querySelector(':scope > details > script[type="text/rwa-step"]')
@@ -597,35 +633,42 @@ const KIND_WORKFLOW_BODY = `<!-- rwa:frozen:begin wf-style -->
       cacheOutput(node, pinnedP);
       return pinnedP;
     }
-    var cells = parallelCells(node);
-    if (cells.length === 0) {
-      throw RwaWorkflowError('parallel_empty', 'parallel block has no <td class="rwa-step"> cells');
-    }
-    validateParallelLabels(cells);
+    // v0.9: extract column pipelines (single-row → 1 cell per column).
+    var columns = parallelColumns(node);
     node.classList.add('running');
     try {
-      // v0.6: allSettled so cells with data-allow-failure="true" don't sink
-      // the whole block. Default cells still cause a halt — we detect any
-      // un-tolerated rejection post-settle and throw the first one.
-      var settled = await Promise.allSettled(cells.map(function (cell) {
-        return runLeaf(cell, prev, ctx);
+      // Each column is a sequential pipeline; columns run in parallel.
+      // Cell-level allow-failure (v0.6) is honored within each column:
+      // a failing cell with the flag substitutes an {__error, __code}
+      // object as the next cell's prev value; without the flag, the
+      // column promise rejects.
+      var settled = await Promise.allSettled(columns.map(async function (col) {
+        var colPrev = prev;
+        for (var i = 0; i < col.cells.length; i++) {
+          var cell = col.cells[i];
+          try {
+            colPrev = await runLeaf(cell, colPrev, ctx);
+          } catch (e) {
+            if (cell.dataset.allowFailure === 'true') {
+              colPrev = {
+                __error: (e && e.message) || String(e),
+                __code: (e && e.code) || null,
+              };
+              continue;
+            }
+            throw e;
+          }
+        }
+        return colPrev;
       }));
       var obj = {};
       var firstFatal = null;
-      cells.forEach(function (cell, i) {
+      columns.forEach(function (col, i) {
         var r = settled[i];
-        var allow = cell.dataset.allowFailure === 'true';
         if (r.status === 'fulfilled') {
-          obj[cell.dataset.rwaLabel] = r.value;
-        } else {
-          if (allow) {
-            obj[cell.dataset.rwaLabel] = {
-              __error: (r.reason && r.reason.message) || String(r.reason),
-              __code: (r.reason && r.reason.code) || null,
-            };
-          } else if (!firstFatal) {
-            firstFatal = r.reason;
-          }
+          obj[col.label] = r.value;
+        } else if (!firstFatal) {
+          firstFatal = r.reason;
         }
       });
       if (firstFatal) {
