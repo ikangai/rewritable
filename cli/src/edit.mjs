@@ -4,15 +4,16 @@
 // deterministically, and atomically writes the file back.
 //
 // Error surface (load-bearing — Task 5's --json output keys on these):
-//   exitCode 2 / subcode: 'not_found', 'not_a_rewritable'
+//   exitCode 2 / subcode: 'not_found', 'read_error', 'not_a_rewritable'
 //   exitCode 3 / subcode: 'not_an_object', 'unknown_shape',
 //                         'ambiguous_envelope', 'missing_version',
 //                         'version_mismatch', 'missing_reason',
+//                         'malformed_envelope', 'frozen_zone_violation',
 //                         plus DslCompileError.code or RwaEditError.code
 //                         from the underlying modules.
 
 import { readFile, writeFile, rename, unlink } from 'node:fs/promises';
-import { applyEdits, RwaEditError } from './apply-edits.mjs';
+import { applyEdits, RwaEditError, findFrozenZones } from './apply-edits.mjs';
 import { compileDslPlan } from './dsl-compiler.mjs';
 import { extractInlineDoc, replaceInlineDoc } from './seed.mjs';
 
@@ -49,6 +50,14 @@ function validateEnvelope(env) {
   if (hasDoc && env.version !== 'rwa-edit/1') {
     throw new CliError(3, 'version_mismatch', { expected: 'rwa-edit/1', got: env.version });
   }
+  // `'doc' in env` is true even when env.doc is undefined — without this type
+  // check `replaceInlineDoc(fileText, undefined)` would silently write an
+  // empty body (canonLF(undefined) → ''). Use `malformed_envelope` to match
+  // the bootstrap's replaceDocument shape-check (seeds/rewritable.html
+  // §replaceDocument, line ~2913).
+  if (hasDoc && typeof env.doc !== 'string') {
+    throw new CliError(3, 'malformed_envelope', { reason: 'doc must be a string' });
+  }
   if (hasDoc && (typeof env.reason !== 'string' || env.reason.length === 0)) {
     throw new CliError(3, 'missing_reason');
   }
@@ -71,7 +80,12 @@ export async function applyPlan(filePath, envelope) {
     fileText = await readFile(filePath, 'utf8');
   } catch (e) {
     if (e && e.code === 'ENOENT') throw new CliError(2, 'not_found', { path: filePath });
-    throw new CliError(2, 'not_found', { path: filePath, errno: e && e.code });
+    // EACCES, EISDIR, EMFILE, etc. — "not_found" would mislead the user.
+    throw new CliError(2, 'read_error', {
+      path: filePath,
+      errno: e && e.code,
+      message: e && e.message,
+    });
   }
 
   // 2. Extract INLINE_DOC body. A plain-text or non-rewritable target throws.
@@ -89,6 +103,26 @@ export async function applyPlan(filePath, envelope) {
   let newDoc;
   if (shape === 'replace_document') {
     newDoc = envelope.doc;
+    // Frozen-zone preservation. Mirror of bootstrap replaceDocument
+    // (seeds/rewritable.html ~line 2938-2945): every marker-form zone
+    // present in `currentDoc` must also exist in the replacement with
+    // byte-identical inner content. Covers marker form only (consistent
+    // with Task 2's scope-down — attribute-form `data-rwa-frozen` zones
+    // are deferred until the CLI gains a real HTML parser).
+    const oldZones = findFrozenZones(currentDoc);
+    const newZones = findFrozenZones(newDoc);
+    // Build name → full-zone-bytes maps (inclusive of the begin/end markers)
+    // off each doc so we can compare contents.
+    const oldByName = new Map(oldZones.map(z => [z.name, currentDoc.slice(z.start, z.end)]));
+    const newByName = new Map(newZones.map(z => [z.name, newDoc.slice(z.start, z.end)]));
+    for (const [name, originalBytes] of oldByName) {
+      if (!newByName.has(name) || newByName.get(name) !== originalBytes) {
+        throw new CliError(3, 'frozen_zone_violation', {
+          zone: name,
+          reason: 'replace_document must preserve frozen zones byte-identically',
+        });
+      }
+    }
   } else if (shape === 'apply_dsl_plan') {
     let compiled;
     try {

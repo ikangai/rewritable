@@ -67,7 +67,7 @@ function countOccurrences(haystack, needle) {
 // `/* rwa:frozen:* */` and `// rwa:frozen:*` (script/JS-comment forms);
 // for the CLI v1 those are deferred — they were a niche need on the seed
 // side and the substrate is the doc the CLI edits, not the bootstrap.
-function findFrozenZones(doc) {
+export function findFrozenZones(doc) {
   const zones = [];
   const beginRe = /<!--\s*rwa:frozen:begin\s+([A-Za-z0-9_-]+)\s*-->/g;
   let m;

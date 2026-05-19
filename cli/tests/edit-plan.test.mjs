@@ -232,3 +232,111 @@ test('atomic write — no temp file remains on success', async () => {
     assert.equal(remaining.length, 0);
   } finally { fx.cleanup(); }
 });
+
+// ─── Regression: C-1 data-loss bug — replace_document doc-type check ──
+// Before the fix, `{doc: undefined}` and `{doc: 42}` passed validation because
+// the discriminator check only did `'doc' in env`. The result was
+// `replaceInlineDoc(fileText, undefined)` silently writing an empty body via
+// `canonLF(undefined) → ''`. Now we require typeof === 'string'.
+
+test('malformed_envelope — replace_document with doc: undefined', async () => {
+  const fx = mkFixture('<article>x</article>');
+  try {
+    await assert.rejects(
+      applyPlan(fx.path, { version: 'rwa-edit/1', doc: undefined, reason: 'r' }),
+      err => err.exitCode === 3 && err.subcode === 'malformed_envelope',
+    );
+    // File must be unchanged — the whole point of failing loud here.
+    const body = extractInlineDoc(readFileSync(fx.path, 'utf8'));
+    assert.ok(body.includes('<article>x</article>'));
+  } finally { fx.cleanup(); }
+});
+
+test('malformed_envelope — replace_document with doc: non-string', async () => {
+  const fx = mkFixture('<article>x</article>');
+  try {
+    await assert.rejects(
+      applyPlan(fx.path, { version: 'rwa-edit/1', doc: 42, reason: 'r' }),
+      err => err.exitCode === 3 && err.subcode === 'malformed_envelope',
+    );
+  } finally { fx.cleanup(); }
+});
+
+// ─── Regression: I-1 — replace_document frozen-zone preservation ──────
+// The CLI's replace_document branch previously bypassed the bootstrap's
+// frozen-zone integrity check entirely. A marker-form zone present in the
+// current doc but missing from `envelope.doc` would be silently dropped on
+// commit. These three tests pin the new check: removal, content change,
+// and the intact-pass case.
+
+test('frozen_zone_violation — replace_document removes a frozen zone', async () => {
+  const fx = mkFixture(
+    '<article>a<!-- rwa:frozen:begin lock --><h2>locked</h2><!-- rwa:frozen:end lock -->z</article>',
+  );
+  try {
+    await assert.rejects(
+      applyPlan(fx.path, {
+        version: 'rwa-edit/1',
+        doc: '<article>a z</article>', // zone removed
+        reason: 'remove lock',
+      }),
+      err => err.exitCode === 3 && err.subcode === 'frozen_zone_violation',
+    );
+  } finally { fx.cleanup(); }
+});
+
+test('frozen_zone_violation — replace_document changes content inside frozen zone', async () => {
+  const fx = mkFixture(
+    '<article>a<!-- rwa:frozen:begin lock --><h2>original</h2><!-- rwa:frozen:end lock -->z</article>',
+  );
+  try {
+    await assert.rejects(
+      applyPlan(fx.path, {
+        version: 'rwa-edit/1',
+        doc: '<article>a<!-- rwa:frozen:begin lock --><h2>modified</h2><!-- rwa:frozen:end lock -->z</article>',
+        reason: 'modify lock',
+      }),
+      err => err.exitCode === 3 && err.subcode === 'frozen_zone_violation',
+    );
+  } finally { fx.cleanup(); }
+});
+
+test('replace_document with intact frozen zone succeeds', async () => {
+  const fx = mkFixture(
+    '<article>a<!-- rwa:frozen:begin lock --><h2>locked</h2><!-- rwa:frozen:end lock -->z</article>',
+  );
+  try {
+    const result = await applyPlan(fx.path, {
+      version: 'rwa-edit/1',
+      doc: '<article>NEW<!-- rwa:frozen:begin lock --><h2>locked</h2><!-- rwa:frozen:end lock -->NEW</article>',
+      reason: 'replace surrounding',
+    });
+    assert.equal(result.exitCode, 0);
+  } finally { fx.cleanup(); }
+});
+
+// ─── Regression: I-2 — non-ENOENT read errors mislabeled as not_found ─
+// EACCES (and other non-ENOENT codes) used to map to `not_found`, which
+// misleads users about why the read failed. Now they surface as
+// `read_error` with the original errno attached.
+
+test('read_error — non-ENOENT (EACCES via chmod 000)', async () => {
+  // Skip when running as root (e.g. some CI containers) — root bypasses
+  // file mode bits, so chmod 000 cannot trigger EACCES on read.
+  if (process.platform === 'win32' || process.getuid?.() === 0) {
+    return; // implementation still correct; environment can't exercise it
+  }
+  const fx = mkFixture('<article>x</article>');
+  try {
+    execFileSync('chmod', ['000', fx.path]);
+    try {
+      await assert.rejects(
+        applyPlan(fx.path, { version: 'rwa-edit/1', edits: [{ find: 'x', replace: 'y' }] }),
+        err => err.exitCode === 2 && err.subcode === 'read_error',
+      );
+    } finally {
+      // Restore so the temp dir can be removed.
+      execFileSync('chmod', ['644', fx.path]);
+    }
+  } finally { fx.cleanup(); }
+});
