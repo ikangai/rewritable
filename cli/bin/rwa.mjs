@@ -89,12 +89,17 @@ function readStdin() {
 
 // Map exit codes to category names for the --json payload's `code` field.
 // Subcodes (specific failure reasons) come from edit.mjs / underlying modules.
+// Throws on unknown codes — Rule 12 (fail loud): a synthetic fallback would
+// mask future programmer bugs (e.g. someone adds `new CliError(5, ...)` and
+// forgets to extend this switch).
 function codeName(n) {
-  if (n === 1) return 'usage_error';
-  if (n === 2) return 'file_error';
-  if (n === 3) return 'envelope_error';
-  if (n === 4) return 'agent_error';
-  return 'unknown_error';
+  switch (n) {
+    case 1: return 'usage_error';
+    case 2: return 'file_error';
+    case 3: return 'envelope_error';
+    case 4: return 'agent_error';
+    default: throw new Error(`codeName: unexpected exit code ${n}`);
+  }
 }
 
 (async () => {
@@ -151,9 +156,19 @@ function codeName(n) {
       const hasPlanFile = typeof planArg === 'string' && planArg !== '-';
       const hasPlanDash = planArg === '-';
 
+      // Read stdin only when there's no positional instruction AND no --plan <file>.
+      // We accept that this means we cannot detect `pipe | rwa edit X "instruction"` as
+      // `conflicting_input` — that combination is rare, and detecting it would require
+      // either eagerly draining stdin (which hangs on slow upstreams) or a non-blocking
+      // peek (platform-specific). Strict-and-loud beats hang-and-then-loud.
+      //
+      // Note: when --plan <file> is set, piped stdin is intentionally ignored. The design
+      // treats explicit-file as the unambiguous source of intent; detecting "stdin happens
+      // to have bytes too" would require eagerly draining (defeats the file-only fast path)
+      // or a non-blocking peek. We accept the trade-off.
       let stdinBuf = '';
       let stdinHasContent = false;
-      if (!hasPlanFile) {
+      if (!hasPlanFile && !hasPositionalInstruction) {
         stdinBuf = await readStdin();
         stdinHasContent = stdinBuf.length > 0;
       }
