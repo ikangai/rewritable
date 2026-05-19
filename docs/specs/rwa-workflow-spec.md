@@ -2,7 +2,7 @@
 
 ## Status
 
-Version 0.5 (current). Defines the HTML shape and execution semantics
+Version 0.6 (current). Defines the HTML shape and execution semantics
 of the **workflow** product type. The workflow product lives at the
 substrate layer (per `docs/specs/rwa-product-types.md`); this spec is
 layered on top of the substrate spec (`re-write-able-spec.md`) and
@@ -112,8 +112,15 @@ The spec is normative for §2 (data flow), §3 (`ctx` object), §4
   value MUST match `^[a-z][a-z0-9_]{0,31}$` (lowercase, starts
   with a letter, snake_case, ≤32 chars). All labels in the same
   row MUST be unique.
+- A cell MAY carry `data-allow-failure="true"` (v0.6). When set,
+  a thrown rejection from that cell does NOT halt the pipeline;
+  instead, the cell's slot in the output object becomes
+  `{ __error: "<message>", __code: "<code or null>" }` and
+  sibling cells / downstream steps continue. Without this
+  attribute, the cell's rejection halts the parallel block per
+  the default semantics in §3.3.
 - A v0.4 parallel block has **one row** (`<tr>`) containing N
-  cells. Multi-row parallel pipelines are deferred to v0.5.
+  cells. Multi-row parallel pipelines remain deferred (see §8).
 - The `<tbody>` element is required for valid HTML (browsers
   auto-insert it; serialized HTML must include it explicitly so
   the runner can `:scope > tbody > tr > td.rwa-step`).
@@ -175,13 +182,30 @@ keyed by each cell's `data-rwa-label`, values are the cells'
 return values. Cell order in the object reflects insertion order
 of the cells in the `<tr>` (left-to-right).
 
-**Error semantics:** Per `Promise.all` semantics, any cell
-rejection causes the parallel block to reject. The runner halts
-the pipeline at the parallel block. The failing cell shows
-`.failed` with the error message in its `<output>`. Surviving
-cells' resolved values exist but are NOT piped downstream — the
-rejection ate them. v0.5 introduces opt-in `data-allow-failure`
-for per-cell containment.
+**Error semantics:**
+
+- **Default (no `data-allow-failure`):** Per `Promise.all` semantics,
+  any cell rejection causes the parallel block to reject. The runner
+  halts the pipeline at the parallel block. The failing cell shows
+  `.failed` with the error message in its `<output>`. Surviving
+  cells' resolved values exist but are NOT piped downstream — the
+  rejection ate them.
+
+- **Per-cell `data-allow-failure="true"` (v0.6):** The cell's
+  rejection is contained. The cell still shows `.failed` with the
+  error message in its `<output>`, but the parallel block does NOT
+  reject. The cell's slot in the output object is replaced with
+  `{ __error: "<message>", __code: "<code or null>" }`; sibling
+  cells continue normally; downstream sees the partial result and
+  runs as usual. Reserved keys `__error` and `__code` minimize
+  collision risk with real cell-output shapes.
+
+- **Mixed:** If multiple cells reject and at least one of them
+  lacks `data-allow-failure`, the parallel block rejects with the
+  first such rejection's reason (in cell DOM order). Tolerated
+  failures alongside a fatal one are still surfaced in the result
+  object, but the result is never returned to downstream because
+  the fatal one wins.
 
 ### 3.4 Composition
 
@@ -239,6 +263,7 @@ remains leaf-only (see §5.1); pin and last-output cache work on both.
 |---|---|---|---|---|
 | `data-rwa-id` | 8-char | substrate | all step nodes | substrate-assigned stable identifier (per `re-write-able-spec.md` §5.9) |
 | `data-rwa-label` | string | author / agent | parallel cells only | required on `<td class="rwa-step">`; must match `^[a-z][a-z0-9_]{0,31}$`; unique within its `<tr>` |
+| `data-allow-failure` | `"true"` | author / agent | parallel cells only | opt-in containment (§3.3). Cell's rejection becomes `{__error, __code}` in the output object; sibling cells and downstream continue |
 | `data-pinned-output` | JSON string | user gesture | leaves AND containers | runner short-circuits the node's execution and returns the parsed value as if the node had completed normally |
 | `data-last-output` | JSON string | runner | leaves AND containers | cache of the most recent successful run's return value |
 | `data-last-run-hash` | 8-char hex | runner | leaves only | FNV-1a hash of `stepBody + '::' + prevHash` at last successful run; mismatch ⇒ runner marks node `.stale`. Not set on containers — see §5.1 |
@@ -319,12 +344,10 @@ A conformant runner implementation MUST:
 The reference implementation lives in the frozen runner block at
 the bottom of `KIND_WORKFLOW_BODY` in `cli/src/seed.mjs`.
 
-## 8. Non-goals (deferred to v0.6+)
+## 8. Non-goals (deferred to v0.7+)
 
 - Multi-row parallel tables (each column its own internal pipeline
   meeting at row boundaries).
-- Per-cell failure containment (`data-allow-failure="true"` +
-  `Promise.allSettled`-style execution).
 - Inter-cell communication within a parallel block.
 - Branching / conditional execution (`if (prev) { ... } else { ... }`
   at the structural level). Use code-level branching inside a
@@ -339,7 +362,8 @@ the bottom of `KIND_WORKFLOW_BODY` in `cli/src/seed.mjs`.
 - `ctx.iter.parent` chain for outer-iteration access.
 - `ctx.signal`, `ctx.log`, `ctx.shared`.
 
-(Container-level **pin** shipped in v0.5 — see §5.1.)
+(Container-level **pin** shipped in v0.5 — see §5.1. Per-cell
+**`data-allow-failure`** shipped in v0.6 — see §3.3.)
 
 ## 9. Composition example
 
@@ -418,10 +442,14 @@ Reading the structure top-to-bottom:
 
 ---
 
-Spec version 0.5 — adds container-level pin (§5.1). Container
-dirty/stale tracking, container test-step, multi-row parallel,
-per-cell failure containment, inter-cell comms, and dynamic
-parallelism remain deferred to v0.6+.
+Spec version 0.6 — adds per-cell `data-allow-failure` (§3.3). A
+parallel cell can now opt into failure containment; its rejection
+becomes `{__error, __code}` in the output object while sibling cells
+and downstream continue. Container dirty/stale tracking, container
+test-step, multi-row parallel, inter-cell comms, and dynamic
+parallelism remain deferred to v0.7+.
+
+Spec version 0.5 — adds container-level pin (§5.1).
 
 Spec version 0.4 — initial release. Defines linear / foreach /
 parallel primitives, leaf state attributes, error codes, and the

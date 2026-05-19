@@ -543,11 +543,35 @@ const KIND_WORKFLOW_BODY = `<!-- rwa:frozen:begin wf-style -->
     validateParallelLabels(cells);
     node.classList.add('running');
     try {
-      var results = await Promise.all(cells.map(function (cell) {
+      // v0.6: allSettled so cells with data-allow-failure="true" don't sink
+      // the whole block. Default cells still cause a halt — we detect any
+      // un-tolerated rejection post-settle and throw the first one.
+      var settled = await Promise.allSettled(cells.map(function (cell) {
         return runLeaf(cell, prev, ctx);
       }));
       var obj = {};
-      cells.forEach(function (cell, i) { obj[cell.dataset.rwaLabel] = results[i]; });
+      var firstFatal = null;
+      cells.forEach(function (cell, i) {
+        var r = settled[i];
+        var allow = cell.dataset.allowFailure === 'true';
+        if (r.status === 'fulfilled') {
+          obj[cell.dataset.rwaLabel] = r.value;
+        } else {
+          if (allow) {
+            obj[cell.dataset.rwaLabel] = {
+              __error: (r.reason && r.reason.message) || String(r.reason),
+              __code: (r.reason && r.reason.code) || null,
+            };
+          } else if (!firstFatal) {
+            firstFatal = r.reason;
+          }
+        }
+      });
+      if (firstFatal) {
+        node.classList.remove('running');
+        node.classList.add('failed');
+        throw firstFatal;
+      }
       node.classList.remove('running');
       node.classList.add('done');
       cacheOutput(node, obj);

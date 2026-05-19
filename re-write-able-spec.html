@@ -1918,7 +1918,7 @@ Concurrency & iteration (workflow v0.4) — two composable structural primitives
           <output class="rwa-step-output"></output>
         </li>
 
-  • PARALLEL — fans out into N independent branches, all sharing the same upstream prev, all running concurrently via Promise.all. Use when the user wants to fetch from multiple sources at once, or compute multiple independent things from the same input. The shape is a <table class="rwa-parallel"> with a single <tbody><tr> containing N <td class="rwa-step"> cells. Each cell MUST carry a data-rwa-label matching ^[a-z][a-z0-9_]{0,31}$ (lowercase snake_case, ≤32 chars), unique within the row. Output is an object keyed by label: { [label]: cellReturn, … }.
+  • PARALLEL — fans out into N independent branches, all sharing the same upstream prev, all running concurrently via Promise.all. Use when the user wants to fetch from multiple sources at once, or compute multiple independent things from the same input. The shape is a <table class="rwa-parallel"> with a single <tbody><tr> containing N <td class="rwa-step"> cells. Each cell MUST carry a data-rwa-label matching ^[a-z][a-z0-9_]{0,31}$ (lowercase snake_case, ≤32 chars), unique within the row. Output is an object keyed by label: { [label]: cellReturn, … }. A cell MAY carry data-allow-failure="true" — if it throws, the parallel block survives: that cell's slot becomes { __error: "<message>", __code: "<code or null>" } and sibling cells / downstream continue. Use this when the user has expressed tolerance for a single source going down (e.g., "if Slack is unreachable, just skip it").
 
       Example HTML — three parallel fetches:
         <table class="rwa-parallel">
