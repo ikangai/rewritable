@@ -262,7 +262,9 @@ A dashboard can embed multiple siblings live and refresh them when their stores 
 
 On disk a container's identity is its file path; on the web it is its URL. A URL also carries a fragment, and for the web edition of a re-writeable that fragment is load-bearing: it names a block inside the document. So `https://you.com/notes.html#7k3p2m9q` means "the block I called `7k3p2m9q` inside `notes.html`," and it goes on meaning that even after the block's surrounding prose has been re-written fifty times.
 
-To make this real, the runtime maintains a stable identifier on every anchorable block (`p`, `h1`–`h6`, `blockquote`, `li`, `figure`, `pre`, `aside`). The attribute is `data-rwa-id`. The value is opaque — 8 characters of lower-base32 from `crypto.getRandomValues`, e.g. `data-rwa-id="7k3p2m9q"`.
+To make this real, the runtime maintains a stable identifier on every anchorable block (`p`, `h1`–`h6`, `blockquote`, `li`, `figure`, `pre`, `aside`, `table`, `td`). The attribute is `data-rwa-id`. The value is opaque — 8 characters of lower-base32 from `crypto.getRandomValues`, e.g. `data-rwa-id="7k3p2m9q"`.
+
+`table` and `td` were added in spec 0.11 (2026-05-19) so the workflow product's parallel-block container and its cells get stable identifiers without needing the agent to inject them by hand. The change is additive — existing documents without ids on tables / cells get them backfilled on the next commit.
 
 **Lifecycle.**
 
@@ -624,6 +626,8 @@ These properties are load-bearing — every change to the runtime, bootstrap, or
 7. Undo history lives in IndexedDB, not in the file. Commits do not carry undo state.
 
 ---
+
+*Spec version 0.11 — anchorable-tags extended. `table` and `td` join the anchorable list so the workflow product's parallel blocks and cells (per `docs/specs/rwa-workflow-spec.md`) get `data-rwa-id` backfilled automatically. The change is purely additive — existing containers gain ids on their tables on the next commit; no behavior changes for documents that don't use tables. Reference implementations regenerated.*
 
 *Spec version 0.10 — public runtime API pass. §7 grows from a sketch into a contract: `runtime.id`, `runtime.db.{get,put,del,all,open,subscribe}`, `runtime.fs.{read,write,del,list}`, `runtime.modify/commit/undo`, the observable `runtime.status`, and `runtime.on('commit'|'modify'|'status', cb)` are all wired through the seed and exercised by the test harness. The bootstrap shape is unchanged from 0.9 — the runtime API is additive — so the meta tag remains `rwa-bootstrap` 0.9 while the spec versions to 0.10. OPFS gains per-container namespacing: each container's blobs live under `_<DOC_UUID>/`, `runtime.fs.*` auto-prefixes paths, and §5.7's "OPFS is not yet namespaced" gap is closed (§5.3, §5.7, §11.5 updated). `runtime.shared.*` remains the one piece of §7 deferred — the open questions in §11.5 (naming, conflict resolution, schema/discovery, cross-host bridging) are unchanged and still gate that surface. No changes to the storage model invariants, container UUIDs, or bootstrap byte-identity rules from v0.7/v0.8/v0.9. Reference implementations regenerated against the seed.*
 

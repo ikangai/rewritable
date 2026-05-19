@@ -231,7 +231,9 @@ const INLINE_DOC = `<style>
 // Prose-block anchoring vocabulary. Drives lens click-to-anchor and
 // data-rwa-id backfill. Region scope: doc-product default; see
 // docs/specs/rwa-product-types.md.
-const ANCHORABLE_TAGS = new Set(['P','H1','H2','H3','H4','H5','H6','BLOCKQUOTE','LI','FIGURE','PRE','ASIDE']);
+// Spec 0.11: TABLE and TD added so the workflow product's parallel
+// blocks and cells get stable ids automatically.
+const ANCHORABLE_TAGS = new Set(['P','H1','H2','H3','H4','H5','H6','BLOCKQUOTE','LI','FIGURE','PRE','ASIDE','TABLE','TD']);
 window.ANCHORABLE_TAGS = ANCHORABLE_TAGS; // expose for tests
 // === END DOCUMENT-PRODUCT DEFAULT: ANCHORABLE_TAGS ===
 
@@ -1733,13 +1735,18 @@ function maskRawTextAndComments(doc) {
 function buildSourcePositionMap(doc) {
   const map = [];
   const parsed = new DOMParser().parseFromString('<!DOCTYPE html><html><body>' + doc + '</body></html>', 'text/html');
-  // Collect anchorable nodes in document order, but stop descending past an
-  // anchorable (outer wins — matches the source-scanner's lastIndex skip).
+  // Collect anchorable nodes in document order. Default is "outer wins" —
+  // stop descending past an anchorable so unusual nestings (e.g. nested
+  // <li>s) anchor on the outer block. TABLE is the exception: we descend
+  // into it so its <td> cells (also anchorable per spec 0.11) get their
+  // own entries. The DOM grammar guarantees TD only appears inside TABLE,
+  // so descending here doesn't risk double-counting other anchorables.
   const nodesInOrder = [];
   (function walk(el) {
     for (const child of el.children) {
       if (ANCHORABLE_TAGS.has(child.tagName)) {
         nodesInOrder.push(child);
+        if (child.tagName === 'TABLE') walk(child);
       } else {
         walk(child);
       }
@@ -1760,8 +1767,10 @@ function buildSourcePositionMap(doc) {
     if (end < 0) continue;
     map.push({ tag, start, end, node: null });
     // Outer-wins: skip past the close so nested anchorables of any type are
-    // not separately recorded.
-    tagOpen.lastIndex = end;
+    // not separately recorded. Exception (spec 0.11): TABLE keeps scanning
+    // inside itself so the contained TDs are also recorded. Mirrors the
+    // DOM walker above.
+    if (tag !== 'TABLE') tagOpen.lastIndex = end;
   }
 
   // Attach DOM nodes by ordinal. If counts disagree, the parser and scanner
@@ -2744,7 +2753,11 @@ function injectMissingBlockIds(doc) {
     if (!ANCHORABLE_TAGS.has(tag)) continue;
     const closeEnd = findCloseTagEnd(masked, m[1], m.index + m[0].length);
     if (closeEnd < 0) continue;
-    tagOpen.lastIndex = closeEnd;
+    // Outer-wins skip past nested anchorables. Spec 0.11 exception: TABLE
+    // keeps scanning inside so contained TDs are also id-injected. The DOM
+    // grammar guarantees TD only appears inside TABLE, so this doesn't
+    // double-process other anchorables.
+    if (tag !== 'TABLE') tagOpen.lastIndex = closeEnd;
     if (inFrozen(m.index)) continue;
     const attrs = m[2] || '';
     if (/\sdata-rwa-id\s*=/.test(attrs)) continue;

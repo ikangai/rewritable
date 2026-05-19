@@ -308,10 +308,10 @@ const KIND_WORKFLOW_BODY = `<!-- rwa:frozen:begin wf-style -->
       var isPinned = node.dataset.pinnedOutput != null;
       var hasCache = node.dataset.lastOutput != null;
       var isContainer = node.matches('li.rwa-step.rwa-foreach, table.rwa-parallel');
-      var needsId = node.tagName === 'TABLE' && !node.dataset.rwaId;
+      var needsId = (node.tagName === 'TABLE' || node.tagName === 'TD') && !node.dataset.rwaId;
       btn.disabled = needsId || (!isPinned && !hasCache);
       btn.title = needsId
-        ? 'Parallel table needs data-rwa-id to be pinnable'
+        ? 'No data-rwa-id on this node yet — commit (⌘S) to populate it'
         : (isPinned
             ? 'Unpin'
             : (hasCache
@@ -953,13 +953,14 @@ const KIND_WORKFLOW_BODY = `<!-- rwa:frozen:begin wf-style -->
       pinBtn.disabled = true;
       pinBtn.title = isContainer ? 'Run the workflow first to enable pinning' : 'Run this step first to enable pinning';
     }
-    // Pin commits via findStepInDoc, which requires data-rwa-id. <table>
-    // isn't in ANCHORABLE_TAGS so the substrate doesn't backfill ids there.
-    // If the table has no id, disable with a clear hint (the author/agent
-    // must include data-rwa-id explicitly; v0.4 spec §2.3 example shows it).
-    if (node.tagName === 'TABLE' && !node.dataset.rwaId) {
+    // Pin commits via findStepInDoc which requires data-rwa-id. Substrate
+    // 0.11 added TABLE/TD to ANCHORABLE_TAGS so the auto-backfill covers
+    // these in fresh containers. Legacy containers without ids gain them
+    // on first commit. As a defensive backstop, disable the pin button if
+    // an id is missing — the user just needs to ⌘S once to populate it.
+    if ((node.tagName === 'TABLE' || node.tagName === 'TD') && !node.dataset.rwaId) {
       pinBtn.disabled = true;
-      pinBtn.title = 'Parallel table needs data-rwa-id to be pinnable';
+      pinBtn.title = 'No data-rwa-id on this node yet — commit (⌘S) to populate it';
     }
     pinBtn.addEventListener('click', async function (e) {
       e.stopPropagation();
