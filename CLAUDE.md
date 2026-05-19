@@ -1,5 +1,59 @@
 # CLAUDE.md
 
+These rules apply to every task in this project unless explicitly overridden.
+Bias: caution over speed on non-trivial work.
+
+## Rule 1 — Think Before Coding
+State assumptions explicitly. Ask rather than guess.
+Push back when a simpler approach exists. Stop when confused.
+
+## Rule 2 — Simplicity First
+Minimum code that solves the problem. Nothing speculative.
+No abstractions for single-use code.
+
+## Rule 3 — Surgical Changes
+Touch only what you must. Don't improve adjacent code.
+Match existing style. Don't refactor what isn't broken.
+
+## Rule 4 — Goal-Driven Execution
+Define success criteria. Loop until verified.
+Strong success criteria let Claude loop independently.
+
+## Rule 5 — Use the model only for judgment calls
+Use for: classification, drafting, summarization, extraction.
+Do NOT use for: routing, retries, deterministic transforms.
+If code can answer, code answers.
+
+## Rule 6 — Token budgets are not advisory
+Per-task: 4,000 tokens. Per-session: 30,000 tokens.
+If approaching budget, summarize and start fresh.
+Surface the breach. Do not silently overrun.
+
+## Rule 7 — Surface conflicts, don't average them
+If two patterns contradict, pick one (more recent / more tested).
+Explain why. Flag the other for cleanup.
+
+## Rule 8 — Read before you write
+Before adding code, read exports, immediate callers, shared utilities.
+If unsure why existing code is structured a certain way, ask.
+
+## Rule 9 — Tests verify intent, not just behavior
+Tests must encode WHY behavior matters, not just WHAT it does.
+A test that can't fail when business logic changes is wrong.
+
+## Rule 10 — Checkpoint after every significant step
+Summarize what was done, what's verified, what's left.
+Don't continue from a state you can't describe back.
+
+## Rule 11 — Match the codebase's conventions, even if you disagree
+Conformance > taste inside the codebase.
+If you think a convention is harmful, surface it. Don't fork silently.
+
+## Rule 12 — Fail loud
+"Completed" is wrong if anything was skipped silently.
+"Tests pass" is wrong if any were skipped.
+Default to surfacing uncertainty, not hiding it.
+
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Repository contents
@@ -165,6 +219,7 @@ iOS Safari evicts IndexedDB aggressively after inactivity or storage pressure. T
 - The seed is loaded by the CLI from a small candidate list: `cli/seeds/rewritable.html` (the in-package copy that prepublish creates) preferred; `seeds/rewritable.html` (canonical, dev mode) as fallback. Don't add more candidates without thinking about how the search semantics interact with `npm publish`.
 - The CLI mirrors three pieces of bootstrap-side logic: `escapeTL` (the template-literal escape), the INLINE_DOC backtick-walk, and the DOC_UUID substitution regex. If any of those change in `seeds/rewritable.html`, mirror the change in `cli/src/seed.mjs`.
 - Product-kind machinery (added 2026-05-18 across R9-minimal, v0.1.1, R1, and R3-scoped). `rwa new --kind <name>` substitutes six regions in the seed at emit time via `kindOverrides(kind)` in `cli/src/seed.mjs`: (1) `INLINE_DOC` body, (2) the `LENS_PLACEHOLDER` const, (3) the `LEGACY_PAL_PLACEHOLDER` const, (4) the `PRODUCT HEADER` comment block, (5) the `PRODUCT_KIND` const (audit R1 — selects the active entry in `SYSTEM_PROMPTS`), (6) the `LENS_CLICK_TO_ANCHOR` boolean (audit R3 scoped — false for kinds where every block is anchorable, e.g. workflow). Known kinds: `document` (default), `workflow`. Adding a kind = one entry in `KIND_TABLE` (`cli/src/seed.mjs`) carrying body/lens/pal/header/kind/clickToAnchor values, plus a new entry in the seed's `SYSTEM_PROMPTS` registry (per-kind framing), plus a line in `cli/README.md` and the help text in `cli/bin/rwa.mjs`. Substitution regexes anchor on stable const declarations and marker pairs; `applySeedSubs` enforces exactly-one match per region so a seed-side rename can't silently no-op.
+- Workflow v0.3 — iteration tightening (added 2026-05-19, n8n-inspired pin / dirty / test-step). `KIND_WORKFLOW_BODY`'s frozen runner block carries three per-step affordances exposed via three `<li class="rwa-step">` data attributes: `data-pinned-output` (JSON; runner short-circuits `run()` and threads this value forward), `data-last-output` (JSON; cached for the per-step ▶ Test button), `data-last-run-hash` (8-char FNV-1a hex of `stepBody + prevHash` at last successful run; mismatch ⇒ `.stale` class on render). The pin gesture (📌) commits via `runtime.applyEnvelope` and snapshots the live `<li>`'s runner attrs so the audit-log commit preserves them across the IDB replay. The test gesture (▶) runs JUST that step against the upstream's cached/pinned value — no whole-workflow run. All state lives inside `INLINE_DOC`, so ⌘S preserves it; the agent's `apply_edits` envelopes must preserve these three attributes verbatim (system prompt rule). Conformance scenarios: `benchmark/scenarios/conformance/workflow-{03,04,05}.mjs`. Plan + rationale at `docs/plans/2026-05-19-workflow-v0.3-iteration-tightening.md`.
 - `rwa import` ordering: apply seed-level substitutions (DOC_UUID/title/FILE) on the pristine seed first, *then* drop the imported content into INLINE_DOC. Doing it in the other order causes the `DOC_UUID` substitution to falsely match content the user imported (e.g. when importing another rwa file).
 - HTML import keeps `<script>` tags intentionally (rwa documents can be interactive per the spec) and prints a stderr `note:` warning. Don't strip them silently.
 

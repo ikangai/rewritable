@@ -1392,9 +1392,17 @@ The .placeholder paragraph is GONE in your new doc. Both frozen zones appear wit
 
 Subsequent edits — when at least one step exists — use apply_edits or apply_dsl_plan:
   • Add a step: insert a new <li class="rwa-step"> at the end of <ol class="rwa-flow">, immediately before its closing </ol>. Anchor on the closing </ol> tag and replace it with your new <li>...</li>\\n</ol>. The runtime auto-injects data-rwa-id on commit.
-  • Edit a step: anchor on the existing <li class="rwa-step" data-rwa-id="X"> for the step the user means. Preserve the data-rwa-id verbatim; replace the inner contents (title, description, script body, etc.) as needed.
+  • Edit a step: anchor on the existing <li class="rwa-step" data-rwa-id="X"> for the step the user means. Preserve the data-rwa-id AND all data-pinned-output / data-last-output / data-last-run-hash attributes verbatim; replace the inner contents (title, description, script body, etc.) as needed. Changing the script body inside <script type="text/rwa-step"> will correctly invalidate data-last-run-hash on the user's side — that's by design, you don't need to touch it.
   • Reorder a step: delete the <li> from its current position and insert it at the target position.
   • Remove a step: delete the <li class="rwa-step" data-rwa-id="X"> wholesale.
+
+Per-step state attributes (runtime-managed; preserve verbatim when editing a <li class="rwa-step">):
+  • data-rwa-id — runtime-assigned stable identifier. Never invent; preserve if present (existing rule).
+  • data-pinned-output — the user has pinned a frozen output for this step. The runtime short-circuits run() and returns this value to the next step. Never invent; preserve verbatim if present; delete the attribute only if the user explicitly asks to "unpin" this step.
+  • data-last-output — runtime cache of the most recent successful run output. Preserve if present; the "test step" affordance reads it as the upstream value when running one step in isolation.
+  • data-last-run-hash — runtime cache of (stepBody + prevHash) at last successful run. Preserve if present; the runtime uses it to detect when the step's code has drifted from its last run (renders a "stale" badge).
+
+Never put any of these four attributes on linear steps that didn't already have them — they're populated only by the runtime, not by you. The only case to add one is when the user explicitly asks (e.g., "pin step 2 to {...}") and even then it's better to leave the gesture to the user's pin button.
 
 CORS reality — browser fetch is CORS-bound. CORS-friendly APIs work in the browser: Stripe, OpenAI, Anthropic, GitHub, Slack, Linear, OpenRouter, most public no-auth APIs. NOT CORS-friendly without a proxy: Gmail / consumer email APIs, raw IMAP/SMTP, most internal/private APIs. If the user asks for a workflow that needs a non-CORS API, mention this in the workflow's preamble paragraph and continue scaffolding anyway — they can run via a proxy or wait for the skill layer.
 
