@@ -242,11 +242,63 @@ const KIND_WORKFLOW_BODY = `<!-- rwa:frozen:begin wf-style -->
     var sc = li.querySelector('script[type="text/rwa-step"]');
     return sc ? sc.textContent : '';
   }
+  // v0.8: recursive structural fingerprint for staleness on containers.
+  // For leaves: just the script body. For foreach: 'foreach:' + the join
+  // of inner-node fingerprints. For parallel: 'parallel:' + each cell's
+  // 'label=fp/F-or-A' joined in DOM order. Adding / removing / reordering
+  // / editing inner nodes shifts the fingerprint; same for toggling
+  // data-allow-failure on a cell.
+  function nodeFingerprint(node) {
+    if (node && node.matches && node.matches('li.rwa-step.rwa-foreach')) {
+      var innerOl = node.querySelector(':scope > ol.rwa-flow');
+      if (!innerOl) return 'foreach:';
+      var inner = Array.from(innerOl.children).filter(function (c) {
+        return c.matches('li.rwa-step, table.rwa-parallel');
+      });
+      return 'foreach:' + inner.map(nodeFingerprint).join('|');
+    }
+    if (node && node.matches && node.matches('table.rwa-parallel')) {
+      var cells = Array.from(node.querySelectorAll(':scope > tbody > tr > td.rwa-step'));
+      return 'parallel:' + cells.map(function (c) {
+        var allow = c.dataset.allowFailure === 'true' ? 'A' : 'F';
+        return (c.dataset.rwaLabel || '?') + '=' + nodeFingerprint(c) + '/' + allow;
+      }).join('|');
+    }
+    // Leaf
+    return stepBodyOf(node);
+  }
+  // v0.8: runner state cache, keyed by data-rwa-id. Mirrors the on-DOM
+  // dataset values so they survive applyEnvelope's re-render (which wipes
+  // any DOM mutations not in the IDB doc). Lost on reload — that's fine:
+  // hashes are tied to a session of running + editing.
+  var SESSION = (window.__rwa_workflow_session = window.__rwa_workflow_session || {
+    lastOutput: new Map(),
+    lastRunHash: new Map(),
+  });
   function cacheOutput(li, value) {
     try {
       var s = JSON.stringify(value);
-      if (s !== undefined) li.dataset.lastOutput = s;
+      if (s !== undefined) {
+        li.dataset.lastOutput = s;
+        if (li.dataset.rwaId) SESSION.lastOutput.set(li.dataset.rwaId, s);
+      }
     } catch (_) { /* not JSON-serializable; skip */ }
+  }
+  function persistLastRunHash(node, hash) {
+    node.dataset.lastRunHash = hash;
+    if (node.dataset.rwaId) SESSION.lastRunHash.set(node.dataset.rwaId, hash);
+  }
+  function restoreSessionState() {
+    document.querySelectorAll('[data-rwa-id]').forEach(function (node) {
+      var id = node.dataset.rwaId;
+      if (!id) return;
+      if (!node.dataset.lastOutput && SESSION.lastOutput.has(id)) {
+        node.dataset.lastOutput = SESSION.lastOutput.get(id);
+      }
+      if (!node.dataset.lastRunHash && SESSION.lastRunHash.has(id)) {
+        node.dataset.lastRunHash = SESSION.lastRunHash.get(id);
+      }
+    });
   }
   function prevHashFor(li, allSteps) {
     var idx = allSteps.indexOf(li);
@@ -257,8 +309,11 @@ const KIND_WORKFLOW_BODY = `<!-- rwa:frozen:begin wf-style -->
     }
     return prevLi.dataset.lastRunHash || 'never';
   }
-  function currentHashFor(li, allSteps) {
-    return hashStr(stepBodyOf(li) + '::' + prevHashFor(li, allSteps));
+  function currentHashFor(node, allSteps) {
+    // v0.8: containers use nodeFingerprint (recursive) instead of just
+    // their script body (which they don't have). Leaves behave identically
+    // since nodeFingerprint of a leaf returns its body.
+    return hashStr(nodeFingerprint(node) + '::' + prevHashFor(node, allSteps));
   }
   function syncBadges(node) {
     // For <li>/<td>: badge lives in the node's <header>. For <table>:
@@ -320,29 +375,27 @@ const KIND_WORKFLOW_BODY = `<!-- rwa:frozen:begin wf-style -->
     });
   }
   function recomputeStaleness() {
-    // v0.4: top-level linear steps get a proper chain; nested leaves
-    // (inside foreach / parallel) and parallel cells use prevHash='init'
-    // since their upstream context isn't represented in the flat list.
-    // v0.5: container nodes are pinnable but not stale-tracked. We still
-    // sync their badges (so the "pinned" chip renders).
-    var topLevelLinear = Array.from(
-      document.querySelectorAll('article.rwa-workflow > ol.rwa-flow > li.rwa-step:not(.rwa-foreach)')
+    // v0.4: top-level linear steps get a proper chain.
+    // v0.8: containers (foreach, parallel) also get hashes via
+    // nodeFingerprint. Top-level chain includes both leaves and containers.
+    // Nested nodes (inside foreach body or parallel cells) use prevHash='init'.
+    var topLevelChain = Array.from(
+      document.querySelectorAll('article.rwa-workflow > ol.rwa-flow > li.rwa-step, article.rwa-workflow > ol.rwa-flow > table.rwa-parallel')
     );
-    var allLeaves = Array.from(document.querySelectorAll('li.rwa-step:not(.rwa-foreach), td.rwa-step'));
-    allLeaves.forEach(function (node) {
+    var allNodes = Array.from(document.querySelectorAll('li.rwa-step, td.rwa-step, table.rwa-parallel'));
+    allNodes.forEach(function (node) {
       var stored = node.dataset.lastRunHash;
       if (!stored) { node.classList.remove('stale'); syncBadges(node); return; }
       var current;
-      if (topLevelLinear.indexOf(node) >= 0) {
-        current = currentHashFor(node, topLevelLinear);
+      if (topLevelChain.indexOf(node) >= 0) {
+        current = currentHashFor(node, topLevelChain);
       } else {
-        current = hashStr(stepBodyOf(node) + '::init');
+        current = hashStr(nodeFingerprint(node) + '::init');
       }
       if (stored !== current) node.classList.add('stale');
       else node.classList.remove('stale');
       syncBadges(node);
     });
-    document.querySelectorAll('li.rwa-step.rwa-foreach, table.rwa-parallel').forEach(syncBadges);
   }
 
   var ctx = {
@@ -440,17 +493,16 @@ const KIND_WORKFLOW_BODY = `<!-- rwa:frozen:begin wf-style -->
         || node.querySelector('output.rwa-step-output');
       if (out) out.textContent = renderOutput(result);
       cacheOutput(node, result);
-      // Hash chain. v0.4: full chain only for top-level linear steps;
-      // nested leaves (inside a foreach iteration or a parallel cell)
-      // use prevHash='init' since their upstream context isn't stable
-      // across renders. This is documented as best-effort in the spec.
-      var topLevelLinear = Array.from(
-        document.querySelectorAll('article.rwa-workflow > ol.rwa-flow > li.rwa-step:not(.rwa-foreach)')
+      // Hash chain. v0.4: top-level linear steps get full chain; nested
+      // leaves (inside foreach / parallel cell) use prevHash='init'.
+      // v0.8: chain includes foreach + parallel containers as siblings.
+      var topLevelChain = Array.from(
+        document.querySelectorAll('article.rwa-workflow > ol.rwa-flow > li.rwa-step, article.rwa-workflow > ol.rwa-flow > table.rwa-parallel')
       );
-      if (topLevelLinear.indexOf(node) >= 0) {
-        node.dataset.lastRunHash = currentHashFor(node, topLevelLinear);
+      if (topLevelChain.indexOf(node) >= 0) {
+        persistLastRunHash(node, currentHashFor(node, topLevelChain));
       } else {
-        node.dataset.lastRunHash = hashStr(stepBodyOf(node) + '::init');
+        persistLastRunHash(node, hashStr(nodeFingerprint(node) + '::init'));
       }
       node.classList.remove('stale');
       return result;
@@ -516,9 +568,18 @@ const KIND_WORKFLOW_BODY = `<!-- rwa:frozen:begin wf-style -->
       node.classList.add('done');
       var outF = node.querySelector(':scope > output.rwa-step-output');
       if (outF) outF.textContent = renderOutput(perIter);
-      // Cache for test-step's upstream lookup. Containers don't get pin/dirty
-      // affordances in v0.4 but they do cache so downstream tests can read.
       cacheOutput(node, perIter);
+      // v0.8: write data-last-run-hash on the container for stale tracking.
+      // Use top-level chain if applicable; nested containers fall back to 'init'.
+      var topLevelFE = Array.from(
+        document.querySelectorAll('article.rwa-workflow > ol.rwa-flow > li.rwa-step, article.rwa-workflow > ol.rwa-flow > table.rwa-parallel')
+      );
+      if (topLevelFE.indexOf(node) >= 0) {
+        persistLastRunHash(node, currentHashFor(node, topLevelFE));
+      } else {
+        persistLastRunHash(node, hashStr(nodeFingerprint(node) + '::init'));
+      }
+      node.classList.remove('stale');
       return perIter;
     } catch (e) {
       node.classList.remove('running');
@@ -575,6 +636,16 @@ const KIND_WORKFLOW_BODY = `<!-- rwa:frozen:begin wf-style -->
       node.classList.remove('running');
       node.classList.add('done');
       cacheOutput(node, obj);
+      // v0.8: write data-last-run-hash on the parallel container for stale tracking.
+      var topLevelP = Array.from(
+        document.querySelectorAll('article.rwa-workflow > ol.rwa-flow > li.rwa-step, article.rwa-workflow > ol.rwa-flow > table.rwa-parallel')
+      );
+      if (topLevelP.indexOf(node) >= 0) {
+        persistLastRunHash(node, currentHashFor(node, topLevelP));
+      } else {
+        persistLastRunHash(node, hashStr(nodeFingerprint(node) + '::init'));
+      }
+      node.classList.remove('stale');
       return obj;
     } catch (e) {
       node.classList.remove('running');
@@ -906,12 +977,12 @@ const KIND_WORKFLOW_BODY = `<!-- rwa:frozen:begin wf-style -->
       cacheOutput(node, result);
       // Hash chain — see runLeaf for the top-level vs nested branch.
       var topLevelLinear = Array.from(
-        document.querySelectorAll('article.rwa-workflow > ol.rwa-flow > li.rwa-step:not(.rwa-foreach)')
+        document.querySelectorAll('article.rwa-workflow > ol.rwa-flow > li.rwa-step, article.rwa-workflow > ol.rwa-flow > table.rwa-parallel')
       );
       if (topLevelLinear.indexOf(node) >= 0) {
-        node.dataset.lastRunHash = currentHashFor(node, topLevelLinear);
+        persistLastRunHash(node, currentHashFor(node, topLevelLinear));
       } else {
-        node.dataset.lastRunHash = hashStr(stepBodyOf(node) + '::init');
+        persistLastRunHash(node, hashStr(nodeFingerprint(node) + '::init'));
       }
       recomputeStaleness();
       refreshPinButtonStates();
@@ -1037,6 +1108,12 @@ const KIND_WORKFLOW_BODY = `<!-- rwa:frozen:begin wf-style -->
   }
 
   function attachGestures() {
+    // v0.8: restore runner state from the session-state cache before
+    // anything else. applyEnvelope-driven re-renders wipe data-last-output
+    // and data-last-run-hash from the DOM (they live in live mutations,
+    // not IDB); the cache survives renders so stale detection still works
+    // after an edit lands.
+    restoreSessionState();
     syncPinnedClasses();
     // Drag-reorder: top-level <li.rwa-step> only (v0.4 doesn't reorder
     // inside foreach bodies or across parallel cells).

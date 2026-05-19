@@ -2,7 +2,7 @@
 
 ## Status
 
-Version 0.7 (current). Defines the HTML shape and execution semantics
+Version 0.8 (current). Defines the HTML shape and execution semantics
 of the **workflow** product type. The workflow product lives at the
 substrate layer (per `docs/specs/rwa-product-types.md`); this spec is
 layered on top of the substrate spec (`re-write-able-spec.md`) and
@@ -266,7 +266,7 @@ remains leaf-only (see §5.1); pin and last-output cache work on both.
 | `data-allow-failure` | `"true"` | author / agent | parallel cells only | opt-in containment (§3.3). Cell's rejection becomes `{__error, __code}` in the output object; sibling cells and downstream continue |
 | `data-pinned-output` | JSON string | user gesture | leaves AND containers | runner short-circuits the node's execution and returns the parsed value as if the node had completed normally |
 | `data-last-output` | JSON string | runner | leaves AND containers | cache of the most recent successful run's return value |
-| `data-last-run-hash` | 8-char hex | runner | leaves only | FNV-1a hash of `stepBody + '::' + prevHash` at last successful run; mismatch ⇒ runner marks node `.stale`. Not set on containers — see §5.1 |
+| `data-last-run-hash` | 8-char hex | runner | leaves AND containers | FNV-1a hash of `nodeFingerprint + '::' + prevHash` at last successful run; mismatch ⇒ runner marks node `.stale`. For leaves the fingerprint is the script body; for foreach it's `foreach:` + the join of inner-node fingerprints (recursive); for parallel it's `parallel:` + each cell's `label=fingerprint/F-or-A` (A = `data-allow-failure="true"`) joined in DOM order. Container staleness shipped in v0.8 |
 
 **Preserve verbatim:** Agents editing the workflow via `apply_edits`
 or `apply_dsl_plan` MUST preserve all five attributes when editing
@@ -290,12 +290,14 @@ the runner to skip the container's execution entirely:
 Pinning a container with a malformed value throws
 `pinned_value_invalid_json` exactly like a leaf.
 
-**Staleness for containers is not tracked in v0.5.** Edits to the
-container's body (changing an inner step's script, swapping a
-parallel cell, etc.) do NOT mark the container `.stale`. The
-runtime cannot detect this without a recursive structural
-fingerprint, which is a v0.6 candidate. Users who pin a container
-must manually unpin to re-run after edits.
+**Staleness for containers** (v0.8). The runner computes a
+recursive fingerprint of the container's body and compares it to
+`data-last-run-hash` at every render — exactly like leaf staleness.
+Editing any inner step's script, adding / removing / reordering
+inner nodes, or toggling a cell's `data-allow-failure` flips the
+container to `.stale`. A pinned-and-stale container shows both
+chips: the pinned value is still used downstream, but the user
+sees that the body has drifted.
 
 **Pin precedence:** When a container is pinned, the pins on its
 descendants never run — the container short-circuits before reaching
@@ -349,7 +351,7 @@ A conformant runner implementation MUST:
 The reference implementation lives in the frozen runner block at
 the bottom of `KIND_WORKFLOW_BODY` in `cli/src/seed.mjs`.
 
-## 8. Non-goals (deferred to v0.8+)
+## 8. Non-goals (deferred to v0.9+)
 
 - Multi-row parallel tables (each column its own internal pipeline
   meeting at row boundaries).
@@ -359,15 +361,13 @@ the bottom of `KIND_WORKFLOW_BODY` in `cli/src/seed.mjs`.
   step body.
 - Dynamic parallelism (spawning N parallel branches based on a
   runtime value). Use a foreach for this pattern.
-- Container-level dirty/stale tracking (a foreach or parallel
-  pinned to a value whose body has been edited shows no warning;
-  user must manually unpin to see code drift).
 - `ctx.iter.parent` chain for outer-iteration access.
 - `ctx.signal`, `ctx.log`, `ctx.shared`.
 
 (Container-level **pin** shipped in v0.5 — see §5.1. Per-cell
 **`data-allow-failure`** shipped in v0.6 — see §3.3. Container-level
-**test-step** shipped in v0.7 — runner contract §7.)
+**test-step** shipped in v0.7 — runner contract §7. Container-level
+**dirty/stale tracking** shipped in v0.8 — see §5.1.)
 
 ## 9. Composition example
 
@@ -445,6 +445,13 @@ Reading the structure top-to-bottom:
    per repo.
 
 ---
+
+Spec version 0.8 — adds container dirty/stale tracking (§5.1, §5
+attributes table). Recursive structural fingerprint: edits to inner
+step bodies or to a container's shape now flip the container to
+`.stale` exactly like leaves. Pinned-and-stale shows both chips.
+Multi-row parallel, inter-cell comms, structural branching, and
+dynamic parallelism remain deferred to v0.9+.
 
 Spec version 0.7 — adds container-level test-step (§7). The ▶ button
 on a foreach card or parallel table runs that container against its
