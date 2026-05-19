@@ -332,6 +332,93 @@ test('codeName has no synthetic fallback — all CliError codes are in 0-4 range
   }
 });
 
+test('instruction path — system prompt is not rules-duplicated (regression: C1)', async () => {
+  // C1: SYSTEM_PROMPTS[kind] in seeds/rewritable.html already interpolates
+  // ${SYSTEM_PROMPT_RULES} internally (seed lines 1369-1370 and 1481). The
+  // dispatcher previously concatenated SYSTEM_PROMPT_RULES again, duplicating
+  // ~4.5KB on every request. This regression test confirms the rules block
+  // appears exactly once in the system prompt the backend receives.
+  const dir = mkdtempSync(join(tmpdir(), 'rwa-disp-'));
+  const path = join(dir, 'x.html');
+  await runRwa(['new', path]);
+  const { baseUrl, stop, requests } = await startMockBackend([{
+    tool_calls: [{
+      id: 'c1', type: 'function',
+      function: {
+        name: 'apply_edits',
+        arguments: JSON.stringify({
+          version: 'rwa-edit/1',
+          edits: [{ find: '<article', replace: '<article data-x="1"' }],
+        }),
+      },
+    }],
+  }]);
+  try {
+    const { code } = await runRwa(
+      ['edit', path, 'do thing', '--backend', 'openrouter', '--base-url', baseUrl, '--api-key', 'test'],
+      { env: cleanEnv() },
+    );
+    assert.equal(code, 0);
+    assert.equal(requests[0].messages[0].role, 'system');
+    const systemContent = requests[0].messages[0].content;
+
+    // Load the actual SYSTEM_PROMPT_RULES bytes from the seed via the same
+    // extractor the dispatcher uses, then count occurrences in the wire
+    // system prompt. Using the first ~80 bytes as a marker is robust against
+    // any single-line repetition inside the rules text.
+    const { extractFromSeed } = await import('../src/seed-extract.mjs');
+    const seedPath = join(__dirname, '..', '..', 'seeds', 'rewritable.html');
+    const seedText = readFileSync(seedPath, 'utf8');
+    const { SYSTEM_PROMPT_RULES } = extractFromSeed(seedText);
+    const marker = SYSTEM_PROMPT_RULES.slice(0, 80);
+    const occurrences = systemContent.split(marker).length - 1;
+    assert.equal(
+      occurrences, 1,
+      `SYSTEM_PROMPT_RULES marker should appear exactly once in system prompt, found ${occurrences}`,
+    );
+  } finally {
+    await stop();
+    rmSync(dir, { recursive: true });
+  }
+});
+
+test('flag parsing — --api-key with another flag as value errors with usage_error/missing_flag_value (I1)', async () => {
+  // I1: previously, `--api-key --json` would set apiKey = '--json' and
+  // jsonMode = true, sending `Authorization: Bearer --json` to OpenRouter.
+  // The fix: getFlag returns {present, value} and resolveFlag rejects
+  // values that start with `-` (treating them as another flag).
+  const dir = mkdtempSync(join(tmpdir(), 'rwa-disp-'));
+  const path = join(dir, 'x.html');
+  await runRwa(['new', path]);
+  try {
+    const { code, stderr } = await runRwa(
+      ['edit', path, 'instr', '--api-key', '--json'],
+      { env: cleanEnv() },
+    );
+    assert.equal(code, 1);
+    assert.match(stderr, /missing_flag_value/);
+    assert.match(stderr, /--api-key/);
+  } finally { rmSync(dir, { recursive: true }); }
+});
+
+test('flag parsing — --backend with no following value errors (I2)', async () => {
+  // I2: `--backend` as the last token previously left backendName undefined,
+  // which silently fell back to env or default. The fix surfaces this as
+  // usage_error/missing_flag_value at exit code 1.
+  const dir = mkdtempSync(join(tmpdir(), 'rwa-disp-'));
+  const path = join(dir, 'x.html');
+  await runRwa(['new', path]);
+  try {
+    const { code, stderr } = await runRwa(
+      ['edit', path, 'instr', '--backend'],
+      { env: cleanEnv() },
+    );
+    assert.equal(code, 1);
+    assert.match(stderr, /missing_flag_value/);
+    assert.match(stderr, /--backend/);
+  } finally { rmSync(dir, { recursive: true }); }
+});
+
 test('--plan <file> takes precedence over piped stdin (I3 documented behavior)', async () => {
   // I3: when --plan <file> is set, piped stdin is intentionally ignored.
   // A missing plan file must surface as `plan_not_found` (file_error / exit 2),

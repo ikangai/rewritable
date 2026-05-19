@@ -119,15 +119,34 @@ function codeName(n) {
   }
 }
 
-// Generic single-value flag extractor: `getFlag('--foo', rest)` returns the
-// value following `--foo` in rest, or undefined if absent. Returns undefined
-// if `--foo` is the last token (caller can choose to error on that).
+// Generic single-value flag extractor. Returns `{present, value}` so callers
+// can distinguish "flag absent" (use env / default) from "flag present with a
+// bad value" (must surface usage_error). A bad value is either missing (flag
+// is the last token) or another flag (starts with `-`). Silently falling back
+// to env in the bad-value case lets typos like `--api-key --json` route
+// `--json` into the Authorization header — fail loud instead (Rule 12).
 function getFlag(name, rest) {
   const i = rest.indexOf(name);
-  if (i < 0) return undefined;
-  const v = rest[i + 1];
-  if (v === undefined) return undefined;
-  return v;
+  if (i < 0) return { present: false };
+  const value = rest[i + 1];
+  return { present: true, value };
+}
+
+// Validate a flag returned by getFlag. If present-with-bad-value, emit
+// usage_error/missing_flag_value and signal the caller to bail. Returns the
+// usable string when present-and-good, or undefined when absent (caller
+// resolves via env / default chain).
+function resolveFlag(flagResult, name, jsonMode) {
+  if (!flagResult.present) return { ok: true, value: undefined };
+  const v = flagResult.value;
+  if (v === undefined || v.startsWith('-')) {
+    emitEdit(
+      { code: 'usage_error', subcode: 'missing_flag_value', details: { flag: name } },
+      jsonMode,
+    );
+    return { ok: false };
+  }
+  return { ok: true, value: v };
 }
 
 // Default base URLs per backend — mirrors seeds/rewritable.html
@@ -257,10 +276,25 @@ function detectProductKind(fileText) {
         // The default model id matches the seed (seeds/rewritable.html
         // const RWA.MODEL) so first-paint behavior is consistent across CLI
         // and browser surfaces.
-        const backendName = getFlag('--backend', rest) || process.env.RWA_BACKEND || 'openrouter';
-        const modelId     = getFlag('--model',   rest) || process.env.RWA_MODEL   || 'google/gemini-3-flash-preview';
-        const baseUrl     = getFlag('--base-url', rest) || envBaseUrl(backendName);
-        const apiKey      = getFlag('--api-key',  rest) || envApiKey(backendName);
+        //
+        // Each flag is validated explicitly: present-with-bad-value (e.g.
+        // `--api-key --json` or `--backend` with no following token) errors
+        // with usage_error/missing_flag_value rather than silently falling
+        // back to env (which would, e.g., route `--json` into the
+        // Authorization header). Absent flags resolve via env / default.
+        const backendFlag  = resolveFlag(getFlag('--backend',  rest), '--backend',  jsonMode);
+        if (!backendFlag.ok)  { process.exitCode = 1; return; }
+        const modelFlag    = resolveFlag(getFlag('--model',    rest), '--model',    jsonMode);
+        if (!modelFlag.ok)    { process.exitCode = 1; return; }
+        const baseUrlFlag  = resolveFlag(getFlag('--base-url', rest), '--base-url', jsonMode);
+        if (!baseUrlFlag.ok)  { process.exitCode = 1; return; }
+        const apiKeyFlag   = resolveFlag(getFlag('--api-key',  rest), '--api-key',  jsonMode);
+        if (!apiKeyFlag.ok)   { process.exitCode = 1; return; }
+
+        const backendName = backendFlag.value || process.env.RWA_BACKEND || 'openrouter';
+        const modelId     = modelFlag.value   || process.env.RWA_MODEL   || 'google/gemini-3-flash-preview';
+        const baseUrl     = baseUrlFlag.value || envBaseUrl(backendName);
+        const apiKey      = apiKeyFlag.value  || envApiKey(backendName);
 
         // Reject unknown backends fast. `bridge` is browser-only by design
         // (single-shot via web_cli_bridge); the CLI has no equivalent.
@@ -308,16 +342,18 @@ function detectProductKind(fileText) {
         // kinds both fall through to the 'document' entry below.
         const productKind = detectProductKind(fileText) || 'document';
 
-        // Load the seed and extract SYSTEM_PROMPTS / SYSTEM_PROMPT_RULES /
-        // TOOL_SCHEMAS — same in-package-first lookup `rwa new` uses.
+        // Load the seed and extract SYSTEM_PROMPTS / TOOL_SCHEMAS — same
+        // in-package-first lookup `rwa new` uses. Per-kind SYSTEM_PROMPTS
+        // entries already interpolate ${SYSTEM_PROMPT_RULES} internally
+        // (see seeds/rewritable.html lines 1369-1370 and 1481), so we use
+        // the resolved string verbatim — concatenating SYSTEM_PROMPT_RULES
+        // again would duplicate ~4.5KB on every request.
         const { loadSeed } = await import('../src/seed.mjs');
         const { SEED_CANDIDATES } = await import('../src/commands.mjs');
         const seedText = await loadSeed(SEED_CANDIDATES);
         const { extractFromSeed } = await import('../src/seed-extract.mjs');
-        const { SYSTEM_PROMPTS, SYSTEM_PROMPT_RULES, TOOL_SCHEMAS } = extractFromSeed(seedText);
-        const systemPrompt =
-          (SYSTEM_PROMPTS[productKind] || SYSTEM_PROMPTS.document) +
-          '\n\n' + SYSTEM_PROMPT_RULES;
+        const { SYSTEM_PROMPTS, TOOL_SCHEMAS } = extractFromSeed(seedText);
+        const systemPrompt = SYSTEM_PROMPTS[productKind] || SYSTEM_PROMPTS.document;
 
         // Compute marker-form frozen-zone names from the CURRENT doc so the
         // model sees the same list the apply-edits guard will enforce.
