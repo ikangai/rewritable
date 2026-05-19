@@ -21,6 +21,10 @@ rwa new my-notes.html       # → ./my-notes.html
 
 rwa import notes.md         # → ./notes.html
 rwa import page.html out.html
+
+rwa edit notes.html "Add a section on testing"      # instruction → agent loop
+echo '{"tool":"apply_edits", ...}' | rwa edit notes.html
+rwa edit notes.html --plan plan.json                # envelope from a file
 ```
 
 ### `rwa new`
@@ -45,6 +49,42 @@ Embeds the input file's content as the document's initial state. Supported forma
 
 Output defaults to `<input-basename>.html` in the input's directory. Conversion is deterministic and offline — no API key, no network.
 
+### `rwa edit <path> [instruction]`
+
+Programmatic edit entry point. Applies an `rwa-edit/1` tool envelope (`apply_edits`, `apply_dsl_plan`, or `replace_document`) to an existing rwa container in place. Three invocation forms:
+
+```sh
+# 1. Instruction path — run the agent loop, apply the resulting envelope.
+rwa edit notes.html "Add a section on testing"
+
+# 2. Piped envelope — read a tool envelope as JSON from stdin.
+echo '{"tool":"apply_edits","args":{"version":"rwa-edit/1","edits":[{"find":"old","replace":"new"}]}}' \
+  | rwa edit notes.html
+
+# 3. --plan <file> — read the envelope from a file. Use `--plan -` to force stdin.
+rwa edit notes.html --plan plan.json
+```
+
+All three paths funnel through the same `applyPlan` splice/write code path: extract `INLINE_DOC`, apply the edit (with frozen-zone + reserved-marker + structural-shape checks), and atomic-rename the file in place.
+
+The agent loop drives a multi-turn tool-use conversation with up to 3 retry attempts on `find_not_found`, `find_not_unique`, `frozen_zone_violation`, `structural_shape_changed`, `dsl_compile_error`, or malformed envelopes. After exhaustion the failure surfaces with `agent_error/no_envelope_after_retries`.
+
+#### Backend flags (instruction path only)
+
+| Flag | Effect |
+|---|---|
+| `--backend <name>` | `openrouter` (default), `ollama`, `lmstudio`. Falls back to `$RWA_BACKEND`. `bridge` is browser-only by design. |
+| `--model <id>` | model id passed to the backend. Falls back to `$RWA_MODEL`, then `google/gemini-3-flash-preview`. |
+| `--base-url <url>` | OpenAI-compatible base URL override. Defaults: `https://openrouter.ai/api/v1`, `http://localhost:11434/v1` (or `$RWA_OLLAMA_URL`), `http://localhost:1234/v1` (or `$RWA_LMSTUDIO_URL`). |
+| `--api-key <key>` | openrouter only; falls back to `$RWA_OPENROUTER_KEY`. ollama / lmstudio run locally without auth. |
+
+#### Other edit flags
+
+| Flag | Effect |
+|---|---|
+| `--plan <file>` | read the tool envelope from a file (or `--plan -` for explicit stdin). |
+| `--json` | emit one JSON object per line on stderr for structured failure / retry reporting. Each line is `{code, subcode, details}` (or `{phase:"retry", attempt, reason}` during agent retries). |
+
 ### Flags
 
 | Flag | Effect |
@@ -57,9 +97,15 @@ Output defaults to `<input-basename>.html` in the input's directory. Conversion 
 
 ### Exit codes
 
-- `0` — success
-- `1` — generic error (read failure, bad seed, etc.)
-- `2` — bad arguments / unsupported format / destination conflict
+| Code | Name | Meaning |
+|---|---|---|
+| `0` | success | edit applied / file written |
+| `1` | usage_error | bad arguments, missing input, unknown backend, conflicting input sources |
+| `2` | file_error | target not found, read/write failure, not a rewritable container |
+| `3` | envelope_error | malformed JSON, unknown tool, version mismatch, missing required fields |
+| `4` | agent_error | `apply_edits`/DSL/`replace_document` rejected (frozen-zone violation, find_not_found, etc.); agent loop exhausted retries; backend error; missing API key |
+
+Exit codes 1–4 are emitted by `rwa edit` and are stable. Other verbs (`new`, `import`) use `0`/`1`/`2` only — `2` for argument or format issues, `1` for everything else. The `--json` flag (edit only) turns every stderr line into a single-line JSON object suitable for piping into a structured log or wrapper script.
 
 ## Design
 

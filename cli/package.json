@@ -22,6 +22,6 @@
     "pdfjs-dist": "5.4.149"
   },
   "scripts": {
-    "prepublishOnly": "mkdir -p seeds && cp ../seeds/rewritable.html seeds/rewritable.html && cp ../benchmark/oracles/dsl-compiler.mjs src/dsl-compiler.mjs && cmp ../benchmark/oracles/dsl-compiler.mjs src/dsl-compiler.mjs"
+    "prepublishOnly": "mkdir -p seeds && cp ../seeds/rewritable.html seeds/rewritable.html && cmp ../benchmark/oracles/dsl-compiler.mjs src/dsl-compiler.mjs && cp ../benchmark/oracles/dsl-compiler.mjs src/dsl-compiler.mjs"
   }
 }

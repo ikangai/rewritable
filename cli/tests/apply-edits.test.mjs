@@ -47,6 +47,20 @@ test('containsReservedMarker — false for ordinary content', () => {
   assert.equal(containsReservedMarker('<p>Hello world</p>'), false);
 });
 
+test('containsReservedMarker — detects all comment-prefix forms', () => {
+  // String-concat to keep these literals out of containsReservedMarker's
+  // own scan over the source tree — see apply-edits.mjs RESERVED_MARKERS
+  // for the same trick.
+  const forms = [
+    '<' + '!-- rwa: x',
+    '/*' + ' rwa: x',
+    '//' + ' rwa: x',
+  ];
+  for (const s of forms) {
+    assert.equal(containsReservedMarker(s), true, `should flag: ${s}`);
+  }
+});
+
 // ─── Frozen zones (marker form) ────────────────────────────────────────
 
 test('frozen_zone_violation — edit inside marker-form zone', () => {
@@ -105,7 +119,7 @@ test('apply_edits — preserves existing <script> count', () => {
   assert.equal(result, '<article><script>VAR_Y = 1;</script></article>');
 });
 
-// ─── xfail: attribute-form frozen zone (v1 scope-down) ─────────────────
+// ─── todo: attribute-form frozen zone (v1 scope-down) ──────────────────
 // The seed enforces data-rwa-frozen attribute-form zones via DOMParser
 // snapshots (seeds/rewritable.html dataRwaFrozenSnapshot). Implementing
 // tag-balanced HTML parsing without a parser is significantly more
@@ -113,11 +127,13 @@ test('apply_edits — preserves existing <script> count', () => {
 // (above) already blocks edits that mention `data-rwa-frozen` literally,
 // which is the primary attack surface — but an edit that finds anchors
 // inside an attribute-form frozen element's text would currently apply.
-test('xfail: attribute-form frozen zone NOT enforced in v1 (CLI scope-down)', () => {
+// Marked as todo so it shows up in the run summary as outstanding work
+// (see cli/TODO.md).
+test('attribute-form frozen zone enforcement (v1 scope-down)', { todo: true }, () => {
   const doc = '<article><div data-rwa-frozen><p>locked</p></div></article>';
   // Per spec §7.3 + seed dataRwaFrozenSnapshot, this should throw.
-  // CLI v1 marker-form-only scope: this incorrectly succeeds.
-  const result = applyEdits(doc, [{ find: 'locked', replace: 'unlocked' }]);
-  assert.ok(result.includes('unlocked'),
-    'v1 marker-form-only: attribute-form frozen zone not yet enforced — see report');
+  assert.throws(
+    () => applyEdits(doc, [{ find: 'locked', replace: 'unlocked' }]),
+    err => err.code === 'frozen_zone_violation'
+  );
 });
