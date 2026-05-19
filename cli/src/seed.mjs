@@ -1336,6 +1336,29 @@ export function replaceInlineDoc(seed, newDoc) {
   return seed.slice(0, cs) + escapeTL(newDoc) + seed.slice(i);
 }
 
+// Inverse of replaceInlineDoc — walk the INLINE_DOC backticks and return the
+// body string with escapeTL's substitutions reversed. Pairs with the runtime
+// agent contract: the agent only ever sees the unescaped doc bytes.
+export function extractInlineDoc(seed) {
+  const start = seed.indexOf(INLINE_DOC_MARKER);
+  if (start < 0) throw new Error('cannot locate INLINE_DOC marker in seed');
+  const cs = start + INLINE_DOC_MARKER.length;
+  let i = cs;
+  while (i < seed.length) {
+    if (seed[i] === '\\') { i += 2; continue; }
+    if (seed[i] === '`') break;
+    i++;
+  }
+  if (i >= seed.length) throw new Error('unterminated INLINE_DOC literal in seed');
+  const body = seed.slice(cs, i);
+  // Inverse of escapeTL — order matters (mirror reverse).
+  return body
+    .replace(/<\\\/script/gi, '</script')
+    .replace(/\\\$\{/g, '${')
+    .replace(/\\`/g, '`')
+    .replace(/\\\\/g, '\\');
+}
+
 function escapeHtml(s) {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
