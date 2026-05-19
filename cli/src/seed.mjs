@@ -158,7 +158,10 @@ const KIND_WORKFLOW_BODY = `<!-- rwa:frozen:begin wf-style -->
 .rwa-step.rwa-foreach{border-left:3px dashed var(--gray-400);padding-left:13px;}
 .rwa-step.rwa-foreach > ol.rwa-flow{margin:.5em 0 0;padding-left:0;}
 .rwa-iter-count{display:inline-block;margin-left:6px;padding:1px 6px;font-size:10px;font-weight:500;border-radius:3px;background:var(--gray-700);color:#fff;font-family:var(--font-mono);letter-spacing:.3px;}
-.rwa-parallel{width:100%;border-collapse:separate;border-spacing:8px;margin:.5em 0;}
+.rwa-parallel{width:100%;border-collapse:separate;border-spacing:8px;margin:.5em 0;position:relative;}
+.rwa-parallel.pinned > tbody{outline:2px solid var(--blue);outline-offset:6px;border-radius:6px;}
+.rwa-parallel-caption{caption-side:top;text-align:left;padding:0 0 4px 0;}
+.rwa-foreach.pinned{border-left-color:var(--blue);}
 .rwa-parallel > tbody > tr > td.rwa-step{vertical-align:top;width:1%;min-width:200px;max-width:340px;}
 .rwa-parallel > tbody > tr > td.rwa-step::before{content:attr(data-rwa-label);position:absolute;top:-10px;left:8px;padding:1px 6px;background:var(--gray-100);border:1px solid var(--gray-200);border-radius:3px;font-family:var(--font-mono);font-size:10px;font-weight:500;color:var(--gray-600);text-transform:uppercase;letter-spacing:.4px;}
 @media (max-width:720px){.rwa-parallel,.rwa-parallel>tbody,.rwa-parallel>tbody>tr,.rwa-parallel>tbody>tr>td.rwa-step{display:block;width:auto;max-width:none;}.rwa-parallel>tbody>tr>td.rwa-step{margin:.5em 0;}}
@@ -257,27 +260,40 @@ const KIND_WORKFLOW_BODY = `<!-- rwa:frozen:begin wf-style -->
   function currentHashFor(li, allSteps) {
     return hashStr(stepBodyOf(li) + '::' + prevHashFor(li, allSteps));
   }
-  function syncBadges(li) {
-    var header = li.querySelector(':scope > header');
-    if (!header) return;
-    var existing = header.querySelectorAll(':scope > .rwa-step-badge');
+  function syncBadges(node) {
+    // For <li>/<td>: badge lives in the node's <header>. For <table>:
+    // <header> isn't a valid <table> child; we use a <caption> instead.
+    var host;
+    if (node.tagName === 'TABLE') {
+      host = node.querySelector(':scope > caption.rwa-parallel-caption');
+      if (!host && (node.classList.contains('pinned') || node.classList.contains('stale'))) {
+        host = document.createElement('caption');
+        host.className = 'rwa-parallel-caption';
+        // <caption> must be the first child of <table>
+        node.insertBefore(host, node.firstChild);
+      }
+    } else {
+      host = node.querySelector(':scope > header');
+    }
+    if (!host) return;
+    var existing = host.querySelectorAll(':scope > .rwa-step-badge');
     existing.forEach(function (e) { e.remove(); });
-    if (li.classList.contains('pinned')) {
+    if (node.classList.contains('pinned')) {
       var bP = document.createElement('span');
       bP.className = 'rwa-step-badge rwa-badge-pinned';
       bP.textContent = 'pinned';
-      header.appendChild(bP);
+      host.appendChild(bP);
     }
-    if (li.classList.contains('stale')) {
+    if (node.classList.contains('stale')) {
       var bS = document.createElement('span');
       bS.className = 'rwa-step-badge rwa-badge-stale';
       bS.textContent = 'stale';
-      header.appendChild(bS);
+      host.appendChild(bS);
     }
   }
   function syncPinnedClasses() {
-    // v0.4: covers leaf <li.rwa-step:not(.rwa-foreach)> and <td.rwa-step>.
-    document.querySelectorAll('li.rwa-step:not(.rwa-foreach), td.rwa-step').forEach(function (node) {
+    // v0.5: includes container nodes (foreach <li>, parallel <table>).
+    document.querySelectorAll('li.rwa-step, td.rwa-step, table.rwa-parallel').forEach(function (node) {
       if (node.dataset.pinnedOutput != null) node.classList.add('pinned');
       else node.classList.remove('pinned');
     });
@@ -286,21 +302,29 @@ const KIND_WORKFLOW_BODY = `<!-- rwa:frozen:begin wf-style -->
   // pinned). The attached handler reads current state, so we just keep the
   // disabled attribute and title in sync with dataset.
   function refreshPinButtonStates() {
-    document.querySelectorAll('li.rwa-step:not(.rwa-foreach), td.rwa-step').forEach(function (node) {
+    document.querySelectorAll('li.rwa-step, td.rwa-step, table.rwa-parallel').forEach(function (node) {
       var btn = node.querySelector(':scope > .rwa-step-toolbar > .rwa-pin-btn');
       if (!btn) return;
       var isPinned = node.dataset.pinnedOutput != null;
       var hasCache = node.dataset.lastOutput != null;
-      btn.disabled = !isPinned && !hasCache;
-      btn.title = isPinned
-        ? 'Unpin this step'
-        : (hasCache ? 'Pin this step\\'s output' : 'Run this step first to enable pinning');
+      var isContainer = node.matches('li.rwa-step.rwa-foreach, table.rwa-parallel');
+      var needsId = node.tagName === 'TABLE' && !node.dataset.rwaId;
+      btn.disabled = needsId || (!isPinned && !hasCache);
+      btn.title = needsId
+        ? 'Parallel table needs data-rwa-id to be pinnable'
+        : (isPinned
+            ? 'Unpin'
+            : (hasCache
+                ? (isContainer ? 'Pin this container\\'s output' : 'Pin this step\\'s output')
+                : (isContainer ? 'Run the workflow first to enable pinning' : 'Run this step first to enable pinning')));
     });
   }
   function recomputeStaleness() {
     // v0.4: top-level linear steps get a proper chain; nested leaves
     // (inside foreach / parallel) and parallel cells use prevHash='init'
     // since their upstream context isn't represented in the flat list.
+    // v0.5: container nodes are pinnable but not stale-tracked. We still
+    // sync their badges (so the "pinned" chip renders).
     var topLevelLinear = Array.from(
       document.querySelectorAll('article.rwa-workflow > ol.rwa-flow > li.rwa-step:not(.rwa-foreach)')
     );
@@ -318,6 +342,7 @@ const KIND_WORKFLOW_BODY = `<!-- rwa:frozen:begin wf-style -->
       else node.classList.remove('stale');
       syncBadges(node);
     });
+    document.querySelectorAll('li.rwa-step.rwa-foreach, table.rwa-parallel').forEach(syncBadges);
   }
 
   var ctx = {
@@ -439,6 +464,17 @@ const KIND_WORKFLOW_BODY = `<!-- rwa:frozen:begin wf-style -->
     }
   }
   async function runForeach(node, prev, ctx) {
+    // v0.5: container pin short-circuit. Skip iteration entirely.
+    if (node.dataset.pinnedOutput != null) {
+      var pinned;
+      try { pinned = JSON.parse(node.dataset.pinnedOutput); }
+      catch (_) { throw RwaWorkflowError('pinned_value_invalid_json', 'foreach pinned value is not valid JSON'); }
+      node.classList.add('done');
+      var outFP = node.querySelector(':scope > output.rwa-step-output');
+      if (outFP) outFP.textContent = renderOutput(pinned);
+      cacheOutput(node, pinned);
+      return pinned;
+    }
     if (!Array.isArray(prev)) {
       node.classList.add('failed');
       var outErrFE = node.querySelector(':scope > output.rwa-step-output');
@@ -491,6 +527,15 @@ const KIND_WORKFLOW_BODY = `<!-- rwa:frozen:begin wf-style -->
     }
   }
   async function runParallel(node, prev, ctx) {
+    // v0.5: container pin short-circuit. Skip Promise.all entirely.
+    if (node.dataset.pinnedOutput != null) {
+      var pinnedP;
+      try { pinnedP = JSON.parse(node.dataset.pinnedOutput); }
+      catch (_) { throw RwaWorkflowError('pinned_value_invalid_json', 'parallel pinned value is not valid JSON'); }
+      node.classList.add('done');
+      cacheOutput(node, pinnedP);
+      return pinnedP;
+    }
     var cells = parallelCells(node);
     if (cells.length === 0) {
       throw RwaWorkflowError('parallel_empty', 'parallel block has no <td class="rwa-step"> cells');
@@ -559,15 +604,18 @@ const KIND_WORKFLOW_BODY = `<!-- rwa:frozen:begin wf-style -->
   // and undo stack. ⌘Z reverts them like any other commit.
 
   function findStepInDoc(doc, dataRwaId) {
-    // v0.4: matches <li> OR <td> by data-rwa-id, requiring the class
-    // attribute to contain rwa-step (so foreach containers with
-    // class="rwa-step rwa-foreach" also match for delete/reorder).
+    // v0.4-5: matches <li>, <td>, or <table> by data-rwa-id, requiring
+    // the class attribute to contain rwa-step OR rwa-parallel. Covers:
+    //   • linear step <li class="rwa-step">
+    //   • foreach <li class="rwa-step rwa-foreach"> (matches via rwa-step)
+    //   • parallel cell <td class="rwa-step">
+    //   • parallel container <table class="rwa-parallel"> (v0.5 — pinned via container pin gesture)
     // Runner-managed attributes (data-pinned-output, data-last-output,
     // data-last-run-hash) may appear in any order on the opening tag.
     var idEscaped = dataRwaId.replace(/[.*+?^\${}()|[\\]\\\\]/g, '\\\\$&');
-    var classMatch = '\\\\bclass="(?:[^"]*\\\\s)?rwa-step(?:\\\\s[^"]*)?"';
+    var classMatch = '\\\\bclass="(?:[^"]*\\\\s)?(?:rwa-step|rwa-parallel)(?:\\\\s[^"]*)?"';
     var re = new RegExp(
-      '<(li|td)\\\\b(?=[^>]*\\\\bdata-rwa-id="' + idEscaped + '")(?=[^>]*' + classMatch + ')[^>]*>'
+      '<(li|td|table)\\\\b(?=[^>]*\\\\bdata-rwa-id="' + idEscaped + '")(?=[^>]*' + classMatch + ')[^>]*>'
     );
     var m = re.exec(doc);
     if (!m) return null;
@@ -850,49 +898,62 @@ const KIND_WORKFLOW_BODY = `<!-- rwa:frozen:begin wf-style -->
   // ▶/📌 toolbar on each step. Hover-revealed, sits left of the existing
   // × delete button. Pin button is disabled when there's nothing to pin
   // (no cached output yet and not currently pinned).
-  function attachStepToolbar(li) {
-    if (li.querySelector(':scope > .rwa-step-toolbar')) return;
+  // v0.5: containers (foreach <li>, parallel <table>) get a pin button
+  // but no test button — test-step on containers is deferred to v0.6.
+  function attachStepToolbar(node) {
+    if (node.querySelector(':scope > .rwa-step-toolbar')) return;
+    var isContainer = (node.matches && node.matches('li.rwa-step.rwa-foreach, table.rwa-parallel'));
     var toolbar = document.createElement('span');
     toolbar.className = 'rwa-step-toolbar';
-    var testBtn = document.createElement('button');
-    testBtn.type = 'button';
-    testBtn.className = 'rwa-test-btn';
-    testBtn.title = 'Test this step (uses upstream\\'s cached output)';
-    testBtn.setAttribute('aria-label', 'Test this step');
-    testBtn.textContent = '▶';
-    testBtn.addEventListener('click', function (e) {
-      e.stopPropagation();
-      testStep(li);
-    });
+    if (!isContainer) {
+      var testBtn = document.createElement('button');
+      testBtn.type = 'button';
+      testBtn.className = 'rwa-test-btn';
+      testBtn.title = 'Test this step (uses upstream\\'s cached output)';
+      testBtn.setAttribute('aria-label', 'Test this step');
+      testBtn.textContent = '▶';
+      testBtn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        testStep(node);
+      });
+      toolbar.appendChild(testBtn);
+    }
     var pinBtn = document.createElement('button');
     pinBtn.type = 'button';
     pinBtn.className = 'rwa-pin-btn';
-    var isPinned = li.dataset.pinnedOutput != null;
-    pinBtn.title = isPinned ? 'Unpin this step' : 'Pin this step\\'s output';
-    pinBtn.setAttribute('aria-label', 'Pin or unpin step');
+    var isPinned = node.dataset.pinnedOutput != null;
+    pinBtn.title = isPinned ? 'Unpin' : (isContainer ? 'Pin this container\\'s output' : 'Pin this step\\'s output');
+    pinBtn.setAttribute('aria-label', 'Pin or unpin');
     pinBtn.textContent = '📌';
-    if (!isPinned && li.dataset.lastOutput == null) {
+    if (!isPinned && node.dataset.lastOutput == null) {
       pinBtn.disabled = true;
-      pinBtn.title = 'Run this step first to enable pinning';
+      pinBtn.title = isContainer ? 'Run the workflow first to enable pinning' : 'Run this step first to enable pinning';
+    }
+    // Pin commits via findStepInDoc, which requires data-rwa-id. <table>
+    // isn't in ANCHORABLE_TAGS so the substrate doesn't backfill ids there.
+    // If the table has no id, disable with a clear hint (the author/agent
+    // must include data-rwa-id explicitly; v0.4 spec §2.3 example shows it).
+    if (node.tagName === 'TABLE' && !node.dataset.rwaId) {
+      pinBtn.disabled = true;
+      pinBtn.title = 'Parallel table needs data-rwa-id to be pinnable';
     }
     pinBtn.addEventListener('click', async function (e) {
       e.stopPropagation();
       try {
-        if (li.dataset.pinnedOutput != null) {
-          await setPinnedAttribute(li, null);
+        if (node.dataset.pinnedOutput != null) {
+          await setPinnedAttribute(node, null);
         } else {
-          var cached = li.dataset.lastOutput;
+          var cached = node.dataset.lastOutput;
           if (cached == null) return;
           try { JSON.parse(cached); } catch (_) { return; }
-          await setPinnedAttribute(li, cached);
+          await setPinnedAttribute(node, cached);
         }
       } catch (err) {
         console.error('pin-toggle failed:', err);
       }
     });
-    toolbar.appendChild(testBtn);
     toolbar.appendChild(pinBtn);
-    li.appendChild(toolbar);
+    node.appendChild(toolbar);
   }
 
   function attachGestures() {
@@ -906,8 +967,8 @@ const KIND_WORKFLOW_BODY = `<!-- rwa:frozen:begin wf-style -->
     document.querySelectorAll('li.rwa-step, td.rwa-step').forEach(function (node) {
       attachDeleteButton(node);
     });
-    // Toolbar (▶ test, 📌 pin): leaf nodes only.
-    document.querySelectorAll('li.rwa-step:not(.rwa-foreach), td.rwa-step').forEach(function (node) {
+    // Toolbar: leaves get ▶ test + 📌 pin; containers get just 📌 pin (v0.5).
+    document.querySelectorAll('li.rwa-step:not(.rwa-foreach), td.rwa-step, li.rwa-step.rwa-foreach, table.rwa-parallel').forEach(function (node) {
       attachStepToolbar(node);
     });
     attachInsertButtons();

@@ -2,7 +2,7 @@
 
 ## Status
 
-Version 0.4 (draft). Defines the HTML shape and execution semantics
+Version 0.5 (current). Defines the HTML shape and execution semantics
 of the **workflow** product type. The workflow product lives at the
 substrate layer (per `docs/specs/rwa-product-types.md`); this spec is
 layered on top of the substrate spec (`re-write-able-spec.md`) and
@@ -229,18 +229,19 @@ interface Ctx {
 
 ## 5. Per-step state attributes
 
-Leaf step nodes (linear `<li class="rwa-step">` without `rwa-foreach`,
-and parallel `<td class="rwa-step">`) carry these runtime-managed
-attributes. Container nodes (`rwa-foreach`, `rwa-parallel`) do
-NOT carry them in v0.4.
+Both leaf step nodes (linear `<li class="rwa-step">` without
+`rwa-foreach`, and parallel `<td class="rwa-step">`) AND container
+nodes (`<li class="rwa-step rwa-foreach">`, `<table class="rwa-parallel">`)
+carry these runtime-managed attributes. The dirty / staleness chain
+remains leaf-only (see §5.1); pin and last-output cache work on both.
 
-| Attribute | Type | Set by | Meaning |
-|---|---|---|---|
-| `data-rwa-id` | 8-char | substrate | substrate-assigned stable identifier (per `re-write-able-spec.md` §5.9) |
-| `data-rwa-label` | string | author / agent | required on `<td class="rwa-step">`; must match `^[a-z][a-z0-9_]{0,31}$`; unique within its `<tr>` |
-| `data-pinned-output` | JSON string | user gesture | runner short-circuits `run()` and returns the parsed value |
-| `data-last-output` | JSON string | runner | cache of the most recent successful run's return value |
-| `data-last-run-hash` | 8-char hex | runner | FNV-1a hash of `stepBody + '::' + prevHash` at last successful run; mismatch ⇒ runner marks node `.stale` |
+| Attribute | Type | Set by | Applies to | Meaning |
+|---|---|---|---|---|
+| `data-rwa-id` | 8-char | substrate | all step nodes | substrate-assigned stable identifier (per `re-write-able-spec.md` §5.9) |
+| `data-rwa-label` | string | author / agent | parallel cells only | required on `<td class="rwa-step">`; must match `^[a-z][a-z0-9_]{0,31}$`; unique within its `<tr>` |
+| `data-pinned-output` | JSON string | user gesture | leaves AND containers | runner short-circuits the node's execution and returns the parsed value as if the node had completed normally |
+| `data-last-output` | JSON string | runner | leaves AND containers | cache of the most recent successful run's return value |
+| `data-last-run-hash` | 8-char hex | runner | leaves only | FNV-1a hash of `stepBody + '::' + prevHash` at last successful run; mismatch ⇒ runner marks node `.stale`. Not set on containers — see §5.1 |
 
 **Preserve verbatim:** Agents editing the workflow via `apply_edits`
 or `apply_dsl_plan` MUST preserve all five attributes when editing
@@ -248,9 +249,33 @@ the surrounding node. Substrate-level data-rwa-id preservation rules
 (per `re-write-able-spec.md`) extend to the workflow-managed
 attributes.
 
-**Container pinning deferred:** v0.4 does not support pin/dirty/test
-on container nodes (foreach, parallel table). The user can pin
-individual leaves; container-level pinning is a v0.5 candidate.
+### 5.1 Container pin semantics (v0.5)
+
+A pinned container — `<li class="rwa-step rwa-foreach" data-pinned-output="...">`
+or `<table class="rwa-parallel" data-pinned-output="...">` — causes
+the runner to skip the container's execution entirely:
+
+- Foreach: skips iteration; returns the parsed value as the
+  container's output (which downstream sees as `prev`). Inner
+  steps' `<output>` slots are NOT updated by the pin path (the
+  container short-circuited before reaching them).
+- Parallel: skips `Promise.all`; returns the parsed value as the
+  container's output. Cells' `<output>` slots are NOT updated.
+
+Pinning a container with a malformed value throws
+`pinned_value_invalid_json` exactly like a leaf.
+
+**Staleness for containers is not tracked in v0.5.** Edits to the
+container's body (changing an inner step's script, swapping a
+parallel cell, etc.) do NOT mark the container `.stale`. The
+runtime cannot detect this without a recursive structural
+fingerprint, which is a v0.6 candidate. Users who pin a container
+must manually unpin to re-run after edits.
+
+**Pin precedence:** When a container is pinned, the pins on its
+descendants never run — the container short-circuits before reaching
+them. Their `data-pinned-output` values remain in the document and
+take effect again once the container is unpinned.
 
 ## 6. Error codes
 
@@ -294,7 +319,7 @@ A conformant runner implementation MUST:
 The reference implementation lives in the frozen runner block at
 the bottom of `KIND_WORKFLOW_BODY` in `cli/src/seed.mjs`.
 
-## 8. Non-goals (deferred to v0.5+)
+## 8. Non-goals (deferred to v0.6+)
 
 - Multi-row parallel tables (each column its own internal pipeline
   meeting at row boundaries).
@@ -306,10 +331,15 @@ the bottom of `KIND_WORKFLOW_BODY` in `cli/src/seed.mjs`.
   step body.
 - Dynamic parallelism (spawning N parallel branches based on a
   runtime value). Use a foreach for this pattern.
-- Container-level pin/dirty/test (pinning a foreach or parallel
-  table as a unit).
+- Container-level test-step (running just a foreach or parallel
+  table without re-running the whole pipeline above).
+- Container-level dirty/stale tracking (a foreach or parallel
+  pinned to a value whose body has been edited shows no warning;
+  user must manually unpin to see code drift).
 - `ctx.iter.parent` chain for outer-iteration access.
 - `ctx.signal`, `ctx.log`, `ctx.shared`.
+
+(Container-level **pin** shipped in v0.5 — see §5.1.)
 
 ## 9. Composition example
 
@@ -388,8 +418,11 @@ Reading the structure top-to-bottom:
 
 ---
 
+Spec version 0.5 — adds container-level pin (§5.1). Container
+dirty/stale tracking, container test-step, multi-row parallel,
+per-cell failure containment, inter-cell comms, and dynamic
+parallelism remain deferred to v0.6+.
+
 Spec version 0.4 — initial release. Defines linear / foreach /
 parallel primitives, leaf state attributes, error codes, and the
-runner contract. Multi-row parallel, per-cell failure containment,
-inter-cell comms, container-level pin, and dynamic parallelism are
-all v0.5+.
+runner contract.
