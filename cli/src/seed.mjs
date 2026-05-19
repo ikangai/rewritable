@@ -191,10 +191,14 @@ const KIND_WORKFLOW_BODY = `<!-- rwa:frozen:begin wf-style -->
     var el = document.querySelector('.rwa-run-status');
     if (el) el.textContent = s || '';
   }
+
   function clearStepStates() {
-    document.querySelectorAll('li.rwa-step').forEach(function(li){
-      li.classList.remove('running', 'done', 'failed');
-      var out = li.querySelector('.rwa-step-output');
+    // v0.4: also clears parallel cells and foreach containers.
+    document.querySelectorAll('li.rwa-step, td.rwa-step').forEach(function(node){
+      node.classList.remove('running', 'done', 'failed');
+      // For each step, find its own output slot (immediate child preferred).
+      var out = node.querySelector(':scope > output.rwa-step-output')
+        || node.querySelector('output.rwa-step-output');
       if (out) out.textContent = '';
     });
   }
@@ -264,20 +268,21 @@ const KIND_WORKFLOW_BODY = `<!-- rwa:frozen:begin wf-style -->
     }
   }
   function syncPinnedClasses() {
-    document.querySelectorAll('li.rwa-step').forEach(function (li) {
-      if (li.dataset.pinnedOutput != null) li.classList.add('pinned');
-      else li.classList.remove('pinned');
+    // v0.4: covers leaf <li.rwa-step:not(.rwa-foreach)> and <td.rwa-step>.
+    document.querySelectorAll('li.rwa-step:not(.rwa-foreach), td.rwa-step').forEach(function (node) {
+      if (node.dataset.pinnedOutput != null) node.classList.add('pinned');
+      else node.classList.remove('pinned');
     });
   }
   // Pin button enabled when there's something to pin (cached or already
   // pinned). The attached handler reads current state, so we just keep the
   // disabled attribute and title in sync with dataset.
   function refreshPinButtonStates() {
-    document.querySelectorAll('li.rwa-step').forEach(function (li) {
-      var btn = li.querySelector(':scope > .rwa-step-toolbar > .rwa-pin-btn');
+    document.querySelectorAll('li.rwa-step:not(.rwa-foreach), td.rwa-step').forEach(function (node) {
+      var btn = node.querySelector(':scope > .rwa-step-toolbar > .rwa-pin-btn');
       if (!btn) return;
-      var isPinned = li.dataset.pinnedOutput != null;
-      var hasCache = li.dataset.lastOutput != null;
+      var isPinned = node.dataset.pinnedOutput != null;
+      var hasCache = node.dataset.lastOutput != null;
       btn.disabled = !isPinned && !hasCache;
       btn.title = isPinned
         ? 'Unpin this step'
@@ -285,14 +290,25 @@ const KIND_WORKFLOW_BODY = `<!-- rwa:frozen:begin wf-style -->
     });
   }
   function recomputeStaleness() {
-    var allSteps = Array.from(document.querySelectorAll('li.rwa-step'));
-    allSteps.forEach(function (li) {
-      var stored = li.dataset.lastRunHash;
-      if (!stored) { li.classList.remove('stale'); syncBadges(li); return; }
-      var current = currentHashFor(li, allSteps);
-      if (stored !== current) li.classList.add('stale');
-      else li.classList.remove('stale');
-      syncBadges(li);
+    // v0.4: top-level linear steps get a proper chain; nested leaves
+    // (inside foreach / parallel) and parallel cells use prevHash='init'
+    // since their upstream context isn't represented in the flat list.
+    var topLevelLinear = Array.from(
+      document.querySelectorAll('article.rwa-workflow > ol.rwa-flow > li.rwa-step:not(.rwa-foreach)')
+    );
+    var allLeaves = Array.from(document.querySelectorAll('li.rwa-step:not(.rwa-foreach), td.rwa-step'));
+    allLeaves.forEach(function (node) {
+      var stored = node.dataset.lastRunHash;
+      if (!stored) { node.classList.remove('stale'); syncBadges(node); return; }
+      var current;
+      if (topLevelLinear.indexOf(node) >= 0) {
+        current = currentHashFor(node, topLevelLinear);
+      } else {
+        current = hashStr(stepBodyOf(node) + '::init');
+      }
+      if (stored !== current) node.classList.add('stale');
+      else node.classList.remove('stale');
+      syncBadges(node);
     });
   }
 
@@ -309,6 +325,180 @@ const KIND_WORKFLOW_BODY = `<!-- rwa:frozen:begin wf-style -->
     },
   };
 
+  // v0.4: workflow runner is a recursive tree-walker over three primitives.
+  // Spec: docs/specs/rwa-workflow-spec.md.
+  //   • Linear  — <li class="rwa-step"> with a <script type="text/rwa-step">
+  //   • Foreach — <li class="rwa-step rwa-foreach"> with a nested <ol class="rwa-flow">
+  //   • Parallel— <table class="rwa-parallel"> with <tbody><tr><td class="rwa-step" data-rwa-label="...">
+  // Pin / dirty / test-step (v0.3) apply to LEAF nodes only — container nodes
+  // (foreach, parallel) don't carry data-pinned-output / data-last-output /
+  // data-last-run-hash in v0.4 (deferred to v0.5).
+  function RwaWorkflowError(code, message) {
+    var e = new Error(message || code);
+    e.code = code;
+    return e;
+  }
+  // Selectors. Top-level children of a <ol class="rwa-flow"> are either
+  // step <li> or parallel <table>. Leaf step nodes are <li class="rwa-step">
+  // without rwa-foreach, OR <td class="rwa-step"> inside a parallel block.
+  function isForeach(node) {
+    return node && node.matches && node.matches('li.rwa-step.rwa-foreach');
+  }
+  function isParallel(node) {
+    return node && node.matches && node.matches('table.rwa-parallel');
+  }
+  function isLeafStep(node) {
+    return node && node.matches && (
+      node.matches('li.rwa-step:not(.rwa-foreach)') ||
+      node.matches('td.rwa-step')
+    );
+  }
+  function flowChildren(ol) {
+    return Array.from(ol.children).filter(function (c) {
+      return c.matches('li.rwa-step, table.rwa-parallel');
+    });
+  }
+  function parallelCells(table) {
+    return Array.from(table.querySelectorAll(':scope > tbody > tr > td.rwa-step'));
+  }
+  function validateParallelLabels(cells) {
+    var seen = {};
+    var labelRe = /^[a-z][a-z0-9_]{0,31}$/;
+    for (var i = 0; i < cells.length; i++) {
+      var lbl = cells[i].dataset.rwaLabel;
+      if (!lbl || !labelRe.test(lbl)) {
+        throw RwaWorkflowError('parallel_label_invalid',
+          'cell ' + i + ': data-rwa-label missing or invalid (got ' + JSON.stringify(lbl) + ')');
+      }
+      if (seen[lbl]) {
+        throw RwaWorkflowError('parallel_label_invalid',
+          'cell ' + i + ': duplicate label "' + lbl + '"');
+      }
+      seen[lbl] = true;
+    }
+  }
+  async function runLeaf(node, prev, ctx) {
+    var sc = node.querySelector(':scope > details > script[type="text/rwa-step"]')
+      || node.querySelector('script[type="text/rwa-step"]');
+    if (!sc) throw RwaWorkflowError('step_missing_script', 'no <script type="text/rwa-step">');
+    // Pin short-circuit.
+    if (node.dataset.pinnedOutput != null) {
+      var pinned;
+      try { pinned = JSON.parse(node.dataset.pinnedOutput); }
+      catch (_) { throw RwaWorkflowError('pinned_value_invalid_json', 'pinned value is not valid JSON'); }
+      node.classList.add('done');
+      var outPin = node.querySelector(':scope > output.rwa-step-output')
+        || node.querySelector('output.rwa-step-output');
+      if (outPin) outPin.textContent = renderOutput(pinned);
+      cacheOutput(node, pinned);
+      return pinned;
+    }
+    node.classList.add('running');
+    try {
+      var fn = compile(sc);
+      var result = await fn(ctx, prev);
+      // compile() returns an async function; if the source body had no
+      // top-level "run" function, the wrapper resolves to undefined.
+      // That's user-acceptable; if the user expected a return, their
+      // step body should define run() and return from it.
+      node.classList.remove('running');
+      node.classList.add('done');
+      var out = node.querySelector(':scope > output.rwa-step-output')
+        || node.querySelector('output.rwa-step-output');
+      if (out) out.textContent = renderOutput(result);
+      cacheOutput(node, result);
+      // Hash chain. v0.4: full chain only for top-level linear steps;
+      // nested leaves (inside a foreach iteration or a parallel cell)
+      // use prevHash='init' since their upstream context isn't stable
+      // across renders. This is documented as best-effort in the spec.
+      var topLevelLinear = Array.from(
+        document.querySelectorAll('article.rwa-workflow > ol.rwa-flow > li.rwa-step:not(.rwa-foreach)')
+      );
+      if (topLevelLinear.indexOf(node) >= 0) {
+        node.dataset.lastRunHash = currentHashFor(node, topLevelLinear);
+      } else {
+        node.dataset.lastRunHash = hashStr(stepBodyOf(node) + '::init');
+      }
+      node.classList.remove('stale');
+      return result;
+    } catch (e) {
+      node.classList.remove('running');
+      node.classList.add('failed');
+      var outErr = node.querySelector(':scope > output.rwa-step-output')
+        || node.querySelector('output.rwa-step-output');
+      if (outErr) outErr.textContent = 'Error: ' + (e && e.message || e);
+      throw e;
+    }
+  }
+  async function runForeach(node, prev, ctx) {
+    if (!Array.isArray(prev)) {
+      node.classList.add('failed');
+      var outErrFE = node.querySelector(':scope > output.rwa-step-output');
+      if (outErrFE) outErrFE.textContent = 'Error: foreach upstream is not an array';
+      throw RwaWorkflowError('foreach_upstream_not_array',
+        'foreach requires an array; upstream returned ' + (prev === null ? 'null' : typeof prev));
+    }
+    var innerOl = node.querySelector(':scope > ol.rwa-flow');
+    if (!innerOl) {
+      throw RwaWorkflowError('foreach_missing_body', 'foreach <li> has no inner <ol class="rwa-flow">');
+    }
+    var innerNodes = flowChildren(innerOl);
+    var perIter = [];
+    node.classList.add('running');
+    try {
+      for (var i = 0; i < prev.length; i++) {
+        var iterCtx = Object.assign({}, ctx, {
+          iter: { index: i, item: prev[i], total: prev.length, parent: ctx.iter || undefined },
+        });
+        var innerPrev = prev[i];
+        for (var j = 0; j < innerNodes.length; j++) {
+          innerPrev = await runNode(innerNodes[j], innerPrev, iterCtx);
+        }
+        perIter.push(innerPrev);
+      }
+      node.classList.remove('running');
+      node.classList.add('done');
+      var outF = node.querySelector(':scope > output.rwa-step-output');
+      if (outF) outF.textContent = renderOutput(perIter);
+      // Cache for test-step's upstream lookup. Containers don't get pin/dirty
+      // affordances in v0.4 but they do cache so downstream tests can read.
+      cacheOutput(node, perIter);
+      return perIter;
+    } catch (e) {
+      node.classList.remove('running');
+      node.classList.add('failed');
+      throw e;
+    }
+  }
+  async function runParallel(node, prev, ctx) {
+    var cells = parallelCells(node);
+    if (cells.length === 0) {
+      throw RwaWorkflowError('parallel_empty', 'parallel block has no <td class="rwa-step"> cells');
+    }
+    validateParallelLabels(cells);
+    node.classList.add('running');
+    try {
+      var results = await Promise.all(cells.map(function (cell) {
+        return runLeaf(cell, prev, ctx);
+      }));
+      var obj = {};
+      cells.forEach(function (cell, i) { obj[cell.dataset.rwaLabel] = results[i]; });
+      node.classList.remove('running');
+      node.classList.add('done');
+      cacheOutput(node, obj);
+      return obj;
+    } catch (e) {
+      node.classList.remove('running');
+      node.classList.add('failed');
+      throw e;
+    }
+  }
+  async function runNode(node, prev, ctx) {
+    if (isForeach(node)) return runForeach(node, prev, ctx);
+    if (isParallel(node)) return runParallel(node, prev, ctx);
+    if (isLeafStep(node)) return runLeaf(node, prev, ctx);
+    throw RwaWorkflowError('unknown_node_type', 'unrecognized workflow node: ' + (node.tagName || '?'));
+  }
   async function runWorkflow() {
     if (NS.running) return;
     NS.running = true;
@@ -317,62 +507,24 @@ const KIND_WORKFLOW_BODY = `<!-- rwa:frozen:begin wf-style -->
     clearStepStates();
     setStatus('● running…');
     try {
-      var steps = Array.from(document.querySelectorAll('li.rwa-step'));
-      if (!steps.length) { setStatus('no steps to run'); return; }
+      var rootOl = document.querySelector('article.rwa-workflow > ol.rwa-flow')
+        || document.querySelector('ol.rwa-flow');
+      if (!rootOl) { setStatus('no workflow body to run'); return; }
+      var nodes = flowChildren(rootOl);
+      if (!nodes.length) { setStatus('no steps to run'); return; }
       var prev;
-      for (var i = 0; i < steps.length; i++) {
-        var li = steps[i];
-        var sc = li.querySelector('script[type="text/rwa-step"]');
-        if (!sc) throw new Error('step ' + (i+1) + ': missing <script type="text/rwa-step">');
-        // Pin short-circuit: skip run(), return the parsed pinned value.
-        // Does NOT update data-last-run-hash — pin is its own state, and
-        // staleness should still reflect "code drifted from last actual run."
-        if (li.dataset.pinnedOutput != null) {
-          try {
-            prev = JSON.parse(li.dataset.pinnedOutput);
-          } catch (eP) {
-            li.classList.add('failed');
-            var outPinErr = li.querySelector('.rwa-step-output');
-            if (outPinErr) outPinErr.textContent = 'Error: pinned value is not valid JSON';
-            throw new Error('step ' + (i+1) + ': pinned value is not valid JSON');
-          }
-          li.classList.add('done');
-          var outPin = li.querySelector('.rwa-step-output');
-          if (outPin) outPin.textContent = renderOutput(prev);
-          cacheOutput(li, prev);
-          setStatus('● step ' + (i+1) + '/' + steps.length + ' (pinned)');
-          continue;
-        }
-        li.classList.add('running');
-        setStatus('● step ' + (i+1) + '/' + steps.length);
-        try {
-          var fn = compile(sc);
-          prev = await fn(ctx, prev);
-          li.classList.remove('running');
-          li.classList.add('done');
-          var out = li.querySelector('.rwa-step-output');
-          if (out) out.textContent = renderOutput(prev);
-          cacheOutput(li, prev);
-          li.dataset.lastRunHash = currentHashFor(li, steps);
-          li.classList.remove('stale');
-        } catch (e) {
-          li.classList.remove('running');
-          li.classList.add('failed');
-          var outErr = li.querySelector('.rwa-step-output');
-          if (outErr) outErr.textContent = 'Error: ' + (e && e.message || e);
-          throw e;
-        }
+      for (var i = 0; i < nodes.length; i++) {
+        setStatus('● node ' + (i+1) + '/' + nodes.length);
+        prev = await runNode(nodes[i], prev, ctx);
       }
       NS.lastResult = prev;
-      setStatus('✓ done (' + steps.length + ' step' + (steps.length===1?'':'s') + ')');
+      setStatus('✓ done (' + nodes.length + ' node' + (nodes.length===1?'':'s') + ')');
     } catch (e) {
-      setStatus('✗ ' + (e && e.message || e));
+      setStatus('✗ ' + (e && (e.code || e.message) || e));
       console.error(e);
     } finally {
       NS.running = false;
       if (btn) btn.disabled = false;
-      // Run-state changes can flip staleness for downstream steps; refresh
-      // the visual indicators so the cascade is accurate.
       recomputeStaleness();
       refreshPinButtonStates();
     }
@@ -387,26 +539,31 @@ const KIND_WORKFLOW_BODY = `<!-- rwa:frozen:begin wf-style -->
   // and undo stack. ⌘Z reverts them like any other commit.
 
   function findStepInDoc(doc, dataRwaId) {
-    // v0.3: <li class="rwa-step" data-rwa-id="X"> may carry extra runner
-    // attributes (data-pinned-output, data-last-output, data-last-run-hash)
-    // in any order. Match by requiring both class="rwa-step" and the target
-    // data-rwa-id, regardless of position or surrounding attributes.
+    // v0.4: matches <li> OR <td> by data-rwa-id, requiring the class
+    // attribute to contain rwa-step (so foreach containers with
+    // class="rwa-step rwa-foreach" also match for delete/reorder).
+    // Runner-managed attributes (data-pinned-output, data-last-output,
+    // data-last-run-hash) may appear in any order on the opening tag.
     var idEscaped = dataRwaId.replace(/[.*+?^\${}()|[\\]\\\\]/g, '\\\\$&');
+    var classMatch = '\\\\bclass="(?:[^"]*\\\\s)?rwa-step(?:\\\\s[^"]*)?"';
     var re = new RegExp(
-      '<li\\\\b(?=[^>]*\\\\bdata-rwa-id="' + idEscaped + '")(?=[^>]*\\\\bclass="rwa-step")[^>]*>'
+      '<(li|td)\\\\b(?=[^>]*\\\\bdata-rwa-id="' + idEscaped + '")(?=[^>]*' + classMatch + ')[^>]*>'
     );
     var m = re.exec(doc);
     if (!m) return null;
     var idx = m.index;
     var openTag = m[0];
-    var close = doc.indexOf('</li>', idx + openTag.length);
+    var tagName = m[1];
+    var closeTag = '</' + tagName + '>';
+    var close = doc.indexOf(closeTag, idx + openTag.length);
     if (close < 0) return null;
     return {
-      outerHTML: doc.substring(idx, close + 5),
+      outerHTML: doc.substring(idx, close + closeTag.length),
       openTag: openTag,
-      bodyAndClose: doc.substring(idx + openTag.length, close + 5),
+      bodyAndClose: doc.substring(idx + openTag.length, close + closeTag.length),
+      tagName: tagName,
       start: idx,
-      end: close + 5,
+      end: close + closeTag.length,
     };
   }
 
@@ -502,33 +659,36 @@ const KIND_WORKFLOW_BODY = `<!-- rwa:frozen:begin wf-style -->
   // pre-filled prompt that anchors the agent's insertion on the preceding
   // step's title. No substrate change needed — the lens flow handles it.
   function attachInsertButtons() {
-    var ol = document.querySelector('ol.rwa-flow');
-    if (!ol) return;
-    // Drop existing insert buttons from a previous attach pass.
-    ol.querySelectorAll(':scope > .rwa-step-insert').forEach(function (b) { b.remove(); });
-    var steps = Array.from(ol.querySelectorAll(':scope > li.rwa-step'));
-    steps.forEach(function (li) {
-      var h3 = li.querySelector('h3');
-      var title = (h3 && h3.textContent) || '';
-      var ins = document.createElement('button');
-      ins.type = 'button';
-      ins.className = 'rwa-step-insert';
-      ins.title = 'Insert a step after this one';
-      ins.setAttribute('aria-label', 'Insert step here');
-      ins.textContent = '+';
-      ins.dataset.afterStepTitle = title;
-      ins.addEventListener('click', function (ev) {
-        var afterTitle = ev.currentTarget.dataset.afterStepTitle || '';
-        var input = document.getElementById('rwa-lens-input');
-        if (!input) return;
-        var prefix = afterTitle
-          ? '/insert a step after the "' + afterTitle.replace(/"/g, '\\\\"') + '" step that '
-          : '/insert a step that ';
-        input.value = prefix;
-        input.focus();
-        try { input.setSelectionRange(prefix.length, prefix.length); } catch (_) {}
+    // v0.4: attach + buttons in every <ol class="rwa-flow"> (top-level
+    // AND inside foreach bodies). Parallel rows are not <ol>s, so cells
+    // don't get them — adding a parallel cell is a different gesture.
+    var ols = document.querySelectorAll('ol.rwa-flow');
+    ols.forEach(function (ol) {
+      ol.querySelectorAll(':scope > .rwa-step-insert').forEach(function (b) { b.remove(); });
+      var steps = Array.from(ol.querySelectorAll(':scope > li.rwa-step'));
+      steps.forEach(function (li) {
+        var h3 = li.querySelector('h3');
+        var title = (h3 && h3.textContent) || '';
+        var ins = document.createElement('button');
+        ins.type = 'button';
+        ins.className = 'rwa-step-insert';
+        ins.title = 'Insert a step after this one';
+        ins.setAttribute('aria-label', 'Insert step here');
+        ins.textContent = '+';
+        ins.dataset.afterStepTitle = title;
+        ins.addEventListener('click', function (ev) {
+          var afterTitle = ev.currentTarget.dataset.afterStepTitle || '';
+          var input = document.getElementById('rwa-lens-input');
+          if (!input) return;
+          var prefix = afterTitle
+            ? '/insert a step after the "' + afterTitle.replace(/"/g, '\\\\"') + '" step that '
+            : '/insert a step that ';
+          input.value = prefix;
+          input.focus();
+          try { input.setSelectionRange(prefix.length, prefix.length); } catch (_) {}
+        });
+        li.insertAdjacentElement('afterend', ins);
       });
-      li.insertAdjacentElement('afterend', ins);
     });
   }
 
@@ -587,44 +747,80 @@ const KIND_WORKFLOW_BODY = `<!-- rwa:frozen:begin wf-style -->
   }
 
   // ▶ Test runs ONE step against the upstream's cached (or pinned) output.
+  // v0.4: upstream lookup respects nesting.
+  //   • For a leaf <li.rwa-step> inside an <ol class="rwa-flow"> (top-level
+  //     OR nested in a foreach body): upstream = previous flow-child of
+  //     the same <ol> (either a <li.rwa-step> or a <table.rwa-parallel>).
+  //   • For a parallel cell <td.rwa-step>: upstream = previous flow-child
+  //     of the <ol> that contains the parallel <table>.
+  //   • If upstream lookup yields nothing, prev = undefined.
   // Does not persist through applyEnvelope — the run is transient like
   // runWorkflow's mutations. ⌘S captures it if the user wants to.
-  async function testStep(li) {
+  function findTestUpstream(node) {
+    var target;
+    if (node.tagName === 'LI') {
+      target = node;
+    } else if (node.tagName === 'TD') {
+      // Walk up to the parallel <table>; that's the unit positioned in
+      // the containing flow.
+      var table = node.closest('table.rwa-parallel');
+      if (!table) return null;
+      target = table;
+    } else {
+      return null;
+    }
+    var sibling = target.previousElementSibling;
+    while (sibling) {
+      if (sibling.matches && (sibling.matches('li.rwa-step') || sibling.matches('table.rwa-parallel'))) {
+        return sibling;
+      }
+      sibling = sibling.previousElementSibling;
+    }
+    return null;
+  }
+  async function testStep(node) {
     if (NS.running) return;
-    var allSteps = Array.from(document.querySelectorAll('li.rwa-step'));
-    var idx = allSteps.indexOf(li);
-    if (idx < 0) return;
-    var sc = li.querySelector('script[type="text/rwa-step"]');
+    var sc = node.querySelector(':scope > details > script[type="text/rwa-step"]')
+      || node.querySelector('script[type="text/rwa-step"]');
     if (!sc) return;
-    li.classList.remove('done', 'failed', 'stale');
-    li.classList.add('running');
-    syncBadges(li);
+    node.classList.remove('done', 'failed', 'stale');
+    node.classList.add('running');
+    syncBadges(node);
     try {
       var prev;
-      if (idx > 0) {
-        var prevLi = allSteps[idx - 1];
-        var src = prevLi.dataset.pinnedOutput != null
-          ? prevLi.dataset.pinnedOutput
-          : prevLi.dataset.lastOutput;
+      var upstream = findTestUpstream(node);
+      if (upstream) {
+        var src = upstream.dataset.pinnedOutput != null
+          ? upstream.dataset.pinnedOutput
+          : upstream.dataset.lastOutput;
         if (src != null) {
           try { prev = JSON.parse(src); } catch (_) { prev = src; }
         }
       }
       var fn = compile(sc);
       var result = await fn(ctx, prev);
-      li.classList.remove('running');
-      li.classList.add('done');
-      var out = li.querySelector('.rwa-step-output');
+      node.classList.remove('running');
+      node.classList.add('done');
+      var out = node.querySelector(':scope > output.rwa-step-output')
+        || node.querySelector('output.rwa-step-output');
       if (out) out.textContent = renderOutput(result);
-      cacheOutput(li, result);
-      li.dataset.lastRunHash = currentHashFor(li, allSteps);
-      // Downstream may now be stale relative to this fresh upstream.
+      cacheOutput(node, result);
+      // Hash chain — see runLeaf for the top-level vs nested branch.
+      var topLevelLinear = Array.from(
+        document.querySelectorAll('article.rwa-workflow > ol.rwa-flow > li.rwa-step:not(.rwa-foreach)')
+      );
+      if (topLevelLinear.indexOf(node) >= 0) {
+        node.dataset.lastRunHash = currentHashFor(node, topLevelLinear);
+      } else {
+        node.dataset.lastRunHash = hashStr(stepBodyOf(node) + '::init');
+      }
       recomputeStaleness();
       refreshPinButtonStates();
     } catch (e) {
-      li.classList.remove('running');
-      li.classList.add('failed');
-      var outErr = li.querySelector('.rwa-step-output');
+      node.classList.remove('running');
+      node.classList.add('failed');
+      var outErr = node.querySelector(':scope > output.rwa-step-output')
+        || node.querySelector('output.rwa-step-output');
       if (outErr) outErr.textContent = 'Error: ' + (e && e.message || e);
       recomputeStaleness();
       refreshPinButtonStates();
@@ -681,10 +877,18 @@ const KIND_WORKFLOW_BODY = `<!-- rwa:frozen:begin wf-style -->
 
   function attachGestures() {
     syncPinnedClasses();
-    document.querySelectorAll('li.rwa-step').forEach(function (li) {
+    // Drag-reorder: top-level <li.rwa-step> only (v0.4 doesn't reorder
+    // inside foreach bodies or across parallel cells).
+    document.querySelectorAll('article.rwa-workflow > ol.rwa-flow > li.rwa-step').forEach(function (li) {
       attachDragReorder(li);
-      attachDeleteButton(li);
-      attachStepToolbar(li);
+    });
+    // Delete button: any step node (linear, foreach container, parallel cell).
+    document.querySelectorAll('li.rwa-step, td.rwa-step').forEach(function (node) {
+      attachDeleteButton(node);
+    });
+    // Toolbar (▶ test, 📌 pin): leaf nodes only.
+    document.querySelectorAll('li.rwa-step:not(.rwa-foreach), td.rwa-step').forEach(function (node) {
+      attachStepToolbar(node);
     });
     attachInsertButtons();
     recomputeStaleness();
