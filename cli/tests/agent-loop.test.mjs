@@ -26,6 +26,7 @@ test('happy path — model emits valid apply_edits on first try', async () => {
       }],
       currentDoc: '<article>Old</article>',
       instruction: 'change Old to New',
+      frozenZoneNames: [],
       backend: { baseUrl, model: 'mock', apiKey: 'test' },
     });
     assert.equal(result.toolName, 'apply_edits');
@@ -38,6 +39,63 @@ test('happy path — model emits valid apply_edits on first try', async () => {
     assert.equal(requests[0].messages[0].role, 'system');
     assert.match(requests[0].messages[1].content, /Old/);
     assert.match(requests[0].messages[1].content, /change Old to New/);
+    // I2 seed-parity: every request body carries max_tokens + tool_choice
+    // defaults (mirrors seeds/rewritable.html openAiCompatChat caller).
+    assert.equal(requests[0].max_tokens, 32000);
+    assert.equal(requests[0].tool_choice, 'auto');
+  } finally { await stop(); }
+});
+
+test('I1 seed parity — user message contains <DOC> fence and frozen-zone list', async () => {
+  const { baseUrl, stop, requests } = await startMockBackend([{
+    tool_calls: [{
+      id: 'c1', type: 'function',
+      function: {
+        name: 'apply_edits',
+        arguments: JSON.stringify({ version: 'rwa-edit/1', edits: [{ find: 'x', replace: 'y' }] }),
+      },
+    }],
+  }]);
+  try {
+    await runAgentLoop({
+      systemPrompt: 'sys',
+      toolSchemas: [],
+      currentDoc: '<article>x</article>',
+      instruction: 'change x to y',
+      frozenZoneNames: ['header', 'footer'],
+      backend: { baseUrl, model: 'm', apiKey: 'k' },
+    });
+    const userMsg = requests[0].messages[1];
+    assert.equal(userMsg.role, 'user');
+    // Shape from seeds/rewritable.html buildUserPrompt: `User request:` /
+    // `Frozen zones in the current doc:` / `<DOC>…</DOC>`.
+    assert.match(userMsg.content, /User request:\nchange x to y/);
+    assert.match(userMsg.content, /Frozen zones in the current doc: header, footer/);
+    assert.match(userMsg.content, /<DOC>\n<article>x<\/article>\n<\/DOC>/);
+  } finally { await stop(); }
+});
+
+test('I1 seed parity — frozen zones default to "(none)" when omitted', async () => {
+  const { baseUrl, stop, requests } = await startMockBackend([{
+    tool_calls: [{
+      id: 'c1', type: 'function',
+      function: {
+        name: 'apply_edits',
+        arguments: JSON.stringify({ version: 'rwa-edit/1', edits: [{ find: 'x', replace: 'y' }] }),
+      },
+    }],
+  }]);
+  try {
+    // No frozenZoneNames opt — must default to [] → "(none)" in the prompt.
+    await runAgentLoop({
+      systemPrompt: 'sys',
+      toolSchemas: [],
+      currentDoc: '<article>x</article>',
+      instruction: 'edit',
+      backend: { baseUrl, model: 'm', apiKey: 'k' },
+    });
+    const userMsg = requests[0].messages[1];
+    assert.match(userMsg.content, /Frozen zones in the current doc: \(none\)/);
   } finally { await stop(); }
 });
 

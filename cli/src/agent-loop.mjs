@@ -32,6 +32,9 @@ export class AgentError extends Error {
  * @param {Array}    opts.toolSchemas  - Tool definitions (OpenAI-compatible).
  * @param {string}   opts.currentDoc   - Document content for the user message.
  * @param {string}   opts.instruction  - User instruction for the user message.
+ * @param {string[]} [opts.frozenZoneNames] - Frozen zone names visible to the
+ *   model. Defaults to `[]`. Surfaces in the user prompt so the model
+ *   knows which marker-form zones to preserve verbatim.
  * @param {{baseUrl: string, model: string, apiKey?: string}} opts.backend
  * @param {(info: {attempt: number, reason: string, toolName?: string}) => void} [opts.onRetry]
  *   Optional callback fired each time a retry is queued. `attempt` is the
@@ -44,12 +47,24 @@ export async function runAgentLoop({
   toolSchemas,
   currentDoc,
   instruction,
+  frozenZoneNames = [],
   backend,
   onRetry,
 }) {
+  // Seed parity (seeds/rewritable.html buildUserPrompt): the user message
+  // names the request, lists frozen-zone names so the model knows what to
+  // preserve, and fences the doc in <DOC>…</DOC> so the model can't confuse
+  // doc bytes with instruction bytes. The CLI surface is a strict subset of
+  // the seed's prompt — lock ranges and the long explanatory parenthetical
+  // are seed-only.
+  const fzText = frozenZoneNames.length === 0 ? '(none)' : frozenZoneNames.join(', ');
+  const userContent =
+    'User request:\n' + instruction +
+    '\n\nFrozen zones in the current doc: ' + fzText +
+    '\n\n<DOC>\n' + currentDoc + '\n</DOC>';
   const messages = [
     { role: 'system', content: systemPrompt },
-    { role: 'user',   content: `Current document:\n\n${currentDoc}\n\nInstruction: ${instruction}` },
+    { role: 'user',   content: userContent },
   ];
 
   for (let attempt = 1; attempt <= RETRY_BUDGET; attempt++) {
@@ -117,10 +132,19 @@ async function callBackend({ baseUrl, model, apiKey }, body) {
   const headers = { 'Content-Type': 'application/json' };
   if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
   const url = baseUrl.replace(/\/+$/, '') + '/chat/completions';
+  // Seed parity (seeds/rewritable.html openAiCompatChat caller in modify()):
+  // every request carries max_tokens: 32000 and tool_choice: 'auto'. The
+  // tool_choice default forces the model to call one of the provided tools
+  // rather than emitting plain text (which would trip our no_tool_call retry).
   const res = await fetch(url, {
     method: 'POST',
     headers,
-    body: JSON.stringify({ model, ...body }),
+    body: JSON.stringify({
+      model,
+      max_tokens: 32000,
+      tool_choice: 'auto',
+      ...body,
+    }),
   });
   if (!res.ok) {
     let text = '';

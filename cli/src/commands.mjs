@@ -13,8 +13,10 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const packageRoot = path.dirname(here);
 
 // Look in the in-package copy first (published case), fall back to the
-// repo-canonical seed (dev case where cli/ sits next to seeds/).
-const SEED_CANDIDATES = [
+// repo-canonical seed (dev case where cli/ sits next to seeds/). Exported so
+// the `rwa edit` instruction path can extract SYSTEM_PROMPTS/TOOL_SCHEMAS
+// from the same seed `rwa new`/`rwa import` use — single source of truth.
+export const SEED_CANDIDATES = [
   path.join(packageRoot, 'seeds', 'rewritable.html'),
   path.join(packageRoot, '..', 'seeds', 'rewritable.html'),
 ];

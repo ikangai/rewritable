@@ -10,13 +10,15 @@ import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { startMockBackend } from './helpers/mock-backend.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const RWA = ['node', join(__dirname, '..', 'bin', 'rwa.mjs')];
 
-function runRwa(args, { stdin = null } = {}) {
+function runRwa(args, { stdin = null, env } = {}) {
   return new Promise(resolve => {
-    const child = spawn(RWA[0], [...RWA.slice(1), ...args]);
+    const spawnOpts = env ? { env } : {};
+    const child = spawn(RWA[0], [...RWA.slice(1), ...args], spawnOpts);
     let stdout = '', stderr = '';
     child.stdout.on('data', d => { stdout += d; });
     child.stderr.on('data', d => { stderr += d; });
@@ -30,6 +32,18 @@ function runRwa(args, { stdin = null } = {}) {
   });
 }
 
+// Clean env that strips any inherited RWA_* vars the test author may have set.
+// Tests that depend on flag-only resolution should pass `env: cleanEnv()` so
+// a developer's `.env` doesn't accidentally inject `RWA_OPENROUTER_KEY` into
+// the no_api_key test.
+function cleanEnv(overrides = {}) {
+  const env = { ...process.env };
+  for (const k of Object.keys(env)) {
+    if (k.startsWith('RWA_') || k === 'OPENROUTER_API_KEY') delete env[k];
+  }
+  return { ...env, ...overrides };
+}
+
 test('exit 1 missing_input — TTY stdin, no positional, no --plan', async () => {
   const { code, stderr } = await runRwa(['edit', '/tmp/nonexistent.html']);
   assert.equal(code, 1);
@@ -41,9 +55,16 @@ test('positional instruction wins over piped stdin (no stdin drain)', async () =
   // stdin (so we never hang on a slow upstream). The cost is that the rare
   // combination `pipe | rwa edit X "instruction"` is NOT flagged as
   // `conflicting_input` — the instruction wins. See rwa.mjs for the rationale.
-  const { code, stderr } = await runRwa(['edit', '/tmp/x.html', 'instruction'], { stdin: '{}' });
-  assert.equal(code, 1);
-  assert.match(stderr, /not_yet_implemented/);
+  //
+  // Post-Task-7: the instruction path is real, so we no longer expect
+  // `not_yet_implemented`. With no --base-url / --api-key and no env var,
+  // the openrouter default trips `no_api_key` (exit 4) — which is enough to
+  // prove the instruction branch ran (and stdin wasn't drained).
+  const { code, stderr } = await runRwa(['edit', '/tmp/x.html', 'instruction'], {
+    stdin: '{}', env: cleanEnv(),
+  });
+  assert.equal(code, 4);
+  assert.match(stderr, /no_api_key/);
 });
 
 test('exit 2 not_found — valid usage, missing file', async () => {
@@ -133,15 +154,121 @@ test('plan path — apply_dsl_plan via --plan file', async () => {
   }
 });
 
-test('plan path — instruction stub returns not_yet_implemented for now', async () => {
-  // This test will be flipped to "instruction path happy path" in Task 7
+test('instruction path — happy path via mock backend', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'rwa-disp-'));
+  const path = join(dir, 'x.html');
+  await runRwa(['new', path]);
+  // Mock emits an apply_edits envelope that drops a data-attribute on the
+  // first <article> tag — a stable anchor across the `rwa new` starter doc.
+  const { baseUrl, stop } = await startMockBackend([{
+    tool_calls: [{
+      id: 'c1', type: 'function',
+      function: {
+        name: 'apply_edits',
+        arguments: JSON.stringify({
+          version: 'rwa-edit/1',
+          edits: [{ find: '<article', replace: '<article data-via="agent"' }],
+        }),
+      },
+    }],
+  }]);
+  try {
+    const { code } = await runRwa(
+      ['edit', path, 'add a data attribute', '--backend', 'openrouter', '--base-url', baseUrl, '--api-key', 'test'],
+      { env: cleanEnv() },
+    );
+    assert.equal(code, 0);
+    const { extractInlineDoc } = await import('../src/seed.mjs');
+    const body = extractInlineDoc(readFileSync(path, 'utf8'));
+    assert.ok(body.includes('data-via="agent"'));
+  } finally {
+    await stop();
+    rmSync(dir, { recursive: true });
+  }
+});
+
+test('instruction path — no_api_key without RWA_OPENROUTER_KEY', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'rwa-disp-'));
   const path = join(dir, 'x.html');
   try {
     await runRwa(['new', path]);
-    const { code, stderr } = await runRwa(['edit', path, 'do something']);
+    const { code, stderr } = await runRwa(['edit', path, 'do thing'], { env: cleanEnv() });
+    assert.equal(code, 4);
+    assert.match(stderr, /no_api_key/);
+  } finally { rmSync(dir, { recursive: true }); }
+});
+
+test('instruction path — retry exhaustion → agent_error/no_envelope_after_retries', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'rwa-disp-'));
+  const path = join(dir, 'x.html');
+  await runRwa(['new', path]);
+  const { baseUrl, stop } = await startMockBackend([
+    { content: 'no' }, { content: 'still no' }, { content: 'final no' },
+  ]);
+  try {
+    const { code, stderr } = await runRwa(
+      ['edit', path, 'do thing', '--backend', 'openrouter', '--base-url', baseUrl, '--api-key', 'test', '--json'],
+      { env: cleanEnv() },
+    );
+    assert.equal(code, 4);
+    const lines = stderr.trim().split('\n').filter(Boolean);
+    const last = JSON.parse(lines[lines.length - 1]);
+    assert.equal(last.code, 'agent_error');
+    assert.equal(last.subcode, 'no_envelope_after_retries');
+  } finally {
+    await stop();
+    rmSync(dir, { recursive: true });
+  }
+});
+
+test('instruction path — retry emits stderr telemetry per attempt', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'rwa-disp-'));
+  const path = join(dir, 'x.html');
+  await runRwa(['new', path]);
+  const { baseUrl, stop } = await startMockBackend([
+    { content: 'forgot the tool' },
+    {
+      tool_calls: [{
+        id: 'c1', type: 'function',
+        function: {
+          name: 'apply_edits',
+          arguments: JSON.stringify({
+            version: 'rwa-edit/1',
+            edits: [{ find: '<article', replace: '<article data-r="1"' }],
+          }),
+        },
+      }],
+    },
+  ]);
+  try {
+    const { code, stderr } = await runRwa(
+      ['edit', path, 'do thing', '--backend', 'openrouter', '--base-url', baseUrl, '--api-key', 'test'],
+      { env: cleanEnv() },
+    );
+    assert.equal(code, 0);
+    // Plain stderr should announce the retry by attempt count.
+    assert.match(stderr, /attempt 1\/3 retrying/);
+  } finally {
+    await stop();
+    rmSync(dir, { recursive: true });
+  }
+});
+
+test('instruction path — unknown_backend fails with usage_error', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'rwa-disp-'));
+  const path = join(dir, 'x.html');
+  try {
+    await runRwa(['new', path]);
+    const { code, stderr } = await runRwa(
+      ['edit', path, 'do thing', '--backend', 'bogus', '--json'],
+      { env: cleanEnv() },
+    );
     assert.equal(code, 1);
-    assert.match(stderr, /not_yet_implemented/);
+    const lines = stderr.trim().split('\n').filter(Boolean);
+    const last = JSON.parse(lines[lines.length - 1]);
+    assert.equal(last.code, 'usage_error');
+    assert.equal(last.subcode, 'unknown_backend');
+    assert.equal(last.details.backend, 'bogus');
   } finally {
     rmSync(dir, { recursive: true });
   }
@@ -151,11 +278,16 @@ test('instruction mode does not block on partially-open upstream pipe', async ()
   // Regression: previously the dispatcher eagerly drained stdin whenever
   // --plan <file> was absent, which hung on `slow_command | rwa edit X "instr"`.
   // I1 fix: skip the stdin drain when a positional instruction is given.
+  //
+  // Post-Task-7 the instruction path is real. With cleanEnv() the openrouter
+  // default fails at the no_api_key gate (exit 4) BEFORE any agent call —
+  // which is enough to prove (a) the instruction branch ran and (b) stdin
+  // was never drained (else the test would hang).
   const dir = mkdtempSync(join(tmpdir(), 'rwa-disp-'));
   const path = join(dir, 'x.html');
   try {
     await runRwa(['new', path]);
-    const child = spawn(RWA[0], [...RWA.slice(1), 'edit', path, 'do thing']);
+    const child = spawn(RWA[0], [...RWA.slice(1), 'edit', path, 'do thing'], { env: cleanEnv() });
     let stderr = '';
     child.stderr.on('data', d => { stderr += d; });
     // Write some bytes but never close — if the CLI drains, it hangs.
@@ -170,8 +302,8 @@ test('instruction mode does not block on partially-open upstream pipe', async ()
     });
     // Force-close stdin so the child can exit cleanly if it hadn't already
     try { child.stdin.end(); } catch {}
-    assert.equal(code, 1);
-    assert.match(stderr, /not_yet_implemented/);
+    assert.equal(code, 4);
+    assert.match(stderr, /no_api_key/);
   } finally {
     rmSync(dir, { recursive: true });
   }

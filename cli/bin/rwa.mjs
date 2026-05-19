@@ -12,7 +12,9 @@ Usage:
                               rewritable in place. Plan path: pipe an
                               apply_edits / apply_dsl_plan / replace_document
                               envelope on stdin, or pass --plan <file>.
-                              Instruction path (Tasks 6/7) is TODO.
+                              Instruction path: pass a plain-text instruction
+                              as the second positional and the CLI runs the
+                              agent loop (backend-configurable below).
 
 Flags:
   --kind <name>  (new only) starter kind: document (default) or workflow.
@@ -50,6 +52,21 @@ Flags:
   --json         (edit only) emit one JSON object per line on stderr for
                  structured failure reporting. Each line is a single
                  \`{code, subcode, details}\` object.
+  --backend <n>  (edit only, instruction path) backend name. One of:
+                 openrouter (default), ollama, lmstudio. Falls back to
+                 \$RWA_BACKEND if unset.
+  --model <id>   (edit only, instruction path) model id passed to the
+                 backend. Falls back to \$RWA_MODEL, then a
+                 sensible default for the backend.
+  --base-url <u> (edit only, instruction path) override the OpenAI-
+                 compatible base URL. Defaults: openrouter →
+                 https://openrouter.ai/api/v1, ollama →
+                 http://localhost:11434/v1 (or \$RWA_OLLAMA_URL),
+                 lmstudio → http://localhost:1234/v1 (or
+                 \$RWA_LMSTUDIO_URL).
+  --api-key <k>  (edit only, instruction path) API key for the backend.
+                 Openrouter: required, falls back to
+                 \$RWA_OPENROUTER_KEY. Other backends ignore this flag.
   --version      print version and exit
   --help, -h     this help
 
@@ -102,6 +119,51 @@ function codeName(n) {
   }
 }
 
+// Generic single-value flag extractor: `getFlag('--foo', rest)` returns the
+// value following `--foo` in rest, or undefined if absent. Returns undefined
+// if `--foo` is the last token (caller can choose to error on that).
+function getFlag(name, rest) {
+  const i = rest.indexOf(name);
+  if (i < 0) return undefined;
+  const v = rest[i + 1];
+  if (v === undefined) return undefined;
+  return v;
+}
+
+// Default base URLs per backend — mirrors seeds/rewritable.html
+// resolveBackendConfig (openrouter:2275, ollama:2243, lmstudio:2259).
+// ollama and lmstudio honor RWA_*_URL overrides so the user can point at a
+// remote host or non-standard port. openrouter is fixed (the URL has never
+// drifted in the seed) so no override.
+function envBaseUrl(name) {
+  switch (name) {
+    case 'openrouter': return 'https://openrouter.ai/api/v1';
+    case 'ollama':     return process.env.RWA_OLLAMA_URL || 'http://localhost:11434/v1';
+    case 'lmstudio':   return process.env.RWA_LMSTUDIO_URL || 'http://localhost:1234/v1';
+    default:           return undefined;
+  }
+}
+
+// Only openrouter requires a key — ollama and lmstudio run locally without
+// auth. Pull from RWA_OPENROUTER_KEY (env conventions match the docker-
+// compose deploy in service/).
+function envApiKey(name) {
+  switch (name) {
+    case 'openrouter': return process.env.RWA_OPENROUTER_KEY;
+    default:           return undefined;
+  }
+}
+
+// Extract `const PRODUCT_KIND = '...';` from the bootstrap. The seed bakes
+// this at emit time (cli/src/seed.mjs applySeedSubs); reading it back lets
+// us select the right SYSTEM_PROMPTS entry. Falls back to 'document' if the
+// regex doesn't match — pre-PRODUCT_KIND containers all rendered as
+// document-kind in the runtime, so defaulting matches that history.
+function detectProductKind(fileText) {
+  const m = fileText.match(/const PRODUCT_KIND = '([^']*)';/);
+  return m ? m[1] : null;
+}
+
 (async () => {
   try {
     if (verb === '--version' || verb === '-V') {
@@ -126,8 +188,8 @@ function codeName(n) {
         process.exitCode = 1;
         return;
       }
-      // Reserve Task 7's backend flags so their values don't leak into
-      // `positionals` as bogus instructions. We don't act on them yet.
+      // Backend flags carry a value — keep them out of `positionals` so
+      // their argument doesn't get parsed as a stray instruction word.
       const FLAG_WITH_VALUE = new Set(['--plan', '--backend', '--model', '--base-url', '--api-key']);
       const positionals = rest.filter((a, i) =>
         !a.startsWith('-') && !FLAG_WITH_VALUE.has(rest[i - 1])
@@ -189,11 +251,123 @@ function codeName(n) {
         return;
       }
 
-      // Instruction path: deferred to Task 7 (agent loop + backends).
+      // Instruction path: run the agent loop and apply the resulting envelope.
       if (hasPositionalInstruction) {
-        emitEdit({ code: 'usage_error', subcode: 'not_yet_implemented', details: { mode: 'instruction' } }, jsonMode);
-        process.exitCode = 1;
-        return;
+        // Resolve backend config: explicit flag wins, then env, then default.
+        // The default model id matches the seed (seeds/rewritable.html
+        // const RWA.MODEL) so first-paint behavior is consistent across CLI
+        // and browser surfaces.
+        const backendName = getFlag('--backend', rest) || process.env.RWA_BACKEND || 'openrouter';
+        const modelId     = getFlag('--model',   rest) || process.env.RWA_MODEL   || 'google/gemini-3-flash-preview';
+        const baseUrl     = getFlag('--base-url', rest) || envBaseUrl(backendName);
+        const apiKey      = getFlag('--api-key',  rest) || envApiKey(backendName);
+
+        // Reject unknown backends fast. `bridge` is browser-only by design
+        // (single-shot via web_cli_bridge); the CLI has no equivalent.
+        if (!['openrouter', 'ollama', 'lmstudio'].includes(backendName)) {
+          emitEdit({ code: 'usage_error', subcode: 'unknown_backend', details: { backend: backendName } }, jsonMode);
+          process.exitCode = 1;
+          return;
+        }
+        if (backendName === 'openrouter' && !apiKey) {
+          emitEdit({ code: 'agent_error', subcode: 'no_api_key', details: { backend: 'openrouter' } }, jsonMode);
+          process.exitCode = 4;
+          return;
+        }
+
+        // Read the target file. Same file_error shape as the plan path so
+        // callers can dedupe `not_found` / `read_error` handling across
+        // both code paths.
+        const { readFile } = await import('node:fs/promises');
+        let fileText;
+        try {
+          fileText = await readFile(filePath, 'utf8');
+        } catch (e) {
+          if (e && e.code === 'ENOENT') {
+            emitEdit({ code: 'file_error', subcode: 'not_found', details: { path: filePath } }, jsonMode);
+            process.exitCode = 2; return;
+          }
+          emitEdit({
+            code: 'file_error', subcode: 'read_error',
+            details: { path: filePath, errno: e && e.code, message: e && e.message },
+          }, jsonMode);
+          process.exitCode = 2; return;
+        }
+
+        const { extractInlineDoc } = await import('../src/seed.mjs');
+        let currentDoc;
+        try {
+          currentDoc = extractInlineDoc(fileText);
+        } catch (_e) {
+          emitEdit({ code: 'file_error', subcode: 'not_a_rewritable', details: { path: filePath } }, jsonMode);
+          process.exitCode = 2; return;
+        }
+
+        // Detect product kind from the bootstrap so we pick the right
+        // SYSTEM_PROMPTS entry. Pre-PRODUCT_KIND containers and unknown
+        // kinds both fall through to the 'document' entry below.
+        const productKind = detectProductKind(fileText) || 'document';
+
+        // Load the seed and extract SYSTEM_PROMPTS / SYSTEM_PROMPT_RULES /
+        // TOOL_SCHEMAS — same in-package-first lookup `rwa new` uses.
+        const { loadSeed } = await import('../src/seed.mjs');
+        const { SEED_CANDIDATES } = await import('../src/commands.mjs');
+        const seedText = await loadSeed(SEED_CANDIDATES);
+        const { extractFromSeed } = await import('../src/seed-extract.mjs');
+        const { SYSTEM_PROMPTS, SYSTEM_PROMPT_RULES, TOOL_SCHEMAS } = extractFromSeed(seedText);
+        const systemPrompt =
+          (SYSTEM_PROMPTS[productKind] || SYSTEM_PROMPTS.document) +
+          '\n\n' + SYSTEM_PROMPT_RULES;
+
+        // Compute marker-form frozen-zone names from the CURRENT doc so the
+        // model sees the same list the apply-edits guard will enforce.
+        const { findFrozenZones } = await import('../src/apply-edits.mjs');
+        const frozenZoneNames = findFrozenZones(currentDoc).map(z => z.name);
+
+        // Run the agent loop. Retry telemetry goes to stderr (plain or
+        // JSON depending on mode) so CI / wrapper scripts can observe
+        // progress without parsing stdout.
+        const { runAgentLoop } = await import('../src/agent-loop.mjs');
+        let envelope;
+        try {
+          const result = await runAgentLoop({
+            systemPrompt,
+            toolSchemas: TOOL_SCHEMAS,
+            currentDoc,
+            instruction,
+            frozenZoneNames,
+            backend: { baseUrl, model: modelId, apiKey },
+            onRetry: r => {
+              if (jsonMode) {
+                process.stderr.write(JSON.stringify({ phase: 'retry', attempt: r.attempt, reason: r.reason }) + '\n');
+              } else {
+                process.stderr.write(`rwa edit: attempt ${r.attempt}/3 retrying — ${r.reason}\n`);
+              }
+            },
+          });
+          envelope = result.envelope;
+        } catch (e) {
+          if (e && (e.subcode === 'no_envelope_after_retries' || e.subcode === 'backend_error')) {
+            emitEdit({ code: 'agent_error', subcode: e.subcode, details: e.details }, jsonMode);
+            process.exitCode = 4; return;
+          }
+          throw e;
+        }
+
+        // Apply the envelope through the same applyPlan used by the plan
+        // path — single splice/write code path, single error surface.
+        const { applyPlan } = await import('../src/edit.mjs');
+        try {
+          await applyPlan(filePath, envelope);
+          return;
+        } catch (e) {
+          if (e && typeof e.exitCode === 'number') {
+            emitEdit({ code: codeName(e.exitCode), subcode: e.subcode, details: e.details }, jsonMode);
+            process.exitCode = e.exitCode;
+            return;
+          }
+          throw e;
+        }
       }
 
       // Plan path: envelope comes from --plan file OR the stdin buffer we
