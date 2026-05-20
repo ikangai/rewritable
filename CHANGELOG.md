@@ -2,6 +2,37 @@
 
 Notable changes to `re-write-able`. The container format is versioned in `re-write-able-spec.md`; the edit protocol in `rwa-edit-spec.md`; the structural-transform DSL in `rwa-edit-dsl-spec.md`. The CLI follows semver in `cli/package.json`.
 
+## 2026-05-20 — gemini-3.5-flash default, lens progress chip, 9 new fidelity scenarios
+
+Three small things landed together: a model bump for OpenRouter users, an inline progress affordance on the lens, and nine new fidelity scenarios that raise the complexity bar on tables, semantic header/footer, and print stylesheets.
+
+### Default model: `google/gemini-3.5-flash`
+
+`RWA.MODEL` (the OpenRouter default for fresh containers and the `rwa edit` instruction path) is now `google/gemini-3.5-flash`, replacing `google/gemini-3-flash-preview`. Mirrored across the seed, `cli/bin/rwa.mjs`, `cli/src/import-vision.mjs`, and the help / `cli/README.md` / `service/public/build-skill.md` documentation. Existing containers are unaffected — the model is per-container `sessionStorage` (`rwa_model`), so a user who picked a model previously keeps that pick.
+
+The settings panel's model `<input>` is now pre-populated with a curated `<datalist>` of seven benchmarked OpenRouter model ids — `google/gemini-3.5-flash`, the previous `gemini-3-flash-preview`, the two `gemini-3.1-*` previews, and the three frontier-Anthropic ids that show up in `benchmark/results/`. So when a new user opens ⚙ for the first time, typing into the model field gets real autocomplete out of the box. Local backends (Ollama / LM Studio) still populate the datalist live from `/v1/models` when the Test button is clicked.
+
+### Lens progress chip
+
+The lens textarea now shows an inline animated progress chip above the input while the agent is working — mirroring the affordance pattern from Claude's app. Four states, all centralized through a new `setLensProgress(state, msg)` helper:
+
+- `thinking` — italic grey text with a spinning ring; shows `Thinking…` initially, switches to `Applying edits…` / `Applying structural plan…` / `Applying full rewrite…` once the tool call comes back, and `Retrying (attempt N/3)…` between retries.
+- `done` — green `✓ Done`, auto-clears after 1.4s so it doesn't linger past the re-render.
+- `error` — red `✗ <code>` that sticks until the next modify call overwrites it. Surfaces the structured failure code from `rwa-edit/1` (`find_not_unique`, `frozen_zone_violation`, …) inline rather than just in the corner status pill.
+- `bridge` — `Asking claude -p…` while the localhost bridge subprocess cold-starts.
+
+Wired into all three agent code paths in `seeds/rewritable.html` — `modify()` (default-command + `runtime.modify` from in-document JS), `runAnchoredCommand()` (anchored slash commands), and `modifyViaBridge()` (the claude-p bridge). The previous `data-busy` pulse-dot was only set by one of those three paths; consolidating the affordance fixed an unintentional silence on the default-command path.
+
+### 9 new fidelity scenarios: tables, headers, footers, print
+
+`benchmark/scenarios/fidelity/pres-07.mjs` through `pres-15.mjs` add complexity coverage in three clusters:
+
+- **Tables** — invoice-table line-amount edit with subtotal/VAT/total recompute (PRES-07; math-consistency oracle checks sum-of-lines == subtotal and subtotal × 1.19 ≈ total), `rowspan`/`colspan` survival under a regular-cell edit (PRES-08), adding a new column to thead + tbody + tfoot with column-count parity (PRES-09), and table-within-table with the inner table byte-identical under an outer-cell edit (PRES-10).
+- **Headers and footers** — edit article body with semantic `<header>` + `<footer>` (logo, nav, tagline, secondary nav) byte-identical (PRES-11), and surgical copyright-year update in `<footer>` with aria-label, license rel-link, mailto and address all preserved (PRES-12).
+- **Print stylesheets** — `@media print` block with break-control + orphans/widows + `print-color-adjust` rules byte-identical across a prose edit (PRES-13), surgical `@page { size: A4 → Letter }` swap with margin shorthand and `@page :first` override preserved (PRES-14), and a stacked report combining `@page` running header + `@media print` rules + masthead + multi-section article + semantic footer where one deep paragraph in section 2 is the only thing that changes (PRES-15).
+
+Stub-fidelity suite goes from 89 → 98 scenarios, all scoring 2/2 (S=2 success, T=2 stability). Aggregate stays at `meanS=2.00 meanT=2.00 median_drift=0.0000`. 62/62 conformance unchanged; 291/291 e2e + 246/246 lens still pass.
+
 ## 2026-05-19 — `rwa edit`: programmatic edit CLI
 
 A new `rwa edit <file>` verb lets skills, CI jobs, and scripts apply `rwa-edit/1` envelopes to a rewritable file from outside the browser. Same edit grammar as ⌘K: frozen-zone enforcement, reserved-substring detection, structural-shape check, atomic write. Three invocation forms — positional instruction (runs the agent loop), piped envelope on stdin, or `--plan <file>` from disk — all converge on the same `applyPlan` splice/write path.

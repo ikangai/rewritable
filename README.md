@@ -26,7 +26,7 @@ The user-authored content is a **document** — sometimes pure prose, sometimes 
 
 Open the file in a browser. It's a document the moment it opens — no build screen, no agent call, no waiting. The shipped file already contains a snapshot of its own initial state. From that point:
 
-- **The lens** — a single steerable input docked at the bottom of the viewport. Type prose to append; type a leading `/` to issue a command. Click a block to anchor the lens to it: now prose inserts after that block and `/edit it` rewrites it. The badge on the lens tells you what it's targeting; `Esc` releases.
+- **The lens** — a single steerable input docked at the bottom of the viewport. Type prose to append; type a leading `/` to issue a command. Click a block to anchor the lens to it: now prose inserts after that block and `/edit it` rewrites it. The badge on the lens tells you what it's targeting; `Esc` releases. An inline progress chip above the input narrates what the model is doing while an edit runs (*Thinking…* → *Applying edits…* → *Retrying (attempt 2/3)…*), and surfaces structured failure codes inline if the run exhausts its retry budget.
 - `Cmd+Z` — undo
 - `Cmd+S` — commit the current state back into the file (write-in-place on Chromium; download elsewhere)
 - `Cmd+P` — print, or save as PDF. The seed ships a baseline content stylesheet (system fonts, 720 px article width, page-like margins) and a `@media print` block that hides the runtime chrome, applies `@page` margins, and protects block integrity (no stranded headings, no split tables). A fresh container prints as a clean page with just its heading; imports (md/csv/docx/pdf) inherit the same defaults so they look like a styled document the moment they open
