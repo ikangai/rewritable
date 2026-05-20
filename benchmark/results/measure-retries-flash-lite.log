@@ -1,0 +1,195 @@
+== measure-retries — model=google/gemini-3.1-flash-lite-preview, 89 scenario(s) ==
+
+  [APP-01] (N=1) -
+  [APP-02] (N=1) -
+  [APP-03] (N=1) -
+  [APP-04] (N=1) -
+  [APP-05] (N=1) -
+  [APP-06] (N=1) -
+  [BULK-01] (N=3) 000
+        meanRetries=0.00  anyRetry=0%  threw=0/3  codes={}
+  [BULK-02] (N=3) 000
+        meanRetries=0.00  anyRetry=0%  threw=0/3  codes={}
+  [BULK-03] (N=3) 022
+        meanRetries=1.33  anyRetry=67%  threw=0/3  codes={malformed_envelope}
+  [BULK-04] (N=3) 000
+        meanRetries=0.00  anyRetry=0%  threw=0/3  codes={}
+  [CONT-01] (N=3) 000
+        meanRetries=0.00  anyRetry=0%  threw=0/3  codes={}
+  [CONT-02] (N=3) 000
+        meanRetries=0.00  anyRetry=0%  threw=0/3  codes={}
+  [CONT-03] (N=3) 000
+        meanRetries=0.00  anyRetry=0%  threw=0/3  codes={}
+  [CONT-04] (N=3) 000
+        meanRetries=0.00  anyRetry=0%  threw=0/3  codes={}
+  [CONT-05] (N=3) 000
+        meanRetries=0.00  anyRetry=0%  threw=0/3  codes={}
+  [CONT-06] (N=3) 112
+        meanRetries=1.33  anyRetry=100%  threw=0/3  codes={malformed_envelope}
+  [CONT-07] (N=3) 000
+        meanRetries=0.00  anyRetry=0%  threw=0/3  codes={}
+  [DATA-01] (N=3) 000
+        meanRetries=0.00  anyRetry=0%  threw=0/3  codes={}
+  [DATA-02] (N=3) 000
+        meanRetries=0.00  anyRetry=0%  threw=0/3  codes={}
+  [DATA-03] (N=3) 000
+        meanRetries=0.00  anyRetry=0%  threw=0/3  codes={}
+  [DATA-04] (N=3) 000
+        meanRetries=0.00  anyRetry=0%  threw=0/3  codes={}
+  [DATA-05] (N=3) 000
+        meanRetries=0.00  anyRetry=0%  threw=0/3  codes={}
+  [DATA-06] (N=3) 000
+        meanRetries=0.00  anyRetry=0%  threw=0/3  codes={}
+  [DEG-01] (N=1) 0
+        meanRetries=0.00  anyRetry=0%  threw=0/1  codes={}
+  [DEG-02] (N=1) -
+  [DEG-03] (N=1) -
+  [FAIL-01] (N=3) 222
+        meanRetries=2.00  anyRetry=100%  threw=0/3  codes={malformed_envelope}
+  [FAIL-02] (N=3) 111
+        meanRetries=1.00  anyRetry=100%  threw=0/3  codes={frozen_zone_violation}
+  [FAIL-03] (N=3) 000
+        meanRetries=0.00  anyRetry=0%  threw=0/3  codes={}
+  [FAIL-04] (N=3) 000
+        meanRetries=0.00  anyRetry=0%  threw=0/3  codes={}
+  [FAIL-05] (N=3) ---
+  [FAIL-06] (N=3) 000
+        meanRetries=0.00  anyRetry=0%  threw=0/3  codes={}
+  [FAIL-07] (N=3) 222
+        meanRetries=2.00  anyRetry=100%  threw=0/3  codes={malformed_envelope}
+  [FAIL-08] (N=3) 000
+        meanRetries=0.00  anyRetry=0%  threw=0/3  codes={}
+  [FAIL-09] (N=3) 000
+        meanRetries=0.00  anyRetry=0%  threw=0/3  codes={}
+  [FID-01] (N=3) 000
+        meanRetries=0.00  anyRetry=0%  threw=0/3  codes={}
+  [FID-02] (N=3) 000
+        meanRetries=0.00  anyRetry=0%  threw=0/3  codes={}
+  [FID-03] (N=3) 222
+        meanRetries=2.00  anyRetry=100%  threw=0/3  codes={malformed_envelope}
+  [FID-04] (N=3) 000
+        meanRetries=0.00  anyRetry=0%  threw=0/3  codes={}
+  [FID-05] (N=3) 222
+        meanRetries=2.00  anyRetry=100%  threw=0/3  codes={malformed_envelope}
+  [FID-06] (N=3) 000
+        meanRetries=0.00  anyRetry=0%  threw=0/3  codes={}
+  [GENRE-01] (N=3) 000
+        meanRetries=0.00  anyRetry=0%  threw=0/3  codes={}
+  [GENRE-02] (N=3) 000
+        meanRetries=0.00  anyRetry=0%  threw=0/3  codes={}
+  [GENRE-03] (N=3) 000
+        meanRetries=0.00  anyRetry=0%  threw=0/3  codes={}
+  [GENRE-04] (N=3) 101
+        meanRetries=0.67  anyRetry=67%  threw=0/3  codes={find_not_unique}
+  [GENRE-05] (N=3) 000
+        meanRetries=0.00  anyRetry=0%  threw=0/3  codes={}
+  [GENRE-06] (N=3) 000
+        meanRetries=0.00  anyRetry=0%  threw=0/3  codes={}
+  [ID-01] (N=3) 000
+        meanRetries=0.00  anyRetry=0%  threw=0/3  codes={}
+  [ID-02] (N=3) 000
+        meanRetries=0.00  anyRetry=0%  threw=0/3  codes={}
+  [ID-03] (N=3) 000
+        meanRetries=0.00  anyRetry=0%  threw=0/3  codes={}
+  [ID-04] (N=3) 000
+        meanRetries=0.00  anyRetry=0%  threw=0/3  codes={}
+  [ID-05] (N=3) 000
+        meanRetries=0.00  anyRetry=0%  threw=0/3  codes={}
+  [ID-06] (N=3) 000
+        meanRetries=0.00  anyRetry=0%  threw=0/3  codes={}
+  [INTERACT-01] (N=1) -
+  [INTERACT-02] (N=1) -
+  [INTERACT-03] (N=1) -
+  [INTERACT-04] (N=1) -
+  [INTERACT-05] (N=1) -
+  [INTERACT-06] (N=1) -
+  [INTL-01] (N=3) 000
+        meanRetries=0.00  anyRetry=0%  threw=0/3  codes={}
+  [INTL-02] (N=3) 000
+        meanRetries=0.00  anyRetry=0%  threw=0/3  codes={}
+  [INTL-03] (N=3) 000
+        meanRetries=0.00  anyRetry=0%  threw=0/3  codes={}
+  [INTL-04] (N=3) 000
+        meanRetries=0.00  anyRetry=0%  threw=0/3  codes={}
+  [INTL-05] (N=3) 000
+        meanRetries=0.00  anyRetry=0%  threw=0/3  codes={}
+  [INTL-06] (N=3) 000
+        meanRetries=0.00  anyRetry=0%  threw=0/3  codes={}
+  [INTL-07] (N=3) 000
+        meanRetries=0.00  anyRetry=0%  threw=0/3  codes={}
+  [IRREG-01] (N=3) 222
+        meanRetries=2.00  anyRetry=100%  threw=0/3  codes={malformed_envelope}
+  [IRREG-02] (N=3) 222
+        meanRetries=2.00  anyRetry=100%  threw=0/3  codes={malformed_envelope}
+  [IRREG-03] (N=3) 221
+        meanRetries=1.67  anyRetry=100%  threw=0/3  codes={malformed_envelope}
+  [PASTE-01] (N=3) 000
+        meanRetries=0.00  anyRetry=0%  threw=0/3  codes={}
+  [PASTE-02] (N=3) 000
+        meanRetries=0.00  anyRetry=0%  threw=0/3  codes={}
+  [PASTE-03] (N=3) 000
+        meanRetries=0.00  anyRetry=0%  threw=0/3  codes={}
+  [PRES-01] (N=3) 000
+        meanRetries=0.00  anyRetry=0%  threw=0/3  codes={}
+  [PRES-02] (N=3) 000
+        meanRetries=0.00  anyRetry=0%  threw=0/3  codes={}
+  [PRES-03] (N=3) 000
+        meanRetries=0.00  anyRetry=0%  threw=0/3  codes={}
+  [PRES-04] (N=3) 000
+        meanRetries=0.00  anyRetry=0%  threw=0/3  codes={}
+  [PRES-05] (N=3) 000
+        meanRetries=0.00  anyRetry=0%  threw=0/3  codes={}
+  [PRES-06] (N=3) 000
+        meanRetries=0.00  anyRetry=0%  threw=0/3  codes={}
+  [ROB-01] (N=3) 000
+        meanRetries=0.00  anyRetry=0%  threw=0/3  codes={}
+  [ROB-02] (N=3) 000
+        meanRetries=0.00  anyRetry=0%  threw=0/3  codes={}
+  [ROB-03] (N=3) 000
+        meanRetries=0.00  anyRetry=0%  threw=0/3  codes={}
+  [ROB-04] (N=3) 000
+        meanRetries=0.00  anyRetry=0%  threw=0/3  codes={}
+  [ROB-05] (N=3) 000
+        meanRetries=0.00  anyRetry=0%  threw=0/3  codes={}
+  [ROB-06] (N=3) 222
+        meanRetries=2.00  anyRetry=100%  threw=0/3  codes={malformed_envelope}
+  [ROB-07] (N=3) 000
+        meanRetries=0.00  anyRetry=0%  threw=0/3  codes={}
+  [ROB-08] (N=3) 000
+        meanRetries=0.00  anyRetry=0%  threw=0/3  codes={}
+  [STRUCT-01] (N=3) 222
+        meanRetries=2.00  anyRetry=100%  threw=0/3  codes={malformed_envelope}
+  [STRUCT-02] (N=3) 221
+        meanRetries=1.67  anyRetry=100%  threw=0/3  codes={malformed_envelope}
+  [STRUCT-03] (N=3) 222
+        meanRetries=2.00  anyRetry=100%  threw=0/3  codes={malformed_envelope}
+
+=========================================
+HEADLINE
+=========================================
+Total runs:           220
+Total retry rounds:   77
+Mean retries / run:   0.350
+Runs with ≥1 retry:   43/220 (19.5%)
+Runs that threw:      0/220 (0.0%)
+
+Failure code distribution (fed-back tool_result errors):
+  malformed_envelope           72
+  frozen_zone_violation        3
+  find_not_unique              2
+
+Tool-call counts (across all runs):
+  apply_edits                  177
+  apply_dsl_plan               107
+  replace_document             7
+
+By tag:
+  content                scenarios=40  runs=120  meanRetries=0.00  anyRetry=0%
+  drift                  scenarios=1  runs=1  meanRetries=0.00  anyRetry=0%
+  failure_mode           scenarios=9  runs=27  meanRetries=0.56  anyRetry=33%
+  mixed                  scenarios=6  runs=18  meanRetries=0.22  anyRetry=17%
+  paste                  scenarios=3  runs=9  meanRetries=0.00  anyRetry=0%
+  structural_irregular   scenarios=4  runs=12  meanRetries=1.42  anyRetry=75%
+  structural_regular     scenarios=11  runs=33  meanRetries=1.24  anyRetry=67%
+
+Wrote /Users/martintreiber/Documents/Development/rewritable/benchmark/results/retries.google-gemini-3.1-flash-lite-preview.tsv

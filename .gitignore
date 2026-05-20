@@ -22,3 +22,11 @@ service/data/*
 # keep it out of version control so a fresh regen can't enter a commit.
 /rewritable.html
 
+
+# Local project kanban (kanban skill)
+.kanban/
+
+# Raw session-event log produced by Claude Code hooks for the diary skill.
+# Per-machine state; the synthesized diary entries (*.md) are the canonical
+# artifact and are tracked normally.
+.dev-diary/.events.jsonl
