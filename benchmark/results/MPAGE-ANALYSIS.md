@@ -126,9 +126,56 @@ told). The fix is in either:
 
 ## Retry rate
 
-_Measured separately by `benchmark/runners/measure-retries.mjs`. Headlines
-populated after that run completes; see
-`benchmark/results/measure-retries-gemini-3.5-flash.log`._
+Measured by `benchmark/runners/measure-retries.mjs google/gemini-3.5-flash`.
+Run truncated at PASTE-03 (78 of 98 model-driven scenarios completed before
+the harness wall-clock cap; MPAGE batch fully covered).
+
+### MPAGE retry headlines
+
+**All 10 MPAGE scenarios: `meanRetries=0.00 anyRetry=0%`.** No malformed
+envelopes, no `find_not_unique`, no `frozen_zone_violation` retries —
+the model emitted a clean `apply_edits` envelope on the first attempt
+every time, including against fixtures using CSS Paged Media features it
+likely doesn't have strong training data for (`string-set`, `target-counter`,
+`bookmark-level/label/state`).
+
+### Suite-wide pattern (partial run, 82 scenarios)
+
+| Metric | Value |
+|---|---|
+| Scenarios run | 82 (truncated at PASTE-03) |
+| Scenarios with 0% retry | 65 |
+| Scenarios with ≥1 retry | 1 (FAIL-09 only — intentional failure-mode test) |
+| Custom-run / skipped | 16 (APP, DEG, INTERACT — bypass modify()) |
+
+Only one scenario triggered any retries: **FAIL-09** with
+`codes={find_not_unique, frozen_zone_violation}` — that scenario
+explicitly tests the multi-failure recovery path and is *expected* to
+retry.
+
+### Comparison to `gemini-3.1-flash-lite-preview` (prior baseline)
+
+The earlier measurement against `google/gemini-3.1-flash-lite-preview`
+(`retries.google-gemini-3.1-flash-lite-preview.tsv`) showed:
+
+- 19.5% of runs needed ≥1 retry (43/220)
+- `malformed_envelope` dominant at 72 of 77 retry rounds
+- `structural_irregular` tag worst at 75% retry rate
+- `structural_regular` tag at 67%
+
+**`gemini-3.5-flash` on the same suite is effectively retry-free outside
+intentional failure-mode scenarios.** This is a step-change improvement in
+tool-call discipline, not a marginal one. The `malformed_envelope` failure
+mode that drove almost all retries on flash-lite has essentially disappeared
+on the new flash model.
+
+This finding has a substrate implication: the case for adding a "scout"
+tool like `grep_doc` to help the model disambiguate anchors is now weaker
+than the prior data suggested. The retry rate on the older model was the
+empirical signal for that proposal (per `measure-retries.mjs`'s header
+comment); against the current default model, the signal is gone. The
+proposal stays valid for users on older / smaller models, but isn't load-
+bearing for the default path.
 
 ## Coverage gaps (deferred)
 
