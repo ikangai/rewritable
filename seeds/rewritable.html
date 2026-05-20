@@ -90,8 +90,22 @@ body{font-family:var(--font-ui);background:var(--bg);color:var(--text);min-heigh
 #rwa-lens-hist-panel .rwa-hist-actor{background:var(--gray-50);color:var(--gray-500);padding:2px 8px;border-radius:100px;font-size:9px;letter-spacing:.3px;font-family:var(--font-mono);max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 #rwa-lens-hist-panel .rwa-hist-instr{color:var(--gray-900);word-wrap:break-word;}
 #rwa-lens-hist-panel .rwa-hist-empty{color:var(--gray-400);font-style:italic;padding:12px 0;}
-#rwa-lens[data-busy="true"]::after{content:'';position:absolute;top:16px;right:48px;width:8px;height:8px;border-radius:50%;background:var(--gray-400);animation:rwa-lens-pulse 1.2s ease-in-out infinite;}
-@keyframes rwa-lens-pulse{0%,100%{opacity:.3;transform:scale(1);}50%{opacity:1;transform:scale(1.2);}}
+/* Inline progress chip above the textarea: shows what the agent is doing
+   during in-flight modify() / runAnchoredCommand() / modifyViaBridge() runs.
+   States: thinking (default, shows spinner), done (green check, auto-clears),
+   error (red, sticks until next submit). Mirrors the affordance pattern from
+   Claude.app — keep the user oriented without stealing focus from the input. */
+#rwa-lens-progress{display:none;align-items:center;gap:8px;font-family:var(--font-ui);font-size:12px;color:var(--gray-500);font-style:italic;min-height:16px;line-height:16px;}
+#rwa-lens-progress[data-state]{display:flex;}
+#rwa-lens-progress[data-state="error"]{color:var(--red);font-style:normal;}
+#rwa-lens-progress[data-state="done"]{color:var(--green);font-style:normal;}
+.rwa-lens-spinner{display:inline-block;width:10px;height:10px;border-radius:50%;border:1.5px solid var(--gray-200);border-top-color:var(--gray-700);animation:rwa-lens-spin .7s linear infinite;flex-shrink:0;}
+#rwa-lens-progress[data-state="error"] .rwa-lens-spinner,
+#rwa-lens-progress[data-state="done"] .rwa-lens-spinner{display:none;}
+#rwa-lens-progress[data-state="error"]::before{content:'✗';font-weight:600;}
+#rwa-lens-progress[data-state="done"]::before{content:'✓';font-weight:600;}
+.rwa-lens-prog-text{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+@keyframes rwa-lens-spin{to{transform:rotate(360deg);}}
 .rwa-lens-toast{position:fixed;bottom:140px;left:50%;transform:translateX(-50%);background:var(--gray-900);color:var(--white);padding:10px 16px;border-radius:8px;z-index:11;font-size:13px;font-family:var(--font-ui);box-shadow:0 8px 24px rgba(0,0,0,0.12);}
 #rwa-private-mode-banner{position:fixed;inset:0;background:rgba(255,255,255,0.98);z-index:9999;display:flex;align-items:center;justify-content:center;padding:24px;font-family:var(--font-ui);}
 #rwa-private-mode-banner .rwa-pm-card{max-width:480px;text-align:center;padding:32px;border:1px solid var(--gray-200);border-radius:var(--radius);background:var(--white);box-shadow:0 8px 32px rgba(0,0,0,0.08);}
@@ -246,7 +260,7 @@ const RWA = {
   // Per-backend base-URL overrides for local OpenAI-compatible servers.
   // Empty/unset falls back to DEFAULT_*_URL below.
   K_BASE_URL_OLLAMA:'rwa_base_url_ollama', K_BASE_URL_LMSTUDIO:'rwa_base_url_lmstudio',
-  MODEL:'google/gemini-3-flash-preview',
+  MODEL:'google/gemini-3.5-flash',
   FILE:'rewritable.html',
   // OpenAI-compat localhost defaults — both Ollama and LM Studio ship the
   // `/v1/chat/completions` shape and reuse the same multi-turn tool-use loop
@@ -924,6 +938,7 @@ function buildUI() {
 <div id="rwa-lens" data-state="default">
   <button type="button" id="rwa-lens-hist-btn" aria-label="show history" title="show history"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/><path d="M12 7v5l3 2"/></svg></button>
   <div id="rwa-lens-badge" hidden></div>
+  <div id="rwa-lens-progress" aria-live="polite"><span class="rwa-lens-spinner" aria-hidden="true"></span><span class="rwa-lens-prog-text"></span></div>
   <textarea id="rwa-lens-input" rows="1" placeholder="${LENS_PLACEHOLDER}" spellcheck="false"></textarea>
   <div id="rwa-lens-paste-hint" hidden></div>
   <div id="rwa-lens-hint"></div>
@@ -966,6 +981,20 @@ function buildUI() {
     },
   };
 
+  // Curated OpenRouter model suggestions. Populated into the datalist when the
+  // OpenRouter backend is selected so the model input gets autocomplete out of
+  // the box (local backends populate from `/v1/models` via the Test button).
+  // Default (RWA.MODEL) leads; others are models exercised in benchmark/results.
+  const OPENROUTER_MODEL_SUGGESTIONS = [
+    'google/gemini-3.5-flash',
+    'google/gemini-3.1-pro-preview',
+    'google/gemini-3.1-flash-lite-preview',
+    'google/gemini-3-flash-preview',
+    'anthropic/claude-opus-4-7',
+    'anthropic/claude-sonnet-4-6',
+    'anthropic/claude-haiku-4-5',
+  ];
+
   const syncBackendRows = () => {
     const meta = BACKEND_META[backendEl.value] || BACKEND_META.openrouter;
     document.getElementById('rwa-set-row-key').style.display    = meta.showKey     ? '' : 'none';
@@ -979,6 +1008,18 @@ function buildUI() {
       baseUrlResultEl.className = 'rwa-set-hint';
     }
     if (meta.showHint) hintEl.innerHTML = meta.hintHTML;
+    // Seed the model datalist with curated suggestions for the OpenRouter
+    // backend. Local backends overwrite this via the Test button (which probes
+    // `/v1/models` on the live server). Skipped when the model row is hidden
+    // (bridge backend has no model selection).
+    if (meta.showModel && backendEl.value === 'openrouter') {
+      modelOptsEl.innerHTML = '';
+      for (const id of OPENROUTER_MODEL_SUGGESTIONS) {
+        const opt = document.createElement('option');
+        opt.value = id;
+        modelOptsEl.appendChild(opt);
+      }
+    }
   };
   backendEl.value = sessionStorage.getItem(RWA.K_BACKEND) || 'openrouter';
   syncBackendRows();
@@ -1154,6 +1195,32 @@ function buildUI() {
 const setStatus = (cls, msg) => { const e = document.getElementById('rwa-st-status'); if (e) { e.className = 'rwa-st-btn ' + (cls || ''); e.textContent = msg; } };
 const setPalSt = (cls, msg) => { const e = document.getElementById('rwa-pal-st'); if (e) { e.className = cls || ''; e.textContent = msg; } };
 const setDirty = d => { const e = document.getElementById('rwa-st-commit'); if (e) e.classList.toggle('dirty', d); };
+
+// rwa-lens/1 progress chip: inline status above the textarea during in-flight
+// agent runs. State drives both visibility and color (CSS keyed off
+// `data-state`); a null state clears the chip. `done` auto-clears after a short
+// delay so the chip doesn't linger past the next user action; `error` sticks
+// until cleared explicitly (typically by the next modify call). Centralizes the
+// DOM touch points so modify(), runAnchoredCommand(), and modifyViaBridge()
+// don't each open-code element lookups.
+let _lensProgressTimer = null;
+const setLensProgress = (state, msg) => {
+  const el = document.getElementById('rwa-lens-progress');
+  if (!el) return;
+  if (_lensProgressTimer) { clearTimeout(_lensProgressTimer); _lensProgressTimer = null; }
+  if (!state) {
+    el.removeAttribute('data-state');
+    const txt = el.querySelector('.rwa-lens-prog-text');
+    if (txt) txt.textContent = '';
+    return;
+  }
+  el.setAttribute('data-state', state);
+  const txt = el.querySelector('.rwa-lens-prog-text');
+  if (txt) txt.textContent = msg || '';
+  if (state === 'done') {
+    _lensProgressTimer = setTimeout(() => setLensProgress(null), 1400);
+  }
+};
 
 // Spec §5.6: dirty-state nudge. Counter survives reload by living in IDB
 // under the rwa_state store at key 'dirty_count'. When the count crosses
@@ -2421,6 +2488,7 @@ function showAffordance(text) {
 async function runAnchoredCommand(anchor, instruction) {
   if (modifyMutex) {
     setStatus('err', '✗ another modify in progress');
+    setLensProgress('error', 'another modify in progress');
     throw new RwaEditError('concurrent_modify');
   }
   modifyMutex = true;
@@ -2428,6 +2496,7 @@ async function runAnchoredCommand(anchor, instruction) {
   const lensBusy = document.getElementById('rwa-lens');
   if (lensBusy) lensBusy.dataset.busy = 'true';
   setStatus('run', '⌘K running');
+  setLensProgress('thinking', 'Thinking…');
   try {
     const { target, context } = buildAnchoredContextWindow(anchor);
     const basePrompt = buildAnchoredPrompt(target, context, instruction);
@@ -2435,6 +2504,8 @@ async function runAnchoredCommand(anchor, instruction) {
     let lastFailure = null;
     while (attempts < 3) {
       attempts++;
+      setLensProgress('thinking',
+        attempts === 1 ? 'Thinking…' : `Retrying (attempt ${attempts}/3)…`);
       const tryPrompt = basePrompt + (lastFailure ? `\n\nPrevious attempt failed: ${lastFailure}\nRetry honoring the constraint.` : '');
       const response = await callAgentSingleShot(tryPrompt);
       const validation = validateAnchoredResponse(response, anchor);
@@ -2457,6 +2528,7 @@ async function runAnchoredCommand(anchor, instruction) {
           scope: { type: 'block', block_id: String(anchor.start) },
           actor: getActiveActor(),   // audit R2
         };
+        setLensProgress('thinking', 'Applying edits…');
         const result = await applyEdits(envelope, await getDoc(), lensMeta);
         renderDoc(result);
         setDirty(true);
@@ -2478,6 +2550,7 @@ async function runAnchoredCommand(anchor, instruction) {
         // at the same source offset preserve the start position.
         handlePostCommitAnchor(response, anchor);
         setStatus('ok', '✓ done');
+        setLensProgress('done', 'Done');
         return;
       } catch (err) {
         if (!(err instanceof RwaEditError)) throw err;
@@ -2486,8 +2559,10 @@ async function runAnchoredCommand(anchor, instruction) {
       }
     }
     setStatus('err', `✗ ${lastFailure || 'lens command failed after retries'}`);
+    setLensProgress('error', lastFailure || 'lens command failed after retries');
   } catch (e) {
     setStatus('err', '✗ ' + e.message);
+    setLensProgress('error', e.message);
     console.error(e);
   } finally {
     modifyMutex = false;
@@ -3184,6 +3259,15 @@ function failureToToolResult(err) {
   return JSON.stringify(payload);
 }
 
+// Tool-call → human label for the lens progress chip. Keep terse — the chip
+// has limited horizontal room and gets ellipsis-truncated past ~60ch.
+function friendlyToolName(name) {
+  if (name === 'apply_edits') return 'edits';
+  if (name === 'apply_dsl_plan') return 'structural plan';
+  if (name === 'replace_document') return 'full rewrite';
+  return name || 'tool';
+}
+
 async function modify(instr, lensMeta = null) {
   // Audit R2: every commit through the agent loop is attributed. Lens
   // callers set actor explicitly (getActiveActor() for command paths,
@@ -3200,6 +3284,7 @@ async function modify(instr, lensMeta = null) {
   const model = sessionStorage.getItem(RWA.K_MODEL) || RWA.MODEL;
   if (cfg.requiresKey && !cfg.apiKey) {
     setPalSt('err', 'no API key — open ⚙ settings');
+    setLensProgress('error', 'no API key — open ⚙ settings');
     document.getElementById('rwa-set-panel').classList.add('open');
     document.getElementById('rwa-key').focus();
     return;
@@ -3207,12 +3292,14 @@ async function modify(instr, lensMeta = null) {
 
   if (modifyMutex) {
     setPalSt('err', '✗ another modify in progress');
+    setLensProgress('error', 'another modify in progress');
     throw new RwaEditError('concurrent_modify');
   }
   modifyMutex = true;
 
   closePal();
   setStatus('run', '⌘K running');
+  setLensProgress('thinking', 'Thinking…');
 
   try {
     const cur = canonLF(await getDoc());
@@ -3229,6 +3316,9 @@ async function modify(instr, lensMeta = null) {
 
     while (attemptsLeft > 0 && newDoc === null) {
       attemptsLeft--;
+      const attemptNum = RWA_EDIT.RETRIES - attemptsLeft;
+      setLensProgress('thinking',
+        attemptNum === 1 ? 'Thinking…' : `Retrying (attempt ${attemptNum}/${RWA_EDIT.RETRIES})…`);
 
       const data = await openAiCompatChat(cfg, {
         model,
@@ -3245,6 +3335,7 @@ async function modify(instr, lensMeta = null) {
         const text = (msg.content || '(no message)').trim();
         setStatus('err', '✗ model declined');
         setPalSt('err', text.slice(0, 200));
+        setLensProgress('error', 'model declined — ' + text.slice(0, 120));
         return;
       }
 
@@ -3264,6 +3355,8 @@ async function modify(instr, lensMeta = null) {
         }
         continue;
       }
+
+      setLensProgress('thinking', `Applying ${friendlyToolName(fnName)}…`);
 
       try {
         if (fnName === 'apply_dsl_plan') {
@@ -3299,15 +3392,18 @@ async function modify(instr, lensMeta = null) {
         emitRuntimeEvent('status', getStatusSnapshot());
       });
       setStatus('ok', '✓ done');
+      setLensProgress('done', 'Done');
     } else {
       const summary = lastFailure
-        ? '✗ ' + lastFailure.code + (lastFailure.editIndex != null ? ' [edit ' + lastFailure.editIndex + ']' : '')
-        : '✗ retry budget exhausted';
-      setStatus('err', summary);
+        ? lastFailure.code + (lastFailure.editIndex != null ? ' [edit ' + lastFailure.editIndex + ']' : '')
+        : 'retry budget exhausted';
+      setStatus('err', '✗ ' + summary);
+      setLensProgress('error', summary);
       console.error('rwa-edit retry exhausted', lastFailure);
     }
   } catch (e) {
     setStatus('err', '✗ ' + e.message);
+    setLensProgress('error', e.message);
     console.error(e);
   } finally {
     modifyMutex = false;
@@ -3324,11 +3420,13 @@ async function modify(instr, lensMeta = null) {
 async function modifyViaBridge(instr, lensMeta = null) {
   if (modifyMutex) {
     setPalSt('err', '✗ another modify in progress');
+    setLensProgress('error', 'another modify in progress');
     throw new RwaEditError('concurrent_modify');
   }
   modifyMutex = true;
   closePal();
   setStatus('run', '⌘K running (bridge)');
+  setLensProgress('thinking', 'Asking claude -p…');
 
   try {
     const cur = canonLF(await getDoc());
@@ -3371,6 +3469,7 @@ async function modifyViaBridge(instr, lensMeta = null) {
       throw new Error('bridge: model output did not contain a parseable JSON envelope. Preview: ' + preview);
     }
 
+    setLensProgress('thinking', `Applying ${friendlyToolName(parsed.tool)}…`);
     let newDoc = null;
     if (parsed.tool === 'apply_dsl_plan') {
       const compiled = compileDslPlan(parsed.envelope, cur);
@@ -3398,11 +3497,15 @@ async function modifyViaBridge(instr, lensMeta = null) {
       emitRuntimeEvent('status', getStatusSnapshot());
     });
     setStatus('ok', '✓ done');
+    setLensProgress('done', 'Done');
   } catch (e) {
     if (e instanceof RwaEditError) {
-      setStatus('err', '✗ ' + e.code + (e.editIndex != null ? ' [edit ' + e.editIndex + ']' : ''));
+      const code = e.code + (e.editIndex != null ? ' [edit ' + e.editIndex + ']' : '');
+      setStatus('err', '✗ ' + code);
+      setLensProgress('error', code);
     } else {
       setStatus('err', '✗ ' + e.message);
+      setLensProgress('error', e.message);
     }
     console.error(e);
   } finally {

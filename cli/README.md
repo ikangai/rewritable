@@ -74,7 +74,7 @@ The agent loop retries up to 3 times when the model emits plain text instead of 
 | Flag | Effect |
 |---|---|
 | `--backend <name>` | `openrouter` (default), `ollama`, `lmstudio`. Falls back to `$RWA_BACKEND`. `bridge` is browser-only by design. |
-| `--model <id>` | model id passed to the backend. Falls back to `$RWA_MODEL`, then `google/gemini-3-flash-preview`. |
+| `--model <id>` | model id passed to the backend. Falls back to `$RWA_MODEL`, then `google/gemini-3.5-flash`. |
 | `--base-url <url>` | OpenAI-compatible base URL override. Defaults: `https://openrouter.ai/api/v1`, `http://localhost:11434/v1` (or `$RWA_OLLAMA_URL`), `http://localhost:1234/v1` (or `$RWA_LMSTUDIO_URL`). |
 | `--api-key <key>` | openrouter only; falls back to `$RWA_OPENROUTER_KEY`. ollama / lmstudio run locally without auth. |
 

@@ -320,9 +320,10 @@ The runtime drives a multi-turn loop with a 3-retry budget per ⌘K. On failure
 tool_result and the model gets another attempt. After exhaustion the user sees
 the failure; **no silent escalation** to `replace_document`.
 
-Default model: `google/gemini-3-flash-preview` via OpenRouter. The user
+Default model: `google/gemini-3.5-flash` via OpenRouter. The user
 overrides per session in the settings panel (key + model live in
-`sessionStorage` only).
+`sessionStorage` only); the model input is pre-populated with a curated
+datalist of benchmarked OpenRouter models for autocomplete.
 
 ## Hard rules (do not relax)
 

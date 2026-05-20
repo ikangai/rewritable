@@ -57,7 +57,7 @@ export async function convertPdfViaVision(bytes, { apiKey, model, signal } = {})
   const dataUri = `data:application/pdf;base64,${buf.toString('base64')}`;
 
   const body = {
-    model: model || 'google/gemini-3-flash-preview',
+    model: model || 'google/gemini-3.5-flash',
     messages: [
       { role: 'system', content: SYSTEM_PROMPT },
       {

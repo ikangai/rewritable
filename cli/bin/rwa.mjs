@@ -42,7 +42,7 @@ Flags:
                  with --permission-mode bypassPermissions; only use on
                  files you trust.
   --model <id>   (with --vision) override the OpenRouter model id.
-                 Default: google/gemini-3-flash-preview.
+                 Default: google/gemini-3.5-flash.
   --timeout <s>  (with --claude) wall-clock cap for the subprocess in
                  seconds. Default: 1200 (20 minutes). Long academic
                  papers may need more.
@@ -292,7 +292,7 @@ function detectProductKind(fileText) {
         if (!apiKeyFlag.ok)   { process.exitCode = 1; return; }
 
         const backendName = backendFlag.value || process.env.RWA_BACKEND || 'openrouter';
-        const modelId     = modelFlag.value   || process.env.RWA_MODEL   || 'google/gemini-3-flash-preview';
+        const modelId     = modelFlag.value   || process.env.RWA_MODEL   || 'google/gemini-3.5-flash';
         const baseUrl     = baseUrlFlag.value || envBaseUrl(backendName);
         const apiKey      = apiKeyFlag.value  || envApiKey(backendName);
 
