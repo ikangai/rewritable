@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>code-02-long-pre-must-break — <pre> longer than a page is forced to break (known limit)</title>
+<!--
+  code-02-long-pre-must-break — <pre> longer than a page is forced to break (known limit)
+
+  Hypothesis under test:
+    When a single <pre> exceeds one printed page, the rendering engine is forced to break inside it (break-inside:avoid is a HINT, not a guarantee). This scenario DOCUMENTS the limit rather than fixing it: the user must split long code blocks manually if intact printing matters.
+
+  Manual verification (open in Chromium → Cmd-P → preview):
+       1. The code block spans at least 2 pages.
+       2. The break lands at a LINE boundary, not mid-character or mid-word.
+       3. No code line is split in half horizontally between two pages.
+       4. NOTE: This scenario PASSES if the break is line-aligned, even though the pre was split.
+
+  Failure modes this scenario catches:
+    See MANIFEST.md for the per-scenario failure-mode table.
+-->
+<style>
+:root { --gray-50:#fafafa; --gray-100:#f4f4f5; --gray-200:#e4e4e7; --gray-400:#a1a1aa; --gray-500:#71717a; --gray-700:#3f3f46; --gray-800:#27272a; --gray-900:#18181b; --blue:#2563eb; --font-ui: system-ui,-apple-system,Segoe UI,sans-serif; --font-mono: ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
+body { font-family: var(--font-ui); color: var(--gray-900); background: var(--gray-50); margin: 0; line-height: 1.6; }
+:where(#rwa-doc-mount) article { max-width: 720px; margin: 64px auto; padding: 0 32px; }
+:where(#rwa-doc-mount) h1 { font-size: 2.2em; margin: 0 0 .5em; line-height: 1.2; }
+:where(#rwa-doc-mount) h2 { font-size: 1.5em; margin: 1.5em 0 .5em; }
+:where(#rwa-doc-mount) h3 { font-size: 1.2em; margin: 1.3em 0 .4em; }
+:where(#rwa-doc-mount) p { margin: 0 0 1em; }
+:where(#rwa-doc-mount) a { color: var(--blue); text-decoration: underline; }
+:where(#rwa-doc-mount) code { font-family: var(--font-mono); font-size: .92em; background: var(--gray-100); padding: .1em .35em; border-radius: 4px; }
+:where(#rwa-doc-mount) pre { font-family: var(--font-mono); font-size: .9rem; background: var(--gray-50); border: 1px solid var(--gray-200); border-radius: 8px; padding: 14px 16px; overflow-x: auto; margin: 0 0 1em; line-height: 1.5; }
+:where(#rwa-doc-mount) pre code { background: transparent; padding: 0; }
+:where(#rwa-doc-mount) blockquote { margin: 1.5em 0; padding: 0 1.2em; border-left: 3px solid var(--gray-200); color: var(--gray-700); }
+:where(#rwa-doc-mount) figure { margin: 1.5em 0; }
+:where(#rwa-doc-mount) figcaption { font-size: .875em; color: var(--gray-500); margin-top: .5em; text-align: center; }
+:where(#rwa-doc-mount) img { max-width: 100%; height: auto; border-radius: 6px; }
+:where(#rwa-doc-mount) table { border-collapse: collapse; width: 100%; margin: 1em 0; font-size: .95em; }
+:where(#rwa-doc-mount) th, :where(#rwa-doc-mount) td { border-bottom: 1px solid var(--gray-200); padding: .5em .75em; text-align: left; vertical-align: top; }
+:where(#rwa-doc-mount) th { font-weight: 600; color: var(--gray-700); background: var(--gray-50); }
+.placeholder { color: var(--gray-400); font-style: italic; }
+#rwa-runtime { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); width: 680px; background: #fff; border: 1px solid var(--gray-200); border-radius: 24px; padding: 16px 20px; box-shadow: 0 4px 24px rgba(0,0,0,.06); }
+@page { margin: 18mm; }
+@media print {
+  #rwa-runtime { display: none !important; }
+  body { background: #fff !important; color: #000 !important; min-height: 0 !important; padding-bottom: 0 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  #rwa-doc-mount { margin: 0 !important; padding: 0 !important; }
+  :where(#rwa-doc-mount) article { margin: 0 auto !important; padding: 0 !important; max-width: none !important; }
+  :where(#rwa-doc-mount) h1, :where(#rwa-doc-mount) h2, :where(#rwa-doc-mount) h3, :where(#rwa-doc-mount) h4, :where(#rwa-doc-mount) h5, :where(#rwa-doc-mount) h6 { break-after: avoid; page-break-after: avoid; }
+  :where(#rwa-doc-mount) figure, :where(#rwa-doc-mount) pre, :where(#rwa-doc-mount) blockquote, :where(#rwa-doc-mount) table, :where(#rwa-doc-mount) img { break-inside: avoid; page-break-inside: avoid; }
+  :where(#rwa-doc-mount) tr, :where(#rwa-doc-mount) li { break-inside: avoid; page-break-inside: avoid; }
+  :where(#rwa-doc-mount) p { orphans: 3; widows: 3; }
+  :where(#rwa-doc-mount) a { color: #000 !important; }
+  .placeholder { display: none; }
+}
+</style>
+</head>
+<body>
+<div id="rwa-doc-mount">
+<article>
+<h1>Long log dump</h1>
+<p>This pre exceeds one printed page. The engine MUST split it. The check is only that the split lands cleanly at a line boundary.</p>
+<pre><code>[001] Operating margin held steady at 22 percent despite headcount additions.
+[002] Operating margin held steady at 22 percent despite headcount additions.
+[003] Operating margin held steady at 22 percent despite headcount additions.
+[004] Operating margin held steady at 22 percent despite headcount additions.
+[005] Operating margin held steady at 22 percent despite headcount additions.
+[006] Operating margin held steady at 22 percent despite headcount additions.
+[007] Operating margin held steady at 22 percent despite headcount additions.
+[008] Operating margin held steady at 22 percent despite headcount additions.
+[009] Operating margin held steady at 22 percent despite headcount additions.
+[010] Operating margin held steady at 22 percent despite headcount additions.
+[011] Operating margin held steady at 22 percent despite headcount additions.
+[012] Operating margin held steady at 22 percent despite headcount additions.
+[013] Operating margin held steady at 22 percent despite headcount additions.
+[014] Operating margin held steady at 22 percent despite headcount additions.
+[015] Operating margin held steady at 22 percent despite headcount additions.
+[016] Operating margin held steady at 22 percent despite headcount additions.
+[017] Operating margin held steady at 22 percent despite headcount additions.
+[018] Operating margin held steady at 22 percent despite headcount additions.
+[019] Operating margin held steady at 22 percent despite headcount additions.
+[020] Operating margin held steady at 22 percent despite headcount additions.
+[021] Operating margin held steady at 22 percent despite headcount additions.
+[022] Operating margin held steady at 22 percent despite headcount additions.
+[023] Operating margin held steady at 22 percent despite headcount additions.
+[024] Operating margin held steady at 22 percent despite headcount additions.
+[025] Operating margin held steady at 22 percent despite headcount additions.
+[026] Operating margin held steady at 22 percent despite headcount additions.
+[027] Operating margin held steady at 22 percent despite headcount additions.
+[028] Operating margin held steady at 22 percent despite headcount additions.
+[029] Operating margin held steady at 22 percent despite headcount additions.
+[030] Operating margin held steady at 22 percent despite headcount additions.
+[031] Operating margin held steady at 22 percent despite headcount additions.
+[032] Operating margin held steady at 22 percent despite headcount additions.
+[033] Operating margin held steady at 22 percent despite headcount additions.
+[034] Operating margin held steady at 22 percent despite headcount additions.
+[035] Operating margin held steady at 22 percent despite headcount additions.
+[036] Operating margin held steady at 22 percent despite headcount additions.
+[037] Operating margin held steady at 22 percent despite headcount additions.
+[038] Operating margin held steady at 22 percent despite headcount additions.
+[039] Operating margin held steady at 22 percent despite headcount additions.
+[040] Operating margin held steady at 22 percent despite headcount additions.
+[041] Operating margin held steady at 22 percent despite headcount additions.
+[042] Operating margin held steady at 22 percent despite headcount additions.
+[043] Operating margin held steady at 22 percent despite headcount additions.
+[044] Operating margin held steady at 22 percent despite headcount additions.
+[045] Operating margin held steady at 22 percent despite headcount additions.
+[046] Operating margin held steady at 22 percent despite headcount additions.
+[047] Operating margin held steady at 22 percent despite headcount additions.
+[048] Operating margin held steady at 22 percent despite headcount additions.
+[049] Operating margin held steady at 22 percent despite headcount additions.
+[050] Operating margin held steady at 22 percent despite headcount additions.
+[051] Operating margin held steady at 22 percent despite headcount additions.
+[052] Operating margin held steady at 22 percent despite headcount additions.
+[053] Operating margin held steady at 22 percent despite headcount additions.
+[054] Operating margin held steady at 22 percent despite headcount additions.
+[055] Operating margin held steady at 22 percent despite headcount additions.
+[056] Operating margin held steady at 22 percent despite headcount additions.
+[057] Operating margin held steady at 22 percent despite headcount additions.
+[058] Operating margin held steady at 22 percent despite headcount additions.
+[059] Operating margin held steady at 22 percent despite headcount additions.
+[060] Operating margin held steady at 22 percent despite headcount additions.
+[061] Operating margin held steady at 22 percent despite headcount additions.
+[062] Operating margin held steady at 22 percent despite headcount additions.
+[063] Operating margin held steady at 22 percent despite headcount additions.
+[064] Operating margin held steady at 22 percent despite headcount additions.
+[065] Operating margin held steady at 22 percent despite headcount additions.
+[066] Operating margin held steady at 22 percent despite headcount additions.
+[067] Operating margin held steady at 22 percent despite headcount additions.
+[068] Operating margin held steady at 22 percent despite headcount additions.
+[069] Operating margin held steady at 22 percent despite headcount additions.
+[070] Operating margin held steady at 22 percent despite headcount additions.
+[071] Operating margin held steady at 22 percent despite headcount additions.
+[072] Operating margin held steady at 22 percent despite headcount additions.
+[073] Operating margin held steady at 22 percent despite headcount additions.
+[074] Operating margin held steady at 22 percent despite headcount additions.
+[075] Operating margin held steady at 22 percent despite headcount additions.
+[076] Operating margin held steady at 22 percent despite headcount additions.
+[077] Operating margin held steady at 22 percent despite headcount additions.
+[078] Operating margin held steady at 22 percent despite headcount additions.
+[079] Operating margin held steady at 22 percent despite headcount additions.
+[080] Operating margin held steady at 22 percent despite headcount additions.
+[081] Operating margin held steady at 22 percent despite headcount additions.
+[082] Operating margin held steady at 22 percent despite headcount additions.
+[083] Operating margin held steady at 22 percent despite headcount additions.
+[084] Operating margin held steady at 22 percent despite headcount additions.
+[085] Operating margin held steady at 22 percent despite headcount additions.
+[086] Operating margin held steady at 22 percent despite headcount additions.
+[087] Operating margin held steady at 22 percent despite headcount additions.
+[088] Operating margin held steady at 22 percent despite headcount additions.
+[089] Operating margin held steady at 22 percent despite headcount additions.
+[090] Operating margin held steady at 22 percent despite headcount additions.
+[091] Operating margin held steady at 22 percent despite headcount additions.
+[092] Operating margin held steady at 22 percent despite headcount additions.
+[093] Operating margin held steady at 22 percent despite headcount additions.
+[094] Operating margin held steady at 22 percent despite headcount additions.
+[095] Operating margin held steady at 22 percent despite headcount additions.
+[096] Operating margin held steady at 22 percent despite headcount additions.
+[097] Operating margin held steady at 22 percent despite headcount additions.
+[098] Operating margin held steady at 22 percent despite headcount additions.
+[099] Operating margin held steady at 22 percent despite headcount additions.
+[100] Operating margin held steady at 22 percent despite headcount additions.
+[101] Operating margin held steady at 22 percent despite headcount additions.
+[102] Operating margin held steady at 22 percent despite headcount additions.
+[103] Operating margin held steady at 22 percent despite headcount additions.
+[104] Operating margin held steady at 22 percent despite headcount additions.
+[105] Operating margin held steady at 22 percent despite headcount additions.
+[106] Operating margin held steady at 22 percent despite headcount additions.
+[107] Operating margin held steady at 22 percent despite headcount additions.
+[108] Operating margin held steady at 22 percent despite headcount additions.
+[109] Operating margin held steady at 22 percent despite headcount additions.
+[110] Operating margin held steady at 22 percent despite headcount additions.
+[111] Operating margin held steady at 22 percent despite headcount additions.
+[112] Operating margin held steady at 22 percent despite headcount additions.
+[113] Operating margin held steady at 22 percent despite headcount additions.
+[114] Operating margin held steady at 22 percent despite headcount additions.
+[115] Operating margin held steady at 22 percent despite headcount additions.
+[116] Operating margin held steady at 22 percent despite headcount additions.
+[117] Operating margin held steady at 22 percent despite headcount additions.
+[118] Operating margin held steady at 22 percent despite headcount additions.
+[119] Operating margin held steady at 22 percent despite headcount additions.
+[120] Operating margin held steady at 22 percent despite headcount additions.</code></pre>
+</article>
+</div>
+</body>
+</html>

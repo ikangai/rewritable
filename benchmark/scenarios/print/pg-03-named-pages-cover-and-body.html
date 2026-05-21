@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>pg-03-named-pages-cover-and-body — named pages: cover (no margins, no header) + body (header + page number)</title>
+<!--
+  pg-03-named-pages-cover-and-body — named pages: cover (no margins, no header) + body (header + page number)
+
+  Hypothesis under test:
+    @page :first (or a named-page selector) can carry margin-boxes for headers/footers/page numbers; the cover page is rendered with margin:0 and no margin-box content.
+
+  Manual verification (open in Chromium → Cmd-P → preview):
+       1. Page 1 (the cover) prints edge-to-edge with NO header and NO page number.
+       2. Page 2 onward prints with a top-center header reading "Annual Report 2026" and a bottom-center page number.
+       3. Page numbers increment correctly (1, 2, 3…) on body pages. NOTE: page-number rendering depends on browser engine — Chromium supports counter(page) only via margin-boxes; Safari may differ. Document the actual behavior observed.
+
+  Failure modes this scenario catches:
+    See MANIFEST.md for the per-scenario failure-mode table.
+-->
+<style>
+:root { --gray-50:#fafafa; --gray-100:#f4f4f5; --gray-200:#e4e4e7; --gray-400:#a1a1aa; --gray-500:#71717a; --gray-700:#3f3f46; --gray-800:#27272a; --gray-900:#18181b; --blue:#2563eb; --font-ui: system-ui,-apple-system,Segoe UI,sans-serif; --font-mono: ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
+body { font-family: var(--font-ui); color: var(--gray-900); background: var(--gray-50); margin: 0; line-height: 1.6; }
+:where(#rwa-doc-mount) article { max-width: 720px; margin: 64px auto; padding: 0 32px; }
+:where(#rwa-doc-mount) h1 { font-size: 2.2em; margin: 0 0 .5em; line-height: 1.2; }
+:where(#rwa-doc-mount) h2 { font-size: 1.5em; margin: 1.5em 0 .5em; }
+:where(#rwa-doc-mount) h3 { font-size: 1.2em; margin: 1.3em 0 .4em; }
+:where(#rwa-doc-mount) p { margin: 0 0 1em; }
+:where(#rwa-doc-mount) a { color: var(--blue); text-decoration: underline; }
+:where(#rwa-doc-mount) code { font-family: var(--font-mono); font-size: .92em; background: var(--gray-100); padding: .1em .35em; border-radius: 4px; }
+:where(#rwa-doc-mount) pre { font-family: var(--font-mono); font-size: .9rem; background: var(--gray-50); border: 1px solid var(--gray-200); border-radius: 8px; padding: 14px 16px; overflow-x: auto; margin: 0 0 1em; line-height: 1.5; }
+:where(#rwa-doc-mount) pre code { background: transparent; padding: 0; }
+:where(#rwa-doc-mount) blockquote { margin: 1.5em 0; padding: 0 1.2em; border-left: 3px solid var(--gray-200); color: var(--gray-700); }
+:where(#rwa-doc-mount) figure { margin: 1.5em 0; }
+:where(#rwa-doc-mount) figcaption { font-size: .875em; color: var(--gray-500); margin-top: .5em; text-align: center; }
+:where(#rwa-doc-mount) img { max-width: 100%; height: auto; border-radius: 6px; }
+:where(#rwa-doc-mount) table { border-collapse: collapse; width: 100%; margin: 1em 0; font-size: .95em; }
+:where(#rwa-doc-mount) th, :where(#rwa-doc-mount) td { border-bottom: 1px solid var(--gray-200); padding: .5em .75em; text-align: left; vertical-align: top; }
+:where(#rwa-doc-mount) th { font-weight: 600; color: var(--gray-700); background: var(--gray-50); }
+.placeholder { color: var(--gray-400); font-style: italic; }
+#rwa-runtime { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); width: 680px; background: #fff; border: 1px solid var(--gray-200); border-radius: 24px; padding: 16px 20px; box-shadow: 0 4px 24px rgba(0,0,0,.06); }
+@page { size: A4; margin: 22mm 18mm; @top-center { content: "Annual Report 2026"; font-size: 9pt; } @bottom-center { content: counter(page); font-size: 9pt; } }
+@page :first { margin: 0; @top-center { content: none; } @bottom-center { content: none; } }
+.cover { page: auto; min-height: 95vh; display: flex; align-items: center; justify-content: center; background: #0a0a0a; color: white; break-after: page; }
+.cover h1 { color: white; font-size: 3em; }
+@page { margin: 18mm; }
+@media print {
+  #rwa-runtime { display: none !important; }
+  body { background: #fff !important; color: #000 !important; min-height: 0 !important; padding-bottom: 0 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  #rwa-doc-mount { margin: 0 !important; padding: 0 !important; }
+  :where(#rwa-doc-mount) article { margin: 0 auto !important; padding: 0 !important; max-width: none !important; }
+  :where(#rwa-doc-mount) h1, :where(#rwa-doc-mount) h2, :where(#rwa-doc-mount) h3, :where(#rwa-doc-mount) h4, :where(#rwa-doc-mount) h5, :where(#rwa-doc-mount) h6 { break-after: avoid; page-break-after: avoid; }
+  :where(#rwa-doc-mount) figure, :where(#rwa-doc-mount) pre, :where(#rwa-doc-mount) blockquote, :where(#rwa-doc-mount) table, :where(#rwa-doc-mount) img { break-inside: avoid; page-break-inside: avoid; }
+  :where(#rwa-doc-mount) tr, :where(#rwa-doc-mount) li { break-inside: avoid; page-break-inside: avoid; }
+  :where(#rwa-doc-mount) p { orphans: 3; widows: 3; }
+  :where(#rwa-doc-mount) a { color: #000 !important; }
+  .placeholder { display: none; }
+}
+</style>
+</head>
+<body>
+<div id="rwa-doc-mount">
+<section class="cover">
+<h1>Annual Report 2026</h1>
+</section>
+<article>
+<h1>Executive summary</h1>
+<p>Operating margin held steady at 22 percent despite headcount additions.</p>
+<p>Revenue grew 18 percent year over year, driven by enterprise renewals and modest expansion in the EMEA region.</p>
+<p>We expect mid-teens growth to continue through Q2 with new product introductions in late summer.</p>
+<p>Risk register updated this quarter to track supplier concentration and currency exposure across three new corridors.</p>
+<p>The board approved the dividend at the prior level pending Q3 results.</p>
+<p>Cost discipline remains the operating principle for the back half of the fiscal year.</p>
+<p>Technical investments include rebuilding the ingestion path and reducing batch latency by half.</p>
+<p>Headcount plan calls for selective expansion in engineering and customer success.</p>
+<p>Competitive position improved in the mid-market segment after the spring product cycle.</p>
+<p>Customer satisfaction scores moved up two points after the support overhaul.</p>
+<p>Operating margin held steady at 22 percent despite headcount additions.</p>
+<p>Revenue grew 18 percent year over year, driven by enterprise renewals and modest expansion in the EMEA region.</p>
+<p>We expect mid-teens growth to continue through Q2 with new product introductions in late summer.</p>
+<p>Risk register updated this quarter to track supplier concentration and currency exposure across three new corridors.</p>
+<p>The board approved the dividend at the prior level pending Q3 results.</p>
+<p>Cost discipline remains the operating principle for the back half of the fiscal year.</p>
+<p>Technical investments include rebuilding the ingestion path and reducing batch latency by half.</p>
+<p>Headcount plan calls for selective expansion in engineering and customer success.</p>
+<p>Competitive position improved in the mid-market segment after the spring product cycle.</p>
+<p>Customer satisfaction scores moved up two points after the support overhaul.</p>
+<h1>Outlook</h1>
+<p>Operating margin held steady at 22 percent despite headcount additions.</p>
+<p>Revenue grew 18 percent year over year, driven by enterprise renewals and modest expansion in the EMEA region.</p>
+<p>We expect mid-teens growth to continue through Q2 with new product introductions in late summer.</p>
+<p>Risk register updated this quarter to track supplier concentration and currency exposure across three new corridors.</p>
+<p>The board approved the dividend at the prior level pending Q3 results.</p>
+<p>Cost discipline remains the operating principle for the back half of the fiscal year.</p>
+<p>Technical investments include rebuilding the ingestion path and reducing batch latency by half.</p>
+<p>Headcount plan calls for selective expansion in engineering and customer success.</p>
+<p>Competitive position improved in the mid-market segment after the spring product cycle.</p>
+<p>Customer satisfaction scores moved up two points after the support overhaul.</p>
+<p>Operating margin held steady at 22 percent despite headcount additions.</p>
+<p>Revenue grew 18 percent year over year, driven by enterprise renewals and modest expansion in the EMEA region.</p>
+<p>We expect mid-teens growth to continue through Q2 with new product introductions in late summer.</p>
+<p>Risk register updated this quarter to track supplier concentration and currency exposure across three new corridors.</p>
+<p>The board approved the dividend at the prior level pending Q3 results.</p>
+</article>
+</div>
+</body>
+</html>

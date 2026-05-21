@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>edge-03-oversize-block-breaks-inside — block taller than a page is forced to break inside (known limit)</title>
+<!--
+  edge-03-oversize-block-breaks-inside — block taller than a page is forced to break inside (known limit)
+
+  Hypothesis under test:
+    break-inside:avoid is a hint. When a single <blockquote> is taller than a page, the engine MUST break inside it. The expected behavior is a clean break between lines, not mid-character.
+
+  Manual verification (open in Chromium → Cmd-P → preview):
+       1. The blockquote spans AT LEAST 2 pages.
+       2. The break inside the blockquote lands at a clean LINE boundary.
+       3. No line of the blockquote is split horizontally across two pages.
+       4. NOTE: this scenario documents a limit, not a bug — there is nothing CSS can do to keep an oversize block on one page.
+
+  Failure modes this scenario catches:
+    See MANIFEST.md for the per-scenario failure-mode table.
+-->
+<style>
+:root { --gray-50:#fafafa; --gray-100:#f4f4f5; --gray-200:#e4e4e7; --gray-400:#a1a1aa; --gray-500:#71717a; --gray-700:#3f3f46; --gray-800:#27272a; --gray-900:#18181b; --blue:#2563eb; --font-ui: system-ui,-apple-system,Segoe UI,sans-serif; --font-mono: ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
+body { font-family: var(--font-ui); color: var(--gray-900); background: var(--gray-50); margin: 0; line-height: 1.6; }
+:where(#rwa-doc-mount) article { max-width: 720px; margin: 64px auto; padding: 0 32px; }
+:where(#rwa-doc-mount) h1 { font-size: 2.2em; margin: 0 0 .5em; line-height: 1.2; }
+:where(#rwa-doc-mount) h2 { font-size: 1.5em; margin: 1.5em 0 .5em; }
+:where(#rwa-doc-mount) h3 { font-size: 1.2em; margin: 1.3em 0 .4em; }
+:where(#rwa-doc-mount) p { margin: 0 0 1em; }
+:where(#rwa-doc-mount) a { color: var(--blue); text-decoration: underline; }
+:where(#rwa-doc-mount) code { font-family: var(--font-mono); font-size: .92em; background: var(--gray-100); padding: .1em .35em; border-radius: 4px; }
+:where(#rwa-doc-mount) pre { font-family: var(--font-mono); font-size: .9rem; background: var(--gray-50); border: 1px solid var(--gray-200); border-radius: 8px; padding: 14px 16px; overflow-x: auto; margin: 0 0 1em; line-height: 1.5; }
+:where(#rwa-doc-mount) pre code { background: transparent; padding: 0; }
+:where(#rwa-doc-mount) blockquote { margin: 1.5em 0; padding: 0 1.2em; border-left: 3px solid var(--gray-200); color: var(--gray-700); }
+:where(#rwa-doc-mount) figure { margin: 1.5em 0; }
+:where(#rwa-doc-mount) figcaption { font-size: .875em; color: var(--gray-500); margin-top: .5em; text-align: center; }
+:where(#rwa-doc-mount) img { max-width: 100%; height: auto; border-radius: 6px; }
+:where(#rwa-doc-mount) table { border-collapse: collapse; width: 100%; margin: 1em 0; font-size: .95em; }
+:where(#rwa-doc-mount) th, :where(#rwa-doc-mount) td { border-bottom: 1px solid var(--gray-200); padding: .5em .75em; text-align: left; vertical-align: top; }
+:where(#rwa-doc-mount) th { font-weight: 600; color: var(--gray-700); background: var(--gray-50); }
+.placeholder { color: var(--gray-400); font-style: italic; }
+#rwa-runtime { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); width: 680px; background: #fff; border: 1px solid var(--gray-200); border-radius: 24px; padding: 16px 20px; box-shadow: 0 4px 24px rgba(0,0,0,.06); }
+@page { margin: 18mm; }
+@media print {
+  #rwa-runtime { display: none !important; }
+  body { background: #fff !important; color: #000 !important; min-height: 0 !important; padding-bottom: 0 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  #rwa-doc-mount { margin: 0 !important; padding: 0 !important; }
+  :where(#rwa-doc-mount) article { margin: 0 auto !important; padding: 0 !important; max-width: none !important; }
+  :where(#rwa-doc-mount) h1, :where(#rwa-doc-mount) h2, :where(#rwa-doc-mount) h3, :where(#rwa-doc-mount) h4, :where(#rwa-doc-mount) h5, :where(#rwa-doc-mount) h6 { break-after: avoid; page-break-after: avoid; }
+  :where(#rwa-doc-mount) figure, :where(#rwa-doc-mount) pre, :where(#rwa-doc-mount) blockquote, :where(#rwa-doc-mount) table, :where(#rwa-doc-mount) img { break-inside: avoid; page-break-inside: avoid; }
+  :where(#rwa-doc-mount) tr, :where(#rwa-doc-mount) li { break-inside: avoid; page-break-inside: avoid; }
+  :where(#rwa-doc-mount) p { orphans: 3; widows: 3; }
+  :where(#rwa-doc-mount) a { color: #000 !important; }
+  .placeholder { display: none; }
+}
+</style>
+</head>
+<body>
+<div id="rwa-doc-mount">
+<article>
+<h1>An oversize quotation</h1>
+<blockquote>
+<p>Line 1. Operating margin held steady at 22 percent despite headcount additions.</p>
+<p>Line 2. Operating margin held steady at 22 percent despite headcount additions.</p>
+<p>Line 3. Operating margin held steady at 22 percent despite headcount additions.</p>
+<p>Line 4. Operating margin held steady at 22 percent despite headcount additions.</p>
+<p>Line 5. Operating margin held steady at 22 percent despite headcount additions.</p>
+<p>Line 6. Operating margin held steady at 22 percent despite headcount additions.</p>
+<p>Line 7. Operating margin held steady at 22 percent despite headcount additions.</p>
+<p>Line 8. Operating margin held steady at 22 percent despite headcount additions.</p>
+<p>Line 9. Operating margin held steady at 22 percent despite headcount additions.</p>
+<p>Line 10. Operating margin held steady at 22 percent despite headcount additions.</p>
+<p>Line 11. Operating margin held steady at 22 percent despite headcount additions.</p>
+<p>Line 12. Operating margin held steady at 22 percent despite headcount additions.</p>
+<p>Line 13. Operating margin held steady at 22 percent despite headcount additions.</p>
+<p>Line 14. Operating margin held steady at 22 percent despite headcount additions.</p>
+<p>Line 15. Operating margin held steady at 22 percent despite headcount additions.</p>
+<p>Line 16. Operating margin held steady at 22 percent despite headcount additions.</p>
+<p>Line 17. Operating margin held steady at 22 percent despite headcount additions.</p>
+<p>Line 18. Operating margin held steady at 22 percent despite headcount additions.</p>
+<p>Line 19. Operating margin held steady at 22 percent despite headcount additions.</p>
+<p>Line 20. Operating margin held steady at 22 percent despite headcount additions.</p>
+<p>Line 21. Operating margin held steady at 22 percent despite headcount additions.</p>
+<p>Line 22. Operating margin held steady at 22 percent despite headcount additions.</p>
+<p>Line 23. Operating margin held steady at 22 percent despite headcount additions.</p>
+<p>Line 24. Operating margin held steady at 22 percent despite headcount additions.</p>
+<p>Line 25. Operating margin held steady at 22 percent despite headcount additions.</p>
+<p>Line 26. Operating margin held steady at 22 percent despite headcount additions.</p>
+<p>Line 27. Operating margin held steady at 22 percent despite headcount additions.</p>
+<p>Line 28. Operating margin held steady at 22 percent despite headcount additions.</p>
+<p>Line 29. Operating margin held steady at 22 percent despite headcount additions.</p>
+<p>Line 30. Operating margin held steady at 22 percent despite headcount additions.</p>
+<p>Line 31. Operating margin held steady at 22 percent despite headcount additions.</p>
+<p>Line 32. Operating margin held steady at 22 percent despite headcount additions.</p>
+<p>Line 33. Operating margin held steady at 22 percent despite headcount additions.</p>
+<p>Line 34. Operating margin held steady at 22 percent despite headcount additions.</p>
+<p>Line 35. Operating margin held steady at 22 percent despite headcount additions.</p>
+<p>Line 36. Operating margin held steady at 22 percent despite headcount additions.</p>
+<p>Line 37. Operating margin held steady at 22 percent despite headcount additions.</p>
+<p>Line 38. Operating margin held steady at 22 percent despite headcount additions.</p>
+<p>Line 39. Operating margin held steady at 22 percent despite headcount additions.</p>
+<p>Line 40. Operating margin held steady at 22 percent despite headcount additions.</p>
+<p>Line 41. Operating margin held steady at 22 percent despite headcount additions.</p>
+<p>Line 42. Operating margin held steady at 22 percent despite headcount additions.</p>
+<p>Line 43. Operating margin held steady at 22 percent despite headcount additions.</p>
+<p>Line 44. Operating margin held steady at 22 percent despite headcount additions.</p>
+<p>Line 45. Operating margin held steady at 22 percent despite headcount additions.</p>
+<p>Line 46. Operating margin held steady at 22 percent despite headcount additions.</p>
+<p>Line 47. Operating margin held steady at 22 percent despite headcount additions.</p>
+<p>Line 48. Operating margin held steady at 22 percent despite headcount additions.</p>
+<p>Line 49. Operating margin held steady at 22 percent despite headcount additions.</p>
+<p>Line 50. Operating margin held steady at 22 percent despite headcount additions.</p>
+<p>Line 51. Operating margin held steady at 22 percent despite headcount additions.</p>
+<p>Line 52. Operating margin held steady at 22 percent despite headcount additions.</p>
+<p>Line 53. Operating margin held steady at 22 percent despite headcount additions.</p>
+<p>Line 54. Operating margin held steady at 22 percent despite headcount additions.</p>
+<p>Line 55. Operating margin held steady at 22 percent despite headcount additions.</p>
+<p>Line 56. Operating margin held steady at 22 percent despite headcount additions.</p>
+<p>Line 57. Operating margin held steady at 22 percent despite headcount additions.</p>
+<p>Line 58. Operating margin held steady at 22 percent despite headcount additions.</p>
+<p>Line 59. Operating margin held steady at 22 percent despite headcount additions.</p>
+<p>Line 60. Operating margin held steady at 22 percent despite headcount additions.</p>
+</blockquote>
+</article>
+</div>
+</body>
+</html>

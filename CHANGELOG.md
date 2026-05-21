@@ -2,6 +2,38 @@
 
 Notable changes to `re-write-able`. The container format is versioned in `re-write-able-spec.md`; the edit protocol in `rwa-edit-spec.md`; the structural-transform DSL in `rwa-edit-dsl-spec.md`. The CLI follows semver in `cli/package.json`.
 
+## 2026-05-21 — print-fidelity test scenarios (23 fixtures + validator)
+
+Closes a gap in the benchmark coverage: the `@media print` stylesheet in `seeds/rewritable.html` has been quietly load-bearing for save-as-PDF since the seed shipped, but had no test surface beyond manual eyeballing. The existing `pres-13` / `pres-14` / `pres-15` scenarios cover *edit fidelity* (does the agent preserve print CSS during edits?), not *visual fidelity* (does the rendered PDF actually look right?). This release adds the latter.
+
+### What ships
+
+`benchmark/scenarios/print/` — 23 self-contained HTML fixtures across 9 categories:
+
+- **sp** (3) — single-page docs: placeholder-only, short prose (full-width on print, not the 720px screen card), receipt with intact table
+- **mp** (2) — multipage prose: long form with no orphan/widow stranding; H2 near page break stays with its following paragraph
+- **tbl** (5) — small intact, 25-row across pages (every row on exactly one page), tall row moves as a unit, wide 9-column without overflow, caption + table together
+- **code** (2) — short `<pre>` intact; 120-line dump documents the engine-forced-break limit
+- **list** (2) — 50-item bullet list breaks between items only; 12 multi-line items stay intact
+- **fig** (2) — figure + caption stay together; figure near boundary moves cleanly
+- **chr** (1) — `#rwa-runtime`, lens placeholder, and `.placeholder` all hidden in print output
+- **pg** (3) — default 18mm margin, document-level `@page` override wins, named-page cover + body with `@top-center` header and `counter(page)` footer
+- **edge** (3) — forced `break-before:page`, `print-color-adjust:exact` preserves coloured backgrounds and forces link text black, oversize blockquote breaks inside at clean line boundaries
+
+Each fixture is a real `.html` you can open in any browser and verify by ⌘P preview against the embedded checklist. The print CSS is mirrored from the seed verbatim (drift-controlled via `generate.mjs`), so what each fixture exercises matches what the runtime ships.
+
+### Runner
+
+`benchmark/scenarios/print/validate.mjs` prints every fixture to PDF via headless Chrome, then runs text-only assertions on the result: page-count exact / minimum / maximum, text presence / absence, "every row on exactly one page", "caption + table on same page", "forced-break target page". 23 / 23 pass on the current runtime. Output PDFs land in `benchmark/results/print/<id>.pdf` — same basename as the source fixture in `scenarios/print/<id>.html`, so source and rendered output sit side-by-side for visual review or cross-run diffing. Both the validator output dir and the PDFs are gitignored.
+
+Requires Chrome / Chromium on PATH or the default macOS location, and `pdfinfo` / `pdftotext` from `poppler` (`brew install poppler`). Skips gracefully when either is missing.
+
+### What's deliberately NOT included
+
+- No puppeteer dependency — the validator shells out to the local Chrome binary, keeping `benchmark/package.json` at its current jsdom + fake-indexeddb minimum. The longer-term puppeteer-based design lives in `scenarios/print/_runner-spec.md` for when pixel-level assertions become worth the dep cost.
+- No screenshot diffing — pixel diffs on rendered PDFs are flaky (subpixel rendering, colour profile, paper rounding). The assertion vocabulary is intentionally semantic.
+- No coverage of Safari / Firefox print engines — fixtures still print correctly in both, but the named-page header/footer scenario (`pg-03`) is the most engine-sensitive and is documented as such.
+
 ## 2026-05-20 — gemini-3.5-flash default, lens progress chip, 9 new fidelity scenarios
 
 Three small things landed together: a model bump for OpenRouter users, an inline progress affordance on the lens, and nine new fidelity scenarios that raise the complexity bar on tables, semantic header/footer, and print stylesheets.

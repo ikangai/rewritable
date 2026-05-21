@@ -65,3 +65,29 @@ export default {
   },
 };
 ```
+
+## Print-fidelity scenarios
+
+`scenarios/print/` is a separate test surface from conformance / fidelity:
+self-contained HTML fixtures that exercise the runtime's `@media print`
+stylesheet (page-break behavior, `@page` margins, runtime chrome hiding,
+named pages, colour preservation). They can't run in jsdom — jsdom doesn't
+paginate — so the runner is a thin headless-Chrome wrapper.
+
+```sh
+node benchmark/scenarios/print/generate.mjs   # regenerate the 23 .html fixtures
+node benchmark/scenarios/print/validate.mjs   # print each → PDF → assert
+```
+
+Requires Chrome / Chromium on PATH or at the default macOS location, and
+`pdfinfo` / `pdftotext` from `poppler` (`brew install poppler`).
+
+PDFs land in `benchmark/results/print/<id>.pdf` — same basename as the
+source fixture in `scenarios/print/<id>.html`, so you can open both
+side-by-side or diff renders across runs. Both the validator output dir
+and the generated PDFs are gitignored.
+
+See `scenarios/print/MANIFEST.md` for the per-scenario catalog and
+`scenarios/print/_runner-spec.md` for the design sketch of a larger
+puppeteer-based runner (deferred — current text-only validator is
+sufficient for the failure modes the print CSS protects against).
