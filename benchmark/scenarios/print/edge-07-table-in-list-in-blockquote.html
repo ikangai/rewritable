@@ -2,16 +2,18 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>code-01-short-pre-intact — short <pre> stays intact on one page</title>
+<title>edge-07-table-in-list-in-blockquote — deeply nested: <table> inside <li> inside <blockquote></title>
 <!--
-  code-01-short-pre-intact — short <pre> stays intact on one page
+  edge-07-table-in-list-in-blockquote — deeply nested: <table> inside <li> inside <blockquote>
 
   Hypothesis under test:
-    break-inside:avoid on <pre> keeps a short code block from being split across pages.
+    Three nested break-inside:avoid elements (blockquote, li, table). Chromium resolves the conflict by treating each rule as a hint at each level. The expected result: the WHOLE blockquote tries to stay together; if it cannot, the engine breaks at LI boundaries; if any LI is taller than a page, the engine breaks inside it (at row boundaries inside the table).
 
   Manual verification (open in Chromium → Cmd-P → preview):
-       1. The 10-line code block appears as ONE intact block on a single page.
-       2. No line of the code appears on a different page from the rest.
+       1. Every TABLE row appears on exactly one page (no mid-row split).
+       2. Every LI in the outer list appears on exactly one page where reasonably sized.
+       3. The blockquote border-left visual treatment is preserved across page breaks.
+       4. Header rows of the nested tables repeat at the top of each continuation page (browser default for <thead>).
 
   Failure modes this scenario catches:
     See MANIFEST.md for the per-scenario failure-mode table.
@@ -57,32 +59,48 @@ body { font-family: var(--font-ui); color: var(--gray-900); background: var(--gr
 <body>
 <div id="rwa-doc-mount">
 <article>
-<h1>API example</h1>
-<p>Operating margin held steady at 22 percent despite headcount additions.</p>
-<p>Revenue grew 18 percent year over year, driven by enterprise renewals and modest expansion in the EMEA region.</p>
-<p>We expect mid-teens growth to continue through Q2 with new product introductions in late summer.</p>
-<p>Risk register updated this quarter to track supplier concentration and currency exposure across three new corridors.</p>
-<p>The board approved the dividend at the prior level pending Q3 results.</p>
-<p>Cost discipline remains the operating principle for the back half of the fiscal year.</p>
-<p>Technical investments include rebuilding the ingestion path and reducing batch latency by half.</p>
-<p>Headcount plan calls for selective expansion in engineering and customer success.</p>
-<p>Competitive position improved in the mid-market segment after the spring product cycle.</p>
-<p>Customer satisfaction scores moved up two points after the support overhaul.</p>
-<p>Operating margin held steady at 22 percent despite headcount additions.</p>
-<p>Revenue grew 18 percent year over year, driven by enterprise renewals and modest expansion in the EMEA region.</p>
-<p>We expect mid-teens growth to continue through Q2 with new product introductions in late summer.</p>
-<p>Risk register updated this quarter to track supplier concentration and currency exposure across three new corridors.</p>
-<p>The board approved the dividend at the prior level pending Q3 results.</p>
-<pre><code>fetch('/api/run', {
-  method: 'POST',
-  headers: { 'content-type': 'application/json' },
-  body: JSON.stringify({
-    instruction: 'edit the prose',
-    fixture: { content: '<p>Hello.</p>' },
-  }),
-})
-  .then(r =&gt; r.json())
-  .then(result =&gt; console.log(result));</code></pre>
+<h1>Nested content stress test</h1>
+<p>The blockquote below contains a list, each item of which contains a small table. All three layers carry break-inside:avoid in the print CSS.</p>
+<blockquote>
+<p>From the Q1 board memo, pre-meeting comments:</p>
+<ol>
+<li>
+<strong>Supplier concentration.</strong> The top three suppliers represent over 60% of input spend. Recent contract renewals brought the breakdown to:
+<table>
+<thead><tr><th>Supplier</th><th>Spend share</th><th>Renewed</th></tr></thead>
+<tbody>
+<tr><td>Acme</td><td>28%</td><td>Yes</td></tr>
+<tr><td>Beacon</td><td>19%</td><td>Yes</td></tr>
+<tr><td>Crestline</td><td>14%</td><td>No</td></tr>
+<tr><td>Doric</td><td>9%</td><td>No</td></tr>
+</tbody>
+</table>
+</li>
+<li>
+<strong>FX exposure by corridor.</strong> Three new corridors added to the risk register this quarter:
+<table>
+<thead><tr><th>Corridor</th><th>Notional</th><th>Hedge</th></tr></thead>
+<tbody>
+<tr><td>EUR→USD</td><td>4.2M</td><td>50%</td></tr>
+<tr><td>USD→JPY</td><td>2.8M</td><td>30%</td></tr>
+<tr><td>GBP→EUR</td><td>1.1M</td><td>0%</td></tr>
+</tbody>
+</table>
+</li>
+<li>
+<strong>Headcount plan.</strong> Net additions through Q3, by function:
+<table>
+<thead><tr><th>Function</th><th>Q2</th><th>Q3</th><th>Total</th></tr></thead>
+<tbody>
+<tr><td>Engineering</td><td>+4</td><td>+6</td><td>+10</td></tr>
+<tr><td>Customer success</td><td>+2</td><td>+3</td><td>+5</td></tr>
+<tr><td>Finance</td><td>+1</td><td>+1</td><td>+2</td></tr>
+</tbody>
+</table>
+</li>
+</ol>
+<p>End of pre-meeting comments. Comments above represent author position only.</p>
+</blockquote>
 </article>
 </div>
 </body>

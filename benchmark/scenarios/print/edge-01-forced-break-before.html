@@ -47,9 +47,11 @@ section.chapter:first-of-type { break-before: auto; page-break-before: auto; }
   #rwa-doc-mount { margin: 0 !important; padding: 0 !important; }
   :where(#rwa-doc-mount) article { margin: 0 auto !important; padding: 0 !important; max-width: none !important; }
   :where(#rwa-doc-mount) h1, :where(#rwa-doc-mount) h2, :where(#rwa-doc-mount) h3, :where(#rwa-doc-mount) h4, :where(#rwa-doc-mount) h5, :where(#rwa-doc-mount) h6 { break-after: avoid; page-break-after: avoid; }
-  :where(#rwa-doc-mount) figure, :where(#rwa-doc-mount) pre, :where(#rwa-doc-mount) blockquote, :where(#rwa-doc-mount) table, :where(#rwa-doc-mount) img { break-inside: avoid; page-break-inside: avoid; }
+  :where(#rwa-doc-mount) figure, :where(#rwa-doc-mount) pre, :where(#rwa-doc-mount) table, :where(#rwa-doc-mount) img { break-inside: avoid; page-break-inside: avoid; }
   :where(#rwa-doc-mount) tr, :where(#rwa-doc-mount) li { break-inside: avoid; page-break-inside: avoid; }
   :where(#rwa-doc-mount) p { orphans: 3; widows: 3; }
+  :where(#rwa-doc-mount) p, :where(#rwa-doc-mount) li, :where(#rwa-doc-mount) td, :where(#rwa-doc-mount) th, :where(#rwa-doc-mount) code, :where(#rwa-doc-mount) a { overflow-wrap: break-word; }
+  :where(#rwa-doc-mount) pre { white-space: pre-wrap; overflow: visible; overflow-wrap: anywhere; }
   :where(#rwa-doc-mount) a { color: #000 !important; }
   .placeholder { display: none; }
 }

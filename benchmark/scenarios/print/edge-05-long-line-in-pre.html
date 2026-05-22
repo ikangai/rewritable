@@ -2,16 +2,17 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>code-01-short-pre-intact — short <pre> stays intact on one page</title>
+<title>edge-05-long-line-in-pre — <pre> with very long lines — overflow:auto hides content on print</title>
 <!--
-  code-01-short-pre-intact — short <pre> stays intact on one page
+  edge-05-long-line-in-pre — <pre> with very long lines — overflow:auto hides content on print
 
   Hypothesis under test:
-    break-inside:avoid on <pre> keeps a short code block from being split across pages.
+    The baseline content stylesheet sets pre{overflow-x:auto} so long source lines get a horizontal scrollbar on screen. In print there is no scrollbar — the line is clipped at the right margin and the rest is lost.
 
   Manual verification (open in Chromium → Cmd-P → preview):
-       1. The 10-line code block appears as ONE intact block on a single page.
-       2. No line of the code appears on a different page from the rest.
+       1. Every line of the code block is FULLY VISIBLE in the print preview.
+       2. If any line is cut off at the right margin (because pre has overflow-x:auto and no print override), this FAILS — the user cannot read the rest of that line.
+       3. Common shape: a doc with shell commands, long JSON, or stack traces. Truncation in print = unusable PDF.
 
   Failure modes this scenario catches:
     See MANIFEST.md for the per-scenario failure-mode table.
@@ -57,32 +58,13 @@ body { font-family: var(--font-ui); color: var(--gray-900); background: var(--gr
 <body>
 <div id="rwa-doc-mount">
 <article>
-<h1>API example</h1>
-<p>Operating margin held steady at 22 percent despite headcount additions.</p>
-<p>Revenue grew 18 percent year over year, driven by enterprise renewals and modest expansion in the EMEA region.</p>
-<p>We expect mid-teens growth to continue through Q2 with new product introductions in late summer.</p>
-<p>Risk register updated this quarter to track supplier concentration and currency exposure across three new corridors.</p>
-<p>The board approved the dividend at the prior level pending Q3 results.</p>
-<p>Cost discipline remains the operating principle for the back half of the fiscal year.</p>
-<p>Technical investments include rebuilding the ingestion path and reducing batch latency by half.</p>
-<p>Headcount plan calls for selective expansion in engineering and customer success.</p>
-<p>Competitive position improved in the mid-market segment after the spring product cycle.</p>
-<p>Customer satisfaction scores moved up two points after the support overhaul.</p>
-<p>Operating margin held steady at 22 percent despite headcount additions.</p>
-<p>Revenue grew 18 percent year over year, driven by enterprise renewals and modest expansion in the EMEA region.</p>
-<p>We expect mid-teens growth to continue through Q2 with new product introductions in late summer.</p>
-<p>Risk register updated this quarter to track supplier concentration and currency exposure across three new corridors.</p>
-<p>The board approved the dividend at the prior level pending Q3 results.</p>
-<pre><code>fetch('/api/run', {
-  method: 'POST',
-  headers: { 'content-type': 'application/json' },
-  body: JSON.stringify({
-    instruction: 'edit the prose',
-    fixture: { content: '<p>Hello.</p>' },
-  }),
-})
-  .then(r =&gt; r.json())
-  .then(result =&gt; console.log(result));</code></pre>
+<h1>API request example</h1>
+<p>The complete URL-encoded request — every character must survive printing:</p>
+<pre><code>curl -X POST 'https://api.example.com/v1/runs?org=acme&project=rewritable&environment=production' \
+  -H 'Authorization: Bearer sk-proj-1234567890ABCDEF1234567890ABCDEF1234567890ABCDEF1234567890ABCDEF1234567890' \
+  -H 'Content-Type: application/json' \
+  -d '{"instruction":"please rewrite the Executive summary section to mention the new EMEA expansion and the supply chain risk register update that the board approved last week","fixture":{"content":"&lt;p&gt;the original document body&lt;/p&gt;"},"options":{"retries":3,"timeout":30000}}'</code></pre>
+<p>Notice how each of the three lines in the request body above is intentionally longer than any reasonable page width — this is exactly the shape that the runtime's <code>overflow-x:auto</code> on <code>pre</code> handles on screen but loses in print.</p>
 </article>
 </div>
 </body>

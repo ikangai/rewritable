@@ -2,16 +2,17 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>code-01-short-pre-intact — short <pre> stays intact on one page</title>
+<title>edge-04-long-url-in-paragraph — long URL in paragraph — does it wrap or overflow the right margin?</title>
 <!--
-  code-01-short-pre-intact — short <pre> stays intact on one page
+  edge-04-long-url-in-paragraph — long URL in paragraph — does it wrap or overflow the right margin?
 
   Hypothesis under test:
-    break-inside:avoid on <pre> keeps a short code block from being split across pages.
+    A long URL has no word-break candidates. Without overflow-wrap:break-word or word-break:break-all in the print CSS, the URL will overflow the right margin and be clipped in print. The runtime currently does NOT set either property.
 
   Manual verification (open in Chromium → Cmd-P → preview):
-       1. The 10-line code block appears as ONE intact block on a single page.
-       2. No line of the code appears on a different page from the rest.
+       1. The long URL line appears in print preview AND its tail is VISIBLE — i.e. it wraps or is broken.
+       2. If the URL extends past the right margin and is CLIPPED, this scenario FAILS — the user lost information.
+       3. A footer/references section with many long URLs is a common shape; if URLs are truncated, the printed page is missing data the screen view shows.
 
   Failure modes this scenario catches:
     See MANIFEST.md for the per-scenario failure-mode table.
@@ -57,32 +58,13 @@ body { font-family: var(--font-ui); color: var(--gray-900); background: var(--gr
 <body>
 <div id="rwa-doc-mount">
 <article>
-<h1>API example</h1>
-<p>Operating margin held steady at 22 percent despite headcount additions.</p>
-<p>Revenue grew 18 percent year over year, driven by enterprise renewals and modest expansion in the EMEA region.</p>
-<p>We expect mid-teens growth to continue through Q2 with new product introductions in late summer.</p>
-<p>Risk register updated this quarter to track supplier concentration and currency exposure across three new corridors.</p>
-<p>The board approved the dividend at the prior level pending Q3 results.</p>
-<p>Cost discipline remains the operating principle for the back half of the fiscal year.</p>
-<p>Technical investments include rebuilding the ingestion path and reducing batch latency by half.</p>
-<p>Headcount plan calls for selective expansion in engineering and customer success.</p>
-<p>Competitive position improved in the mid-market segment after the spring product cycle.</p>
-<p>Customer satisfaction scores moved up two points after the support overhaul.</p>
-<p>Operating margin held steady at 22 percent despite headcount additions.</p>
-<p>Revenue grew 18 percent year over year, driven by enterprise renewals and modest expansion in the EMEA region.</p>
-<p>We expect mid-teens growth to continue through Q2 with new product introductions in late summer.</p>
-<p>Risk register updated this quarter to track supplier concentration and currency exposure across three new corridors.</p>
-<p>The board approved the dividend at the prior level pending Q3 results.</p>
-<pre><code>fetch('/api/run', {
-  method: 'POST',
-  headers: { 'content-type': 'application/json' },
-  body: JSON.stringify({
-    instruction: 'edit the prose',
-    fixture: { content: '<p>Hello.</p>' },
-  }),
-})
-  .then(r =&gt; r.json())
-  .then(result =&gt; console.log(result));</code></pre>
+<h1>References</h1>
+<p>Recommended reading on the topic — full URLs preserved so this prints as a usable bibliography:</p>
+<ol>
+<li>See <a href="https://example.com/very/deeply/nested/path/that/keeps/going/forever/with-no-natural-break-points-because-someone-set-up-the-URL-this-way/article-2026-q1-financial-results-and-outlook-with-extensive-supporting-detail-and-appendices.html">https://example.com/very/deeply/nested/path/that/keeps/going/forever/with-no-natural-break-points-because-someone-set-up-the-URL-this-way/article-2026-q1-financial-results-and-outlook-with-extensive-supporting-detail-and-appendices.html</a> for the primary source.</li>
+<li>Background context at <a href="https://docs.example.com/2026/operational-reviews/quarterly/Q1-2026-comprehensive-board-package-final-version-after-legal-review-and-board-comments-incorporated.pdf">https://docs.example.com/2026/operational-reviews/quarterly/Q1-2026-comprehensive-board-package-final-version-after-legal-review-and-board-comments-incorporated.pdf</a>.</li>
+<li>Inline plain text URL with no anchor: https://internal-tools.example.com/dashboards/finance/revenue-attribution/by-segment/by-region/by-product-line/2026Q1?view=summary&filter=enterprise&group=region&compare=YoY</li>
+</ol>
 </article>
 </div>
 </body>

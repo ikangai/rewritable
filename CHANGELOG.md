@@ -2,6 +2,18 @@
 
 Notable changes to `re-write-able`. The container format is versioned in `re-write-able-spec.md`; the edit protocol in `rwa-edit-spec.md`; the structural-transform DSL in `rwa-edit-dsl-spec.md`. The CLI follows semver in `cli/package.json`.
 
+## 2026-05-22 — print CSS fixes for long strings + nested blockquote
+
+Three fixes to the `@media print` block in `seeds/rewritable.html`, found by adding the visual scenarios listed in the next entry (`edge-04` through `edge-08`) and reading the rendered PDFs. Each fix addresses a real failure mode rather than a hypothetical concern:
+
+- **`<pre>` no longer clips long lines on print.** The baseline `pre { overflow-x: auto }` scrolls horizontally on screen, but on paper there is no scrollbar — long lines were truncated at the right margin and the user lost data. Print override now sets `white-space: pre-wrap; overflow: visible; overflow-wrap: anywhere`, wrapping long curl commands, JSON bodies, and stack traces at sensible points. Verified: a 200-char Authorization header that was previously clipped after ~80 chars now wraps and remains fully readable.
+- **Long unbroken strings in body text break instead of overflowing.** `p, li, td, th, code, a` get `overflow-wrap: break-word` on print — gentle breaking that preserves column widths in narrow tables (the stronger `anywhere` setting was tried first but fragmented short words like "Step" into "St / ep" in narrow table columns, so reverted to `break-word` for non-`pre` selectors). Catches long hashes, German compound words, file paths, and bare-text URLs.
+- **`<blockquote>` removed from the `break-inside: avoid` set.** A blockquote is a flowable container (often holds paragraphs, lists, even tables), and forcing it intact created the "sparse page 1" anti-pattern — page 1 with just an H1 + intro, then the entire blockquote on page 2. Inner paragraphs retain `orphans/widows: 3` protection so a blockquote split is still readable. Verified on `edge-07` (table-in-list-in-blockquote): page 1 now fills with content, only the trailing summary sentence flows to page 2.
+
+5 new visual scenarios added to verify the fixes (`edge-04` long URL, `edge-05` long pre line, `edge-06` long hash / German word, `edge-07` deeply nested, `edge-08` rich table cells). All 28 print scenarios pass on the patched runtime. References (`hello.html`, `re-write-able-spec.html`) regenerated to mirror the seed.
+
+What remains a known limit: when a single block exceeds one printed page (table > 1 page, very large figure), the engine still moves the whole block to a fresh page before accepting an internal break. `tbl-02` and `edge-03` document this; the only fix is authoring guidance ("split long tables manually") since CSS cannot tell the engine "use the trailing space on this page before moving".
+
 ## 2026-05-21 — print-fidelity test scenarios (23 fixtures + validator)
 
 Closes a gap in the benchmark coverage: the `@media print` stylesheet in `seeds/rewritable.html` has been quietly load-bearing for save-as-PDF since the seed shipped, but had no test surface beyond manual eyeballing. The existing `pres-13` / `pres-14` / `pres-15` scenarios cover *edit fidelity* (does the agent preserve print CSS during edits?), not *visual fidelity* (does the rendered PDF actually look right?). This release adds the latter.

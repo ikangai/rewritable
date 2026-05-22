@@ -2,16 +2,18 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>code-01-short-pre-intact — short <pre> stays intact on one page</title>
+<title>edge-08-pre-and-list-in-table-cell — rich content inside table cell: <pre>, <ul>, multi-paragraph</title>
 <!--
-  code-01-short-pre-intact — short <pre> stays intact on one page
+  edge-08-pre-and-list-in-table-cell — rich content inside table cell: <pre>, <ul>, multi-paragraph
 
   Hypothesis under test:
-    break-inside:avoid on <pre> keeps a short code block from being split across pages.
+    A table cell holding multi-paragraph text plus a code block plus a list. The print rules apply break-inside:avoid to the row (tr), but the row may be taller than the page if the cell content is large. Same forced-break dynamic as edge-03.
 
   Manual verification (open in Chromium → Cmd-P → preview):
-       1. The 10-line code block appears as ONE intact block on a single page.
-       2. No line of the code appears on a different page from the rest.
+       1. Every table row is fully readable across pages.
+       2. No paragraph or list item inside a cell is split horizontally.
+       3. If the row exceeds one page (expected for the largest row), the engine breaks at a child-element boundary inside the cell (between paragraphs or list items), not mid-text.
+       4. The thead row repeats at the top of every continuation page that contains table content.
 
   Failure modes this scenario catches:
     See MANIFEST.md for the per-scenario failure-mode table.
@@ -57,32 +59,55 @@ body { font-family: var(--font-ui); color: var(--gray-900); background: var(--gr
 <body>
 <div id="rwa-doc-mount">
 <article>
-<h1>API example</h1>
-<p>Operating margin held steady at 22 percent despite headcount additions.</p>
-<p>Revenue grew 18 percent year over year, driven by enterprise renewals and modest expansion in the EMEA region.</p>
-<p>We expect mid-teens growth to continue through Q2 with new product introductions in late summer.</p>
-<p>Risk register updated this quarter to track supplier concentration and currency exposure across three new corridors.</p>
-<p>The board approved the dividend at the prior level pending Q3 results.</p>
-<p>Cost discipline remains the operating principle for the back half of the fiscal year.</p>
-<p>Technical investments include rebuilding the ingestion path and reducing batch latency by half.</p>
-<p>Headcount plan calls for selective expansion in engineering and customer success.</p>
-<p>Competitive position improved in the mid-market segment after the spring product cycle.</p>
-<p>Customer satisfaction scores moved up two points after the support overhaul.</p>
-<p>Operating margin held steady at 22 percent despite headcount additions.</p>
-<p>Revenue grew 18 percent year over year, driven by enterprise renewals and modest expansion in the EMEA region.</p>
-<p>We expect mid-teens growth to continue through Q2 with new product introductions in late summer.</p>
-<p>Risk register updated this quarter to track supplier concentration and currency exposure across three new corridors.</p>
-<p>The board approved the dividend at the prior level pending Q3 results.</p>
-<pre><code>fetch('/api/run', {
-  method: 'POST',
-  headers: { 'content-type': 'application/json' },
-  body: JSON.stringify({
-    instruction: 'edit the prose',
-    fixture: { content: '<p>Hello.</p>' },
-  }),
-})
-  .then(r =&gt; r.json())
-  .then(result =&gt; console.log(result));</code></pre>
+<h1>Runbook</h1>
+<table>
+<thead><tr><th>Step</th><th>Action</th><th>Details</th></tr></thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>Detect</td>
+<td>
+<p>Paging signals come from two sources:</p>
+<ul>
+<li>Synthetic checks on the primary endpoint</li>
+<li>Customer-reported errors via the support inbox</li>
+</ul>
+<p>The on-call engineer acknowledges within 5 minutes.</p>
+</td>
+</tr>
+<tr>
+<td>2</td>
+<td>Triage</td>
+<td>
+<p>Reproduce the error locally using the recorded curl from the alert payload:</p>
+<pre><code>curl -X GET 'https://api.example.com/v1/health/deep' \
+  -H 'Authorization: Bearer $TOKEN'</code></pre>
+<p>If the deep health check returns 5xx, escalate to the platform team via the #incidents channel and proceed to step 3.</p>
+</td>
+</tr>
+<tr>
+<td>3</td>
+<td>Mitigate</td>
+<td>
+<p>Mitigation options in order of preference:</p>
+<ol>
+<li>Roll back the last deploy via the rollback workflow</li>
+<li>Shed traffic to the fallback region</li>
+<li>Engage the database team for replica promotion</li>
+<li>Failover to the last known good snapshot</li>
+</ol>
+<p>Document the chosen mitigation in the incident channel before executing.</p>
+</td>
+</tr>
+<tr>
+<td>4</td>
+<td>Resolve</td>
+<td>
+<p>Once the root cause is identified, land the permanent fix on the next release train. Update the runbook with any newly discovered failure mode.</p>
+</td>
+</tr>
+</tbody>
+</table>
 </article>
 </div>
 </body>

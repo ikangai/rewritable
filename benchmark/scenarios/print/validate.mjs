@@ -167,6 +167,29 @@ const ASSERTIONS = [
   { id: 'edge-03-oversize-block-breaks-inside', pages_min: 2,
     present: ['An oversize quotation', 'Line 1.', 'Line 60.'],
     absent: [] },
+  // edge-04 / 05 / 06: overflow scenarios. Text-only assertions can
+  // only confirm the text reached the PDF — clipping at the right
+  // margin still leaves the text extractable. The real verdict is
+  // visual (read the PDF), so we only check presence here and let the
+  // visual review section in MANIFEST.md document the actual failure.
+  { id: 'edge-04-long-url-in-paragraph', pages_min: 1,
+    // URLs wrap with soft breaks; pdftotext renders "internal-\ntools" as
+    // two lines, so a substring containing the hyphen across the break
+    // isn't extractable. Pick fragments that fit within a single visual
+    // line in the rendered PDF.
+    present: ['References', 'example.com/very/deeply', 'view=summary'],
+    absent: [] },
+  { id: 'edge-05-long-line-in-pre', pages_min: 1,
+    present: ['API request example', 'Authorization: Bearer sk-proj', 'X POST'],
+    absent: [] },
+  { id: 'edge-06-long-word-in-paragraph', pages_min: 1,
+    present: ['Audit log entry', '0x4f9c8b2e7a1d6f3c5b8a9e7d4c2b1f0e', 'Donaudampfschiffahrtselektrizit'],
+    absent: [] },
+  { id: 'edge-07-table-in-list-in-blockquote', pages_min: 1,
+    present: ['Nested content stress test', 'Supplier concentration', 'FX exposure by corridor', 'Headcount plan', 'Crestline', 'EUR→USD', 'Engineering'],
+    one_page_each: ['Acme', 'Beacon', 'Crestline', 'Doric', 'EUR→USD', 'USD→JPY', 'GBP→EUR'] },
+  { id: 'edge-08-pre-and-list-in-table-cell', pages_min: 1,
+    present: ['Runbook', 'Detect', 'Triage', 'Mitigate', 'Resolve', 'curl -X GET', 'Roll back the last deploy'] },
 ];
 
 // ─── Print + assert ──────────────────────────────────────────────────

@@ -33,9 +33,11 @@ const PRINT_CSS = `@page { margin: 18mm; }
   #rwa-doc-mount { margin: 0 !important; padding: 0 !important; }
   :where(#rwa-doc-mount) article { margin: 0 auto !important; padding: 0 !important; max-width: none !important; }
   :where(#rwa-doc-mount) h1, :where(#rwa-doc-mount) h2, :where(#rwa-doc-mount) h3, :where(#rwa-doc-mount) h4, :where(#rwa-doc-mount) h5, :where(#rwa-doc-mount) h6 { break-after: avoid; page-break-after: avoid; }
-  :where(#rwa-doc-mount) figure, :where(#rwa-doc-mount) pre, :where(#rwa-doc-mount) blockquote, :where(#rwa-doc-mount) table, :where(#rwa-doc-mount) img { break-inside: avoid; page-break-inside: avoid; }
+  :where(#rwa-doc-mount) figure, :where(#rwa-doc-mount) pre, :where(#rwa-doc-mount) table, :where(#rwa-doc-mount) img { break-inside: avoid; page-break-inside: avoid; }
   :where(#rwa-doc-mount) tr, :where(#rwa-doc-mount) li { break-inside: avoid; page-break-inside: avoid; }
   :where(#rwa-doc-mount) p { orphans: 3; widows: 3; }
+  :where(#rwa-doc-mount) p, :where(#rwa-doc-mount) li, :where(#rwa-doc-mount) td, :where(#rwa-doc-mount) th, :where(#rwa-doc-mount) code, :where(#rwa-doc-mount) a { overflow-wrap: break-word; }
+  :where(#rwa-doc-mount) pre { white-space: pre-wrap; overflow: visible; overflow-wrap: anywhere; }
   :where(#rwa-doc-mount) a { color: #000 !important; }
   .placeholder { display: none; }
 }`;
@@ -629,6 +631,182 @@ ${lorem(5).map(p => `<p>${p}</p>`).join('\n')}
 <blockquote>
 ${Array.from({length:60}, (_,i) => `<p>Line ${i+1}. ${lorem(1)[0]}</p>`).join('\n')}
 </blockquote>
+</article>`,
+  },
+  {
+    id: 'edge-04-long-url-in-paragraph',
+    category: 'edge',
+    title: 'long URL in paragraph — does it wrap or overflow the right margin?',
+    hypothesis: 'A long URL has no word-break candidates. Without overflow-wrap:break-word or word-break:break-all in the print CSS, the URL will overflow the right margin and be clipped in print. The runtime currently does NOT set either property.',
+    checklist: [
+      'The long URL line appears in print preview AND its tail is VISIBLE — i.e. it wraps or is broken.',
+      'If the URL extends past the right margin and is CLIPPED, this scenario FAILS — the user lost information.',
+      'A footer/references section with many long URLs is a common shape; if URLs are truncated, the printed page is missing data the screen view shows.',
+    ],
+    body: `<article>
+<h1>References</h1>
+<p>Recommended reading on the topic — full URLs preserved so this prints as a usable bibliography:</p>
+<ol>
+<li>See <a href="https://example.com/very/deeply/nested/path/that/keeps/going/forever/with-no-natural-break-points-because-someone-set-up-the-URL-this-way/article-2026-q1-financial-results-and-outlook-with-extensive-supporting-detail-and-appendices.html">https://example.com/very/deeply/nested/path/that/keeps/going/forever/with-no-natural-break-points-because-someone-set-up-the-URL-this-way/article-2026-q1-financial-results-and-outlook-with-extensive-supporting-detail-and-appendices.html</a> for the primary source.</li>
+<li>Background context at <a href="https://docs.example.com/2026/operational-reviews/quarterly/Q1-2026-comprehensive-board-package-final-version-after-legal-review-and-board-comments-incorporated.pdf">https://docs.example.com/2026/operational-reviews/quarterly/Q1-2026-comprehensive-board-package-final-version-after-legal-review-and-board-comments-incorporated.pdf</a>.</li>
+<li>Inline plain text URL with no anchor: https://internal-tools.example.com/dashboards/finance/revenue-attribution/by-segment/by-region/by-product-line/2026Q1?view=summary&filter=enterprise&group=region&compare=YoY</li>
+</ol>
+</article>`,
+  },
+  {
+    id: 'edge-05-long-line-in-pre',
+    category: 'edge',
+    title: '<pre> with very long lines — overflow:auto hides content on print',
+    hypothesis: 'The baseline content stylesheet sets pre{overflow-x:auto} so long source lines get a horizontal scrollbar on screen. In print there is no scrollbar — the line is clipped at the right margin and the rest is lost.',
+    checklist: [
+      'Every line of the code block is FULLY VISIBLE in the print preview.',
+      'If any line is cut off at the right margin (because pre has overflow-x:auto and no print override), this FAILS — the user cannot read the rest of that line.',
+      'Common shape: a doc with shell commands, long JSON, or stack traces. Truncation in print = unusable PDF.',
+    ],
+    body: `<article>
+<h1>API request example</h1>
+<p>The complete URL-encoded request — every character must survive printing:</p>
+<pre><code>curl -X POST 'https://api.example.com/v1/runs?org=acme&project=rewritable&environment=production' \\
+  -H 'Authorization: Bearer sk-proj-1234567890ABCDEF1234567890ABCDEF1234567890ABCDEF1234567890ABCDEF1234567890' \\
+  -H 'Content-Type: application/json' \\
+  -d '{"instruction":"please rewrite the Executive summary section to mention the new EMEA expansion and the supply chain risk register update that the board approved last week","fixture":{"content":"&lt;p&gt;the original document body&lt;/p&gt;"},"options":{"retries":3,"timeout":30000}}'</code></pre>
+<p>Notice how each of the three lines in the request body above is intentionally longer than any reasonable page width — this is exactly the shape that the runtime's <code>overflow-x:auto</code> on <code>pre</code> handles on screen but loses in print.</p>
+</article>`,
+  },
+  {
+    id: 'edge-06-long-word-in-paragraph',
+    category: 'edge',
+    title: 'very long unbroken word (hash, German compound) in body text',
+    hypothesis: 'A long unbroken word inside a <p> has no spaces to wrap on. Default Chromium behavior on print is to either overflow the right margin (no break) or accept the overflow (clipping). Without overflow-wrap:break-word, a long hash or German compound word will push past the margin.',
+    checklist: [
+      'The long hash AND the long German compound word are FULLY VISIBLE on the printed page.',
+      'If either pushes past the right margin and is clipped, this FAILS.',
+      'Real-world shapes: cryptographic hashes in audit logs, German legal/medical compounds, transaction IDs, file paths.',
+    ],
+    body: `<article>
+<h1>Audit log entry</h1>
+<p>Transaction reference: 0x4f9c8b2e7a1d6f3c5b8a9e7d4c2b1f0e8d6c5b4a3f2e1d0c9b8a7e6d5c4b3a2f1e0d. The hash is intentionally long and has no break opportunities; it must remain fully readable on the printed page.</p>
+<p>Counterparty (German legal entity): Donaudampfschiffahrtselektrizitätenhauptbetriebswerkbauunterbeamtengesellschaft. Same overflow concern, different cause — German compounding produces single tokens with no natural break candidates.</p>
+<p>File path: /Users/finance-ops/Documents/2026/quarterly-reviews/q1-board-package/working-drafts/v17-after-legal-review/appendix-c-supplementary-supplier-concentration-analysis.xlsx</p>
+</article>`,
+  },
+  {
+    id: 'edge-07-table-in-list-in-blockquote',
+    category: 'edge',
+    title: 'deeply nested: <table> inside <li> inside <blockquote>',
+    hypothesis: 'Three nested break-inside:avoid elements (blockquote, li, table). Chromium resolves the conflict by treating each rule as a hint at each level. The expected result: the WHOLE blockquote tries to stay together; if it cannot, the engine breaks at LI boundaries; if any LI is taller than a page, the engine breaks inside it (at row boundaries inside the table).',
+    checklist: [
+      'Every TABLE row appears on exactly one page (no mid-row split).',
+      'Every LI in the outer list appears on exactly one page where reasonably sized.',
+      'The blockquote border-left visual treatment is preserved across page breaks.',
+      'Header rows of the nested tables repeat at the top of each continuation page (browser default for <thead>).',
+    ],
+    body: `<article>
+<h1>Nested content stress test</h1>
+<p>The blockquote below contains a list, each item of which contains a small table. All three layers carry break-inside:avoid in the print CSS.</p>
+<blockquote>
+<p>From the Q1 board memo, pre-meeting comments:</p>
+<ol>
+<li>
+<strong>Supplier concentration.</strong> The top three suppliers represent over 60% of input spend. Recent contract renewals brought the breakdown to:
+<table>
+<thead><tr><th>Supplier</th><th>Spend share</th><th>Renewed</th></tr></thead>
+<tbody>
+<tr><td>Acme</td><td>28%</td><td>Yes</td></tr>
+<tr><td>Beacon</td><td>19%</td><td>Yes</td></tr>
+<tr><td>Crestline</td><td>14%</td><td>No</td></tr>
+<tr><td>Doric</td><td>9%</td><td>No</td></tr>
+</tbody>
+</table>
+</li>
+<li>
+<strong>FX exposure by corridor.</strong> Three new corridors added to the risk register this quarter:
+<table>
+<thead><tr><th>Corridor</th><th>Notional</th><th>Hedge</th></tr></thead>
+<tbody>
+<tr><td>EUR→USD</td><td>4.2M</td><td>50%</td></tr>
+<tr><td>USD→JPY</td><td>2.8M</td><td>30%</td></tr>
+<tr><td>GBP→EUR</td><td>1.1M</td><td>0%</td></tr>
+</tbody>
+</table>
+</li>
+<li>
+<strong>Headcount plan.</strong> Net additions through Q3, by function:
+<table>
+<thead><tr><th>Function</th><th>Q2</th><th>Q3</th><th>Total</th></tr></thead>
+<tbody>
+<tr><td>Engineering</td><td>+4</td><td>+6</td><td>+10</td></tr>
+<tr><td>Customer success</td><td>+2</td><td>+3</td><td>+5</td></tr>
+<tr><td>Finance</td><td>+1</td><td>+1</td><td>+2</td></tr>
+</tbody>
+</table>
+</li>
+</ol>
+<p>End of pre-meeting comments. Comments above represent author position only.</p>
+</blockquote>
+</article>`,
+  },
+  {
+    id: 'edge-08-pre-and-list-in-table-cell',
+    category: 'edge',
+    title: 'rich content inside table cell: <pre>, <ul>, multi-paragraph',
+    hypothesis: 'A table cell holding multi-paragraph text plus a code block plus a list. The print rules apply break-inside:avoid to the row (tr), but the row may be taller than the page if the cell content is large. Same forced-break dynamic as edge-03.',
+    checklist: [
+      'Every table row is fully readable across pages.',
+      'No paragraph or list item inside a cell is split horizontally.',
+      'If the row exceeds one page (expected for the largest row), the engine breaks at a child-element boundary inside the cell (between paragraphs or list items), not mid-text.',
+      'The thead row repeats at the top of every continuation page that contains table content.',
+    ],
+    body: `<article>
+<h1>Runbook</h1>
+<table>
+<thead><tr><th>Step</th><th>Action</th><th>Details</th></tr></thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>Detect</td>
+<td>
+<p>Paging signals come from two sources:</p>
+<ul>
+<li>Synthetic checks on the primary endpoint</li>
+<li>Customer-reported errors via the support inbox</li>
+</ul>
+<p>The on-call engineer acknowledges within 5 minutes.</p>
+</td>
+</tr>
+<tr>
+<td>2</td>
+<td>Triage</td>
+<td>
+<p>Reproduce the error locally using the recorded curl from the alert payload:</p>
+<pre><code>curl -X GET 'https://api.example.com/v1/health/deep' \\
+  -H 'Authorization: Bearer $TOKEN'</code></pre>
+<p>If the deep health check returns 5xx, escalate to the platform team via the #incidents channel and proceed to step 3.</p>
+</td>
+</tr>
+<tr>
+<td>3</td>
+<td>Mitigate</td>
+<td>
+<p>Mitigation options in order of preference:</p>
+<ol>
+<li>Roll back the last deploy via the rollback workflow</li>
+<li>Shed traffic to the fallback region</li>
+<li>Engage the database team for replica promotion</li>
+<li>Failover to the last known good snapshot</li>
+</ol>
+<p>Document the chosen mitigation in the incident channel before executing.</p>
+</td>
+</tr>
+<tr>
+<td>4</td>
+<td>Resolve</td>
+<td>
+<p>Once the root cause is identified, land the permanent fix on the next release train. Update the runbook with any newly discovered failure mode.</p>
+</td>
+</tr>
+</tbody>
+</table>
 </article>`,
   },
 ];

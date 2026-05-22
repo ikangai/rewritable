@@ -89,6 +89,11 @@ the larger puppeteer-based design that adds pixel-level checks.
 | `edge-01-forced-break-before.html` | Edge cases | forced break-before:page starts a new section on a new page |
 | `edge-02-colored-bg-and-links.html` | Edge cases | colored backgrounds preserved (print-color-adjust:exact); links forced black |
 | `edge-03-oversize-block-breaks-inside.html` | Edge cases | block taller than a page is forced to break inside (known limit) |
+| `edge-04-long-url-in-paragraph.html` | Edge cases | long URL in paragraph — does it wrap or overflow the right margin? |
+| `edge-05-long-line-in-pre.html` | Edge cases | <pre> with very long lines — overflow:auto hides content on print |
+| `edge-06-long-word-in-paragraph.html` | Edge cases | very long unbroken word (hash, German compound) in body text |
+| `edge-07-table-in-list-in-blockquote.html` | Edge cases | deeply nested: <table> inside <li> inside <blockquote> |
+| `edge-08-pre-and-list-in-table-cell.html` | Edge cases | rich content inside table cell: <pre>, <ul>, multi-paragraph |
 
 ## Per-scenario detail
 
@@ -386,6 +391,73 @@ the larger puppeteer-based design that adds pixel-level checks.
    2. The break inside the blockquote lands at a clean LINE boundary.
    3. No line of the blockquote is split horizontally across two pages.
    4. NOTE: this scenario documents a limit, not a bug — there is nothing CSS can do to keep an oversize block on one page.
+
+---
+
+### `edge-04-long-url-in-paragraph.html` — Edge cases
+
+**Title.** long URL in paragraph — does it wrap or overflow the right margin?
+
+**Hypothesis under test.** A long URL has no word-break candidates. Without overflow-wrap:break-word or word-break:break-all in the print CSS, the URL will overflow the right margin and be clipped in print. The runtime currently does NOT set either property.
+
+**Manual checklist (Chromium ⌘P preview):**
+   1. The long URL line appears in print preview AND its tail is VISIBLE — i.e. it wraps or is broken.
+   2. If the URL extends past the right margin and is CLIPPED, this scenario FAILS — the user lost information.
+   3. A footer/references section with many long URLs is a common shape; if URLs are truncated, the printed page is missing data the screen view shows.
+
+---
+
+### `edge-05-long-line-in-pre.html` — Edge cases
+
+**Title.** <pre> with very long lines — overflow:auto hides content on print
+
+**Hypothesis under test.** The baseline content stylesheet sets pre{overflow-x:auto} so long source lines get a horizontal scrollbar on screen. In print there is no scrollbar — the line is clipped at the right margin and the rest is lost.
+
+**Manual checklist (Chromium ⌘P preview):**
+   1. Every line of the code block is FULLY VISIBLE in the print preview.
+   2. If any line is cut off at the right margin (because pre has overflow-x:auto and no print override), this FAILS — the user cannot read the rest of that line.
+   3. Common shape: a doc with shell commands, long JSON, or stack traces. Truncation in print = unusable PDF.
+
+---
+
+### `edge-06-long-word-in-paragraph.html` — Edge cases
+
+**Title.** very long unbroken word (hash, German compound) in body text
+
+**Hypothesis under test.** A long unbroken word inside a <p> has no spaces to wrap on. Default Chromium behavior on print is to either overflow the right margin (no break) or accept the overflow (clipping). Without overflow-wrap:break-word, a long hash or German compound word will push past the margin.
+
+**Manual checklist (Chromium ⌘P preview):**
+   1. The long hash AND the long German compound word are FULLY VISIBLE on the printed page.
+   2. If either pushes past the right margin and is clipped, this FAILS.
+   3. Real-world shapes: cryptographic hashes in audit logs, German legal/medical compounds, transaction IDs, file paths.
+
+---
+
+### `edge-07-table-in-list-in-blockquote.html` — Edge cases
+
+**Title.** deeply nested: <table> inside <li> inside <blockquote>
+
+**Hypothesis under test.** Three nested break-inside:avoid elements (blockquote, li, table). Chromium resolves the conflict by treating each rule as a hint at each level. The expected result: the WHOLE blockquote tries to stay together; if it cannot, the engine breaks at LI boundaries; if any LI is taller than a page, the engine breaks inside it (at row boundaries inside the table).
+
+**Manual checklist (Chromium ⌘P preview):**
+   1. Every TABLE row appears on exactly one page (no mid-row split).
+   2. Every LI in the outer list appears on exactly one page where reasonably sized.
+   3. The blockquote border-left visual treatment is preserved across page breaks.
+   4. Header rows of the nested tables repeat at the top of each continuation page (browser default for <thead>).
+
+---
+
+### `edge-08-pre-and-list-in-table-cell.html` — Edge cases
+
+**Title.** rich content inside table cell: <pre>, <ul>, multi-paragraph
+
+**Hypothesis under test.** A table cell holding multi-paragraph text plus a code block plus a list. The print rules apply break-inside:avoid to the row (tr), but the row may be taller than the page if the cell content is large. Same forced-break dynamic as edge-03.
+
+**Manual checklist (Chromium ⌘P preview):**
+   1. Every table row is fully readable across pages.
+   2. No paragraph or list item inside a cell is split horizontally.
+   3. If the row exceeds one page (expected for the largest row), the engine breaks at a child-element boundary inside the cell (between paragraphs or list items), not mid-text.
+   4. The thead row repeats at the top of every continuation page that contains table content.
 
 
 ## What the print CSS protects
