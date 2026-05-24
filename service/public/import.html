@@ -385,7 +385,15 @@ function renderSharePending() {
 }
 
 function renderShareSuccess({ url, expiresAt }) {
-  const expIso = new Date(expiresAt).toISOString().replace('T', ' ').slice(0, 16) + ' UTC';
+  // new Date(undefined).toISOString() throws RangeError. Without the guard,
+  // a server response missing expiresAt becomes an unhandled rejection that
+  // leaves the share UI stuck on "Publishing…".
+  let expHint;
+  try {
+    expHint = `Expires ${new Date(expiresAt).toISOString().replace('T', ' ').slice(0, 16)} UTC.`;
+  } catch {
+    expHint = 'Expires within 24 hours.';
+  }
   shareEl.classList.add('show');
   shareEl.innerHTML = `
     <div>Published. Anyone with this link can open the snapshot:</div>
@@ -393,7 +401,7 @@ function renderShareSuccess({ url, expiresAt }) {
       <input id="share-url" readonly value="${url.replace(/"/g, '&quot;')}">
       <button type="button" id="share-copy">Copy</button>
     </div>
-    <div class="hint">Expires ${expIso}. The viewer's edits land in their browser only — they don't propagate back.</div>
+    <div class="hint">${expHint} The viewer's edits land in their browser only — they don't propagate back.</div>
   `;
   const urlInput = document.getElementById('share-url');
   const copyBtn = document.getElementById('share-copy');
