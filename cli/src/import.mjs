@@ -149,16 +149,30 @@ async function convertDocx(bytes) {
 // escapes &, ", <, > inside values, so a regex match against `attr="..."` is
 // sufficient — no quote-escape ambiguity to worry about.
 const _SAFE_HREF_SCHEMES = new Set(['http', 'https', 'mailto', 'tel']);
+// Two layers, both required:
+//   1) Strip invisibles before parsing — whitespace + C0/C1 controls (\x00-\x1f,
+//      \x7f-\xa0) + soft hyphen (\xad) + Cf-class format chars (ZWSP/ZWNJ/ZWJ,
+//      LRM/RLM, LRE/RLE/PDF/LRO/RLO, word joiner, BOM, etc.). The previous
+//      regex used JS \s which doesn't match these — they slipped through and
+//      let a docx with `​javascript:…` href bypass the scheme check.
+//   2) Parse via WHATWG URL — the same parser the browser uses to navigate.
+//      Resolve against a synthetic base so scheme-less inputs (relative URL,
+//      fragment, path) round-trip back to that base and pass.
+const _ATTR_STRIP_RE = /[\s\x00-\x1f\x7f-\xa0\xad؜᠎​-‏‪-‮⁠-⁯﻿]/g;
+const _SANITIZER_BASE = 'http://_rwa_sanitizer_base_/';
 function _attrIsSafe(attr, val) {
-  const m = val.match(/^\s*([a-z][a-z0-9+.\-]*):/i);
-  if (!m) return true; // no scheme: relative URL, fragment, or path
-  const proto = m[1].toLowerCase();
+  const normalized = String(val).replace(_ATTR_STRIP_RE, '');
+  let parsed;
+  try { parsed = new URL(normalized, _SANITIZER_BASE); }
+  catch { return true; } // unparseable → cannot be an active URL scheme
+  if (parsed.origin === 'http://_rwa_sanitizer_base_') return true; // resolved relative — no scheme
+  const proto = parsed.protocol.replace(/:$/, '').toLowerCase();
   if (_SAFE_HREF_SCHEMES.has(proto)) return true;
-  // Mammoth embeds images as data:image/...;base64,... — allow that one
-  // narrow shape on src only. A docx that lies about its image content-type
-  // could produce data:text/html in src; img doesn't execute scripts there,
-  // so it's a UX issue (broken image) not a security issue.
-  if (attr === 'src' && proto === 'data' && /^\s*data:image\//i.test(val)) return true;
+  // Mammoth embeds raster images as data:image/...;base64,... — allow on src.
+  // data:image/svg+xml passes here too, but <img src> renders SVG in image-
+  // loading mode with no script execution (HTML spec), so the narrow
+  // 'data:image/*' allowance is still safe for src. Keep scoped to src only.
+  if (attr === 'src' && proto === 'data' && /^data:image\//i.test(parsed.href)) return true;
   return false;
 }
 function sanitizeMammothUrls(html) {
