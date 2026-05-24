@@ -174,9 +174,13 @@ function convertCsv(text) {
   const result = Papa.parse(text, { skipEmptyLines: true, header: false });
   // Errors are kept as warnings; Papa is lenient and produces partial data,
   // matching the CLI's behavior where parse errors don't abort the import.
+  const warnings = result.errors.map(e => {
+    const where = e.row != null ? ` (row ${e.row + 1})` : '';
+    return `csv parse: ${e.message}${where}`;
+  });
   const rows = result.data;
   if (rows.length === 0) {
-    return { html: '<article>\n</article>', warnings: [] };
+    return { html: '<article>\n</article>', warnings };
   }
   const escape = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const [header, ...body] = rows;
@@ -184,7 +188,7 @@ function convertCsv(text) {
   const tbody = body.length === 0
     ? ''
     : `\n<tbody>\n${body.map(row => `<tr>${row.map(c => `<td>${escape(c)}</td>`).join('')}</tr>`).join('\n')}\n</tbody>`;
-  return { html: `<article>\n<table>\n${thead}${tbody}\n</table>\n</article>`, warnings: [] };
+  return { html: `<article>\n<table>\n${thead}${tbody}\n</table>\n</article>`, warnings };
 }
 
 async function convertDocx(arrayBuffer) {
