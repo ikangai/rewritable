@@ -1364,5 +1364,9 @@ function escapeHtml(s) {
 }
 
 function escapeJsString(s) {
-  return s.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+  // </script must be escaped — escapeJsString is used to inject filename and
+  // placeholder values into JS string literals that live inside the bootstrap
+  // <script> block. A value containing </script> would close the tag early and
+  // turn the rest into HTML (stored XSS). Matches escapeTL's </script handling.
+  return s.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/<\/script/gi, '<\\/script');
 }
