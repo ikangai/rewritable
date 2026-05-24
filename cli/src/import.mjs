@@ -38,8 +38,9 @@ function toText(bytes) {
 }
 
 function convertMd(md) {
-  const html = marked.parse(md, { gfm: true, breaks: false });
-  return { html: `<article>\n${html.trim()}\n</article>`, warnings: [] };
+  const raw = marked.parse(md, { gfm: true, breaks: false });
+  const { html, warnings } = sanitizeImportedHtml(raw);
+  return { html: `<article>\n${html.trim()}\n</article>`, warnings };
 }
 
 function convertHtml(input) {
@@ -190,6 +191,50 @@ function sanitizeMammothUrls(html) {
       .replace(/src="([^"]*)"/g, stripAttr('src')),
     skipped,
   };
+}
+
+// marked v14 explicitly does NOT sanitize HTML — its README points readers at
+// DOMPurify. The seed bootstrap injects INLINE_DOC via m.innerHTML AND
+// re-creates <script> tags so they execute (intended for documents that ship
+// JS), so any active content in the imported HTML runs on container open. An
+// imported .md must not be able to add active content.
+//
+// Regex-based strip (not a parser) for mirror-symmetry with the browser. The
+// rules below are deliberately conservative: when in doubt, strip. Marked's
+// output is well-formed and uses double-quoted attributes, so the regex shape
+// matches reliably. Edge cases (CDATA, malformed nesting) are over-stripped
+// rather than under-stripped — acceptable for an import path.
+const _ACTIVE_TAGS = ['script', 'iframe', 'object', 'embed', 'svg', 'math', 'link', 'meta', 'base'];
+function sanitizeImportedHtml(html) {
+  const warnings = [];
+  let s = String(html);
+  // 1) Drop active-content tags (open+close blocks, then self-closing/unmatched).
+  for (const tag of _ACTIVE_TAGS) {
+    const block = new RegExp('<' + tag + '\\b[^>]*>[\\s\\S]*?<\\/' + tag + '\\s*>', 'gi');
+    const solo  = new RegExp('<\\/?' + tag + '\\b[^>]*\\/?>', 'gi');
+    if (block.test(s) || solo.test(s)) warnings.push('imported md: stripped <' + tag + '> elements');
+    s = s.replace(block, '').replace(solo, '');
+  }
+  // 2) Drop on*= event-handler attributes from surviving elements.
+  //    Match quoted (double/single) and unquoted-to-whitespace/> forms.
+  let onCount = 0;
+  s = s.replace(/\son[a-z]+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, () => { onCount++; return ''; });
+  if (onCount) warnings.push('imported md: stripped ' + onCount + ' event-handler attribute(s)');
+  // 3) Apply scheme allow-list to surviving href/src (reuses _attrIsSafe).
+  let hrefSkipped = 0, srcSkipped = 0;
+  s = s.replace(/(\shref\s*=\s*)"([^"]*)"/gi, (full, prefix, val) => {
+    if (_attrIsSafe('href', val)) return full;
+    hrefSkipped++;
+    return prefix + '"#"';
+  });
+  s = s.replace(/(\ssrc\s*=\s*)"([^"]*)"/gi, (full, prefix, val) => {
+    if (_attrIsSafe('src', val)) return full;
+    srcSkipped++;
+    return prefix + '"#"';
+  });
+  if (hrefSkipped) warnings.push('imported md: neutralised ' + hrefSkipped + ' unsafe href(s)');
+  if (srcSkipped) warnings.push('imported md: neutralised ' + srcSkipped + ' unsafe src(s)');
+  return { html: s, warnings };
 }
 
 async function convertPdf(bytes) {
