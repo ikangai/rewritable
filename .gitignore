@@ -1,9 +1,18 @@
 autoresearch-results.tsv
 .autoresearch-starred
 debug/
+scenario/
+fix/
+skill/
 node_modules/
 cli/seeds/
 .worktrees/
+
+# Local demo inputs — invoices / receipts / statements used as ad-hoc import
+# fixtures. The tracked demo content lives under demo/html-effectiveness/;
+# loose PDFs at the demo/ top level are personal financial documents and
+# must never be committed.
+demo/*.pdf
 
 # macOS Finder metadata — never useful in version control.
 .DS_Store
