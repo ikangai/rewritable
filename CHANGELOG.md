@@ -2,6 +2,37 @@
 
 Notable changes to `re-write-able`. The container format is versioned in `re-write-able-spec.md`; the edit protocol in `rwa-edit-spec.md`; the structural-transform DSL in `rwa-edit-dsl-spec.md`. The CLI follows semver in `cli/package.json`.
 
+## 2026-05-25 — Import-flow security release (CLI 0.3.1)
+
+Hardening of the markdown / docx / csv / pdf import path on both surfaces — the `/import` browser endpoint (`service/public/import.html`) and the `rwa import` CLI (`cli/src/import.mjs`, `cli/src/seed.mjs`). Driven end-to-end by autoresearch: a 50-scenario UX stress-test (`scenario/260522-1427-import-stress-ux/`) catalogued 4 critical + 8 high + 24 medium + 14 low findings, a 15-iteration debug pass (`debug/260523-0739-import-html-bugs/`) verified 9 of them with code-level evidence, and this release lands the 7 surgical fixes. The 8th finding (no Content-Security-Policy) is deferred to a spec-level discussion. All fixes apply identically to browser and CLI per CLAUDE.md's four-sites alignment rule.
+
+### Critical
+
+- **Markdown XSS** (`c7d0cc2`) — `marked` does not sanitize HTML, per its own README ("🚨 Marked does not sanitize the output HTML"). The seed bootstrap at `seeds/rewritable.html:849` injects INLINE_DOC via `m.innerHTML` AND lines 850-855 explicitly re-create `<script>` tags so they execute (intentional for documents that ship JS, but it meant an imported `.md` with `<script>alert(1)</script>` was a turn-key payload). New `sanitizeImportedHtml` strips active-content tags (`script`, `iframe`, `object`, `embed`, `svg`, `math`, `link`, `meta`, `base`), drops `on*=` event-handler attributes, and runs URL allow-listing on surviving `href`/`src`. Verified against 11 markdown XSS payloads.
+- **Sanitizer scheme-detection bypass** (`fcf42a1`) — the regex `/^\s*([a-z]+):/i` in `_attrIsSafe` missed inputs the WHATWG URL parser still resolved as `javascript:`. Six bypass variants confirmed: zero-width space (U+200B), soft hyphen (U+00AD), right-to-left override (U+202E), control-char prefix (U+0001), BOM (U+FEFF), and newline-in-scheme (`java\nscript:`). The last two were unambiguous exploits — the WHATWG URL parser strips newlines and controls before scheme detection, so they round-tripped to actual `javascript:` URLs. Replaced with a two-layer check: an invisibles-stripping normaliser (`_ATTR_STRIP_RE`) covering whitespace + C0/C1 controls + Cf-class format chars, followed by `new URL(normalised, syntheticBase)` parsing — the same parser the browser uses to navigate. Verified against 23 URL inputs.
+
+### Medium
+
+- **Filename `</script>` injection** (`18521c7`) — `escapeJsString` only escaped `\` and `'`, not `</script` like its sibling `escapeTL` does. A filename like `evil</script><svg onload=alert(1)>.md` (Linux + macOS both allow `<`/`>` in filenames) closed the bootstrap `<script>` tag early via the `FILE:` substitution and turned subsequent text into HTML. The CLI is more exploitable here than the browser because `rwa import <path>` accepts arbitrary strings; the browser is hard to exploit but produces an equally dangerous container. Now matches `escapeTL`'s handling.
+
+### High
+
+- **Status `<p>` not announced to screen readers** (`4a98bd0`, WCAG 4.1.3) — added `role="status"` to `<p id="status">` so the conversion progress + error states reach assistive technology. The drop zone already had `role="button"` and the share div had `aria-live="polite"`; the status element was the gap. One-attribute change.
+- **`.busy` was cosmetic only** (`8c8568e`) — the drop zone's `.busy` class set only `opacity` and `cursor`; pointer events remained active, so a second drop during an in-flight conversion clobbered `lastShare` and could trigger a double download (or publish the wrong content if the user clicked Publish during the race). Added `pointer-events: none`.
+
+### Low
+
+- **`renderShareSuccess` crashed on invalid `expiresAt`** (`346e164`) — `new Date(undefined).toISOString()` throws RangeError, leaving the share UI stuck on "Publishing…" as an unhandled promise rejection. Wrapped in try/catch with a fallback "Expires within 24 hours" hint.
+- **Browser `convertCsv` silently dropped Papa errors** (`80fd2e4`) — comment claimed errors became warnings "matching the CLI's behavior"; code returned `warnings: []` unconditionally. Now mirrors the CLI: each `result.errors` entry surfaces as a `csv parse: …` warning, which `handleFile` already routes through `console.warn` and the user-visible "(N notes — see console)" status suffix.
+
+### Verification
+
+Two repro/coverage harnesses ship alongside the fixes — currently at `/tmp/verify-c1-md-sanitizer.mjs` and `/tmp/verify-c2-from-files.mjs`; promotion to `cli/tests/import-security.test.mjs` is the recommended follow-up. 34 combined cases pass: 11 markdown XSS payloads (script tag, `<img onerror>`, `<svg onload>`, `<iframe srcdoc>`, markdown link with `javascript:` href, inline anchor with `vbscript:`, `<details ontoggle>`, ZWSP-prefixed `javascript:`, `<base>`, plus negatives confirming safe `https` links and inline code with literal `<script>` text are preserved) and 23 URL inputs (5 classic schemes + all 6 bypass variants from the debug report + space/scheme edge cases + 4 src-attribute cases including the SVG-as-img case that passes the allow-list but is still safe because of the browser's image-loading sandbox).
+
+### Deferred
+
+**No Content-Security-Policy** on the seed or service responses — architectural. The rwa container model is "inline `<script>` is the app", so any CSP needs `script-src 'unsafe-inline'`. A partial CSP whitelisting only `connect-src` (the known agent endpoints: OpenRouter, Ollama, LMStudio) would still meaningfully reduce post-injection exfiltration without breaking the model. Tracked for a spec-level discussion before code.
+
 ## 2026-05-22 — print CSS fixes for long strings + nested blockquote
 
 Three fixes to the `@media print` block in `seeds/rewritable.html`, found by adding the visual scenarios listed in the next entry (`edge-04` through `edge-08`) and reading the rendered PDFs. Each fix addresses a real failure mode rather than a hypothetical concern:

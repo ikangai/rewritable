@@ -42,7 +42,7 @@ The product-kind taxonomy is documented at `docs/specs/rwa-product-types.md` in 
 
 Embeds the input file's content as the document's initial state. Supported formats:
 
-- `.md`, `.markdown` — converted via [`marked`](https://marked.js.org/) (GFM enabled)
+- `.md`, `.markdown` — converted via [`marked`](https://marked.js.org/) (GFM enabled). Inline HTML in markdown is **sanitized**: `<script>`/`<iframe>`/`<object>`/`<embed>`/`<svg>`/`<math>`/`<link>`/`<meta>`/`<base>` elements are dropped, `on*=` event-handler attributes are stripped, and any `href`/`src` outside the safe scheme allow-list (`http`, `https`, `mailto`, `tel`, plus `data:image/*` for `src`) is neutralised to `#`. Removals are reported as warnings on stderr.
 - `.html`, `.htm` — `<!DOCTYPE>`/`<html>`/`<head>`/`<body>` shells stripped, `<style>` tags retained from `<head>`, body content kept as-is. **`<script>` tags are preserved** (rwa documents support inline JS); a stderr warning is printed when scripts are detected.
 - `.csv` — parsed via [`papaparse`](https://www.papaparse.com/) (RFC 4180; handles quoted commas, embedded newlines, escaped quotes, BOM). First row becomes `<thead>`, remaining rows `<tbody>`; every cell is HTML-escaped. Parse warnings print to stderr but don't abort the import.
 - `.txt` — paragraph-split on blank lines, HTML chars escaped
