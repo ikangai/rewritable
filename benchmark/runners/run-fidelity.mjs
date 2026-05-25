@@ -18,7 +18,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import * as harness from './harness.mjs';
-import { stubModel, openRouterModel, baselineModel, modelToFetch } from './model.mjs';
+import { stubModel, openRouterModel, baselineModel, bridgeModel, modelToFetch } from './model.mjs';
 import { runDslMode } from './dsl-mode.mjs';
 import { runHybridMode, flattenStats } from './hybrid-mode.mjs';
 
@@ -74,6 +74,11 @@ function selectModel(modelName, scenario) {
     if (typeof scenario.baselineDoc === 'string') return baselineModel(scenario.baselineDoc);
     if (typeof scenario.stub === 'function') return scenario.stub();
     throw new Error(`scenario ${scenario.id} has neither baselineDoc nor stub`);
+  }
+  if (modelName === 'bridge') {
+    // Local `claude -p` via the web_cli_bridge shim. No API key needed —
+    // authenticates against the user's Claude Code subscription.
+    return bridgeModel();
   }
   // Real model paths — RWA_OPENROUTER_KEY required.
   return openRouterModel({ model: modelName });
