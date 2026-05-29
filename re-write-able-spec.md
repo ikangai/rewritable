@@ -280,6 +280,39 @@ To make this real, the runtime maintains a stable identifier on every anchorable
 
 **Out of scope (for now).** Cross-document transclusion (`<rwa-include src=...>`), overlay/commentary metadata (`<meta name="rwa-overlay">`), and sandboxed-iframe hosting wrappers are designed against this floor but live in a later spec revision. See `docs/plans/2026-05-15-web-hardening-design.md` for the longer arc.
 
+### 5.10 Render modes and view providers
+
+§5.4 renders the document as it is stored: the loader writes `rwa_doc` into `#rwa-doc-mount` and re-renders after every modification. A **render mode** lets a document be *displayed* differently from how it is *stored* — the same headings and paragraphs drawn as a presentation deck, the same list drawn as a board — without changing the stored text, the agent's view of it, or any bootstrap byte (Invariant 1). This section specifies the contract; the first render mode (`presentation`) and the registration surface land in a follow-on revision (see the version note).
+
+**The registration surface.** A render mode is supplied by a *provider*, registered on the runtime:
+
+```
+const off = runtime.provide('view', spec);   // register; returns an unregister closure
+runtime.setView('presentation');             // activate a render mode by name
+runtime.setView(null);                        // return to the default render path (§5.4)
+```
+
+`view` is the one provider kind this revision specifies — a display-only render mode. Other kinds (`edit-surface`, `compute`) are deferred (below). For first-party providers — those shipped inside the bootstrap, and therefore covered by Invariant 3 (the agent never sees them) — the runtime holds a single nullable slot per kind; a persisted registry for installed third-party providers is deferred.
+
+**The `view` spec.** A `view` declares one required slot and one optional slot:
+
+- `render(doc) → html` — **required, pure, synchronous.** Takes the stored document text and returns the HTML to mount.
+- `mounted(m, ctx)` — **optional, impure.** Runs after the mount's `innerHTML` is set and after the runtime's post-render pass (`renderDoc`, rwa-edit-spec.md §11). Owns transient UI state — the active slide index, an `.active` class — which must not live in the document and is re-established here on every render, since §5.4 re-renders on each modification.
+
+**The render contract.** `render` is one-way and display-only; its output is mounted and discarded.
+
+1. *Output is never read back.* The returned HTML is written to `#rwa-doc-mount` and never serialized into `rwa_doc`, never committed, never sent to IndexedDB. The stored document stays the source of truth (Invariant 6); commits operate on the stored text (§5.6), so `data-rwa-id` and frozen zones survive because the mounted value never participates in a commit — not because the render output carries them through.
+2. *The agent-facing source is the stored text, never the mounted value.* The document the agent receives (§5.4, §6.1) is derived from `rwa_doc`, never from `render`'s output. A render mode is therefore invisible to the agent by construction (Invariant 9): the agent never sees a deck's `<section>` wrappers or any rearrangement, even while a `view` is active.
+3. *`data-rwa-id`-bearing blocks stay present and identified.* `render` must not strip `data-rwa-id` (§5.9) and must keep every id-bearing block present in the mounted DOM — it may hide a block with CSS but must not omit it, so URL-fragment resolution (§5.9, which resolves `location.hash` against the live DOM) and any runtime state keyed by stable id continue to work.
+4. *No reserved ids or markers.* `render` output must not contain reserved runtime ids (`#rwa-doc-mount`, `#rwa-lens`, `#rwa-runtime`, any `#rwa-*`) or frozen-zone markers (§5.3, rwa-edit-spec.md §7) — a duplicate `#rwa-lens` silently breaks lens identity resolution. The runtime validates output at `provide`/`setView` time and throws.
+5. *First-party output carries no `<script>`.* The render path re-executes `<script>` in mounted HTML as main-thread code (rwa-edit-spec.md §11); a display transform is HTML and CSS, not code. The runtime asserts their absence in first-party `render` output and fails loud.
+
+**Activation and the lens.** `setView` mutates the render path and must not race the rewrite loop. It refuses while a modification holds the modify mutex (rwa-edit-spec.md §5.5), rejecting with status rather than queueing. On activation it releases any held lens anchor, returning the lens to its default docked state (rwa-lens-spec.md §5.2), so a stale anchor cannot resolve against the newly mounted DOM. The lens's anchored-edit path (rwa-lens-spec.md §5.5, which maps a click to a source range via the source-position map) is available only when no render mode is active; suspending the click listener alone is insufficient, because a stale anchor can re-enter that path against rearranged DOM.
+
+**Trust and thread affinity.** A `view` needs the DOM, so `render`/`mounted` run on the main thread and cannot be Worker-isolated. Because the render path writes via `innerHTML` and re-executes any `<script>` it contains on the main thread with no Content Security Policy, a render mode is a path to arbitrary main-thread code — it can reach `runtime.db`, `runtime.fs`, and the `sessionStorage` API key. For first-party providers (bootstrap-resident, author-trusted) this is acceptable. A third-party provider supplying a `view` is therefore inherently un-sandboxable and a higher-trust category than a Worker-isolatable kind; this composes with the security model of §10, and the eventual install surface must disclose "can run arbitrary code on the page," not the softer "renders its own UI."
+
+**Deferred.** This revision specifies only the `view` kind and only its first-party path. The `edit-surface` and `compute` kinds (direct human cell editing, reactive recompute), the installed/third-party provider path (the install surface, permission declaration, persistence), and the write-path ordering that non-agent writers need (flushing uncommitted edits before an agent modify acquires the mutex — not enforceable at the current `modify()` structure) are out of scope here and tracked in `docs/plans/2026-05-29-rwa-affordance-skill-kernel-design.md`.
+
 ---
 
 ## 6. The Agent Contract
@@ -624,8 +657,12 @@ These properties are load-bearing — every change to the runtime, bootstrap, or
 5. Every committed file is self-contained — opens and runs without external dependencies.
 6. The inline snapshot is the source of truth on first open. After hydration, IndexedDB is the source of truth until the next commit.
 7. Undo history lives in IndexedDB, not in the file. Commits do not carry undo state.
+8. A render mode's output (§5.10) is display-only: it is written to `#rwa-doc-mount` and never read back into `rwa_doc`, never committed, never persisted. The stored document remains the source of truth.
+9. The document the agent receives is derived from the stored document text, never from a render mode's mounted output. Render modes are invisible to the agent.
 
 ---
+
+*Spec version 0.12 — render-mode / view-provider contract. §5.10 (new) specifies render modes: a document can be displayed differently from how it is stored via a `view` provider registered on `runtime.provide` / `runtime.setView`, with a pure `render(doc) → html` slot, an optional `mounted` hook, and a contract that keeps the stored text the source of truth and the agent's view of it untouched (Invariants 8–9, new). This revision is **contract-only**: the bootstrap is byte-unchanged, no `view` ships in the seed, and references are not regenerated. The first render mode (`presentation`) and the `runtime.provide` / `setView` surface implement this contract in a follow-on revision. The contract was grounded in a standalone prototype, not yet in the runtime; the `edit-surface` / `compute` kinds, the installed third-party path, and the non-agent write-path ordering remain deferred (`docs/plans/2026-05-29-rwa-affordance-skill-kernel-design.md`).*
 
 *Spec version 0.11 — anchorable-tags extended. `table` and `td` join the anchorable list so the workflow product's parallel blocks and cells (per `docs/specs/rwa-workflow-spec.md`) get `data-rwa-id` backfilled automatically. The change is purely additive — existing containers gain ids on their tables on the next commit; no behavior changes for documents that don't use tables. Reference implementations regenerated.*
 
