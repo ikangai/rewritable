@@ -1978,6 +1978,10 @@ function setSourceMap(doc) {
 }
 function getSourceMap() { return sourceMap; }
 window.getSourceMap = getSourceMap;
+// Agent-facing source cache (spec §5.10 Invariant 9 lives or dies here): with a
+// render mode active this MUST equal the stored doc text, never the view's
+// mounted output. Exposed for tests, same as getSourceMap above.
+window.getCurrentDocCache = () => currentDocCache;
 
 // rwa-lens/1: class-declared locks (spec §7).
 let lockedRanges = [];
