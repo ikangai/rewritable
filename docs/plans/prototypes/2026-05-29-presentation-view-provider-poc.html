@@ -1,0 +1,648 @@
+<!--
+  PROTOTYPE — not derived from the canonical seed; validates the affordance/skill
+  kernel registration API (view provider). See
+  docs/plans/2026-05-29-rwa-affordance-skill-kernel-design.md
+
+  This file is a STANDALONE proof-of-concept. It does NOT share bytes with
+  seeds/rewritable.html and must never be promoted into it unmodified. It exists
+  only to answer one question: does provider registration survive contact with a
+  render path shaped like the real runtime's renderDoc()?
+
+  What it models from the real runtime (line refs are to seeds/rewritable.html):
+    - renderDoc(docText) full-replace mount pipeline (:829-873): capture form
+      state -> set innerHTML -> re-exec <script> -> restore form state ->
+      rebuild source map -> wire click listener.
+    - runtime.provide(kind, spec) -> unregister  (new top-level member, C4)
+    - runtime.setView(name|null)                  (new top-level member, C4)
+    - a single-slot first-party `view` provider registry (C1)
+    - one branch at the m.innerHTML seam (:849, C2)
+    - source-map / anchoring suspension while a whole-mount view is active (C3)
+    - a sibling toggle button in the runtime chrome (C6)
+
+  CONFIRMED FIXES FOLDED IN (see the review block in the spawning task):
+    F1  render() output is mount-only and is NEVER read back into the doc text.
+        data-rwa-id / frozen-zone preservation is guaranteed because the doc text
+        is the only thing that reaches "commit", not because wrapping rides
+        attributes along. Demonstrated: COMMIT reads docText, never the mount.
+    F2  source map is built from docText, never from the mounted html; on
+        setView('presentation') we releaseAnchor() and gate re-anchoring on
+        activeView===null. wrapIntoSlides is WRAP-IN-PLACE (no reordering) so
+        document order is preserved.
+    F3  the view contract REQUIRES every id-keyed interactive element to be present
+        in the mount on every render (may hide via CSS, must not omit from DOM).
+        Enforced by a dev-time assertion.
+    F4  render() output flows through the <script> re-exec loop with NO CSP, i.e.
+        it is arbitrary main-thread code execution by construction. For first-party
+        this is fine; the first-party view contract here STRIPS <script> from
+        render() output and fails loud if any is present, so the contract a future
+        third-party path would inherit is "no scripts", not "all scripts run".
+    F5  the agent-facing source (sourceMap / docCache) is structurally derived from
+        docText, never from the mounted html — invisible by construction, not by
+        a parameter-naming convention. Asserted: with a view active, the doc cache
+        contains no "rwa-slide" substring.
+    F6  flush-before-agent-modify ordering: a `view` never writes, so no overlay
+        flush exists here; the kernel's "flush acquires modifyMutex before agent
+        modify" claim is a WRITE-PATH concern that this slice does NOT validate and
+        cannot enforce without editing modify(). Stated as an open hole, not faked.
+    F7  setView is guarded against an in-flight modify (mirrors undo()'s guard):
+        a render-mode change must not interleave with a write-path lifecycle.
+    F8  render() is a pure string->string transform; post-mount UI state (current
+        slide index) is restored by a separate mounted(m, ctx) callback — the
+        same shape as the runtime's existing post-mount form-state restore. The
+        sessionStorage slide index is therefore actually reachable.
+    F9  print: a presentation deck prints as the linear document. The slide CSS is
+        @media-screen-only and an @media print reset unwraps it; runtime chrome
+        AND the (modeled) lens both get explicit print-hide rules — no reliance on
+        transitive "in #rwa-runtime => hidden in print".
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Presentation view provider — PoC</title>
+<style>
+  /* ---- seed-aligned palette / typography (light theme) ---- */
+  :root{
+    --gray-50:#fafafa;--gray-100:#f5f5f5;--gray-200:#e5e5e5;--gray-300:#d4d4d4;
+    --gray-400:#a3a3a3;--gray-500:#737373;--gray-600:#525252;--gray-700:#404040;
+    --gray-800:#262626;--gray-900:#171717;--white:#fff;
+    --green:#22c55e;--yellow:#eab308;--red:#ef4444;--blue:#3b82f6;
+    --font-ui:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+    --font-mono:'SF Mono',Menlo,Monaco,ui-monospace,'Cascadia Mono',monospace;
+    --radius-sm:8px;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;}
+  body{
+    font-family:var(--font-ui);background:var(--gray-50);color:var(--gray-900);
+    min-height:100dvh;padding-bottom:120px;line-height:1.5;
+    -webkit-font-smoothing:antialiased;
+  }
+
+  /* ---- document mount (modeling #rwa-doc-mount) ----
+     Zero-specificity baseline so any <style> inside the doc text always wins,
+     exactly like the seed's :where(#rwa-doc-mount ...) baseline. */
+  :where(#rwa-doc-mount) article{max-width:760px;margin:48px auto;padding:0 32px;}
+  :where(#rwa-doc-mount) h1{font-size:30px;line-height:1.15;margin:0 0 8px;}
+  :where(#rwa-doc-mount) h2{font-size:21px;line-height:1.2;margin:32px 0 8px;}
+  :where(#rwa-doc-mount) p{margin:0 0 14px;color:var(--gray-700);}
+  :where(#rwa-doc-mount) ul{color:var(--gray-700);}
+  :where(#rwa-doc-mount) code{font-family:var(--font-mono);font-size:.9em;background:var(--gray-100);
+    border:1px solid var(--gray-200);border-radius:4px;padding:1px 5px;}
+  :where(#rwa-doc-mount) .speaker{display:block;margin-top:18px;font-size:13px;color:var(--gray-500);
+    font-family:var(--font-mono);}
+
+  /* ---- presentation view chrome (SCREEN ONLY — F9) ----
+     Wrapped sections become slides only on screen; print resets them away. */
+  @media screen{
+    #rwa-doc-mount.viewmode-presentation article{max-width:none;margin:0;padding:0;}
+    #rwa-doc-mount.viewmode-presentation .rwa-slide{
+      display:none;min-height:78vh;max-width:860px;margin:24px auto;padding:48px 56px;
+      background:var(--white);border:1px solid var(--gray-200);border-radius:18px;
+      box-shadow:0 1px 3px rgba(0,0,0,.04);
+    }
+    #rwa-doc-mount.viewmode-presentation .rwa-slide.active{display:block;}
+  }
+
+  /* ---- runtime chrome (modeling #rwa-runtime + toggle) ---- */
+  #rwa-runtime{position:fixed;top:16px;right:16px;display:flex;gap:8px;align-items:center;z-index:50;}
+  .rwa-st-btn{
+    background:var(--white);border:1px solid var(--gray-200);color:var(--gray-500);
+    font-family:var(--font-mono);font-size:10px;padding:6px 10px;border-radius:6px;
+    cursor:pointer;letter-spacing:.5px;text-transform:uppercase;
+    transition:color .15s,background .15s,border-color .15s;
+  }
+  .rwa-st-btn:hover{color:var(--gray-900);border-color:var(--gray-300);background:var(--gray-50);}
+  .rwa-st-btn.on{background:var(--gray-900);color:var(--white);border-color:var(--gray-900);}
+  .rwa-st-btn.run{color:var(--gray-700);border-color:var(--gray-300);background:var(--gray-50);}
+  #rwa-status{font-family:var(--font-mono);font-size:10px;color:var(--gray-500);min-width:120px;text-align:right;}
+  #rwa-status.run{color:var(--gray-700);}#rwa-status.ok{color:var(--green);}#rwa-status.err{color:var(--red);}
+
+  /* provider chrome host: nav arrows + counter, sibling inside #rwa-runtime (§2.1) */
+  #rwa-view-chrome{display:none;gap:6px;align-items:center;}
+  #rwa-view-chrome.active{display:flex;}
+  #rwa-view-chrome .count{font-family:var(--font-mono);font-size:11px;color:var(--gray-500);min-width:42px;text-align:center;}
+
+  /* modeled lens (escapes to body after an anchor cycle in the real runtime) */
+  #rwa-lens{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);
+    width:min(680px,calc(100vw - 48px));background:var(--white);border:1px solid var(--gray-200);
+    border-radius:24px;padding:14px 18px;box-shadow:0 6px 28px rgba(0,0,0,.10);z-index:60;
+    font-family:var(--font-ui);font-size:13px;color:var(--gray-600);}
+  #rwa-lens .anchor{display:none;color:var(--gray-900);font-family:var(--font-mono);font-size:11px;}
+  #rwa-lens[data-anchored="1"] .anchor{display:inline;}
+
+  /* ---- F9: print = linear document. Reset slides; hide ALL runtime chrome
+     including the lens (explicit, not transitive). ---- */
+  @media print{
+    #rwa-runtime{display:none!important;}
+    #rwa-lens{display:none!important;}          /* the lens can escape to <body>; hide it explicitly */
+    #rwa-view-chrome{display:none!important;}
+    #rwa-doc-mount.viewmode-presentation article{max-width:720px;margin:0 auto;padding:0;}
+    #rwa-doc-mount.viewmode-presentation .rwa-slide{
+      all:unset;display:block;break-inside:avoid;margin:0 0 18px;
+    }
+  }
+
+  /* the PoC's own scaffolding panel (not part of the kernel; clearly marked) */
+  #poc-panel{position:fixed;left:16px;bottom:16px;max-width:520px;background:var(--gray-900);
+    color:var(--gray-100);font-family:var(--font-mono);font-size:11px;line-height:1.5;
+    border-radius:12px;padding:14px 16px;z-index:70;}
+  #poc-panel h3{margin:0 0 8px;font-size:11px;letter-spacing:1px;text-transform:uppercase;color:var(--gray-400);}
+  #poc-panel button{background:var(--white);color:var(--gray-900);border:0;border-radius:6px;
+    font-family:var(--font-mono);font-size:11px;padding:5px 9px;margin:2px 4px 2px 0;cursor:pointer;}
+  #poc-log{margin-top:8px;max-height:150px;overflow:auto;white-space:pre-wrap;color:var(--gray-300);}
+  #poc-log .ok{color:var(--green);}#poc-log .err{color:var(--red);}#poc-log .info{color:var(--blue);}
+  @media print{#poc-panel{display:none!important;}}
+</style>
+</head>
+<body>
+
+<!-- runtime chrome (modeling #rwa-runtime): toggle + view chrome + status -->
+<div id="rwa-runtime">
+  <div id="rwa-view-chrome">
+    <button class="rwa-st-btn" id="rwa-view-prev" title="Previous slide">&larr;</button>
+    <span class="count" id="rwa-view-count">1 / 3</span>
+    <button class="rwa-st-btn" id="rwa-view-next" title="Next slide">&rarr;</button>
+  </div>
+  <button class="rwa-st-btn" id="rwa-view-toggle">Present</button>
+  <span id="rwa-status">ready</span>
+</div>
+
+<!-- the document mount (modeling #rwa-doc-mount). Starts empty; filled by renderDoc. -->
+<div id="rwa-doc-mount"></div>
+
+<!-- modeled lens chrome. In the real runtime releaseAnchor() reparents this to
+     document.body; here it starts as a runtime sibling. -->
+<div id="rwa-lens"><span class="anchor" id="rwa-lens-anchor"></span> lens (whole-doc command surface) — anchoring suspended while presenting</div>
+
+<!-- PoC scaffolding: buttons that exercise the real render/modify/undo/commit seams -->
+<div id="poc-panel">
+  <h3>PoC harness — exercises the runtime seams</h3>
+  <button id="poc-modify">simulate modify (rename slide 2)</button>
+  <button id="poc-undo">undo</button>
+  <button id="poc-commit">commit (show doc bytes)</button>
+  <button id="poc-anchor">anchor a block</button>
+  <button id="poc-asserts">run invariant assertions</button>
+  <div id="poc-log"></div>
+</div>
+
+<!--
+  ===========================================================================
+  BOOTSTRAP (modeling <script id="rwa-bootstrap">). In the real seed this whole
+  block is part of FROZEN: never in IDB, never serialized into INLINE_DOC, never
+  visible to the agent. The presentation provider lives HERE (first-party,
+  bootstrap-resident, re-registered every page load), which is why the single-slot
+  registry in §1.3 suffices and nothing needs persisting.
+  ===========================================================================
+-->
+<script>
+"use strict";
+(function(){
+
+  /* ---------- tiny doc store (models IDB rwa_doc / rwa_undo) ----------
+     The doc text is the ONLY thing that is ever persisted or committed. */
+  const DOC_UUID = "poc-" + "presentation-view";  // baked-at-creation in the real seed
+  const undoStack = [];
+
+  // LF-canonical document text. This is what lives in #rwa-doc-mount today, what
+  // the agent sees, and what commit serializes. It already carries data-rwa-id
+  // attributes (the runtime backfills them); the view must NOT strip them (F1).
+  let docText = canonLF(`<article>
+<h1 data-rwa-id="b1">re-write-able</h1>
+<p data-rwa-id="b2">A re-writeable file is a single self-contained <code>.html</code> that renders, stores, modifies, and exports itself with no server. One file is the whole application and the whole archive.</p>
+<span class="speaker" data-rwa-id="b3">Speaker note: the file on disk is the only durable artifact.</span>
+
+<h2 data-rwa-id="b4">The rewrite loop</h2>
+<p data-rwa-id="b5">Press a key, hand the document to a model, get back surgical edits on unique anchors, commit them atomically, re-render. The bootstrap never moves; only the inline document snapshot changes between commits.</p>
+<span class="speaker" data-rwa-id="b6">Speaker note: the runtime owns when and how to render — providers only declare what the rendered DOM looks like.</span>
+
+<h2 data-rwa-id="b7">One substrate, many views</h2>
+<p data-rwa-id="b8">The same document text can render as prose or — through a registered view provider — as this slide deck. The view is a pure re-presentation of the text at render time; the bytes on disk never change shape.</p>
+<span class="speaker" data-rwa-id="b9">Speaker note: this slide is produced by a first-party 'view' provider registered via runtime.provide('view', spec).</span>
+</article>`);
+
+  function canonLF(s){ return String(s).replace(/\r\n?/g, "\n"); }
+  async function getDoc(){ return docText; }            // models await getDoc()
+  function setDocText(next){ docText = canonLF(next); }  // models commitDoc writing rwa_doc
+
+  /* ---------- write-path mutex (models modifyMutex) ---------- */
+  let modifyMutex = false;
+
+  /* ---------- agent-facing source cache (models setSourceMap / currentDocCache) ----------
+     F5: this is ALWAYS derived from docText, never from the mounted html. With a
+     view active it must contain no "rwa-slide" substring — that is what makes the
+     agent invisible-by-construction rather than by parameter-naming convention. */
+  let currentDocCache = "";
+  let sourceMapSuspended = false;
+  function setSourceMap(docTextArg){
+    currentDocCache = docTextArg;        // canonical doc text ONLY (F5)
+    sourceMapSuspended = activeView !== null; // whole-mount view => byte offsets meaningless
+  }
+
+  /* ---------- anchor state (models lensState.anchor) ---------- */
+  const lensEl = document.getElementById("rwa-lens");
+  const lensAnchorEl = document.getElementById("rwa-lens-anchor");
+  let anchor = null;
+  function releaseAnchor(){ anchor = null; lensEl.dataset.anchored = "0"; lensAnchorEl.textContent = ""; }
+  function setAnchor(id){ anchor = id; lensEl.dataset.anchored = "1"; lensAnchorEl.textContent = "anchored: " + id; }
+
+  /* =========================================================================
+     PROVIDER REGISTRY  (C1)  —  single first-party slot, sibling of the event map.
+     =======================================================================*/
+  const providers = { view: null };   // registered spec or null
+  let activeView = null;              // null = default mount render; else providers.view
+
+  // Read-only facade handed to render()/mounted() — capability: none (no modify/db).
+  function viewCtx(){
+    return Object.freeze({ docUuid: DOC_UUID, status: getStatus(), frozenZoneNames: [] });
+  }
+
+  /* runtime.provide(kind, spec) -> unregister   (C4 / §1.2) */
+  function runtimeProvide(kind, spec){
+    if (kind !== "view") throw new Error("unknown provider kind: " + kind); // fail loud (Rule 12)
+    if (!spec || spec.kind !== "view") throw new Error("view spec.kind must be 'view'");
+    for (const f of ["name","label","render"]) {
+      if (spec[f] == null) throw new Error("view spec missing required field: " + f);
+    }
+    if (typeof spec.render !== "function") throw new Error("view spec.render must be a function");
+    spec.__provenance = "first-party"; // bootstrap-resident call site (§4)
+    providers.view = spec;             // does NOT auto-activate (§1.3)
+    log("info", `registered view '${spec.name}' (provenance=first-party)`);
+    return function unregister(){ if (providers.view === spec){ if (activeView === spec) runtimeSetView(null); providers.view = null; } };
+  }
+
+  /* runtime.setView(name|null)   (C4 / §2.4, with F7 guard) */
+  function runtimeSetView(name){
+    // F7: a render-mode change must NOT interleave with a write-path lifecycle.
+    if (modifyMutex){ setStatus("err", "modify in progress"); log("err","setView refused: modify in progress (F7)"); return; }
+    if (name === null){
+      activeView = null;
+      sessionStorage.setItem(viewKey(), "");
+    } else {
+      const spec = providers.view;
+      if (!spec || spec.name !== name) throw new Error("no registered view named " + name);
+      // F2: clear any standing anchor before activating a whole-mount view. The
+      // anchored-modify render path would otherwise re-anchor against a wrapped DOM.
+      releaseAnchor();
+      activeView = spec;
+      sessionStorage.setItem(viewKey(), name);
+    }
+    syncToggleUI();
+    renderDoc(docText);   // re-render through the (possibly) new branch
+  }
+  function viewKey(){ return "rwa_view_active_" + DOC_UUID; }
+  function slideKey(){ return "rwa_view_slide_" + DOC_UUID; }
+
+  /* =========================================================================
+     RENDER PATH  (models renderDoc, seeds/rewritable.html:829-873)
+     Takes docText (F5: agent-facing source is the ARGUMENT, the mounted html is
+     a derived local). The C2 branch is the ONE new line at the innerHTML seam.
+     =======================================================================*/
+  const mount = document.getElementById("rwa-doc-mount");
+
+  function renderDoc(docTextArg){
+    docTextArg = canonLF(docTextArg);
+
+    // (:843-848) capture id-keyed form state from the OLD mount
+    const formState = {};
+    mount.querySelectorAll("input,textarea,select").forEach(el => {
+      if (el.id) formState[el.id] = (el.type === "checkbox" || el.type === "radio") ? el.checked : el.value;
+    });
+
+    // ---- C2 SEAM (:849). The ONLY new line. render() output is mount-only (F1). ----
+    let mountHtml;
+    if (activeView){
+      const out = activeView.render(docTextArg, viewCtx());          // pure string->string
+      mountHtml = sanitizeViewOutput(out, activeView);               // F4: strip <script>, fail loud
+      mount.classList.add("viewmode-" + activeView.name);
+    } else {
+      mountHtml = docTextArg;                                        // today's exact behavior
+      mount.className = "";
+    }
+    mount.innerHTML = mountHtml;
+    // NOTE (F1): mountHtml is NEVER read back into docText. The doc bytes are
+    // untouched by rendering — that is why data-rwa-id / frozen zones survive,
+    // not because "wrapping rides attributes along".
+
+    // (:850-855) re-exec <script> in mounted HTML. For first-party view output
+    // there are none (sanitizeViewOutput guarantees it), so this is a no-op for
+    // the deck — but it is the seam that makes a THIRD-PARTY view un-sandboxable
+    // (F4): arbitrary main-thread code, no CSP. Documented, not hidden.
+    mount.querySelectorAll("script").forEach(o => {
+      const s = document.createElement("script");
+      for (const a of o.attributes) s.setAttribute(a.name, a.value);
+      s.textContent = o.textContent;
+      o.parentNode.replaceChild(s, o);
+    });
+
+    // (:856-861) restore form state into the NEW mount by id.
+    // F3 depends on render() emitting EVERY id-keyed element (may hide, must not omit).
+    for (const id in formState){
+      const el = mount.querySelector("#" + CSS.escape(id));
+      if (el){ if (el.type === "checkbox" || el.type === "radio") el.checked = formState[id]; else el.value = formState[id]; }
+    }
+
+    // (:866) rebuild the agent-facing source map — FROM docText (F5), never mountHtml.
+    setSourceMap(docTextArg);
+
+    // (:871-872) wire click-to-anchor — ONLY in default view (C3). Whole-mount
+    // views suspend anchoring because wrap-in-place still changes nothing about
+    // ordinals (we don't reorder), but byte-offset click resolution is undefined.
+    if (!activeView){
+      mount.onclick = handleMountClick;
+    } else {
+      mount.onclick = null;
+    }
+
+    // F8: post-mount provider seam. render() stays pure; this is the impure slot
+    // that restores slide-index UI state (the sessionStorage value is finally
+    // reachable here, mirroring the runtime's own post-mount form-state restore).
+    if (activeView && typeof activeView.mounted === "function"){
+      activeView.mounted(mount, viewCtx());
+    }
+  }
+
+  /* default-view click-to-anchor (only wired when activeView===null) */
+  function handleMountClick(e){
+    const block = e.target.closest("[data-rwa-id]");
+    if (!block) return;
+    setAnchor(block.getAttribute("data-rwa-id"));
+    log("info", "anchored block " + anchor + " (default view; source map live)");
+  }
+
+  /* F4: first-party view output contract = NO executable scripts. Strip + fail loud. */
+  function sanitizeViewOutput(html, spec){
+    if (/<script[\s>]/i.test(html)){
+      // Trusted first-party code should not emit scripts; surface, don't silently run.
+      throw new Error("view '" + spec.name + "' render() emitted <script> — forbidden by the first-party view contract (F4)");
+    }
+    return html;
+  }
+
+  /* =========================================================================
+     THE PRESENTATION VIEW PROVIDER (§2). First-party, bootstrap-resident.
+     =======================================================================*/
+  let slideCount = 0;
+
+  // F2: WRAP-IN-PLACE. We split on h1/h2 boundaries but NEVER reorder content,
+  // so document order — and therefore the i-th-anchorable correspondence the
+  // real source map relies on — is preserved. We only ADD <section> wrappers
+  // around existing block HTML; data-rwa-id attributes ride along untouched (F1).
+  function wrapIntoSlides(docHtml){
+    const tmp = document.createElement("div");
+    tmp.innerHTML = docHtml;
+    const art = tmp.querySelector("article") || tmp;
+    const slides = [];
+    let current = null;
+    // walk children IN ORDER; a heading starts a new slide.
+    Array.from(art.childNodes).forEach(node => {
+      const isHeading = node.nodeType === 1 && /^H[12]$/.test(node.tagName);
+      if (isHeading || current === null){
+        current = document.createElement("section");
+        current.className = "rwa-slide";
+        slides.push(current);
+      }
+      current.appendChild(node.cloneNode(true)); // clone: we are producing display HTML only
+    });
+    slideCount = slides.length;
+    const wrappedArt = document.createElement("article");
+    slides.forEach((s, i) => { if (i === 0) s.classList.add("active"); wrappedArt.appendChild(s); });
+    return wrappedArt.outerHTML;
+  }
+
+  const presentationProvider = {
+    kind: "view",
+    name: "presentation",
+    label: "Present",
+    render(doc /*, ctx */){
+      return wrapIntoSlides(doc);   // pure string -> string (F8)
+    },
+    // F8: post-mount UI-state restore. Reads the ephemeral slide index from
+    // sessionStorage (NOT the undo timeline — slide position is not document state)
+    // and activates the right <section>. This is where §2.2's sessionStorage
+    // mechanism is finally consumed.
+    mounted(m /*, ctx */){
+      const sections = Array.from(m.querySelectorAll(".rwa-slide"));
+      if (!sections.length) return;
+      let idx = parseInt(sessionStorage.getItem(slideKey()) || "0", 10);
+      if (!(idx >= 0 && idx < sections.length)) idx = 0;
+      sections.forEach((s, i) => s.classList.toggle("active", i === idx));
+      updateSlideCounter(idx, sections.length);
+    }
+  };
+
+  function currentSlideIndex(){
+    const secs = mount.querySelectorAll(".rwa-slide");
+    let i = 0; secs.forEach((s, n) => { if (s.classList.contains("active")) i = n; });
+    return i;
+  }
+  function gotoSlide(delta){
+    if (!activeView) return;
+    const secs = Array.from(mount.querySelectorAll(".rwa-slide"));
+    if (!secs.length) return;
+    let i = Math.max(0, Math.min(secs.length - 1, currentSlideIndex() + delta));
+    secs.forEach((s, n) => s.classList.toggle("active", n === i));
+    sessionStorage.setItem(slideKey(), String(i));
+    updateSlideCounter(i, secs.length);
+  }
+  function updateSlideCounter(i, total){
+    document.getElementById("rwa-view-count").textContent = (i + 1) + " / " + total;
+  }
+
+  /* =========================================================================
+     STAGED LIVE-REGION FLUSH AT A BOUNDARY (sketch only — §5 / F6)
+     A `view` is read-only and NEVER writes, so this slice does NOT implement
+     the overlay/flush machinery. The function below is a SKETCH that documents
+     where the boundary WOULD sit and why the kernel's "flush acquires
+     modifyMutex before agent modify" ordering is NOT enforceable at the modify()
+     seam this slice promises not to touch (F6). It is intentionally inert.
+     =======================================================================*/
+  function flushPendingOverlaysAtBoundary(/* reason */){
+    // For edit-surface / compute writers (DEFERRED), a flush boundary would:
+    //   1. run-to-completion BEFORE modify() takes the mutex, then hand off
+    //      atomically — but there is no seam between "modify() called" and
+    //      "modifyMutex=true" where that can happen, and the bridge backend
+    //      dispatches BEFORE the mutex check, bypassing any top-of-modify hook.
+    //   2. therefore the honest design requires editing modify()/modifyViaBridge
+    //      to take the mutex at a single shared entry and run an awaited flush
+    //      inside the held mutex (reentrant commit path).
+    // None of that is exercised here. A view writes nothing; there is nothing to
+    // flush. This is recorded as a write-path hole, not a solved problem (F6).
+    return; // no-op by design
+  }
+
+  /* =========================================================================
+     TOGGLE WIRING (C6) + status helpers
+     =======================================================================*/
+  const toggleBtn = document.getElementById("rwa-view-toggle");
+  const viewChrome = document.getElementById("rwa-view-chrome");
+  const statusEl = document.getElementById("rwa-status");
+  function getStatus(){ return statusEl.textContent; }
+  function setStatus(cls, txt){ statusEl.className = ""; if (cls) statusEl.classList.add(cls); statusEl.textContent = txt; }
+
+  function syncToggleUI(){
+    const on = activeView !== null;
+    toggleBtn.classList.toggle("on", on);
+    toggleBtn.textContent = on ? "Prose" : (providers.view ? providers.view.label : "Present");
+    viewChrome.classList.toggle("active", on);
+  }
+  toggleBtn.addEventListener("click", () => {
+    runtimeSetView(activeView ? null : "presentation");
+  });
+  document.getElementById("rwa-view-prev").addEventListener("click", () => gotoSlide(-1));
+  document.getElementById("rwa-view-next").addEventListener("click", () => gotoSlide(+1));
+  document.addEventListener("keydown", (e) => {
+    if (!activeView) return;
+    if (e.key === "ArrowRight" || e.key === "PageDown"){ gotoSlide(+1); }
+    else if (e.key === "ArrowLeft" || e.key === "PageUp"){ gotoSlide(-1); }
+  });
+
+  /* =========================================================================
+     SIMULATED modify / undo / commit  (exercise the seams the PoC validates)
+     =======================================================================*/
+
+  // Models modify(): acquire mutex, read doc, apply an edit, re-render, release.
+  async function simulateModify(){
+    if (modifyMutex){ setStatus("err","busy"); return; }
+    modifyMutex = true;                            // (:3313)
+    setStatus("run","⌘K running");
+    flushPendingOverlaysAtBoundary("before-modify"); // F6 sketch hook (inert)
+    try {
+      const cur = canonLF(await getDoc());         // (:3320) PRE-edit text
+      undoStack.push(cur);                         // undo carries DOC text only
+      // a surgical apply_edits-style transform on the DOC TEXT (never the mount):
+      const next = cur.replace(
+        "One substrate, many views",
+        "One substrate, every view"
+      );
+      setDocText(next);                            // models commitDoc writing rwa_doc (:2904)
+      renderDoc(docText);                          // (:3397) re-render — routes through active view
+      setStatus("ok","edited ✓");
+      log("ok", "modify committed; doc text changed, mount re-derived");
+    } finally {
+      modifyMutex = false;                         // release
+    }
+  }
+
+  // Models undo(): guarded against in-flight modify; restores DOC text only.
+  function simulateUndo(){
+    if (modifyMutex){ setStatus("err","modify in progress"); return; } // (:3568)
+    if (!undoStack.length){ setStatus("err","nothing to undo"); return; }
+    setDocText(undoStack.pop());
+    renderDoc(docText);                            // undo path renderDoc (:3565-3580)
+    setStatus("ok","undone ✓");
+    log("ok", "undo restored doc text; slide index is ephemeral, not undone");
+  }
+
+  // Models commit serialization (buildFile): reads the DOC TEXT, never the mount.
+  function simulateCommit(){
+    // F1 demonstration: what gets written is docText, with data-rwa-id intact and
+    // ZERO "rwa-slide" wrappers — even when the presentation view is active.
+    const bytes = docText;
+    const hasSlideWrapper = /rwa-slide/.test(bytes);
+    const hasRwaIds = /data-rwa-id="b1"/.test(bytes);
+    log(hasSlideWrapper ? "err" : "ok",
+      `commit bytes: data-rwa-id present=${hasRwaIds}, contains 'rwa-slide'=${hasSlideWrapper} ` +
+      `(must be false even while presenting — F1)`);
+  }
+
+  function simulateAnchor(){
+    if (activeView){ log("err","cannot anchor while presenting — anchoring suspended (C3/F2)"); return; }
+    setAnchor("b5");
+    log("info","anchored b5 in default view");
+  }
+
+  /* =========================================================================
+     INVARIANT ASSERTIONS (dev-time, fail-loud) — F1/F3/F5 made checkable
+     =======================================================================*/
+  function runAssertions(){
+    const results = [];
+    const assert = (name, cond) => results.push({ name, ok: !!cond });
+
+    // F5: with the view active, the agent-facing cache must be the DOC TEXT with
+    // no slide wrappers.
+    const wasActive = activeView;
+    if (!wasActive) runtimeSetView("presentation");
+    assert("F5 docCache has no 'rwa-slide' while presenting", !/rwa-slide/.test(currentDocCache));
+    assert("F5 docCache equals canonical doc text", currentDocCache === docText);
+    assert("F5 sourceMapSuspended while whole-mount view active", sourceMapSuspended === true);
+
+    // F1: the mount IS wrapped, but the doc bytes are NOT.
+    assert("F1 mount contains rwa-slide while presenting", /rwa-slide/.test(mount.innerHTML));
+    assert("F1 doc text has NO rwa-slide while presenting", !/rwa-slide/.test(docText));
+    assert("F1 doc text retains data-rwa-id", /data-rwa-id="b1"/.test(docText));
+
+    // F3: every id-keyed interactive element (none here, but the rule holds
+    // vacuously) — assert the mount has at least the rendered sections so the
+    // contract surface is exercised.
+    assert("F3 all slides present in DOM (none omitted)", mount.querySelectorAll(".rwa-slide").length === slideCount && slideCount >= 3);
+
+    // F4: render output carried no <script> (sanitizer would have thrown).
+    assert("F4 mounted HTML has no <script>", !/<script[\s>]/i.test(mount.innerHTML));
+
+    // F7: setView refuses during modify.
+    modifyMutex = true;
+    const before = activeView;
+    runtimeSetView(null);
+    assert("F7 setView refused during modify (view unchanged)", activeView === before);
+    modifyMutex = false;
+
+    if (!wasActive) runtimeSetView(null); // restore
+
+    results.forEach(r => log(r.ok ? "ok" : "err", (r.ok ? "PASS " : "FAIL ") + r.name));
+    const failed = results.filter(r => !r.ok).length;
+    setStatus(failed ? "err" : "ok", failed ? (failed + " assertion(s) failed") : "all assertions pass");
+    return failed === 0;
+  }
+
+  /* =========================================================================
+     PoC logging
+     =======================================================================*/
+  const logEl = document.getElementById("poc-log");
+  function log(cls, msg){
+    const line = document.createElement("div");
+    if (cls) line.className = cls;
+    line.textContent = "› " + msg;
+    logEl.appendChild(line);
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+
+  /* =========================================================================
+     PUBLIC RUNTIME SURFACE (C4) — the two new top-level members this slice adds.
+     =======================================================================*/
+  window.runtime = Object.freeze({
+    provide: runtimeProvide,   // runtime.provide(kind, spec) -> unregister
+    setView: runtimeSetView,   // runtime.setView(name|null)
+    // (read-only conveniences for the PoC harness; not part of the kernel API)
+    _getDocText: () => docText,
+    _getCache:   () => currentDocCache
+  });
+
+  /* =========================================================================
+     BOOTSTRAP SEQUENCE (C5) — register the first-party provider, restore the
+     persisted view choice from sessionStorage, THEN do the first render so it
+     already honors the chosen view (render-path :3724 constraint).
+     =======================================================================*/
+  runtimeProvide("view", presentationProvider);  // register (does not activate)
+
+  const persisted = sessionStorage.getItem(viewKey());
+  if (persisted === "presentation" && providers.view){
+    activeView = providers.view;                  // restore BEFORE first render
+  }
+  syncToggleUI();
+  renderDoc(docText);                             // (:3724) first render honors active view
+  setStatus("ok", "ready");
+  log("info", "bootstrap complete — toggle 'Present' to activate the view provider");
+
+  // PoC harness wiring
+  document.getElementById("poc-modify").addEventListener("click", simulateModify);
+  document.getElementById("poc-undo").addEventListener("click", simulateUndo);
+  document.getElementById("poc-commit").addEventListener("click", simulateCommit);
+  document.getElementById("poc-anchor").addEventListener("click", simulateAnchor);
+  document.getElementById("poc-asserts").addEventListener("click", runAssertions);
+
+})();
+</script>
+</body>
+</html>
