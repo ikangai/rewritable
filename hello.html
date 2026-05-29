@@ -166,6 +166,22 @@ body{font-family:var(--font-ui);background:var(--bg);color:var(--text);min-heigh
    flowable containers (often hold paragraphs / lists / tables) and forcing
    them intact strands page 1 with content on page 2. Inner paragraphs
    still get widows/orphans:3 protection. */
+/* presentation render mode (spec §5.10) — screen only; print resets below.
+   Inert for non-presentation containers: .viewmode-presentation is only ever
+   added to #rwa-doc-mount when the presentation view is active, and the chrome
+   ids only exist when PRODUCT_KIND==='presentation'. */
+@media screen{
+  #rwa-doc-mount.viewmode-presentation article{max-width:none;margin:0;padding:0;}
+  #rwa-doc-mount.viewmode-presentation .rwa-slide{
+    display:none;min-height:78vh;max-width:860px;margin:24px auto;padding:48px 56px;
+    background:var(--white);border:1px solid var(--gray-200);border-radius:18px;
+    box-shadow:0 1px 3px rgba(0,0,0,.04);
+  }
+  #rwa-doc-mount.viewmode-presentation .rwa-slide.active{display:block;}
+  #rwa-view-chrome{display:none;gap:6px;align-items:center;}
+  #rwa-view-chrome.active{display:inline-flex;}
+  #rwa-view-chrome .count{font-family:var(--font-mono);font-size:11px;color:var(--gray-500);min-width:42px;text-align:center;}
+}
 @page{margin:18mm;}
 @media print{
   #rwa-runtime{display:none!important;}
@@ -182,6 +198,11 @@ body{font-family:var(--font-ui);background:var(--bg);color:var(--text);min-heigh
   :where(#rwa-doc-mount) p,:where(#rwa-doc-mount) li,:where(#rwa-doc-mount) td,:where(#rwa-doc-mount) th,:where(#rwa-doc-mount) code,:where(#rwa-doc-mount) a{overflow-wrap:break-word;}
   :where(#rwa-doc-mount) pre{white-space:pre-wrap;overflow:visible;overflow-wrap:anywhere;}
   :where(#rwa-doc-mount) a{color:#000!important;}
+  /* presentation (spec §5.10): print the deck as a linear document — reset the
+     slide framing and hide the nav chrome. Inert unless presenting. */
+  #rwa-view-chrome{display:none!important;}
+  #rwa-doc-mount.viewmode-presentation article{max-width:720px;margin:0 auto!important;padding:0!important;}
+  #rwa-doc-mount.viewmode-presentation .rwa-slide{all:unset;display:block;break-inside:avoid;margin:0 0 18px;}
 }
 </style>
 </head>
@@ -849,7 +870,28 @@ function renderDoc(html) {
     if (el.tagName === 'DETAILS') captured.set(el.id, { kind: 'details', open: el.open });
     else captured.set(el.id, { kind: 'value', value: el.value });
   });
-  m.innerHTML = html;
+  // C2 seam (spec §5.10). render() output is mount-only and is NEVER read back
+  // into the doc text — `html` (the stored text) is what reaches setSourceMap /
+  // commit, which is WHY data-rwa-id and frozen zones survive (Invariant 8).
+  // For activeView===null (every non-presentation container) this is exactly
+  // today's behavior: mountHtml === html, no class added. A view whose output
+  // violates the contract fails SOFT here (fall back to the plain doc + status)
+  // so it can never brick a container at render time; setView's pre-activation
+  // probe is the fail-LOUD gate for the user action.
+  let mountHtml = html;
+  if (activeView) {
+    try {
+      mountHtml = validateViewOutput(activeView.render(html, viewCtx()), activeView);
+      m.classList.add('viewmode-' + activeView.name);
+    } catch (e) {
+      if (typeof setStatus === 'function') setStatus('err', '✗ view error: ' + e.message);
+      mountHtml = html;
+      m.classList.remove('viewmode-' + activeView.name);
+    }
+  } else {
+    m.classList.remove('viewmode-presentation');
+  }
+  m.innerHTML = mountHtml;
   m.querySelectorAll('script').forEach(o => {
     const s = document.createElement('script');
     for (const a of o.attributes) s.setAttribute(a.name, a.value);
@@ -866,13 +908,25 @@ function renderDoc(html) {
   // aligned with the just-rendered doc. setSourceMap is declared further down
   // in this script — JS hoisting (script-mode `function` declarations) makes
   // it callable here even though renderDoc is defined first.
+  // §5.10 clause 2 / Invariant 9: the source map + locked ranges derive from the
+  // STORED doc text (`html`), never the (possibly view-wrapped) `mountHtml` — so
+  // the agent's view of the document is invisible-by-construction to any render mode.
   setSourceMap(html);
   rebuildLockedRanges(html);
   // rwa-lens/1: click-to-anchor (Task 5.1). renderDoc runs on every commit and
   // on bootstrap; remove first so listeners don't multiply across renders. Same
-  // function reference, so removing the previous instance is safe.
+  // function reference, so removing the previous instance is safe. With a
+  // whole-mount view active, byte-offset click resolution is undefined, so the
+  // listener is removed and not re-added (§5.10). For activeView===null this is
+  // byte-identical to the previous behavior.
   m.removeEventListener('click', handleMountClick);
-  m.addEventListener('click', handleMountClick);
+  if (!activeView) m.addEventListener('click', handleMountClick);
+  // §5.10: post-mount provider seam. render() stays a pure string->string slot;
+  // mounted() is the impure slot that restores transient UI state (slide index)
+  // after innerHTML + script-rerun + form-restore.
+  if (activeView && typeof activeView.mounted === 'function') {
+    activeView.mounted(m, viewCtx());
+  }
 }
 
 // ─── URL fragment scroll (rwa-bootstrap 0.9) ───────────────────────
@@ -896,6 +950,11 @@ function scrollToFragment() {
     el = mount.querySelector('[data-rwa-id="' + raw.replace(/"/g, '\\"') + '"]');
   }
   if (!el) return;
+  // §5.10 clause 3: a render mode may hide the target block (presentation hides
+  // inactive slides with display:none). Let the active view reveal the owning
+  // region first, or scrollIntoView is a no-op on a hidden node. Wired to both
+  // initial load and hashchange (this function handles both).
+  if (activeView && typeof activeView.reveal === 'function') activeView.reveal(mount, el);
   el.scrollIntoView({ behavior: 'smooth', block: 'start' });
   el.classList.add('rwa-frag-pulse');
   setTimeout(() => { el.classList.remove('rwa-frag-pulse'); }, 1700);
@@ -1563,6 +1622,15 @@ Concurrency & iteration (workflow v0.4) — two composable structural primitives
     • Add data-rwa-label to linear steps (<li class="rwa-step">) — it's parallel-cell-only.
     • Add the rwa-foreach class to a step that has its own <script> body — foreach containers don't have inline script.
     • Nest parallel directly inside parallel without a foreach in between — that's almost always a foreach.
+${SYSTEM_PROMPT_RULES}`,
+
+  presentation: `You are editing a rewritable HTML document that is presented as a slide deck. Apply the user's request as a small set of surgical edits via tool calls.
+
+The stored document is ordinary prose HTML inside a single <article>: <h1>/<h2> headings, <p> paragraphs, lists. The runtime DISPLAYS it as slides by wrapping the content at each <h1>/<h2> boundary — but that wrapping is display-only and you NEVER see it. You only ever receive and edit the stored prose. Do NOT emit <section>, slide wrappers, or any slide-specific markup; just edit the headings and prose.
+
+Slide model the user reasons about: a new slide STARTS at each <h1> or <h2>. So "add a slide" = add a new <h2> title followed by its body paragraphs/bullets at the right position. "Split this slide" = add an <h2> in the middle. "Merge two slides" = remove the second slide's heading. "Reorder slides" = move the heading-plus-its-body block. Keep slide bodies concise — a deck slide is a title plus a few short paragraphs or a short list, not an essay.
+
+Preserve every existing data-rwa-id verbatim (the runtime assigns them). Anchor edits on unique text near the heading you mean.
 ${SYSTEM_PROMPT_RULES}`,
 };
 // rwa:extract:end SYSTEM_PROMPTS
@@ -2504,6 +2572,12 @@ function showAffordance(text) {
 // release). Up to 3 retries with structured failure context appended to the
 // prompt. No silent escalation to replace_document.
 async function runAnchoredCommand(anchor, instruction) {
+  // §5.10: the anchored-edit path is available ONLY when no render mode is
+  // active — a whole-mount view rearranges the DOM, so re-anchoring against it
+  // would resolve the wrong block. Suspending the click listener alone is
+  // insufficient (a stale anchor can re-enter here). Inert for non-presentation:
+  // activeView is permanently null, so this branch is never taken.
+  if (activeView) { setStatus('err', '✗ anchored edits unavailable in this view'); return; }
   if (modifyMutex) {
     setStatus('err', '✗ another modify in progress');
     setLensProgress('error', 'another modify in progress');
@@ -2685,7 +2759,7 @@ async function synthesizeAndCommit(envelope, surface, instruction) {
       emitRuntimeEvent('modify', { instruction, lensMeta });
       emitRuntimeEvent('status', getStatusSnapshot());
     });
-    if (prevAnchorStart !== null && sourceMap) {
+    if (prevAnchorStart !== null && sourceMap && !activeView) {  // §5.10: no re-anchor under a render mode
       const newEntry = sourceMap.find(m => m.start === prevAnchorStart);
       if (newEntry) {
         // Re-anchor onto the same logical block. anchorTo handles lens repos,
@@ -3244,6 +3318,206 @@ function findAttrInTag(tag, attrName) {
 // ─── Modify lifecycle (rwa-edit/1) ──────────────────────────────────
 let modifyMutex = false;
 
+// ─── Render modes / view providers (spec §5.10, Invariants 8–9) ─────
+// Single nullable first-party slot per kind. `activeView` and `providers.view`
+// stay null for every non-presentation container — the PRODUCT_KIND-gated
+// bootstrap block (below) is the ONLY caller of runtimeProvide / runtimeSetView,
+// so this whole subsystem is inert unless PRODUCT_KIND === 'presentation'.
+const providers = { view: null };
+let activeView = null;
+
+const RWA_VIEW_RESERVED_IDS = ['rwa-doc-mount', 'rwa-lens', 'rwa-runtime'];
+const RWA_VIEW_RESERVED_MARKERS = ['rwa:frozen:begin', 'rwa:frozen:end', 'data-rwa-frozen'];
+
+// Read-only ctx for render()/mounted()/reveal(). Capability: none (§5.10) —
+// trimmed to docUuid; a render provider needs no frozen-zone topology.
+function viewCtx() { return Object.freeze({ docUuid: DOC_UUID }); }
+
+// §5.10 clause 5: first-party render output is HTML+CSS, never code — the render
+// path re-executes <script> as main-thread code (rwa-edit-spec §11). Assert
+// absence and fail loud (Rule 12) rather than silently running fabricated code.
+function sanitizeViewOutput(html, spec) {
+  const name = (spec && spec.name) || '(unknown)';
+  if (/<script[\s/>]/i.test(html)) {
+    throw new Error("view '" + name + "' render() emitted <script> — forbidden by the first-party view contract (spec §5.10)");
+  }
+  return html;
+}
+
+// §5.10 clause 4: render output must carry no reserved id/marker (a duplicate
+// #rwa-lens silently breaks getElementById identity). Probe-validated before
+// activation (runtimeSetView) and re-checked on every render (renderDoc seam).
+function validateViewOutput(html, spec) {
+  const name = (spec && spec.name) || '(unknown)';
+  sanitizeViewOutput(html, spec);
+  const h = String(html).toLowerCase();
+  for (const id of RWA_VIEW_RESERVED_IDS) {
+    if (h.indexOf('id="' + id + '"') !== -1 || h.indexOf("id='" + id + "'") !== -1) {
+      throw new Error("view '" + name + "' render() output contains reserved id #" + id + " (spec §5.10)");
+    }
+  }
+  for (const mk of RWA_VIEW_RESERVED_MARKERS) {
+    if (h.indexOf(mk) !== -1) {
+      throw new Error("view '" + name + "' render() output contains reserved marker '" + mk + "' (spec §5.10)");
+    }
+  }
+  return html;
+}
+
+// runtime.provide(kind, spec) -> unregister closure (spec §5.10).
+function runtimeProvide(kind, spec) {
+  if (kind !== 'view') throw new Error('unknown provider kind: ' + kind);
+  if (!spec || spec.kind !== 'view') throw new Error("view spec.kind must be 'view'");
+  for (const f of ['name', 'label', 'render']) {
+    if (spec[f] == null) throw new Error('view spec missing required field: ' + f);
+  }
+  if (typeof spec.render !== 'function') throw new Error('view spec.render must be a function');
+  spec.__provenance = 'first-party';
+  providers.view = spec;   // single-slot replace; does NOT auto-activate (§5.10)
+  return function unregister() {
+    if (providers.view === spec) {
+      if (activeView === spec) runtimeSetView(null);
+      providers.view = null;
+    }
+  };
+}
+
+// runtime.setView(name|null). Guards (§5.10): refuse mid-modify (rwa-edit-spec
+// §5.5 mutex), probe-validate output before activating (fail-loud), release any
+// standing lens anchor on activation.
+function runtimeSetView(name) {
+  if (modifyMutex) { setStatus('err', '✗ modify in progress'); return; }
+  if (name === null) {
+    activeView = null;
+    sessionStorage.setItem(rwaViewKey(), '');
+  } else {
+    const spec = providers.view;
+    if (!spec || spec.name !== name) throw new Error('no registered view named ' + name);
+    validateViewOutput(spec.render(currentDocCache, viewCtx()), spec); // throws → never activates
+    releaseAnchor();
+    activeView = spec;
+    sessionStorage.setItem(rwaViewKey(), name);
+  }
+  if (typeof syncViewChrome === 'function') syncViewChrome();
+  getDoc().then(d => renderDoc(canonLF(d)));
+}
+function rwaViewKey() { return 'rwa_view_active_' + DOC_UUID; }
+function rwaSlideKey() { return 'rwa_view_slide_' + DOC_UUID; }
+
+// ─── First-party 'presentation' view provider (spec §5.10) ──────────
+// WRAP-IN-PLACE: split the doc at <h1>/<h2> boundaries into
+// <section class="rwa-slide"> wrappers WITHOUT reordering. SECTION ∉
+// ANCHORABLE_TAGS and the ordinal walks recurse through non-anchorables, so
+// wrapping is transparent to the source-map ordinals. data-rwa-id rides along
+// untouched (Invariant 8); output is mount-only and never read back.
+let rwaSlideCount = 0;
+function rwaWrapIntoSlides(docHtml) {
+  const tmp = document.createElement('div');
+  tmp.innerHTML = String(docHtml == null ? '' : docHtml);
+  const art = tmp.querySelector('article') || tmp;
+  const slides = [];
+  let current = null;
+  Array.from(art.childNodes).forEach(node => {
+    // Skip whitespace-only text nodes before the first slide, or leading
+    // formatting whitespace would spawn a spurious empty first slide.
+    const isWs = node.nodeType === 3 && !node.textContent.trim();
+    if (isWs && current === null) return;
+    const isHeading = node.nodeType === 1 && /^H[12]$/.test(node.tagName);
+    if (isHeading || current === null) {
+      current = document.createElement('section');
+      current.className = 'rwa-slide';
+      slides.push(current);
+    }
+    current.appendChild(node.cloneNode(true));
+  });
+  rwaSlideCount = slides.length;
+  const wrapped = document.createElement('article');
+  slides.forEach((s, i) => { if (i === 0) s.classList.add('active'); wrapped.appendChild(s); });
+  return wrapped.outerHTML;
+}
+function rwaActivateSlide(m, idx) {
+  const secs = Array.from(m.querySelectorAll('.rwa-slide'));
+  if (!secs.length) return;
+  if (!(idx >= 0 && idx < secs.length)) idx = 0;
+  secs.forEach((s, i) => s.classList.toggle('active', i === idx));
+  sessionStorage.setItem(rwaSlideKey(), String(idx));
+  rwaUpdateSlideCounter(idx, secs.length);
+}
+const presentationProvider = {
+  kind: 'view',
+  name: 'presentation',
+  label: 'Present',
+  render(doc /*, ctx */) { return rwaWrapIntoSlides(doc); },
+  mounted(m /*, ctx */) {
+    const secs = m.querySelectorAll('.rwa-slide');
+    if (!secs.length) return;
+    let idx = parseInt(sessionStorage.getItem(rwaSlideKey()) || '0', 10);
+    if (!(idx >= 0 && idx < secs.length)) idx = 0;  // clamp — undo can shrink the deck
+    rwaActivateSlide(m, idx);
+  },
+  // §5.10 clause 3: presentation hides inactive slides; reveal the slide that
+  // owns a URL-fragment target before scrollToFragment scrolls to it.
+  reveal(m, el) {
+    const slide = el && el.closest ? el.closest('.rwa-slide') : null;
+    if (!slide) return;
+    const secs = Array.from(m.querySelectorAll('.rwa-slide'));
+    const idx = secs.indexOf(slide);
+    if (idx >= 0) rwaActivateSlide(m, idx);
+  },
+};
+function rwaCurrentSlideIndex(m) {
+  const secs = m ? m.querySelectorAll('.rwa-slide') : [];
+  let i = 0; secs.forEach((s, n) => { if (s.classList.contains('active')) i = n; });
+  return i;
+}
+function rwaGotoSlide(delta) {
+  if (!activeView) return;
+  const m = document.getElementById('rwa-doc-mount');
+  const secs = m ? m.querySelectorAll('.rwa-slide') : [];
+  if (!secs.length) return;
+  rwaActivateSlide(m, Math.max(0, Math.min(secs.length - 1, rwaCurrentSlideIndex(m) + delta)));
+}
+function rwaUpdateSlideCounter(i, total) {
+  const c = document.getElementById('rwa-view-count');
+  if (c) c.textContent = (i + 1) + ' / ' + total;
+}
+
+// ─── Presentation chrome (Present toggle + slide nav), built ONLY when
+//     PRODUCT_KIND === 'presentation' (the bootstrap calls this) ───
+function syncViewChrome() {
+  const toggle = document.getElementById('rwa-view-toggle');
+  const chrome = document.getElementById('rwa-view-chrome');
+  if (!toggle || !chrome) return;
+  const on = activeView !== null;
+  toggle.classList.toggle('on', on);
+  toggle.textContent = on ? 'Prose' : (providers.view ? providers.view.label : 'Present');
+  chrome.classList.toggle('active', on);
+}
+function rwaInstallPresentationChrome() {
+  const set = document.getElementById('rwa-set');   // the fixed status-button bar
+  if (!set) return;
+  const chrome = document.createElement('span');
+  chrome.id = 'rwa-view-chrome';
+  chrome.innerHTML =
+    '<button class="rwa-st-btn" id="rwa-view-prev" title="Previous slide" aria-label="previous slide">&larr;</button>' +
+    '<span class="count" id="rwa-view-count">1 / 1</span>' +
+    '<button class="rwa-st-btn" id="rwa-view-next" title="Next slide" aria-label="next slide">&rarr;</button>';
+  const toggle = document.createElement('button');
+  toggle.className = 'rwa-st-btn';
+  toggle.id = 'rwa-view-toggle';
+  toggle.textContent = 'Present';
+  set.insertBefore(toggle, set.firstChild);
+  set.insertBefore(chrome, toggle.nextSibling);
+  toggle.addEventListener('click', () => runtimeSetView(activeView ? null : 'presentation'));
+  document.getElementById('rwa-view-prev').addEventListener('click', () => rwaGotoSlide(-1));
+  document.getElementById('rwa-view-next').addEventListener('click', () => rwaGotoSlide(+1));
+  document.addEventListener('keydown', (e) => {
+    if (!activeView) return;
+    if (e.key === 'ArrowRight' || e.key === 'PageDown') { e.preventDefault(); rwaGotoSlide(+1); }
+    else if (e.key === 'ArrowLeft' || e.key === 'PageUp') { e.preventDefault(); rwaGotoSlide(-1); }
+  });
+}
+
 function buildUserPrompt(instr, doc, frozenZones) {
   const fzText = frozenZones.length === 0
     ? '(none)'
@@ -3715,6 +3989,8 @@ document.addEventListener('keydown', e => {
       undo:   runtimeUndo,
       applyEnvelope: runtimeApplyEnvelope,
       on:     runtimeOn,
+      provide: runtimeProvide,   // spec §5.10 — register a view provider
+      setView: runtimeSetView,   // spec §5.10 — activate/deactivate a render mode
     };
     // `status` is a getter so each read returns a fresh snapshot of
     // dirty/fsa/storage; an enumerable data prop would let stale references
@@ -3724,6 +4000,18 @@ document.addEventListener('keydown', e => {
       enumerable: true,
       configurable: false,
     });
+    // §5.10: the presentation render mode ships ONLY for presentation
+    // containers. For every other kind this block is skipped entirely —
+    // activeView stays null, no provider is registered, no chrome is built,
+    // and renderDoc takes its byte-identical default branch.
+    if (PRODUCT_KIND === 'presentation') {
+      runtimeProvide('view', presentationProvider);   // register; does not activate
+      rwaInstallPresentationChrome();
+      if (sessionStorage.getItem(rwaViewKey()) === 'presentation' && providers.view) {
+        activeView = providers.view;                   // restore BEFORE first render (§5.10)
+      }
+      syncViewChrome();
+    }
     renderDoc(doc);
     scrollToFragment();
     setStatus('ok', '● ready');
