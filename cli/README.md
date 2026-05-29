@@ -35,6 +35,7 @@ Pass `--kind <name>` to scaffold a different primary stance at first paint:
 
 - `--kind document` (default) — prose container; lens placeholder *"Write, or describe what you want."*
 - `--kind workflow` — three-stage scaffold (Inbox / In progress / Done); lens placeholder *"Add an item, or describe a stage move."*
+- `--kind presentation` — prose slide deck (split on `h1`/`h2`); the *Present* toggle renders it as slides at view time without changing the stored text (spec §5.10); lens placeholder *"Add a slide, or describe a change."*
 
 The product-kind taxonomy is documented at `docs/specs/rwa-product-types.md` in the main repo. The substrate runtime is unchanged across kinds — only the `INLINE_DOC` body and lens placeholder vary at emit time.
 
@@ -91,7 +92,7 @@ The agent loop retries up to 3 times when the model emits plain text instead of 
 |---|---|
 | `--force`, `-f` | overwrite the destination if it exists |
 | `--open`, `-o` | open the resulting file in the default app |
-| `--kind <name>` | (`rwa new` only) starter kind: `document` (default), `workflow` |
+| `--kind <name>` | (`rwa new` only) starter kind: `document` (default), `workflow`, `presentation` |
 | `--version` | print version |
 | `--help`, `-h` | usage |
 

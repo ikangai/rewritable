@@ -1283,6 +1283,39 @@ const KIND_WORKFLOW_HEADER = `// === PRODUCT HEADER ===
 // docs/plans/2026-05-18-workflow-ux-design.md for the v0.2 UX spec.
 // === END PRODUCT HEADER ===`;
 
+const KIND_PRESENTATION_LENS = 'Add a slide, or describe a change.';
+const KIND_PRESENTATION_PAL  = 'edit this deck...';
+
+// PRODUCT HEADER for the presentation kind (render mode, spec §5.10).
+const KIND_PRESENTATION_HEADER = `// === PRODUCT HEADER ===
+// Product: presentation (substrate layer, render mode — spec §5.10).
+//
+// The stored document is ORDINARY prose HTML — one <article> of <h1>/<h2>
+// headings and prose. A first-party 'view' provider (bootstrap-resident) DISPLAYS
+// it as a slide deck by wrapping content at each <h1>/<h2> boundary into a
+// <section class="rwa-slide"> at render time. The wrapping is display-only: it
+// never reaches rwa_doc, never the agent (Invariants 8-9). Toggle 'Present' in
+// the status bar to activate; ArrowLeft/Right and PageUp/Down navigate; printing
+// renders the deck as a linear document. The agent edits the prose, not the
+// slides — "add a slide" = add an <h2> + body. See docs/specs/rwa-product-types.md
+// and re-write-able-spec.md §5.10.
+// === END PRODUCT HEADER ===`;
+
+// Real starter content (never lorem). Three slides keyed on h1/h2 boundaries.
+const KIND_PRESENTATION_BODY = `<article>
+<h1>re-write-able</h1>
+<p>A single self-contained <code>.html</code> file that renders, stores, edits, and exports itself — no server, no build step.</p>
+<p>One file is the whole application and the whole archive.</p>
+
+<h2>The rewrite loop</h2>
+<p>Press the lens. Hand the document to a model. Get back surgical edits on unique anchors, committed atomically, then re-render.</p>
+<p>The bootstrap never moves; only the inline document snapshot changes between commits.</p>
+
+<h2>One substrate, many views</h2>
+<p>The same prose can render as a document or — through a registered view provider — as this slide deck.</p>
+<p>The view is a pure re-presentation at render time; the bytes on disk never change shape.</p>
+</article>`;
+
 const KIND_TABLE = {
   document: {
     body: null,                // pass through seed default
@@ -1297,6 +1330,16 @@ const KIND_TABLE = {
     palPlaceholder: KIND_WORKFLOW_PAL,
     productHeader: KIND_WORKFLOW_HEADER,
     lensClickToAnchor: false,  // audit R3 scoped — workflow stages are <li>-anchorable
+  },
+  presentation: {
+    body: KIND_PRESENTATION_BODY,
+    lensPlaceholder: KIND_PRESENTATION_LENS,
+    palPlaceholder: KIND_PRESENTATION_PAL,
+    productHeader: KIND_PRESENTATION_HEADER,
+    // Whole-deck lens semantics: edits go through the docked lens, not by
+    // anchoring on a slide's paragraph. The provider CODE is bootstrap-resident
+    // (spec §5.10); this kind only sets PRODUCT_KIND + starter/framing/lens.
+    lensClickToAnchor: false,
   },
   // app, workspace: reserved — wire when the templates land. The CLI rejects
   // unknown kinds explicitly rather than silently emitting a document.

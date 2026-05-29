@@ -17,11 +17,12 @@ Usage:
                               agent loop (backend-configurable below).
 
 Flags:
-  --kind <name>  (new only) starter kind: document (default) or workflow.
-                 'document' is the canonical prose container — substrate
-                 layer. 'workflow' scaffolds three stages (Inbox / In
-                 progress / Done) and swaps the lens placeholder for the
-                 workflow framing. See docs/specs/rwa-product-types.md.
+  --kind <name>  (new only) starter kind: document (default), workflow, or
+                 presentation. 'document' is the canonical prose container.
+                 'workflow' scaffolds three stages (Inbox / In progress /
+                 Done). 'presentation' scaffolds a prose deck that the
+                 'Present' toggle displays as slides (split on h1/h2) without
+                 changing the stored text. See docs/specs/rwa-product-types.md.
   --force, -f    overwrite the destination if it exists
   --open, -o     open the resulting file in the default app. First-paint
                  sessionStorage is pre-populated from env / ./.env:
