@@ -6,6 +6,12 @@ thesis. Outcome: keep the types, drop the slogan from the architecture,
 sharpen the north star. The contracts still live in the layer/edit specs;
 this doc decides what we're aiming at, not how the runtime works.*
 
+*Second pass (same day) folds in three corrections: a type has two faces and
+this doc specifies only one; affordances are skills, so the type system and
+the skill layer are one design problem over a shared kernel; and `datatable`
+doesn't break the edit model, it reveals a two-surface one. See "Two faces,"
+"Affordances are skills," and the revised `datatable` verdict below.*
+
 ---
 
 ## Decision (TL;DR)
@@ -21,10 +27,16 @@ this doc decides what we're aiming at, not how the runtime works.*
   peer harnesses. `datatable` / `presentation` / `application` are a prose
   document plus an added edit-affordance and a present/interact surface —
   each scoped to *the richest version that doesn't break self-containment.*
-- **`datatable` is not Excel.** It is an agent-maintained table-*document*
-  (typed records the agent can query, transform, and extend in place;
-  derived columns computed at edit time), explicitly **not** a live
-  formula/recalc calculator.
+- **`datatable` is not Excel — it is a two-surface table-*document*.**
+  Direct manipulation for cell values (DOM editing, no LLM in the loop) +
+  the lens for transform/derive/query. Recalc returns as a *built-in
+  affordance* (a derived-cell recompute behavior, not an imported formula
+  engine). **No** `.xlsx`-parity formula language / dependency-engine; **yes**
+  to propagation-as-affordance.
+- **Affordances are skills.** A real affordance contributes runtime behavior
+  (present-mode, grid-edit, derived-cell recompute), so the type system and
+  the skill layer are **one design problem** over a shared kernel — not
+  sequential items.
 - **Lead the wedge where we win:** documents that travel across trust/org
   boundaries — where "opens anywhere, no account, carries its own AI" is
   decisive — not teams living inside a shared spreadsheet.
@@ -132,15 +144,75 @@ starter}** layered on the document base — not a separate harness.
 - **`application`** — a document + interactive `<script>` regions driving
   `window.modify()` against a structured data region. Already how apps work;
   formalizing it as a type is mostly conventions + framing.
-- **`datatable`** — a document of typed records; edit-affordance =
-  structured-cell editing + agent-native table ops ("add a column computing
-  X", "flag rows where Y", "summarize"). Derived values computed at edit
-  time. **No live recalc engine.** Tripwire: the day "document is base"
-  feels like it's *crippling* datatable, that's the signal we've drifted
-  back toward the calculator we declined to build.
+- **`datatable`** — a document of typed records with **two in-browser edit
+  surfaces**: direct manipulation for cell values (DOM editing, no LLM in the
+  loop) and the lens for transform/derive/query ("add a column computing X",
+  "flag rows where Y", "summarize"). Recalc returns as a *built-in
+  affordance* — a derived-cell recompute behavior firing on cell-change — not
+  an imported formula engine. **No** `.xlsx`-parity formula language or
+  dependency-graph engine; **yes** to propagation-as-affordance. Constraint:
+  `currentDoc` (LF-text in IDB) stays the source of truth — the direct
+  surface round-trips edited values back into the text model at commit; "no
+  model in the loop" means no *LLM*, not no *text-model*, or the
+  commit/undo/INLINE_DOC-rebuild invariants break. Tripwire: the day this
+  feels like it's reaching for `.xlsx` compatibility, that's the drift back
+  toward the calculator we declined to build.
 
 The two load-bearing choices interlock: **document-base + self-containment ⇒
-datatable is a queryable/transformable table-document, not a spreadsheet.**
+datatable is a two-surface table-document, not a spreadsheet.** The "hostile"
+type turns out to *reveal* the edit model rather than break it: privileging
+the lens was always a default, never a law — `rwa_hist.actor` already records
+non-agent edits (`user:lens`) as first-class. datatable just surfaces the
+human/agent edit split inside a single container.
+
+## Two faces of a type
+
+A type has two faces, and this doc specifies only one.
+
+- **Affordance face** — `{content-shape + edit-affordance + agent-framing +
+  starter}`. The solo/authoring view: how *you* make and edit this container.
+  Specified above.
+- **Composition face** — the structural interface the container *declares to
+  other containers* on the bus (e.g. `table/v1`, `intent-log/v1`): what it
+  produces/consumes so a graph orchestrator can iterate, batch-dispatch, or
+  wire it to another container.
+
+The composition face is the **graph-face**, deferred **with** the graph layer
+(`rwa-graph/1`), **not absent**. This doc is complete for the solo artifact
+and deliberately silent on composition. Recording the silence as a *decision*
+matters: without this note, "type system: conceptualized" would read as
+"both faces solved" when only the solo face is — and the skill layer would
+get designed against a half-defined type model.
+
+## Affordances are skills (type system = skill layer)
+
+A real affordance contributes **runtime behavior** — present-mode rendering,
+grid-edit interaction, derived-cell recompute. That is behavior hooking the
+runtime, i.e. the skill mechanism. **A type is a bundle of built-in skills +
+a starter.** So the type system and the skill layer are not sequential items;
+they are **one design problem over a shared kernel** (behavior registration +
+declared capability). Spec them together or you spec types twice.
+
+What the kernel is — and what's missing today:
+
+- The actions spec v0.7 specifies skill **governance** (install dialog,
+  permission grammar `network:`/`vault:`/`fsa:`/`bus:`/`idb:`, provenance,
+  Worker isolation) but is **silent on the execution/registration model**.
+  There is no behavior-hook / aspect mechanism in the committed spec.
+- `runtime.on` exists (`seeds/rewritable.html:3714`) but only as a
+  **state-observation subscription**, not behavior registration.
+- So the affordance/skill **kernel is the missing engine** under both the
+  type system and the governed skill layer — it must be designed, not
+  assumed.
+
+The unification that keeps this from over-coupling: **built-in type
+affordances are first-party skills on the kernel** — implicit grants, no
+install dialog; **third-party skills are the same kernel under v0.7
+governance.** Trust/provenance is the *only* difference. This is what makes
+last session's "composed on one substrate, not N harnesses" actually
+buildable: the kernel **is** the composition mechanism. Consequence: **the
+kernel is on the critical path** — design types and skills together, build
+the kernel first.
 
 ## The wedge
 
@@ -152,12 +224,16 @@ win, don't want to fight).
 
 ## What this does not decide (open, for later sessions)
 
-- **The affordance system itself.** Moving from thin `--kind` templates to
-  real per-type affordances (a true present-mode; a real grid-edit UX) is a
-  substantial build, not a prompt swap. Unspecced here.
+- **The affordance/skill kernel** (now the critical path). The shared
+  behavior-registration + capability mechanism that both built-in type
+  affordances and third-party skills are expressed on. Undocumented in the
+  actions spec; `runtime.on` is only a state-observation seam today. *This is
+  the next design session.*
+- **The composition (graph) face of types.** The bus interface a container
+  declares (`table/v1`, etc.). Deferred with `rwa-graph/1`.
 - **Build sequencing.** Which type after document — presentation (cheapest,
   substrate-native) vs. datatable (highest-risk, defines whether the model
-  holds). Not decided.
+  holds). Gated on the kernel.
 - **Relationship to the layer-cake.** `rwa-product-types.md` (Axis A) and
   this type-as-affordance model (Axis B) need a reconciling pass so the two
   axes are stated as orthogonal rather than competing. Not done here.
@@ -166,7 +242,9 @@ win, don't want to fight).
 
 ---
 
-*Status: positioning decided and pressure-tested. Next natural step is
-either the affordance-system conceptual model or build sequencing — to be
-opened in a later session. Supersedes nothing; complements
-`docs/specs/rwa-product-types.md` on the orthogonal (Axis B) axis.*
+*Status: positioning decided and pressure-tested, then extended with the
+two-faces / affordances-are-skills / two-surface-datatable corrections. Next
+step is the **affordance/skill kernel** design — types and skills are one
+problem and the kernel is their shared substrate. Supersedes nothing;
+complements `docs/specs/rwa-product-types.md` on the orthogonal (Axis B)
+axis.*
