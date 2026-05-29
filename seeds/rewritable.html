@@ -169,6 +169,9 @@ body{font-family:var(--font-ui);background:var(--bg);color:var(--text);min-heigh
 @page{margin:18mm;}
 @media print{
   #rwa-runtime{display:none!important;}
+  /* releaseAnchor() reparents #rwa-lens to <body> (see runtime), escaping the
+     transitive hide above — hide it explicitly so it never prints. */
+  #rwa-lens{display:none!important;}
   body{background:#fff!important;color:#000!important;min-height:0!important;padding-bottom:0!important;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
   #rwa-doc-mount{margin:0!important;padding:0!important;}
   :where(#rwa-doc-mount) article{margin:0 auto!important;padding:0!important;max-width:none!important;}
