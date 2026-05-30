@@ -15,6 +15,13 @@ Usage:
                               Instruction path: pass a plain-text instruction
                               as the second positional and the CLI runs the
                               agent loop (backend-configurable below).
+  rwa doc <path>              print the editable document body (the exact
+                              LF-canonical text the edit contract operates on).
+                              The read counterpart to \`rwa edit\`. With --json,
+                              print the full editing contract instead:
+                              {rewritable, uuid, kind, frozenZones, length, doc}.
+                              Exit 2 on a non-rewritable file — a clean
+                              "is this a rewritable?" probe.
 
 Flags:
   --kind <name>  (new only) starter kind: document (default), workflow, or
@@ -56,9 +63,12 @@ Flags:
   --plan <file>  (edit only) read the tool-envelope from <file> instead of
                  stdin. Use \`--plan -\` to force stdin even when stdin is
                  not a pipe.
-  --json         (edit only) emit one JSON object per line on stderr for
-                 structured failure reporting. Each line is a single
+  --json         (edit) emit one JSON object per line on stderr for
+                 structured failure reporting — each line a single
                  \`{code, subcode, details}\` object.
+                 (doc) emit the editing-contract object on stdout instead of
+                 the raw body; on failure, the \`{code, subcode, details}\`
+                 object goes to stderr.
   --backend <n>  (edit only, instruction path) backend name. One of:
                  openrouter (default), ollama, lmstudio. Falls back to
                  \$RWA_BACKEND if unset.
@@ -451,6 +461,62 @@ function detectProductKind(fileText) {
         }
         throw e;
       }
+    }
+
+    // `rwa doc <path> [--json]` — the READ counterpart to `rwa edit`. Prints
+    // the LF-canonical editable body (plain mode) or the full editing contract
+    // (--json). stdout is reserved for the document/contract so pipes stay
+    // clean; errors go to stderr, mirroring `rwa edit`'s file_error surface.
+    if (verb === 'doc') {
+      const jsonMode = rest.includes('--json');
+      const filePath = rest.find(a => !a.startsWith('-'));
+      const emitDoc = (payload) => {
+        if (jsonMode) {
+          process.stderr.write(JSON.stringify(payload) + '\n');
+        } else {
+          const parts = [payload.code, payload.subcode].filter(Boolean);
+          let line = 'rwa doc: ' + parts.join('/');
+          if (payload.details && Object.keys(payload.details).length) {
+            line += ' ' + JSON.stringify(payload.details);
+          }
+          process.stderr.write(line + '\n');
+        }
+      };
+      if (!filePath) {
+        emitDoc({ code: 'usage_error', subcode: 'missing_file_arg' });
+        process.exitCode = 1;
+        return;
+      }
+      const { inspectDoc } = await import('../src/doc.mjs');
+      let info;
+      try {
+        info = await inspectDoc(filePath);
+      } catch (e) {
+        if (e && typeof e.exitCode === 'number') {
+          emitDoc({ code: codeName(e.exitCode), subcode: e.subcode, details: e.details });
+          process.exitCode = e.exitCode;
+          return;
+        }
+        throw e;
+      }
+      if (jsonMode) {
+        // One call gives an agent read (doc) + write-contract (kind, frozen
+        // zones it must preserve, uuid for correlation). `rewritable:true` is
+        // an explicit parsed-field marker, not just an exit code.
+        process.stdout.write(JSON.stringify({
+          rewritable: true,
+          uuid: info.uuid,
+          kind: info.kind,
+          frozenZones: info.frozenZones,
+          length: info.doc.length,
+          doc: info.doc,
+        }) + '\n');
+      } else {
+        // Terminal/pipe friendly: the body with a single trailing newline.
+        // The byte-exact path is --json's `doc` field.
+        process.stdout.write(info.doc.endsWith('\n') ? info.doc : info.doc + '\n');
+      }
+      return;
     }
 
     const force = rest.includes('--force') || rest.includes('-f');

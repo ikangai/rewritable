@@ -1,0 +1,197 @@
+// Tests for the `rwa doc` CLI verb — the READ counterpart to `rwa edit`.
+//
+// Why this verb exists: the CLI can already WRITE a rewritable (`rwa edit`),
+// but until now had no way to READ its editable body. An agent handed a
+// `foo.html` had to parse ~4000 lines of bootstrap HTML to find the document
+// it is allowed to edit. `rwa doc` closes that asymmetry: it prints the exact
+// LF-canonical text the rwa-edit contract operates on, and `--json` returns
+// the full editing contract (uuid, kind, frozen zones, length, doc) in one
+// call. These tests pin the contract an agent relies on, not just the bytes.
+
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { spawn, execFileSync } from 'node:child_process';
+import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { replaceInlineDoc, extractInlineDoc } from '../src/seed.mjs';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const RWA_BIN = join(__dirname, '..', 'bin', 'rwa.mjs');
+
+function runRwa(args, { stdin = null } = {}) {
+  return new Promise(resolve => {
+    const child = spawn('node', [RWA_BIN, ...args]);
+    let stdout = '', stderr = '';
+    child.stdout.on('data', d => { stdout += d; });
+    child.stderr.on('data', d => { stderr += d; });
+    if (stdin !== null) { child.stdin.write(stdin); child.stdin.end(); } else { child.stdin.end(); }
+    child.on('close', code => resolve({ code, stdout, stderr }));
+  });
+}
+
+// Build a real rewritable fixture with a caller-supplied INLINE_DOC body, the
+// same way edit-plan.test.mjs does: `rwa new` lays down a valid bootstrap,
+// then replaceInlineDoc swaps in the known body via the production splice.
+function mkFixture(inlineDocBody = '<article><h1>Hello</h1><p>Body.</p></article>', { kind } = {}) {
+  const dir = mkdtempSync(join(tmpdir(), 'rwa-doc-test-'));
+  const path = join(dir, 'test.html');
+  const newArgs = [RWA_BIN, 'new', path];
+  if (kind) newArgs.push('--kind', kind);
+  execFileSync('node', newArgs, { stdio: 'pipe' });
+  if (inlineDocBody !== null) {
+    const current = readFileSync(path, 'utf8');
+    writeFileSync(path, replaceInlineDoc(current, inlineDocBody), 'utf8');
+  }
+  return { path, dir, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
+}
+
+// ─── Plain mode: the exact editable body ──────────────────────────────
+
+test('plain mode prints the document body an agent would edit', async () => {
+  const body = '<article><h1>Quarterly Report</h1><p>Revenue up 12%.</p></article>';
+  const fx = mkFixture(body);
+  try {
+    const { code, stdout } = await runRwa(['doc', fx.path]);
+    assert.equal(code, 0);
+    // The body must be present verbatim. Why: an agent computes find-anchors
+    // against this text; if it differs from what `rwa edit` sees, every
+    // apply_edits will fail find_not_found.
+    const expected = extractInlineDoc(readFileSync(fx.path, 'utf8'));
+    assert.equal(expected, body); // sanity: fixture round-trips
+    // Plain mode is terminal/pipe friendly: the body, with at most one trailing
+    // newline added for readability. Stripping a single trailing newline must
+    // recover the exact body.
+    assert.ok(stdout === body || stdout === body + '\n',
+      `stdout should be the body (± one trailing newline); got: ${JSON.stringify(stdout)}`);
+  } finally { fx.cleanup(); }
+});
+
+test('plain mode matches extractInlineDoc byte-for-byte (± trailing newline)', async () => {
+  // Why: `rwa doc` is the read side of the SAME view of the document that
+  // `rwa edit` writes. The two must agree, or anchors won't round-trip.
+  const fx = mkFixture('<article><h1>Anchor Fidelity</h1>\n<p>Line with\ttab.</p></article>');
+  try {
+    const { stdout } = await runRwa(['doc', fx.path]);
+    const body = extractInlineDoc(readFileSync(fx.path, 'utf8'));
+    assert.equal(stdout.replace(/\n$/, ''), body.replace(/\n$/, ''));
+  } finally { fx.cleanup(); }
+});
+
+test('plain mode writes nothing to stderr on success', async () => {
+  // Why: agents pipe `rwa doc f | ...`; diagnostics on the success path would
+  // be noise. stdout is the document, stderr is silent.
+  const fx = mkFixture();
+  try {
+    const { code, stderr } = await runRwa(['doc', fx.path]);
+    assert.equal(code, 0);
+    assert.equal(stderr, '');
+  } finally { fx.cleanup(); }
+});
+
+// ─── JSON mode: the full editing contract in one call ─────────────────
+
+test('--json returns the editing contract {rewritable,uuid,kind,frozenZones,length,doc}', async () => {
+  const body = '<article><h1>Contract</h1><p>One call, everything.</p></article>';
+  const fx = mkFixture(body);
+  try {
+    const { code, stdout, stderr } = await runRwa(['doc', fx.path, '--json']);
+    assert.equal(code, 0);
+    assert.equal(stderr, '');
+    const parsed = JSON.parse(stdout);
+    // `rewritable:true` is the explicit "yes, this is a rewritable" marker so
+    // an agent can branch on a parsed field, not just an exit code.
+    assert.equal(parsed.rewritable, true);
+    // doc is the byte-exact editable body (no newline munging — JSON is the
+    // faithful machine path; plain mode is the human path).
+    assert.equal(parsed.doc, body);
+    // length is the char length of the doc, so an agent can sanity-check size
+    // without re-measuring.
+    assert.equal(parsed.length, body.length);
+    // uuid is the container's DOC_UUID (lets an agent correlate edits/history).
+    assert.match(parsed.uuid, /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+    // kind selects the editing framing; default container is 'document'.
+    assert.equal(parsed.kind, 'document');
+    // frozenZones is always an array (empty here) — an agent must always be
+    // able to read it without a null check.
+    assert.ok(Array.isArray(parsed.frozenZones));
+    assert.equal(parsed.frozenZones.length, 0);
+  } finally { fx.cleanup(); }
+});
+
+test('--json lists marker-form frozen zones the agent must not touch', async () => {
+  // Why: frozen zones are author-declared invariants; an edit that crosses one
+  // is rejected (frozen_zone_violation). Surfacing the names lets the agent
+  // steer clear up front instead of failing and retrying.
+  const body = [
+    '<article><h1>Doc</h1>',
+    '<!-- rwa:frozen:begin signature -->',
+    '<p>© 2026 — do not alter</p>',
+    '<!-- rwa:frozen:end signature -->',
+    '<p>Editable.</p></article>',
+  ].join('\n');
+  const fx = mkFixture(body);
+  try {
+    const { code, stdout } = await runRwa(['doc', fx.path, '--json']);
+    assert.equal(code, 0);
+    const parsed = JSON.parse(stdout);
+    assert.deepEqual(parsed.frozenZones, ['signature']);
+  } finally { fx.cleanup(); }
+});
+
+test('--json kind reflects the container PRODUCT_KIND', async () => {
+  // Why: a presentation edits differently than a prose doc; the agent needs
+  // the kind to pick the right system framing. `rwa new --kind presentation`
+  // bakes PRODUCT_KIND='presentation'; `rwa doc --json` must read it back.
+  const fx = mkFixture(null, { kind: 'presentation' });
+  try {
+    const { code, stdout } = await runRwa(['doc', fx.path, '--json']);
+    assert.equal(code, 0);
+    const parsed = JSON.parse(stdout);
+    assert.equal(parsed.kind, 'presentation');
+  } finally { fx.cleanup(); }
+});
+
+// ─── Error surface (mirrors `rwa edit` file_error codes) ──────────────
+
+test('exit 2 not_found — missing file', async () => {
+  const { code, stdout, stderr } = await runRwa(['doc', '/tmp/does-not-exist-rwa.html']);
+  assert.equal(code, 2);
+  assert.match(stderr, /not_found/);
+  // Why: stdout must stay empty on error so a downstream pipe never mistakes
+  // an error message for document content.
+  assert.equal(stdout, '');
+});
+
+test('exit 2 not_a_rewritable — a non-rewritable file', async () => {
+  // Why: this gives agents a deterministic "is this a rewritable?" probe — a
+  // clean non-zero exit, empty stdout — without false-positive content.
+  const dir = mkdtempSync(join(tmpdir(), 'rwa-doc-test-'));
+  const path = join(dir, 'plain.html');
+  writeFileSync(path, '<!doctype html><html><body><p>just a page</p></body></html>', 'utf8');
+  try {
+    const { code, stdout, stderr } = await runRwa(['doc', path]);
+    assert.equal(code, 2);
+    assert.match(stderr, /not_a_rewritable/);
+    assert.equal(stdout, '');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('exit 1 missing_file_arg — no path given', async () => {
+  const { code, stderr } = await runRwa(['doc']);
+  assert.equal(code, 1);
+  assert.match(stderr, /missing_file_arg/);
+});
+
+test('--json error is structured JSON on stderr (not stdout)', async () => {
+  // Why: agents that run `rwa doc f --json` parse stdout for the contract;
+  // when the call fails they parse stderr for {code,subcode}. Mirrors the
+  // `rwa edit --json` failure surface so callers handle both verbs uniformly.
+  const { code, stdout, stderr } = await runRwa(['doc', '/tmp/nope-rwa.html', '--json']);
+  assert.equal(code, 2);
+  assert.equal(stdout, '');
+  const payload = JSON.parse(stderr.trim());
+  assert.equal(payload.code, 'file_error');
+  assert.equal(payload.subcode, 'not_found');
+} );

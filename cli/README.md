@@ -25,6 +25,9 @@ rwa import page.html out.html
 rwa edit notes.html "Add a section on testing"      # instruction → agent loop
 echo '{"version":"rwa-edit/1","edits":[...]}' | rwa edit notes.html
 rwa edit notes.html --plan plan.json                # envelope from a file
+
+rwa doc notes.html                                  # print the editable body
+rwa doc notes.html --json                           # read + edit-contract, one call
 ```
 
 ### `rwa new`
@@ -86,6 +89,47 @@ The agent loop retries up to 3 times when the model emits plain text instead of 
 | `--plan <file>` | read the tool envelope from a file (or `--plan -` for explicit stdin). |
 | `--json` | emit one JSON object per line on stderr for structured failure / retry reporting. Each line is `{code, subcode, details}` (or `{phase:"retry", attempt, reason}` during agent retries). |
 
+### `rwa doc <path>`
+
+The **read** counterpart to `rwa edit`. `rwa edit` writes the editable body; `rwa doc` reads it. An agent handed a rewritable `.html` shouldn't have to parse the ~4000-line bootstrap to find the document it's allowed to touch — `rwa doc` prints exactly the LF-canonical text the edit contract operates on, so anchors computed against it round-trip through `rwa edit`.
+
+```sh
+# Plain mode — the editable body, pipe/terminal friendly (one trailing newline).
+rwa doc notes.html
+rwa doc notes.html | grep -n '<h2'
+
+# --json — the full editing contract in a single call.
+rwa doc notes.html --json
+# → {"rewritable":true,"uuid":"…","kind":"document","frozenZones":["sig"],"length":465,"doc":"…"}
+```
+
+`--json` gives an agent everything it needs to edit safely in one read: `doc` (the byte-exact body), `frozenZones` (author-declared invariants it must preserve, or `apply_edits` rejects the change with `frozen_zone_violation`), `kind` (which framing applies), and `uuid` (to correlate). `rewritable:true` is an explicit parsed-field marker.
+
+`rwa doc` never reads stdin and never writes the file. On a non-rewritable target it exits `2` with `not_a_rewritable` and an empty stdout — a clean "is this a rewritable?" probe. Errors always go to stderr (plain `rwa doc: file_error/not_found {…}`, or `--json` `{code, subcode, details}`), so stdout stays clean for piping.
+
+### Driving a rewritable from an agent — no embedded LLM, no API key
+
+`rwa doc` + `rwa edit --plan` close a fully **deterministic** edit loop. An agent that can already reason (Claude Code, a script, a CI job) doesn't need the in-file `⌘K` model or an OpenRouter key: it reads the body, computes its own `apply_edits` envelope against anchors it can see, and applies it. Read → decide → write → confirm, all offline:
+
+```sh
+# 1. READ — get the exact body the edit contract sees (and what it must preserve).
+rwa doc report.html --json > /tmp/state.json
+#    state.json: { "doc": "<article><h1>Untitled</h1>…", "frozenZones": [...], ... }
+
+# 2. DECIDE — the agent picks a unique anchor from state.json.doc and forms an
+#    rwa-edit/1 envelope. (Each `find` must appear exactly once; avoid frozenZones.)
+echo '{"version":"rwa-edit/1","edits":[{"find":"Untitled","replace":"Q2 Revenue Review"}]}' \
+  > /tmp/plan.json
+
+# 3. WRITE — apply deterministically, in place, atomically. No model in the loop.
+rwa edit report.html --plan /tmp/plan.json
+
+# 4. CONFIRM — read back; the anchor round-trips, the bootstrap/uuid are untouched.
+rwa doc report.html | grep '<h1>'
+```
+
+Because the anchors in step 1 are the *same* text step 3 splices against, what the agent reads is exactly what it can edit — no HTML-parsing guesswork, no drift. The browser runtime's agent loop (multi-turn tool-use against a model) and this CLI loop apply through the identical `apply_edits` core, so an envelope that works here behaves identically in the file's own `⌘K`.
+
 ### Flags
 
 | Flag | Effect |
@@ -106,7 +150,7 @@ The agent loop retries up to 3 times when the model emits plain text instead of 
 | `3` | envelope_error | malformed JSON, ambiguous/unknown shape, version mismatch, missing required fields, apply-time failures (`frozen_zone_violation`, `find_not_found`, `find_not_unique`, `structural_shape_changed`, `reserved_substring`, `dsl_compile_error`) |
 | `4` | agent_error | agent loop exhausted retries (`no_envelope_after_retries`), backend HTTP/network error (`backend_error`), or missing API key (`no_api_key`) |
 
-Exit codes 1–4 are emitted by `rwa edit` and are stable. Other verbs (`new`, `import`) use `0`/`1`/`2` only — `2` for argument or format issues, `1` for everything else. The `--json` flag (edit only) turns every stderr line into a single-line JSON object suitable for piping into a structured log or wrapper script.
+Exit codes 1–4 are emitted by `rwa edit` and are stable. `rwa doc` reuses the same `file_error` (exit `2`) surface — `not_found`, `read_error`, `not_a_rewritable` — and exits `1`/`missing_file_arg` when no path is given. Other verbs (`new`, `import`) use `0`/`1`/`2` only — `2` for argument or format issues, `1` for everything else. The `--json` flag turns each `rwa edit` stderr line into a single-line JSON object; on `rwa doc` it switches stdout to the editing-contract object (failures still emit the `{code, subcode, details}` object on stderr).
 
 ## Design
 
