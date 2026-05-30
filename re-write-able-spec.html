@@ -4046,20 +4046,65 @@ function rwaIdentityTitle(doc) {
     return t || null;
   } catch (_) { return null; }
 }
+// isEditUnreachable(el) — true iff the lens/agent edit path provably cannot drift
+// `el`. Runtime mirror of declarationFacts() in tools/self-description.mjs: a
+// declaration is trustworthy IFF edit-unreachable = carries data-rwa-frozen on
+// itself or an ancestor (enforced at commit by dataRwaFrozenSnapshot's before/
+// after outerHTML guard) OR lives outside #rwa-doc-mount (the editable body that
+// renders currentDocCache — everything else, #rwa-runtime / #rwa-lens / the
+// bootstrap, is never in INLINE_DOC and so unreachable by an edit). Pure DOM.
+function isEditUnreachable(el) {
+  if (!el || el.nodeType !== 1) return false;
+  if (el.closest('[data-rwa-frozen]')) return true;           // frozen-attr gate (self or ancestor)
+  const mount = document.getElementById('rwa-doc-mount');
+  if (!mount || !mount.contains(el)) return true;             // chrome gate (!inEditableBody)
+  return false;                                               // inside the doc and unfrozen → driftable
+}
+
+// Read the in-doc #rwa-affordances declaration, but ONLY if it is edit-unreachable
+// (so the agent/lens couldn't have drifted it — the same safeguard the static CLI
+// reader applies). Fails SOFT: a missing / driftable / malformed declaration just
+// yields the registry-only answer (the registry is still trustworthy), so
+// describe() never throws (it backs both runtime.describe() and the ⓘ panel).
+// Returns an array of well-formed declared affordance records, or null.
+function readTrustworthyDeclaration() {
+  let el;
+  try { el = document.getElementById('rwa-affordances'); } catch (_) { return null; }
+  if (!el || !isEditUnreachable(el)) return null;
+  let parsed;
+  try { parsed = JSON.parse(el.textContent); } catch (_) { return null; }
+  const list = parsed && Array.isArray(parsed.affordances) ? parsed.affordances : null;
+  if (!list) return null;
+  return list.filter(a => a && typeof a.kind === 'string' && typeof a.name === 'string');
+}
+
 function runtimeDescribe() {
   const doc = rwaIdentityDoc();
   // Same token the static reader counts (tools/self-description.mjs), so the two
   // projections measure blocks the same way.
   const blocks = (doc.match(/\bdata-rwa-id\b/g) || []).length;
   const frozenZones = extractFrozenZones(doc).filter(z => !z.error).map(z => z.name);
-  // LIVE affordances = the actual provider registry (view / edit-surface /
-  // compute), each mapped to its {kind,name,label,provenance} record (zero-drift,
-  // spec §3.1). A file that REGISTERS an edit-surface/compute provider (the
-  // datatable) is reported here LIVE — describe() never under- or over-claims.
+  // LIVE affordances = the provider registry (verified:true — zero-drift, the
+  // runtime is running them) UNIONED with a trustworthy #rwa-affordances
+  // declaration (author-claimed, no `verified`) for affordances the registry
+  // can't represent (in-doc views that aren't setView providers). Registry wins
+  // on a kind|name collision. Spec §3.1's "live prefers registry ∪ declaration":
+  // describe() reports a custom file's FULL shape, marking which affordances are
+  // runtime-verified vs only author-declared.
   const affordances = [];
+  const seen = new Set();
   for (const k of ['view', 'edit-surface', 'compute']) {
     const p = providers[k];
-    if (p) affordances.push({ kind: k, name: p.name, label: p.label, provenance: p.__provenance || 'first-party' });
+    if (p) { affordances.push({ kind: k, name: p.name, label: p.label, provenance: p.__provenance || 'first-party', verified: true }); seen.add(k + '\0' + p.name); }
+  }
+  const declared = readTrustworthyDeclaration();
+  if (declared) {
+    for (const a of declared) {
+      const key = a.kind + '\0' + a.name;
+      if (seen.has(key)) continue;                            // registry-verified beats author-claimed
+      affordances.push({ kind: a.kind, name: a.name, label: a.label, provenance: a.provenance || 'first-party' });
+      seen.add(key);
+    }
   }
   return {
     rwa: 'self-description/1',
@@ -4088,9 +4133,11 @@ function renderInfoPanel() {
   const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const title = d.title ? '“' + esc(d.title) + '”' : '<span style="color:var(--gray-400)">untitled</span>';
   const lines = ['<strong>Edit</strong> — describe a change in the lens (<code>⌘K</code>) and the AI rewrites it in place'];
-  // A registered view provider (e.g. presentation) becomes a "toggle the X view"
-  // line; a base document has none, so this is simply skipped.
-  const viewAff = d.affordances.find(a => a.kind === 'view');
+  // A REGISTERED view provider (verified:true → activatable via runtime.setView)
+  // becomes a "toggle the X view" line. A declared-only view (verified absent,
+  // e.g. the datatable's in-doc grid/summary) is NOT a setView provider, so it
+  // must NOT be offered as a toggle — runtime.setView would throw on it.
+  const viewAff = d.affordances.find(a => a.kind === 'view' && a.verified === true);
   if (viewAff) {
     const label = viewAff.label || viewAff.name;
     lines.push('<strong>' + esc(label) + '</strong> — toggle the <code>' + esc(viewAff.name) + '</code> view' + (d.activeView === viewAff.name ? ' (active now)' : ''));
