@@ -11,7 +11,7 @@
 import { readFile } from 'node:fs/promises';
 import { extractInlineDoc } from './seed.mjs';
 import { findFrozenZones } from './apply-edits.mjs';
-import { buildSelfDescription } from './identity.mjs';
+import { resolveSelfDescription } from './identity.mjs';
 import { CliError } from './edit.mjs';
 
 // The bootstrap bakes both consts at emit time (cli/src/seed.mjs applySeedSubs).
@@ -22,10 +22,14 @@ const UUID_RE = /const DOC_UUID = '([0-9a-f-]{36})';/;
 const PRODUCT_KIND_RE = /const PRODUCT_KIND = '([^']*)';/;
 
 /**
- * Read a rewritable's editable document body, contract metadata, and the static
+ * Read a rewritable's editable document body, contract metadata, and the
  * `self-description/1` projection (the "what is this?" surface, computed from the
- * bytes — kind/affordances/title/blocks/baseline; `source:"static"`, no live
- * block). See ./identity.mjs and docs/specs/rwa-self-description-spec.md.
+ * bytes — kind/affordances/title/blocks/baseline). The projection applies the
+ * v1.1 precedence (declared > static): a trustworthy embedded #rwa-affordances
+ * declaration (edit-unreachable) wins over the kind-template guess
+ * (`source:"declared"`); otherwise the static kind-derived projection
+ * (`source:"static"`). No `live` block (the CLI executes no JS). See
+ * ./identity.mjs and docs/specs/rwa-self-description-spec.md §3.1.
  *
  * @param {string} filePath — path to the target .html
  * @returns {Promise<{doc: string, uuid: string|null, kind: string, frozenZones: string[], self: object}>}
@@ -55,9 +59,11 @@ export async function inspectDoc(filePath) {
   // matching how the runtime and `rwa edit` resolve SYSTEM_PROMPTS.
   const kind = (fileText.match(PRODUCT_KIND_RE) || [])[1] || 'document';
   const frozenZones = findFrozenZones(doc).map(z => z.name);
-  // The static self-description/1 projection — "what is this, what can be done
-  // with it" — assembled from the facts already parsed above (one file parse).
-  const self = buildSelfDescription({ doc, uuid, kind, frozenZones });
+  // The self-description/1 projection — "what is this, what can be done with it".
+  // resolveSelfDescription applies the v1.1 precedence (declared > static): a
+  // trustworthy embedded #rwa-affordances declaration (edit-unreachable) wins over
+  // the kind-template guess; otherwise the static kind-derived projection.
+  const self = resolveSelfDescription({ fileText, doc, uuid, kind, frozenZones });
 
   return { doc, uuid, kind, frozenZones, self };
 }

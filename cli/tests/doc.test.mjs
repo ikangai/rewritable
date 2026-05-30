@@ -16,7 +16,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { replaceInlineDoc, extractInlineDoc } from '../src/seed.mjs';
-import { computeSelfDescription, validateSelfDescription, checkAffordanceAgreement } from '../../tools/self-description.mjs';
+import { computeSelfDescription, validateSelfDescription, checkAffordanceAgreement, declarationFacts } from '../../tools/self-description.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const RWA_BIN = join(__dirname, '..', 'bin', 'rwa.mjs');
@@ -204,6 +204,60 @@ test('--json stays a superset: the edit-contract fields ride alongside the self-
     assert.deepEqual(p.affordances, []);            // base document
     assert.equal(p.title, 'Contract');
     assert.deepEqual(p.baseline.history, ['undo']); // undo-only — never advertise redo
+  } finally { fx.cleanup(); }
+});
+
+// ─── Declared projection: honest affordances for custom files (v1.1) ──
+// When a real container carries a trustworthy embedded #rwa-affordances
+// declaration, `rwa doc` must prefer it (source:'declared') over the kind guess —
+// so a datatable reports its REAL affordances, not the placeholder. Tested on
+// real containers (rwa new + replaceInlineDoc), where the declaration's
+// </script> is escaped in the bytes and recovered from INLINE_DOC — the path
+// the oracle and the CLI must agree on.
+
+const ALIGNED_DECL_JSON = JSON.stringify({
+  rwa: 'self-description/1', source: 'declared', kind: 'datatable', title: 'Q1 Budget', data: '#dt-data',
+  affordances: [
+    { kind: 'view', name: 'grid', label: 'Grid', provenance: 'first-party' },
+    { kind: 'view', name: 'summary', label: 'Summary', provenance: 'first-party' },
+    { kind: 'edit-surface', name: 'cell', label: 'Edit cells', provenance: 'first-party', surface: 'datatable:cell-edit', target: '#dt-data' },
+    { kind: 'compute', name: 'total', label: 'Total', provenance: 'first-party', inputs: ['qty', 'unit_price'], output: 'total' },
+  ],
+  baseline: { edit: ['lens'], tools: ['apply_dsl_plan', 'apply_edits', 'replace_document'], export: ['html', 'print'], history: ['undo'] },
+});
+const declBody = (frozen) =>
+  `<article><h1>Budget</h1>\n<script type="application/rwa-affordances+json" id="rwa-affordances"${frozen ? ' data-rwa-frozen' : ''}>${ALIGNED_DECL_JSON}</script>\n<div id="dt-data">[]</div></article>`;
+
+test('--json prefers a trustworthy (frozen) declaration: source:declared, real affordances', async () => {
+  const fx = mkFixture(declBody(true));
+  try {
+    const { code, stdout } = await runRwa(['doc', fx.path, '--json']);
+    assert.equal(code, 0);
+    const p = JSON.parse(stdout);
+    assert.equal(p.source, 'declared');
+    assert.equal(p.kind, 'datatable'); // the declaration's kind overrides PRODUCT_KIND='document'
+    assert.deepEqual(p.affordances.map(a => a.kind), ['view', 'view', 'edit-surface', 'compute']);
+    // uuid is the CONTAINER's DOC_UUID (a fact), not anything the author claimed.
+    assert.match(p.uuid, /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+    // The whole payload still validates as self-description/1 against the oracle.
+    const { valid, errors } = validateSelfDescription(p);
+    assert.ok(valid, `declared payload must validate; errors: ${errors.join('; ')}`);
+    // And the oracle agrees the declaration is found + frozen-trustworthy.
+    const f = declarationFacts(readFileSync(fx.path, 'utf8'));
+    assert.deepEqual(f, { found: true, inEditableBody: true, frozenAttr: true });
+  } finally { fx.cleanup(); }
+});
+
+test('--json does NOT trust an unfrozen body declaration: falls back to source:static', async () => {
+  const fx = mkFixture(declBody(false));
+  try {
+    const { stdout } = await runRwa(['doc', fx.path, '--json']);
+    const p = JSON.parse(stdout);
+    assert.equal(p.source, 'static'); // edit-reachable claim is not trusted
+    // PRODUCT_KIND is 'document' (rwa new default), so the static answer is a base doc.
+    assert.equal(p.kind, 'document');
+    assert.deepEqual(p.affordances, []);
+    assert.ok(validateSelfDescription(p).valid);
   } finally { fx.cleanup(); }
 });
 

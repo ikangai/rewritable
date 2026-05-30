@@ -12,12 +12,16 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  extractTitle, countBlocks, buildSelfDescription,
+  extractTitle, countBlocks, buildSelfDescription, resolveSelfDescription,
+  parseDeclaration, declarationFacts, validateSelfDescription as cliValidate,
   KIND_PROVIDERS, SUBSTRATE_BASELINE,
 } from '../src/identity.mjs';
 import {
   KIND_PROVIDERS as REF_KIND_PROVIDERS,
   SUBSTRATE_BASELINE as REF_BASELINE,
+  parseDeclaration as refParseDeclaration,
+  declarationFacts as refDeclarationFacts,
+  validateSelfDescription,
 } from '../../tools/self-description.mjs';
 
 // ─── Mirror pins: drift from the single source fails loudly ───────────
@@ -90,4 +94,116 @@ test('buildSelfDescription gives a base document an empty affordance bundle', ()
   const self = buildSelfDescription({ doc: '<article><h1>Note</h1></article>', uuid: 'u', kind: 'document', frozenZones: [] });
   assert.deepEqual(self.affordances, []);
   assert.equal(self.title, 'Note');
+});
+
+// ─── resolveSelfDescription: the declared > static precedence (v1.1) ───
+// For a custom-affordance file the kind table can only GUESS; if the file carries
+// a trustworthy embedded #rwa-affordances declaration the reader prefers it
+// (source:'declared'). "Trustworthy" = edit-unreachable: outside INLINE_DOC (chrome)
+// OR carrying data-rwa-frozen. A non-conforming or edit-reachable declaration is
+// NOT trusted — the reader falls back to the static kind-derived answer rather
+// than emit a guess as truth or trust a driftable claim (spec §3.1).
+
+const ALIGNED_DECL = {
+  rwa: 'self-description/1', source: 'declared', kind: 'datatable',
+  title: 'Q1 Budget', data: '#dt-data',
+  affordances: [
+    { kind: 'view', name: 'grid', label: 'Grid', provenance: 'first-party' },
+    { kind: 'view', name: 'summary', label: 'Summary', provenance: 'first-party' },
+    { kind: 'edit-surface', name: 'cell', label: 'Edit cells', provenance: 'first-party', surface: 'datatable:cell-edit', target: '#dt-data' },
+    { kind: 'compute', name: 'total', label: 'Total', provenance: 'first-party', inputs: ['qty', 'unit_price'], output: 'total' },
+  ],
+  baseline: { edit: ['lens'], tools: ['apply_dsl_plan', 'apply_edits', 'replace_document'], export: ['html', 'print'], history: ['undo'] },
+};
+// tesla's CURRENT (pre-align) shape: `schema` instead of the `rwa` discriminator.
+const NONCONFORMING_DECL = (() => { const { rwa, ...rest } = ALIGNED_DECL; return { schema: rwa, ...rest }; })();
+
+const declScript = (obj, { frozen } = {}) =>
+  `<script type="application/rwa-affordances+json" id="rwa-affordances"${frozen ? ' data-rwa-frozen' : ''}>${JSON.stringify(obj)}</script>`;
+const bodyWith = (obj, opts) => `<article><h1>T</h1>${declScript(obj, opts)}<div id="dt-data">[]</div></article>`;
+const fileWrap = (doc) => `<html><body>${doc}</body></html>`;
+const chromeFile = (obj, doc) => `<html><head>${declScript(obj)}</head><body>${doc}</body></html>`;
+const kinds = (self) => self.affordances.map(a => a.kind);
+
+test('resolveSelfDescription prefers a frozen body declaration (trustworthy → declared)', () => {
+  const doc = bodyWith(ALIGNED_DECL, { frozen: true });
+  const self = resolveSelfDescription({ fileText: fileWrap(doc), doc, uuid: 'u-1', kind: 'datatable', frozenZones: [] });
+  assert.equal(self.source, 'declared');
+  assert.deepEqual(kinds(self), ['view', 'view', 'edit-surface', 'compute']); // the REAL affordances, not the kind guess
+  assert.equal(self.data, '#dt-data');
+});
+
+test('resolveSelfDescription does NOT trust an edit-reachable (unfrozen body) declaration → static', () => {
+  const doc = bodyWith(ALIGNED_DECL, { frozen: false });
+  const self = resolveSelfDescription({ fileText: fileWrap(doc), doc, uuid: 'u', kind: 'datatable', frozenZones: [] });
+  assert.equal(self.source, 'static');
+  assert.deepEqual(kinds(self), ['view', 'edit-surface', 'tool', 'compute']); // the kind-template guess
+});
+
+test('resolveSelfDescription falls back to static for a trusted but NON-conforming declaration', () => {
+  // tesla's current schema-not-rwa block: frozen (trusted) but invalid → never
+  // emit a non-conforming answer; static is at least valid.
+  const doc = bodyWith(NONCONFORMING_DECL, { frozen: true });
+  const self = resolveSelfDescription({ fileText: fileWrap(doc), doc, uuid: 'u', kind: 'datatable', frozenZones: [] });
+  assert.equal(self.source, 'static');
+});
+
+test('resolveSelfDescription trusts a chrome declaration (outside INLINE_DOC) even unfrozen', () => {
+  const doc = '<article><h1>T</h1></article>';
+  const self = resolveSelfDescription({ fileText: chromeFile(ALIGNED_DECL, doc), doc, uuid: 'u', kind: 'datatable', frozenZones: [] });
+  assert.equal(self.source, 'declared');
+  assert.deepEqual(kinds(self), ['view', 'view', 'edit-surface', 'compute']);
+});
+
+test('resolveSelfDescription returns the static projection when there is no declaration', () => {
+  const doc = '<article><h1>Plain</h1></article>';
+  const self = resolveSelfDescription({ fileText: fileWrap(doc), doc, uuid: 'u', kind: 'document', frozenZones: [] });
+  assert.equal(self.source, 'static');
+  assert.deepEqual(self.affordances, []);
+});
+
+test('a declared projection fills uuid/frozenZones from container facts, not the author claim', () => {
+  // uuid/frozenZones are container facts (DOC_UUID / the bytes), authoritative
+  // over anything the declaration claims — an author cannot lie about them.
+  const declWithBogusFacts = { ...ALIGNED_DECL, uuid: 'AUTHOR-LIE', frozenZones: ['author-claim'] };
+  const doc = bodyWith(declWithBogusFacts, { frozen: true });
+  const self = resolveSelfDescription({ fileText: fileWrap(doc), doc, uuid: 'real-uuid', kind: 'datatable', frozenZones: ['sig'] });
+  assert.equal(self.source, 'declared');
+  assert.equal(self.uuid, 'real-uuid');
+  assert.deepEqual(self.frozenZones, ['sig']);
+});
+
+test('CLI validateSelfDescription mirrors the oracle exactly (no drift)', () => {
+  // The reader trusts a declaration only if the assembled object validates; that
+  // gate is a publish-safe mirror of the oracle's validator. Pin them together
+  // across valid + every failure mode so a malformed trustworthy declaration can
+  // never slip past the CLI but be rejected by the oracle (or vice-versa).
+  const cases = [
+    { rwa: 'self-description/1', source: 'declared', kind: 'datatable', affordances: ALIGNED_DECL.affordances },
+    { ...ALIGNED_DECL, uuid: 'u', frozenZones: [] },
+    NONCONFORMING_DECL,                                                  // schema not rwa
+    { ...ALIGNED_DECL, source: 'bogus' },                               // bad source
+    { ...ALIGNED_DECL, affordances: [{ kind: 'nope', name: 'x', provenance: 'first-party' }] }, // bad kind
+    { ...ALIGNED_DECL, affordances: [{ kind: 'view', name: 'g', provenance: 'first-party', surface: 7 }] }, // bad detail type
+    { ...ALIGNED_DECL, data: 123 },                                     // bad data type
+    { ...ALIGNED_DECL, baseline: { history: ['undo', 'redo'] } },       // phantom redo
+    { ...ALIGNED_DECL, affordances: [{ kind: 'view', name: 'g', provenance: 'bad' }] }, // bad provenance
+    buildSelfDescription({ doc: '<h1>x</h1>', uuid: 'u', kind: 'presentation', frozenZones: [] }), // a real static obj
+    null, 'str', [],
+  ];
+  for (const c of cases) {
+    assert.equal(cliValidate(c).valid, validateSelfDescription(c).valid,
+      `CLI vs oracle validity disagree for ${JSON.stringify(c)}`);
+  }
+});
+
+test('CLI declarationFacts/parseDeclaration mirror the oracle on a chrome declaration', () => {
+  // For a chrome declaration the oracle reads raw bytes (no INLINE_DOC needed),
+  // so the CLI mirror (which takes the already-extracted doc) and the oracle agree
+  // without a real container. Body-declaration agreement is pinned on real
+  // containers in doc.test.mjs (where extractInlineDoc succeeds for both).
+  const doc = '<article><h1>T</h1></article>';
+  const fileText = chromeFile(ALIGNED_DECL, doc);
+  assert.deepEqual(declarationFacts(fileText, doc), refDeclarationFacts(fileText));
+  assert.deepEqual(parseDeclaration(fileText, doc).declaration, refParseDeclaration(fileText).declaration);
 });
