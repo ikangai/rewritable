@@ -243,6 +243,21 @@ function editCell(r, c, value) {
   finally { try { fs.unlinkSync(tmp); } catch {} }
   check('Tool affordance: agent edits #dt-data via `rwa edit` (CLI), change visible via `rwa doc`', toolOk);
 
+  // ── Loop-closed (cross-lane): an agent running `rwa doc --json` gets the file's
+  // REAL identity — the CLI declared-reader trusts the frozen, v1.1-aligned
+  // declaration and reports source:"declared" with all four affordances, NOT the
+  // kind-template guess. This pins the agent-facing "knows what it is" property
+  // end-to-end (the static surface), stable across the KIND_PROVIDERS refinement
+  // (declared-sourced files don't consult the kind table).
+  let cliDoc = null;
+  try { cliDoc = JSON.parse(execFileSync('node', [RWA_BIN, 'doc', ARTIFACT, '--json'], { encoding: 'utf8' })); }
+  catch (e) { cliDoc = { error: String(e.stderr || e.message) }; }
+  check('rwa doc --json reports source:"declared" (CLI trusts the frozen declaration, not the kind-guess)',
+    cliDoc && cliDoc.source === 'declared');
+  check('rwa doc --json reports the datatable\'s real 4 affordances (loop closed on the static surface)',
+    cliDoc && Array.isArray(cliDoc.affordances) &&
+    cliDoc.affordances.map(a => a.kind + ':' + a.name).sort().join(',') === 'compute:total,edit-surface:cell,view:grid,view:summary');
+
   console.log(`\n${pass} pass, ${fail} fail`);
   dom.window.close();
   process.exit(fail ? 1 : 0);
