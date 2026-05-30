@@ -385,6 +385,7 @@ runtime.fs = {
 };
 
 runtime.id;                         // string — the container's DOC_UUID
+runtime.describe();                 // self-description/1 — what this container is + can do (docs/specs/rwa-self-description-spec.md)
 runtime.modify(instruction);        // ⌘K programmatic equivalent
 runtime.commit();                   // ⌘S programmatic equivalent
 runtime.undo();                     // ⌘Z programmatic equivalent
@@ -662,6 +663,8 @@ These properties are load-bearing — every change to the runtime, bootstrap, or
 9. The document the agent receives is derived from the stored document text, never from a render mode's mounted output. Render modes are invisible to the agent.
 
 ---
+
+*Spec version 0.14 — self-description. §7 gains `runtime.describe()`, the live projection of the `self-description/1` contract (`docs/specs/rwa-self-description-spec.md`): the answer to "what is this container, and what can be done with it?" — `kind`, the registered affordance providers (from the live `view`/§5.10 registry, zero-drift), author-declared `frozenZones`, `title`, addressable-block count, and a `baseline` of substrate-universal ops. The static counterpart is `rwa doc --json` (computed from the file bytes by `tools/self-description.mjs`, the shared referee oracle); the two projections agree on every shared field by construction (`source:'live'` vs `'static'`). Honest by construction: it reports only affordances actually present (a base `document` is `[]`; `history` is undo-only — there is no redo, Invariant 7). The change is **additive** — a new query method plus a chrome "ⓘ what is this?" disclosure; no commit-stamp (that would break Invariant 1, so the description is computed live, never written into the file), no `modify`/`commit`/`buildFile` change, bootstrap byte-unchanged (meta tag stays `rwa-bootstrap` 0.9). Verified: `tests/identity.mjs` 42/0 (validates `describe()` against the oracle + live⇔static cross-projection + SD-06 no-leakage), full seed suite + conformance 79/79 green.*
 
 *Spec version 0.13 — render-mode implemented. The §5.10 contract from 0.12 is now live in the seed: `runtime.provide('view', spec)` / `runtime.setView(name|null)`, the C2 render seam in `renderDoc` (output mount-only; `setSourceMap` stays on the stored text — Invariants 8–9 hold), the `setView` guards (modify-mutex refusal, `releaseAnchor` on activate, anchored-modify gated on no active view), and the first-party `presentation` provider (wrap-in-place `<section class="rwa-slide">` on `h1`/`h2`, `mounted` slide restore, `reveal` fragment hook, nav chrome, present/print CSS). §5.10 gains the optional `reveal(m, el)` slot. `rwa new --kind presentation` emits a prose deck. The change is inert for `document`/`workflow` containers (the view subsystem is gated on `PRODUCT_KIND === 'presentation'`; the default render path is byte-identical). Verified: conformance 77/77 (incl. VIEW-01..05), e2e 291, lens 246, view 17. References regenerated against the new seed. `edit-surface` / `compute` / installed third-party path / non-agent write-path ordering remain deferred.*
 
