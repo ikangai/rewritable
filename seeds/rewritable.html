@@ -50,6 +50,19 @@ body{font-family:var(--font-ui);background:var(--bg);color:var(--text);min-heigh
 .rwa-set-base-url-line button:hover{background:var(--gray-200);}
 .rwa-set-hint{font-family:var(--font-mono);font-size:10px;line-height:1.5;color:var(--gray-500);}
 .rwa-set-hint:empty{display:none;}
+#rwa-info-panel{position:fixed;top:50px;right:12px;background:var(--white);border:1px solid var(--gray-200);border-radius:var(--radius-sm);padding:18px 20px;display:none;max-width:340px;z-index:999;box-shadow:0 4px 16px rgba(0,0,0,0.08);font-family:var(--font-ui);font-size:13px;line-height:1.55;color:var(--gray-700);}
+#rwa-info-panel.open{display:block;}
+#rwa-info-panel h4{margin:0 0 6px;font-size:15px;color:var(--gray-900);font-weight:600;}
+#rwa-info-panel p{margin:0 0 8px;}
+#rwa-info-panel .rwa-info-kind{font-family:var(--font-mono);font-size:9px;letter-spacing:1.5px;text-transform:uppercase;color:var(--gray-500);margin-bottom:8px;}
+#rwa-info-panel .rwa-info-meta{font-family:var(--font-mono);font-size:10px;color:var(--gray-500);margin-bottom:10px;}
+#rwa-info-panel .rwa-info-lbl{font-family:var(--font-mono);font-size:9px;letter-spacing:1.5px;text-transform:uppercase;color:var(--gray-500);margin:10px 0 4px;}
+#rwa-info-panel ul{margin:4px 0 0;padding:0;list-style:none;}
+#rwa-info-panel li{margin:5px 0;padding-left:14px;position:relative;}
+#rwa-info-panel li::before{content:'·';position:absolute;left:3px;color:var(--gray-400);}
+#rwa-info-panel .rwa-info-foot{margin-top:12px;padding-top:10px;border-top:1px solid var(--gray-100);font-size:11px;color:var(--gray-500);line-height:1.5;}
+#rwa-info-panel strong{color:var(--gray-900);font-weight:600;}
+#rwa-info-panel code{font-family:var(--font-mono);font-size:11px;background:var(--gray-50);padding:1px 5px;border-radius:4px;color:var(--gray-700);}
 .rwa-set-hint code{background:var(--gray-100);padding:1px 4px;border-radius:3px;font-size:10px;}
 .rwa-set-hint.ok{color:#15803d;}
 .rwa-set-hint.err{color:#b91c1c;}
@@ -988,6 +1001,7 @@ function buildUI() {
   document.getElementById('rwa-runtime').innerHTML = `
 <div id="rwa-set">
   <button class="rwa-st-btn" id="rwa-st-status">● ready</button>
+  <button class="rwa-st-btn" id="rwa-st-info" title="what is this?" aria-label="what is this?">ⓘ</button>
   <button class="rwa-st-btn" id="rwa-st-cog">⚙</button>
   <button class="rwa-st-btn pri" id="rwa-st-commit">⌘S</button>
 </div>
@@ -998,6 +1012,7 @@ function buildUI() {
   <div class="rwa-set-row" id="rwa-set-row-model"><label>Model</label><input type="text" id="rwa-model" autocomplete="off" list="rwa-model-options"><datalist id="rwa-model-options"></datalist></div>
   <div class="rwa-set-row" id="rwa-set-row-hint" style="display:none;"><div id="rwa-backend-hint" class="rwa-set-hint"></div></div>
 </div>
+<div id="rwa-info-panel"></div>
 <div id="rwa-pal">
   <div id="rwa-pal-box">
     <div class="rwa-pal-top">
@@ -1152,7 +1167,19 @@ function buildUI() {
     }
   };
 
-  document.getElementById('rwa-st-cog').onclick = () => document.getElementById('rwa-set-panel').classList.toggle('open');
+  document.getElementById('rwa-st-cog').onclick = () => {
+    document.getElementById('rwa-info-panel').classList.remove('open');   // panels are mutually exclusive
+    document.getElementById('rwa-set-panel').classList.toggle('open');
+  };
+  // ⓘ "what is this?" — render the rwa-identity/1 bundle as prose on open so it
+  // reflects current state every time (title/blocks/locked regions change as the
+  // doc is edited). Mutually exclusive with the settings panel.
+  document.getElementById('rwa-st-info').onclick = () => {
+    document.getElementById('rwa-set-panel').classList.remove('open');
+    const panel = document.getElementById('rwa-info-panel');
+    if (!panel.classList.contains('open')) panel.innerHTML = renderInfoPanel();
+    panel.classList.toggle('open');
+  };
   document.getElementById('rwa-st-commit').onclick = commit;
 
   const pal = document.getElementById('rwa-pal'), inp = document.getElementById('rwa-pal-inp'), go = document.getElementById('rwa-pal-go');
@@ -3498,6 +3525,91 @@ function runtimeSetView(name) {
 function rwaViewKey() { return 'rwa_view_active_' + DOC_UUID; }
 function rwaSlideKey() { return 'rwa_view_slide_' + DOC_UUID; }
 
+// ─── rwa-identity/1: a rewritable knows what it is (self-description) ──
+// Computes the LIVE identity bundle — what this container IS and what can be
+// done with it — by introspecting actual runtime state: PRODUCT_KIND, the live
+// §5.10 view-provider registry, author-declared frozen zones, the doc's <h1>
+// title and addressable-block (data-rwa-id) count. This is the `source:'live'`
+// emitter; cli/src/doc.mjs emits the matching `source:'static'` bundle from the
+// file bytes. The agent reads it via runtime.describe(); the human reads it via
+// the ⓘ "what is this?" panel (renderInfoPanel). Honest by construction: it
+// reports only affordances that actually exist (history is ['undo'] — there is
+// no redo) and only views actually registered (zero-drift vs a kind-hardcoded
+// guess). Wire shape tracks the rwa-identity/1 contract (re-write-able-spec
+// §5.11 candidate); see docs/plans/2026-05-30-rwa-identity-design.md.
+function rwaIdentityDoc() {
+  return (typeof currentDocCache === 'string' && currentDocCache !== null) ? currentDocCache : INLINE_DOC;
+}
+function rwaIdentityTitle(doc) {
+  try {
+    const p = new DOMParser().parseFromString('<!DOCTYPE html><html><body>' + (doc || '') + '</body></html>', 'text/html');
+    const h1 = p.querySelector('h1');
+    const t = h1 && h1.textContent.trim();
+    return t || null;
+  } catch (_) { return null; }
+}
+function runtimeDescribe() {
+  const doc = rwaIdentityDoc();
+  // Same token the static reader counts (tools/self-description.mjs), so the two
+  // projections measure blocks the same way.
+  const blocks = (doc.match(/\bdata-rwa-id\b/g) || []).length;
+  const frozenZones = extractFrozenZones(doc).filter(z => !z.error).map(z => z.name);
+  // LIVE affordances = the actual §5.10 provider registry, each mapped to its
+  // {kind,name,label,provenance} record (zero-drift). For v1 the only slot is
+  // `view`; this equals KIND_PROVIDERS[kind] by construction (spec SD-03), so a
+  // registry/kind mismatch surfaces as a real bug rather than being papered over.
+  const affordances = [];
+  if (providers.view) affordances.push({ kind: 'view', name: providers.view.name, label: providers.view.label, provenance: 'first-party' });
+  return {
+    rwa: 'self-description/1',
+    source: 'live',
+    uuid: DOC_UUID,
+    kind: PRODUCT_KIND,
+    title: rwaIdentityTitle(doc),
+    blocks,
+    affordances,
+    frozenZones,
+    // Substrate-universals — true of every container, NOT type affordances (spec
+    // §2). Surfaced so a reader can see "what can be done with me"; history is
+    // undo-only — there is no redo (re-write-able-spec Invariant 7).
+    baseline: { edit: ['lens'], tools: ['apply_dsl_plan', 'apply_edits', 'replace_document'], export: ['html', 'print'], history: ['undo'] },
+    activeView: activeView ? activeView.name : null,
+  };
+}
+
+// Render the identity bundle as friendly, scannable prose for a human who just
+// opened the file and wants to know "what is this?". Reads runtime.describe() so
+// it stays truthful to live state. Decoupled from the wire shape: only this
+// function knows the prose, so reshaping the contract touches runtimeDescribe()
+// and this reader together, nothing else.
+function renderInfoPanel() {
+  const d = runtimeDescribe();
+  const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const title = d.title ? '“' + esc(d.title) + '”' : '<span style="color:var(--gray-400)">untitled</span>';
+  const lines = ['<strong>Edit</strong> — describe a change in the lens (<code>⌘K</code>) and the AI rewrites it in place'];
+  // A registered view provider (e.g. presentation) becomes a "toggle the X view"
+  // line; a base document has none, so this is simply skipped.
+  const viewAff = d.affordances.find(a => a.kind === 'view');
+  if (viewAff) {
+    const label = viewAff.label || viewAff.name;
+    lines.push('<strong>' + esc(label) + '</strong> — toggle the <code>' + esc(viewAff.name) + '</code> view' + (d.activeView === viewAff.name ? ' (active now)' : ''));
+  }
+  lines.push('<strong>Undo</strong> — <code>⌘Z</code> steps back');
+  lines.push('<strong>Save</strong> — <code>⌘S</code> writes your changes back into this file');
+  const fz = d.frozenZones;
+  const meta = [d.blocks + ' addressable block' + (d.blocks === 1 ? '' : 's')];
+  if (fz.length) meta.push(fz.length + ' locked region' + (fz.length === 1 ? '' : 's') + ' (' + fz.map(esc).join(', ') + ')');
+  return [
+    '<div class="rwa-info-kind">re-writeable · ' + esc(d.kind) + '</div>',
+    '<h4>' + title + '</h4>',
+    '<p>A self-contained <strong>' + esc(d.kind) + '</strong> that edits itself — one HTML file, no server, no account.</p>',
+    '<div class="rwa-info-meta">' + meta.join(' · ') + '</div>',
+    '<p class="rwa-info-lbl">What you can do</p>',
+    '<ul><li>' + lines.join('</li><li>') + '</li></ul>',
+    '<div class="rwa-info-foot">Identity <code>' + esc(String(d.uuid).slice(0, 8)) + '</code> · runs anywhere — email it, host it, open it offline. <strong>The file knows what it is.</strong></div>',
+  ].join('');
+}
+
 // ─── First-party 'presentation' view provider (spec §5.10) ──────────
 // WRAP-IN-PLACE: split the doc at <h1>/<h2> boundaries into
 // <section class="rwa-slide"> wrappers WITHOUT reordering. SECTION ∉
@@ -4101,6 +4213,7 @@ document.addEventListener('keydown', e => {
       on:     runtimeOn,
       provide: runtimeProvide,   // spec §5.10 — register a view provider
       setView: runtimeSetView,   // spec §5.10 — activate/deactivate a render mode
+      describe: runtimeDescribe, // rwa-identity/1 — what this container is + can do
     };
     // `status` is a getter so each read returns a fresh snapshot of
     // dirty/fsa/storage; an enumerable data prop would let stale references
