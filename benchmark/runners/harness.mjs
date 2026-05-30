@@ -47,6 +47,10 @@ function freshIDB() {
  * @returns {Promise<Context>}
  */
 export async function fresh(opts = {}) {
+  // opts.html — load an arbitrary container instead of the default seed (e.g. a
+  // flagship example like the datatable, for cross-surface conformance). It must
+  // be a rewritable (its bootstrap exposes the same runtime); defaults to the seed.
+  const containerHtml = opts.html || SEED_HTML;
   const { indexedDB, IDBKeyRange } = freshIDB();
   const virtualConsole = new VirtualConsole();
   const errors = [];
@@ -58,7 +62,7 @@ export async function fresh(opts = {}) {
     throw new Error('fetch called but no fetchHandler set on harness Context');
   });
 
-  const dom = new JSDOM(SEED_HTML, {
+  const dom = new JSDOM(containerHtml, {
     url: 'https://rwa-bench.local/',
     runScripts: 'dangerously',
     pretendToBeVisual: true,
