@@ -16,7 +16,7 @@
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { extractInlineDoc } from '../cli/src/seed.mjs';
-import { findFrozenZones } from '../cli/src/apply-edits.mjs';
+import { findFrozenZones, tagHasFrozenAttr } from '../cli/src/apply-edits.mjs';
 
 export const SCHEMA_TAG = 'self-description/1';
 export const AFFORDANCE_KINDS = ['view', 'edit-surface', 'tool', 'compute', 'hook'];
@@ -269,7 +269,12 @@ export function declarationFacts(fileText) {
   const m = hay.match(DECL_RE);
   if (!m) return { found: false, inEditableBody: false, frozenAttr: false };
   const openTag = m[0].slice(0, m[0].indexOf('>') + 1);
-  return { found: true, inEditableBody, frozenAttr: /\bdata-rwa-frozen\b/.test(openTag) };
+  // DOM-accurate: data-rwa-frozen must be a real attribute NAME, not a value
+  // mention (title="data-rwa-frozen") or a longer name (data-rwa-frozen-note).
+  // Mirrors the seed's tagHasFrozenAttr + the CLI enforcement so trust-detection
+  // never over-trusts a declaration the lens/agent can actually drift (euler's
+  // cross-surface finding; the safeguard "declared only if edit-unreachable").
+  return { found: true, inEditableBody, frozenAttr: tagHasFrozenAttr(openTag) };
 }
 
 async function main(argv) {

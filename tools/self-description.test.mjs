@@ -209,3 +209,17 @@ test('v1.1: declarationFacts on the REAL datatable — edit-reachable but frozen
   assert.equal(f.inEditableBody, true, 'the declaration lives inside INLINE_DOC');
   assert.equal(f.frozenAttr, true, 'tesla froze it (af8e9fa) — trustworthy despite being in the body');
 });
+
+test('v1.1: declarationFacts is DOM-accurate — a data-rwa-frozen VALUE mention does not over-trust', () => {
+  // A declaration tag with NO real data-rwa-frozen attribute, only the string in
+  // another attribute's value (or a longer-named attribute), must NOT report
+  // frozenAttr:true — otherwise the CLI trusts a declaration the seed lens (DOM
+  // querySelectorAll) can actually drift, a cross-surface bypass of the "declared
+  // only if edit-unreachable" safeguard. tagHasFrozenAttr requires a real NAME.
+  const valueMention = '<script type="application/rwa-affordances+json" id="rwa-affordances" title="data-rwa-frozen tip">{}</script>';
+  assert.equal(declarationFacts(valueMention).frozenAttr, false, 'a value mention is not a frozen attribute');
+  const longerName = '<script type="application/rwa-affordances+json" id="rwa-affordances" data-rwa-frozen-note="x">{}</script>';
+  assert.equal(declarationFacts(longerName).frozenAttr, false, 'data-rwa-frozen-note is a different attribute');
+  const realAttr = '<script type="application/rwa-affordances+json" id="rwa-affordances" data-rwa-frozen>{}</script>';
+  assert.equal(declarationFacts(realAttr).frozenAttr, true, 'a real data-rwa-frozen attribute is still trusted');
+});
