@@ -223,21 +223,82 @@ test('apply_edits — preserves existing <script> count', () => {
   assert.equal(result, '<article><script>VAR_Y = 1;</script></article>');
 });
 
-// ─── todo: attribute-form frozen zone (v1 scope-down) ──────────────────
-// The seed enforces data-rwa-frozen attribute-form zones via DOMParser
-// snapshots (seeds/rewritable.html dataRwaFrozenSnapshot). Implementing
-// tag-balanced HTML parsing without a parser is significantly more
-// complex; v1 covers marker-form only. Reserved-substring detection
-// (above) already blocks edits that mention `data-rwa-frozen` literally,
-// which is the primary attack surface — but an edit that finds anchors
-// inside an attribute-form frozen element's text would currently apply.
-// Marked as todo so it shows up in the run summary as outstanding work
-// (see cli/TODO.md).
-test('attribute-form frozen zone enforcement (v1 scope-down)', { todo: true }, () => {
+// ─── attribute-form frozen zone enforcement ────────────────────────────
+// The seed protects data-rwa-frozen elements via dataRwaFrozenSnapshot
+// (seeds/rewritable.html :2971): each [data-rwa-frozen] element snapshotted as
+// tagName + outerHTML, sorted; any change before/after an edit is rejected. The
+// CLI now mirrors that BATCH-LEVEL snapshot equality, parser-free. This matters
+// because a file can declare its own self-knowledge in a frozen inert
+// <script id="rwa-affordances" data-rwa-frozen> block (tesla's datatable) — if a
+// CLI agent could drift it, the declaration would lie. The reserved-substring
+// check already blocks edits that mention `data-rwa-frozen` literally; this
+// closes the remaining gap: edits whose anchors land INSIDE a frozen element.
+
+test('attribute-form: mutating inner text of a data-rwa-frozen element is rejected', () => {
   const doc = '<article><div data-rwa-frozen><p>locked</p></div></article>';
-  // Per spec §7.3 + seed dataRwaFrozenSnapshot, this should throw.
   assert.throws(
     () => applyEdits(doc, [{ find: 'locked', replace: 'unlocked' }]),
-    err => err.code === 'frozen_zone_violation'
+    err => err.code === 'frozen_zone_violation',
   );
+});
+
+test('attribute-form: drifting a frozen #rwa-affordances declaration is rejected (the real case)', () => {
+  // tesla's datatable declares its affordances in a frozen inert script. An
+  // agent must not be able to silently change what the file claims to be.
+  const doc = [
+    '<article><h1>Budget</h1>',
+    '<script type="application/rwa-affordances+json" id="rwa-affordances" data-rwa-frozen>',
+    '{ "kind": "datatable", "affordances": [{"kind":"view","name":"grid"}] }',
+    '</script>',
+    '<script type="application/json" id="dt-data">[{"a":1}]</script></article>',
+  ].join('\n');
+  assert.throws(
+    () => applyEdits(doc, [{ find: '"name":"grid"', replace: '"name":"tampered"' }]),
+    err => err.code === 'frozen_zone_violation',
+  );
+});
+
+test('attribute-form: editing a DIFFERENT block is still allowed (no over-blocking)', () => {
+  // The editable data region (#dt-data) must remain freely editable even when a
+  // sibling #rwa-affordances is frozen — else we trade a security gap for a
+  // usability one.
+  const doc = [
+    '<article>',
+    '<script id="rwa-affordances" data-rwa-frozen>{"kind":"datatable"}</script>',
+    '<script id="dt-data">[{"qty":1}]</script></article>',
+  ].join('\n');
+  const out = applyEdits(doc, [{ find: '"qty":1', replace: '"qty":2' }]);
+  assert.match(out, /"qty":2/);
+  assert.match(out, /\{"kind":"datatable"\}/); // declaration untouched
+});
+
+test('attribute-form: an edit fully outside any frozen element applies normally', () => {
+  const doc = '<article><h1>Title</h1><div data-rwa-frozen><p>locked</p></div><p>free</p></article>';
+  const out = applyEdits(doc, [{ find: 'free', replace: 'edited' }]);
+  assert.equal(out, '<article><h1>Title</h1><div data-rwa-frozen><p>locked</p></div><p>edited</p></article>');
+});
+
+test('attribute-form: changing a non-frozen attribute ON the frozen element is rejected', () => {
+  // outerHTML includes the element's attributes, so an id change is a drift too.
+  const doc = '<article><div data-rwa-frozen id="a">x</div></article>';
+  assert.throws(
+    () => applyEdits(doc, [{ find: 'id="a"', replace: 'id="b"' }]),
+    err => err.code === 'frozen_zone_violation',
+  );
+});
+
+test('attribute-form: matching close tag is found through nested same-tag elements', () => {
+  // Depth-tracking: a naive "next </div>" would stop early and under-protect.
+  const doc = '<article><div data-rwa-frozen><div>inner</div></div><p>after</p></article>';
+  assert.throws(
+    () => applyEdits(doc, [{ find: 'inner', replace: 'changed' }]),
+    err => err.code === 'frozen_zone_violation',
+  );
+  // …while content after the frozen element stays editable.
+  assert.match(applyEdits(doc, [{ find: 'after', replace: 'tail' }]), /tail/);
+});
+
+test('attribute-form: a document with no data-rwa-frozen is unaffected (regression)', () => {
+  const doc = '<article><h1>Plain</h1><p>body</p></article>';
+  assert.equal(applyEdits(doc, [{ find: 'body', replace: 'text' }]), '<article><h1>Plain</h1><p>text</p></article>');
 });

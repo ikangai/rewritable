@@ -13,7 +13,7 @@
 //                         from the underlying modules.
 
 import { readFile, open, rename, unlink } from 'node:fs/promises';
-import { applyEdits, RwaEditError, findFrozenZones, FAILURE_HINTS } from './apply-edits.mjs';
+import { applyEdits, RwaEditError, findFrozenZones, dataRwaFrozenSnapshot, FAILURE_HINTS } from './apply-edits.mjs';
 import { compileDslPlan } from './dsl-compiler.mjs';
 import { extractInlineDoc, replaceInlineDoc } from './seed.mjs';
 
@@ -34,6 +34,34 @@ export class CliError extends Error {
 
 // Inspect the envelope's discriminator set and assert version invariants.
 // Returns the canonical tool name on success.
+// Frozen-zone preservation for wholesale-replacement paths (replace_document and
+// the DSL escape op) — the equivalent of the guards applyEdits runs on the
+// find/replace path. MARKER-form zones must survive byte-identically by name
+// (mirror of seed replaceDocument ~:2938); the set of ATTRIBUTE-form
+// data-rwa-frozen elements must be unchanged (snapshot equality, mirror of seed
+// dataRwaFrozenSnapshot :2971). Without this the escape hatch would let an agent
+// drift a frozen self-description declaration that apply_edits protects.
+function assertFrozenPreserved(currentDoc, newDoc) {
+  const oldByName = new Map(findFrozenZones(currentDoc).map(z => [z.name, currentDoc.slice(z.start, z.end)]));
+  const newByName = new Map(findFrozenZones(newDoc).map(z => [z.name, newDoc.slice(z.start, z.end)]));
+  for (const [name, originalBytes] of oldByName) {
+    if (!newByName.has(name) || newByName.get(name) !== originalBytes) {
+      throw new CliError(3, 'frozen_zone_violation', {
+        zone: name,
+        reason: 'replace_document must preserve frozen zones byte-identically',
+      });
+    }
+  }
+  const a = dataRwaFrozenSnapshot(currentDoc);
+  const b = dataRwaFrozenSnapshot(newDoc);
+  if (a.length !== b.length || a.some((x, i) => x !== b[i])) {
+    throw new CliError(3, 'frozen_zone_violation', {
+      form: 'attribute',
+      reason: 'replace_document must preserve data-rwa-frozen elements byte-identically',
+    });
+  }
+}
+
 function validateEnvelope(env) {
   if (typeof env !== 'object' || env === null || Array.isArray(env)) {
     throw new CliError(3, 'not_an_object');
@@ -109,26 +137,7 @@ export async function applyPlan(filePath, envelope) {
   let newDoc;
   if (shape === 'replace_document') {
     newDoc = envelope.doc;
-    // Frozen-zone preservation. Mirror of bootstrap replaceDocument
-    // (seeds/rewritable.html ~line 2938-2945): every marker-form zone
-    // present in `currentDoc` must also exist in the replacement with
-    // byte-identical inner content. Covers marker form only (consistent
-    // with Task 2's scope-down — attribute-form `data-rwa-frozen` zones
-    // are deferred until the CLI gains a real HTML parser).
-    const oldZones = findFrozenZones(currentDoc);
-    const newZones = findFrozenZones(newDoc);
-    // Build name → full-zone-bytes maps (inclusive of the begin/end markers)
-    // off each doc so we can compare contents.
-    const oldByName = new Map(oldZones.map(z => [z.name, currentDoc.slice(z.start, z.end)]));
-    const newByName = new Map(newZones.map(z => [z.name, newDoc.slice(z.start, z.end)]));
-    for (const [name, originalBytes] of oldByName) {
-      if (!newByName.has(name) || newByName.get(name) !== originalBytes) {
-        throw new CliError(3, 'frozen_zone_violation', {
-          zone: name,
-          reason: 'replace_document must preserve frozen zones byte-identically',
-        });
-      }
-    }
+    assertFrozenPreserved(currentDoc, newDoc);
   } else if (shape === 'apply_dsl_plan') {
     let compiled;
     try {
@@ -138,6 +147,7 @@ export async function applyPlan(filePath, envelope) {
     }
     if (compiled.tool === 'replace_document') {
       newDoc = compiled.envelope.doc;
+      assertFrozenPreserved(currentDoc, newDoc); // the DSL escape op must not bypass frozen zones either
     } else {
       try {
         newDoc = applyEdits(currentDoc, compiled.envelope.edits);

@@ -11,12 +11,17 @@
 //      marker-form frozen zone. The plan (Task 4/5 dispatch) is keyed on
 //      these distinct codes.
 //   2. Seed enforces `data-rwa-frozen` attribute-form zones via a DOMParser
-//      snapshot of [data-rwa-frozen] elements. CLI v1 is parser-free
-//      (offline-first, no jsdom) and covers MARKER-FORM ONLY. Reserved-
-//      substring detection still blocks edits that mention `data-rwa-frozen`
-//      literally — the primary attack surface — but text inside an
-//      attribute-form frozen element is not yet guarded. Tracked as xfail
-//      in tests/apply-edits.test.mjs.
+//      snapshot of [data-rwa-frozen] elements. The CLI mirrors that guard
+//      parser-free (offline-first, no jsdom): `dataRwaFrozenSnapshot` captures
+//      each frozen element as `tag\0outerHTML` (sorted), and applyEdits rejects
+//      a batch that changes the set (`frozen_zone_violation`, `form:'attribute'`)
+//      — covering BOTH marker-form and attribute-form now. Reserved-substring
+//      detection still blocks edits that mention `data-rwa-frozen` literally.
+//      The seed's DOMParser handles edge cases (a `>` inside a quoted attribute
+//      value) that the CLI's pragmatic regex matcher does not; the before/after
+//      snapshot is relative, so a consistent mis-parse of an UNCHANGED element
+//      still compares equal. KEEP IN STEP with the seed (dataRwaFrozenSnapshot
+//      :2971).
 //   3. Seed's structural-shape check uses DOMParser + executable-script-
 //      type filtering + top-level-tag-types set. CLI v1 uses regex counting
 //      of <script>/<style> tags — enough to catch the realistic accidental-
@@ -37,8 +42,6 @@
 //   - Class-lock violation check (class_lock_violation / class_lock_uncovered)
 //   - Reserved-id violation (reserved_id_used) — including data-rwa-id injection
 //   - HTML parse-validity post-apply (parse_error_post_apply)
-//   - data-rwa-frozen snapshot equality (attribute-form frozen zone preservation)
-//     [already partially noted; here for completeness]
 
 export class RwaEditError extends Error {
   constructor(code, editIndex = null, context = {}) {
@@ -217,6 +220,61 @@ function editCrossesFrozenZone(doc, find, zones) {
   return null;
 }
 
+// Void HTML elements have no closing tag, so the depth-matcher below must not
+// scan to EOF looking for a close that never comes.
+const VOID_ELEMENTS = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img',
+  'input', 'link', 'meta', 'param', 'source', 'track', 'wbr']);
+
+// Index just past the matching `</tag>` for an element opened at `from`,
+// tracking nested same-tag depth so a naive "next close" can't stop early.
+// -1 if unterminated.
+function matchingCloseEnd(doc, tag, from) {
+  const tagRe = new RegExp('<(/?)' + tag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b[^>]*>', 'gi');
+  tagRe.lastIndex = from;
+  let depth = 1, t;
+  while ((t = tagRe.exec(doc)) !== null) {
+    if (t[1] === '/') { if (--depth === 0) return t.index + t[0].length; }
+    else if (!/\/>\s*$/.test(t[0])) depth++; // a self-closing open doesn't nest
+  }
+  return -1;
+}
+
+// Parser-free mirror of the seed's dataRwaFrozenSnapshot (seeds/rewritable.html
+// :2971): each data-rwa-frozen element captured as `tagName\0outerHTML`, sorted.
+// applyEdits compares this before/after to reject ANY change (inner text,
+// attributes, add/remove) to an attribute-form frozen element — position-
+// independent (sorted; outerHTML self-contained), batch-level like the seed.
+//
+// The seed uses DOMParser; the CLI stays parser-free (offline-first, no jsdom),
+// so this is a pragmatic regex + tag-depth matcher. Edge cases a real parser
+// handles (a literal `>` inside a quoted attribute value, a tag name inside a
+// comment/string) are out of v1 scope — but because the check is a RELATIVE
+// before/after snapshot, a consistent mis-parse of an UNCHANGED frozen element
+// still compares equal, and the conservative failure direction (false-positive
+// rejection) is the safe one for a frozen-zone guard. KEEP IN STEP with the seed.
+export function dataRwaFrozenSnapshot(doc) {
+  const out = [];
+  const openRe = /<([a-zA-Z][A-Za-z0-9-]*)\b[^>]*\bdata-rwa-frozen\b[^>]*>/g;
+  let m;
+  while ((m = openRe.exec(doc)) !== null) {
+    const tag = m[1].toLowerCase();
+    const openTag = m[0];
+    if (VOID_ELEMENTS.has(tag) || /\/>\s*$/.test(openTag)) {
+      out.push(tag + '\0' + openTag); // self-contained: no inner, no close
+      continue;
+    }
+    const closeEnd = matchingCloseEnd(doc, tag, m.index + openTag.length);
+    out.push(tag + '\0' + (closeEnd === -1 ? doc.slice(m.index) : doc.slice(m.index, closeEnd)));
+  }
+  return out.sort();
+}
+
+function snapshotsEqual(a, b) {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
+
 // Structural-shape check (rwa-edit-spec.md §7).
 // CLI v1: regex count of <script> and <style> tags. The seed additionally
 // tracks top-level tag-types-set and exempts non-executable scripts
@@ -237,6 +295,9 @@ export function applyEdits(doc, edits) {
 
   const before = structuralShape(doc);
   const zones = findFrozenZones(doc);
+  // Attribute-form frozen zones (data-rwa-frozen) are enforced batch-level by
+  // snapshot equality (see dataRwaFrozenSnapshot), mirroring the seed.
+  const frozenAttr = dataRwaFrozenSnapshot(doc);
 
   let working = doc;
   for (let i = 0; i < edits.length; i++) {
@@ -283,6 +344,14 @@ export function applyEdits(doc, edits) {
       before: zones.length,
       after: newZones.length,
     });
+  }
+
+  // Attribute-form frozen zones: the set of data-rwa-frozen elements (by
+  // tag+outerHTML) must be unchanged after the whole batch — mirrors the seed's
+  // dataRwaFrozenSnapshot/snapshotsEqual guard. Reported as frozen_zone_violation
+  // (the FAILURE_HINTS message already covers "author-protected frozen zone").
+  if (!snapshotsEqual(frozenAttr, dataRwaFrozenSnapshot(working))) {
+    throw new RwaEditError('frozen_zone_violation', null, { form: 'attribute' });
   }
 
   return working;

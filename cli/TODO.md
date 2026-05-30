@@ -7,7 +7,7 @@ These items were surfaced during code review of the initial `rwa edit` implement
 The CLI's `replace_document` branch checks frozen-zone preservation (marker-form) but does NOT check:
 - Zone count match between current and new doc (a `replace_document` that ADDS a new zone passes the CLI but would be rejected by the seed runtime)
 - Unterminated marker detection (a stray `<!-- rwa:frozen:begin orphan -->` without a matching end passes the CLI)
-- Attribute-form `data-rwa-frozen` preservation (consistent with Task 2's scope-down — same gap)
+- ~~Attribute-form `data-rwa-frozen` preservation~~ — **DONE** (2026-05-30): `replace_document` (and the DSL escape op) now enforce attribute-form frozen elements via `assertFrozenPreserved` → `dataRwaFrozenSnapshot`.
 - HTML well-formedness (lone surrogate / parse validity)
 - Class-lock coverage
 - Reserved-id violation
@@ -65,7 +65,7 @@ Beyond the three documented scope-downs (structural-shape regex, marker-form-onl
 - **Class-lock checks** — `class_lock_violation`, `class_lock_uncovered`. CLI doesn't enforce.
 - **Reserved-id violation** — `reserved_id_used`. CLI doesn't enforce. A model can inject arbitrary `data-rwa-id` values (e.g. `<article data-rwa-id="hacked">`); the runtime backfills on next commit but these shadow runtime-assigned IDs until then.
 - **`parse_error_post_apply`** — seed parses the post-apply doc as HTML and rejects on parse error. CLI relies on `structural_shape_changed` (script/style count) which is a weaker check.
-- **`data-rwa-frozen` attribute-form preservation** — currently tracked as a `test.todo` in `apply-edits.test.mjs`; listing here for completeness.
+- ~~**`data-rwa-frozen` attribute-form preservation**~~ — **DONE** (2026-05-30): `applyEdits` + `replace_document` (+ DSL escape) now enforce attribute-form frozen elements via the parser-free `dataRwaFrozenSnapshot` snapshot guard (`frozen_zone_violation`, `form:'attribute'`), mirroring the seed. Tests: `apply-edits.test.mjs`, `edit-plan.test.mjs`.
 
 ## Cross-cutting — apply-time tool_result feedback in agent loop
 

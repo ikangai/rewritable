@@ -315,6 +315,38 @@ test('replace_document with intact frozen zone succeeds', async () => {
   } finally { fx.cleanup(); }
 });
 
+// ─── replace_document must preserve ATTRIBUTE-form frozen zones too ─────
+// The escape hatch must not become a frozen-zone bypass: a file that declares
+// its self-knowledge in a frozen `<… data-rwa-frozen>` block (tesla's datatable
+// #rwa-affordances) must stay un-driftable through replace_document, just as it
+// is through apply_edits.
+
+test('frozen_zone_violation — replace_document drifts an attribute-form data-rwa-frozen element', async () => {
+  const fx = mkFixture('<article>a<div data-rwa-frozen><p>locked</p></div>z</article>');
+  try {
+    await assert.rejects(
+      applyPlan(fx.path, {
+        version: 'rwa-edit/1',
+        doc: '<article>a<div data-rwa-frozen><p>tampered</p></div>z</article>',
+        reason: 'drift the frozen element',
+      }),
+      err => err.exitCode === 3 && err.subcode === 'frozen_zone_violation',
+    );
+  } finally { fx.cleanup(); }
+});
+
+test('replace_document preserving the attribute-form frozen element succeeds', async () => {
+  const fx = mkFixture('<article>a<div data-rwa-frozen><p>locked</p></div>z</article>');
+  try {
+    const result = await applyPlan(fx.path, {
+      version: 'rwa-edit/1',
+      doc: '<article>NEW<div data-rwa-frozen><p>locked</p></div>NEW</article>',
+      reason: 'replace surrounding only',
+    });
+    assert.equal(result.exitCode, 0);
+  } finally { fx.cleanup(); }
+});
+
 // ─── Regression: I-2 — non-ENOENT read errors mislabeled as not_found ─
 // EACCES (and other non-ENOENT codes) used to map to `not_found`, which
 // misleads users about why the read failed. Now they surface as
