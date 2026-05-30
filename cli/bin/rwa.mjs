@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { newCmd, importCmd, version, KNOWN_KINDS } from '../src/commands.mjs';
+import { resolveApiKey } from '../src/backend.mjs';
 
 const HELP = `rwa — single-file re-writeable documents
 
@@ -90,8 +91,8 @@ Flags:
                  lmstudio → http://localhost:1234/v1 (or
                  \$RWA_LMSTUDIO_URL).
   --api-key <k>  (edit only, instruction path) API key for the backend.
-                 Openrouter: required, falls back to
-                 \$RWA_OPENROUTER_KEY. Other backends ignore this flag.
+                 Openrouter: required, falls back to \$RWA_OPENROUTER_KEY
+                 then \$OPENROUTER_API_KEY. Other backends ignore this flag.
   --version      print version and exit
   --help, -h     this help
 
@@ -184,16 +185,6 @@ function envBaseUrl(name) {
     case 'openrouter': return 'https://openrouter.ai/api/v1';
     case 'ollama':     return process.env.RWA_OLLAMA_URL || 'http://localhost:11434/v1';
     case 'lmstudio':   return process.env.RWA_LMSTUDIO_URL || 'http://localhost:1234/v1';
-    default:           return undefined;
-  }
-}
-
-// Only openrouter requires a key — ollama and lmstudio run locally without
-// auth. Pull from RWA_OPENROUTER_KEY (env conventions match the docker-
-// compose deploy in service/).
-function envApiKey(name) {
-  switch (name) {
-    case 'openrouter': return process.env.RWA_OPENROUTER_KEY;
     default:           return undefined;
   }
 }
@@ -319,7 +310,7 @@ function detectProductKind(fileText) {
         const backendName = backendFlag.value || process.env.RWA_BACKEND || 'openrouter';
         const modelId     = modelFlag.value   || process.env.RWA_MODEL   || 'google/gemini-3.5-flash';
         const baseUrl     = baseUrlFlag.value || envBaseUrl(backendName);
-        const apiKey      = apiKeyFlag.value  || envApiKey(backendName);
+        const apiKey      = resolveApiKey(backendName, apiKeyFlag.value);
 
         // Reject unknown backends fast. `bridge` is browser-only by design
         // (single-shot via web_cli_bridge); the CLI has no equivalent.
