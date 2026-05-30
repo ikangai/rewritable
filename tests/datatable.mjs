@@ -133,12 +133,15 @@ function editCell(r, c, value) {
   check('live describe() reports the REGISTERED compute:total', liveKN.includes('compute:total'));
   check('live describe() validates against the oracle', validateSelfDescription(live).valid);
   const declKN = new Set(manifest.affordances.map(a => a.kind + ':' + a.name));
-  check('live registry registered exactly the 2 real providers (non-empty — so the subset check below is not vacuously true)',
-    live.affordances.length === 2);
-  check('parity: every LIVE-registered affordance also appears in the declaration (registry ⊆ declared, no drift)',
-    live.affordances.every(a => declKN.has(a.kind + ':' + a.name)));
-  check('declaration is the superset — the 2 in-doc views are declared, not (yet) live providers',
-    declKN.has('view:grid') && declKN.has('view:summary') && !liveKN.includes('view:grid'));
+  // Non-vacuous + forward-compatible with euler's "registry ∪ declaration" union
+  // follow-up: TODAY live = the 2 registered providers; once the union lands, live
+  // also carries the 2 declared-only views (author-claimed, verified:false). Both
+  // registered providers are asserted present above (regime-independent), and the
+  // parity invariant `live ⊆ declaration` (no drift) holds in BOTH regimes.
+  check('parity: live describe() is non-empty and ⊆ declaration (no drift — holds pre- or post-union)',
+    live.affordances.length > 0 && live.affordances.every(a => declKN.has(a.kind + ':' + a.name)));
+  check('the 2 in-doc views are in the declaration (declared today; euler\'s union may also surface them live)',
+    declKN.has('view:grid') && declKN.has('view:summary'));
   // The declaration sits in a data-rwa-frozen zone so the agent/lens edit path
   // can't silently drift the file's self-knowledge (newton + euler's constraint).
   // The runtime rejects any edit that mutates the frozen #rwa-affordances block.
