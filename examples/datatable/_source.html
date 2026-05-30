@@ -62,7 +62,7 @@
 
   <script type="application/rwa-affordances+json" id="rwa-affordances" data-rwa-frozen="affordances">
 {
-  "schema": "self-description/1",
+  "rwa": "self-description/1",
   "source": "declared",
   "kind": "datatable",
   "title": "Q1 2026 — Marketing Budget",
@@ -73,8 +73,7 @@
     { "kind": "edit-surface", "name": "cell",    "label": "Edit cells directly (no model)", "provenance": "first-party", "surface": "datatable:cell-edit", "target": "#dt-data" },
     { "kind": "compute",      "name": "total",   "label": "Total = qty × unit_price", "provenance": "first-party", "inputs": ["qty", "unit_price"], "output": "total" }
   ],
-  "frozenZones": [],
-  "baseline": { "edit": ["lens"], "view": ["document"], "export": ["html", "print"], "history": true }
+  "baseline": { "edit": ["lens"], "tools": ["apply_dsl_plan", "apply_edits", "replace_document"], "export": ["html", "print"], "history": ["undo"] }
 }
   </script>
 
@@ -147,13 +146,13 @@
     // the previous one's SETTLED promise (window-scoped so it survives the
     // re-render that re-runs this script), and read the stored block INSIDE the
     // continuation so each edit sees the prior commit's result.
-    function commitRows(mutate, instruction) {
+    function commitRows(mutate, instruction, actor) {
       var prev = window.__dtBusy || Promise.resolve();
-      var run = prev.then(function () { return doCommit(mutate, instruction); });
+      var run = prev.then(function () { return doCommit(mutate, instruction, actor); });
       window.__dtBusy = run.catch(function () {});   // swallow so the chain survives a failure
       return run;
     }
-    async function doCommit(mutate, instruction) {
+    async function doCommit(mutate, instruction, actor) {
       var inner = storedDataBlock();
       if (inner == null) { status('cannot locate #dt-data'); return; }
       var rows;
@@ -170,7 +169,7 @@
       if (replacement.toLowerCase().indexOf(CLOSE_TAG) !== -1) { status('a value contains a script-close tag — not allowed'); return; }
       if (!window.runtime || typeof window.runtime.applyEnvelope !== 'function') { status('runtime unavailable'); return; }
       var envelope = { version: 'rwa-edit/1', edits: [{ find: inner, replace: replacement }] };
-      var opts = { surface: SURFACE, instruction: instruction || 'edit datatable' };
+      var opts = { surface: SURFACE, instruction: instruction || 'edit datatable', actor: actor || 'user:cell' };
       // Bounded retry only for concurrent_modify (e.g. the AI lens committing at
       // the same instant) — the envelope is unchanged, so it's safe to re-send.
       for (var attempt = 0; attempt < 4; attempt++) {
@@ -236,14 +235,14 @@
       commitRows(function (rows) {
         rows.push({ category: 'New', item: 'New line item', qty: 1, unit_price: 0 });
         return rows;
-      }, 'add a row');
+      }, 'add a row', 'user:row');                 // structural op → row actor, not cell
     }
     function delRow(ri) {
       commitRows(function (rows) {
         if (!rows[ri]) return false;
         rows.splice(ri, 1);
         return rows;
-      }, 'delete row ' + (ri + 1));
+      }, 'delete row ' + (ri + 1), 'user:row');      // structural op → row actor, not cell
     }
 
     function viewMode() { return window.__dtView === 'summary' ? 'summary' : 'grid'; }
@@ -311,6 +310,23 @@
       var cell = e.target.closest && e.target.closest('.dt-cell');
       if (cell && !cell.querySelector('input')) { e.preventDefault(); e.stopPropagation(); beginEdit(cell); }
     });
+
+    // Register this file's real affordances with the runtime so describe()
+    // reports them LIVE (the verified registry), not just the kind→providers
+    // guess. edit-surface/compute are declarative records — this IIFE owns the
+    // actual edit/compute logic; the provider just makes the runtime report it.
+    // The two VIEWS (grid/summary) stay declared-only (they're in-doc renders,
+    // not setView view-providers), so #rwa-affordances remains the superset:
+    // live describe() ⊆ declaration. Guarded — the IIFE re-runs on every
+    // renderDoc, and a pre-kernel-ext seed (no provide for these kinds) degrades
+    // silently to the declaration alone.
+    if (!window.__dtProvided && window.runtime && typeof window.runtime.provide === 'function') {
+      try {
+        window.runtime.provide('edit-surface', { kind: 'edit-surface', name: 'cell', label: 'Edit cells directly (no model)' });
+        window.runtime.provide('compute', { kind: 'compute', name: 'total', label: 'Total = qty × unit_price' });
+        window.__dtProvided = true;   // set ONLY after BOTH succeed; a partial throw leaves it false → retries next render (provide is idempotent per slot)
+      } catch (e) { /* pre-Step-5 seed: provider slots absent — declaration still describes the file */ }
+    }
 
     render();
   })();

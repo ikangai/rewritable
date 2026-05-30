@@ -17,6 +17,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { validateSelfDescription } from '../tools/self-description.mjs';
 
 const { JSDOM, VirtualConsole } = jsdomPkg;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -110,12 +111,34 @@ function editCell(r, c, value) {
   // ── Self-description: the file knows what it is (readable without running JS),
   // shaped to the ratified self-description/1 contract (bohr's RFC).
   const manifest = JSON.parse(document.getElementById('rwa-affordances').textContent);
-  check('manifest is schema "self-description/1"', manifest.schema === 'self-description/1');
+  check('manifest discriminator is rwa:"self-description/1" (v1.1)', manifest.rwa === 'self-description/1');
+  check('manifest source is "declared" (the embedded author projection, §3.1)', manifest.source === 'declared');
+  check('declaration VALIDATES against the self-description/1 oracle', validateSelfDescription(manifest).valid);
   check('declares kind "datatable"', manifest.kind === 'datatable');
   check('affordances are the type-added providers (2×view + edit-surface + compute; no substrate-universals)',
     manifest.affordances.map(a => a.kind).sort().join(',') === 'compute,edit-surface,view,view');
   check('every declared affordance carries kind + name + provenance (Provider shape)',
     manifest.affordances.every(a => a.kind && a.name && a.provenance === 'first-party'));
+
+  // ── LIVE registry (Step 6): the datatable REGISTERS its real edit-surface +
+  // compute affordances via runtime.provide, so runtime.describe() reports them
+  // LIVE (the verified registry) — not the kind→providers guess. The two views
+  // stay declared-only (in-doc renders, not setView providers), so the live
+  // registry is a strict SUBSET of the declaration — honest by construction, no
+  // drift (the gap this lane was built to close, now closed via the registry).
+  const live = window.runtime.describe();
+  const liveKN = live.affordances.map(a => a.kind + ':' + a.name);
+  check('describe().source is "live"', live.source === 'live');
+  check('live describe() reports the REGISTERED edit-surface:cell', liveKN.includes('edit-surface:cell'));
+  check('live describe() reports the REGISTERED compute:total', liveKN.includes('compute:total'));
+  check('live describe() validates against the oracle', validateSelfDescription(live).valid);
+  const declKN = new Set(manifest.affordances.map(a => a.kind + ':' + a.name));
+  check('live registry registered exactly the 2 real providers (non-empty — so the subset check below is not vacuously true)',
+    live.affordances.length === 2);
+  check('parity: every LIVE-registered affordance also appears in the declaration (registry ⊆ declared, no drift)',
+    live.affordances.every(a => declKN.has(a.kind + ':' + a.name)));
+  check('declaration is the superset — the 2 in-doc views are declared, not (yet) live providers',
+    declKN.has('view:grid') && declKN.has('view:summary') && !liveKN.includes('view:grid'));
   // The declaration sits in a data-rwa-frozen zone so the agent/lens edit path
   // can't silently drift the file's self-knowledge (newton + euler's constraint).
   // The runtime rejects any edit that mutates the frozen #rwa-affordances block.
@@ -148,6 +171,8 @@ function editCell(r, c, value) {
   check('hist record is an edit_batch', histAfter[0] && histAfter[0].kind === 'edit_batch');
   check('hist record is surface-labelled "datatable:cell-edit" (audited as client-driven, not agent)',
     histAfter[0] && histAfter[0].surface === 'datatable:cell-edit');
+  check('hist record self-attributes actor:"user:cell" (R5 actor passthrough — not the hardcoded user:lens)',
+    histAfter[0] && histAfter[0].actor === 'user:cell');
 
   // ── Undo reverts the cell AND the derived total (Compute can't drift).
   await window.runtime.undo(); await settle();
@@ -166,6 +191,9 @@ function editCell(r, c, value) {
   document.querySelector('.dt-add').dispatchEvent(new window.MouseEvent('click', { bubbles: true })); await settle();
   check('add-row appends a row through applyEnvelope', storedRows().length === 7);
   check('new row total computes to $0 (qty 1 × unit 0)', totalCellText(6) === '$0');
+  const histAddRow = (await readStore('rwa_hist')) || [];
+  check('add-row self-attributes actor:"user:row" (structural op — honestly distinct from user:cell)',
+    histAddRow[0] && histAddRow[0].actor === 'user:row');
 
   // ── Text edit (Item column) — non-numeric path; rapid succession after a
   // commit (exercises the serialized commit chain, not just a lone edit).

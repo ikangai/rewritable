@@ -14,13 +14,21 @@ affordances on one self-rewriting page, served to both humans and agents:
 | **Compute** | the **Total** column + grand total | pure derivation at render — never stored, so it can't drift |
 | **Tool** | an agent edits rows via the `rwa-edit/1` contract | `rwa edit` / the lens, operating on `#dt-data` |
 
-It **declares** these in a machine-readable `#rwa-affordances` block shaped toward
-the [`self-description/1`](../../docs/specs/rwa-self-description-spec.md) contract —
-so an agent (or a future runtime introspector) can learn what the file is *without
-executing any JavaScript*. The block carries `data-rwa-frozen`, so the runtime/lens
-edit path can't silently drift the file's self-knowledge. (The exact declaration
-schema — and whether a reader should prefer a declaration over the kind-template —
-is being ratified by the team as `self-description/1` v1.1; this block tracks it.)
+It **declares** these in a machine-readable `#rwa-affordances` block — a
+[`self-description/1`](../../docs/specs/rwa-self-description-spec.md) `declared`
+projection (v1.1), readable with no JavaScript and validated by the contract's
+oracle. The block carries `data-rwa-frozen`, so the runtime/lens edit path can't
+silently drift the file's self-knowledge (the CLI enforces attribute-form frozen
+zones too).
+
+It also **registers** its edit-surface + compute affordances live via
+`runtime.provide(…)`, so `runtime.describe()` reports them from the *verified
+registry* — not the kind-template guess. The two views stay declared-only (they're
+in-doc renders, not `setView` providers), so the declaration is the honest superset:
+**live registry ⊆ declaration, no drift.** That closes the truthfulness gap this
+example was built to surface — the registry is the live source, the declaration the
+static bridge for readers (`rwa doc` / `rwa ls`) that can't run JS. Direct edits
+also self-attribute in history as `actor: "user:cell"` (R5 actor passthrough).
 
 ## Try it
 
@@ -45,10 +53,17 @@ self-description contract is validated against.
 Two robustness lessons it surfaced (now handled here, worth folding into the
 substrate guidance for any interactive rewritable):
 
-1. **Serialize direct edits.** The runtime frees its modify mutex *after*
-   re-render, so a fast second edit can hit `concurrent_modify`. The lens never
-   does (its UI serializes input); a datatable with rapid typing will. The fix is
-   a per-document commit queue (`window.__dtBusy` here) + a bounded retry.
+1. **Serialize direct edits — still needed after R5.** Originally this dodged
+   `concurrent_modify` (the runtime freed its modify mutex *after* re-render).
+   R5 (`ccef441`) moved commit-serialization into the runtime, but `window.__dtBusy`
+   is **not** redundant for this consumer: each edit is a *whole-block* `find`/
+   `replace` on `#dt-data`, and the `find` anchor is read from
+   `getCurrentDocCache()` at commit time. R5's queue serializes *commits* but does
+   not re-read a queued caller's anchor — so two un-chained whole-block edits would
+   make the second's `find` stale (`find_not_found`). `__dtBusy` chains
+   *read-then-commit*, recomputing the anchor after each commit. (R5's own
+   characterization test passes without consumer chaining only because its edits
+   are *disjoint* anchors, not whole-block rewrites.)
 2. **No raw `</script` in document scripts.** `escapeForTL` protects the
    *bootstrap's* template literal, but template-literal evaluation restores the
    sequence in the runtime doc text — which then closes an inner `<script>` when
@@ -70,11 +85,13 @@ rewrites its own `INLINE_DOC`, so the two diverge by design.
 ## Test
 
 ```sh
-cd tests && node datatable.mjs        # jsdom + fake-indexeddb, 25 assertions
+cd tests && node datatable.mjs        # jsdom + fake-indexeddb, 41 assertions
 ```
 
 Drives a real cell edit through `applyEnvelope` and asserts persistence into
-`rwa_doc`, a surface-labelled `rwa_hist` record, compute-column consistency, undo,
-input veto, add-row, the agent Tool path (`rwa edit` → `rwa doc`), and the
-self-description manifest shape. Also smoke-tested in a real browser (Chrome +
-real IndexedDB).
+`rwa_doc`, a surface-labelled `rwa_hist` record with `actor:"user:cell"`,
+compute-column consistency, undo, input veto, add-row, a rapid-edit burst, the
+agent Tool path (`rwa edit` → `rwa doc`), the frozen-declaration tamper rejection,
+the declaration's oracle validity, and **live ⇄ declared parity** (the registered
+`describe()` affordances are a subset of the declaration — no drift). Also
+smoke-tested in a real browser (Chrome + real IndexedDB).

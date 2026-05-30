@@ -273,7 +273,7 @@ const LENS_CLICK_TO_ANCHOR = true;
 // The nil UUID below is a sentinel — the /new service substitutes a fresh
 // crypto.randomUUID() at request time. If a downloaded file still has all
 // zeros here, the substitution failed and isolation is broken.
-const DOC_UUID = '5d11c51e-6967-4bc4-8f6d-5468d672bc4b';
+const DOC_UUID = '5d0c037f-760b-454f-81ea-7b26ec8db12d';
 
 // === PRODUCT: INLINE_DOC stub === (see PRODUCT HEADER above for kind)
 // The document — a frozen snapshot, hydrated into IndexedDB on first open
@@ -338,7 +338,7 @@ const INLINE_DOC = `<style>
 
   <script type="application/rwa-affordances+json" id="rwa-affordances" data-rwa-frozen="affordances">
 {
-  "schema": "self-description/1",
+  "rwa": "self-description/1",
   "source": "declared",
   "kind": "datatable",
   "title": "Q1 2026 — Marketing Budget",
@@ -349,8 +349,7 @@ const INLINE_DOC = `<style>
     { "kind": "edit-surface", "name": "cell",    "label": "Edit cells directly (no model)", "provenance": "first-party", "surface": "datatable:cell-edit", "target": "#dt-data" },
     { "kind": "compute",      "name": "total",   "label": "Total = qty × unit_price", "provenance": "first-party", "inputs": ["qty", "unit_price"], "output": "total" }
   ],
-  "frozenZones": [],
-  "baseline": { "edit": ["lens"], "view": ["document"], "export": ["html", "print"], "history": true }
+  "baseline": { "edit": ["lens"], "tools": ["apply_dsl_plan", "apply_edits", "replace_document"], "export": ["html", "print"], "history": ["undo"] }
 }
   <\/script>
 
@@ -423,13 +422,13 @@ const INLINE_DOC = `<style>
     // the previous one's SETTLED promise (window-scoped so it survives the
     // re-render that re-runs this script), and read the stored block INSIDE the
     // continuation so each edit sees the prior commit's result.
-    function commitRows(mutate, instruction) {
+    function commitRows(mutate, instruction, actor) {
       var prev = window.__dtBusy || Promise.resolve();
-      var run = prev.then(function () { return doCommit(mutate, instruction); });
+      var run = prev.then(function () { return doCommit(mutate, instruction, actor); });
       window.__dtBusy = run.catch(function () {});   // swallow so the chain survives a failure
       return run;
     }
-    async function doCommit(mutate, instruction) {
+    async function doCommit(mutate, instruction, actor) {
       var inner = storedDataBlock();
       if (inner == null) { status('cannot locate #dt-data'); return; }
       var rows;
@@ -446,7 +445,7 @@ const INLINE_DOC = `<style>
       if (replacement.toLowerCase().indexOf(CLOSE_TAG) !== -1) { status('a value contains a script-close tag — not allowed'); return; }
       if (!window.runtime || typeof window.runtime.applyEnvelope !== 'function') { status('runtime unavailable'); return; }
       var envelope = { version: 'rwa-edit/1', edits: [{ find: inner, replace: replacement }] };
-      var opts = { surface: SURFACE, instruction: instruction || 'edit datatable' };
+      var opts = { surface: SURFACE, instruction: instruction || 'edit datatable', actor: actor || 'user:cell' };
       // Bounded retry only for concurrent_modify (e.g. the AI lens committing at
       // the same instant) — the envelope is unchanged, so it's safe to re-send.
       for (var attempt = 0; attempt < 4; attempt++) {
@@ -512,14 +511,14 @@ const INLINE_DOC = `<style>
       commitRows(function (rows) {
         rows.push({ category: 'New', item: 'New line item', qty: 1, unit_price: 0 });
         return rows;
-      }, 'add a row');
+      }, 'add a row', 'user:row');                 // structural op → row actor, not cell
     }
     function delRow(ri) {
       commitRows(function (rows) {
         if (!rows[ri]) return false;
         rows.splice(ri, 1);
         return rows;
-      }, 'delete row ' + (ri + 1));
+      }, 'delete row ' + (ri + 1), 'user:row');      // structural op → row actor, not cell
     }
 
     function viewMode() { return window.__dtView === 'summary' ? 'summary' : 'grid'; }
@@ -587,6 +586,23 @@ const INLINE_DOC = `<style>
       var cell = e.target.closest && e.target.closest('.dt-cell');
       if (cell && !cell.querySelector('input')) { e.preventDefault(); e.stopPropagation(); beginEdit(cell); }
     });
+
+    // Register this file's real affordances with the runtime so describe()
+    // reports them LIVE (the verified registry), not just the kind→providers
+    // guess. edit-surface/compute are declarative records — this IIFE owns the
+    // actual edit/compute logic; the provider just makes the runtime report it.
+    // The two VIEWS (grid/summary) stay declared-only (they're in-doc renders,
+    // not setView view-providers), so #rwa-affordances remains the superset:
+    // live describe() ⊆ declaration. Guarded — the IIFE re-runs on every
+    // renderDoc, and a pre-kernel-ext seed (no provide for these kinds) degrades
+    // silently to the declaration alone.
+    if (!window.__dtProvided && window.runtime && typeof window.runtime.provide === 'function') {
+      try {
+        window.runtime.provide('edit-surface', { kind: 'edit-surface', name: 'cell', label: 'Edit cells directly (no model)' });
+        window.runtime.provide('compute', { kind: 'compute', name: 'total', label: 'Total = qty × unit_price' });
+        window.__dtProvided = true;   // set ONLY after BOTH succeed; a partial throw leaves it false → retries next render (provide is idempotent per slot)
+      } catch (e) { /* pre-Step-5 seed: provider slots absent — declaration still describes the file */ }
+    }
 
     render();
   })();
@@ -1135,7 +1151,7 @@ async function runtimeUndo() { return undo(); }
 async function runtimeApplyEnvelope(envelope, options) {
   options = options || {};
   if (!envelope || typeof envelope !== 'object') throw new TypeError('runtime.applyEnvelope: envelope is required');
-  return synthesizeAndCommit(envelope, options.surface || 'runtime:apply-envelope', options.instruction || '');
+  return synthesizeAndCommit(envelope, options.surface || 'runtime:apply-envelope', options.instruction || '', options.actor);
 }
 
 async function getDoc() {
@@ -3118,11 +3134,39 @@ function synthesizeDefaultAppend(text) {
 if (typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent)) {
   window.__synthesizeDefaultAppend = synthesizeDefaultAppend;
 }
-async function synthesizeAndCommit(envelope, surface, instruction) {
-  // Test seam preserved.
+// R5 Step-1 (docs/plans/2026-05-30-r5-write-path-design.md): serializes NON-AGENT
+// commits (the lens direct-text path + runtime.applyEnvelope) so a rapid 2nd
+// commit WAITS for the 1st instead of throwing concurrent_modify. commitCore holds
+// modifyMutex through renderDoc and releases only in `finally`, so before this a
+// fast follow-up landed in a held mutex and an edit-surface (datatable cells,
+// compute cascades) had to hand-roll its own serialization (window.__dtBusy). The
+// queue moves that into the runtime. Initialized to a resolved promise so the
+// first commit chains cleanly.
+let nonAgentCommitChain = Promise.resolve();
+
+async function synthesizeAndCommit(envelope, surface, instruction, actor) {
+  // Test seam preserved (kept 3-arg so existing stubs keep matching; the actor
+  // passthrough is exercised via the rwa_hist integration tests, not the seam).
   if (typeof window.__synthesizeAndCommit === 'function') {
     return window.__synthesizeAndCommit(envelope, surface, instruction);
   }
+  // Chain onto the tail so concurrent non-agent commits run one-at-a-time: `run`
+  // executes only after the prior commitCore has fully settled (post-`finally`,
+  // so modifyMutex is free). The caller gets the real result/rejection (return p);
+  // the chain stores p.catch() so a failed commit (frozen_zone_violation, or
+  // concurrent_modify when an AGENT loop holds the mutex) does not poison the
+  // queue for the next writer. Agent-loop exclusivity is unchanged — only
+  // non-agent-vs-non-agent races now serialize.
+  const run = () => commitCore(envelope, surface, instruction, actor);
+  const p = nonAgentCommitChain.then(run, run);
+  nonAgentCommitChain = p.catch(() => {});
+  return p;
+}
+
+// The reentrant commit body. Assumes the queue above serializes it, so the
+// `if (modifyMutex) throw` guard now fires only when an AGENT loop (modify /
+// modifyViaBridge / runAnchoredCommand) holds the mutex — a genuine conflict.
+async function commitCore(envelope, surface, instruction, actor) {
   // Acquire modifyMutex around the read+commit window. Without this, two
   // concurrent ⌘Enter submits could race against each other: both read the
   // same currentDoc, both push it onto rwa_undo, and the later commit
@@ -3152,7 +3196,10 @@ async function synthesizeAndCommit(envelope, surface, instruction) {
       scope: lensState.anchor
         ? { type: 'block', block_id: String(lensState.anchor.start) }
         : { type: 'eof' },
-      actor: 'user:lens',
+      // Default 'user:lens' for the direct-text path; runtime.applyEnvelope can
+      // pass an actor (e.g. 'user:edit-surface', 'compute:derived') so a non-lens
+      // writer self-attributes in rwa_hist instead of masquerading as the lens.
+      actor: actor || 'user:lens',
     };
     let result;
     if (!envelope) {
@@ -3746,7 +3793,7 @@ let modifyMutex = false;
 // stay null for every non-presentation container — the PRODUCT_KIND-gated
 // bootstrap block (below) is the ONLY caller of runtimeProvide / runtimeSetView,
 // so this whole subsystem is inert unless PRODUCT_KIND === 'presentation'.
-const providers = { view: null };
+const providers = { view: null, 'edit-surface': null, compute: null };
 let activeView = null;
 
 const RWA_VIEW_RESERVED_IDS = ['rwa-doc-mount', 'rwa-lens', 'rwa-runtime'];
@@ -3787,20 +3834,24 @@ function validateViewOutput(html, spec) {
   return html;
 }
 
-// runtime.provide(kind, spec) -> unregister closure (spec §5.10).
+// runtime.provide(kind, spec) -> unregister closure (spec §5.10, §3.1).
+// `view` is executed by the render path (requires render()). `edit-surface` /
+// `compute` are DECLARATIVE affordance records: the document's own JS owns the
+// edit/compute logic; the provider just makes describe() report the affordance
+// LIVE (spec §3.1 — no ui()/logic() execution contract invented in v1).
 function runtimeProvide(kind, spec) {
-  if (kind !== 'view') throw new Error('unknown provider kind: ' + kind);
-  if (!spec || spec.kind !== 'view') throw new Error("view spec.kind must be 'view'");
-  for (const f of ['name', 'label', 'render']) {
-    if (spec[f] == null) throw new Error('view spec missing required field: ' + f);
+  if (kind !== 'view' && kind !== 'edit-surface' && kind !== 'compute') throw new Error('unknown provider kind: ' + kind);
+  if (!spec || spec.kind !== kind) throw new Error(kind + " spec.kind must be '" + kind + "'");
+  for (const f of ['name', 'label']) {
+    if (spec[f] == null) throw new Error(kind + ' spec missing required field: ' + f);
   }
-  if (typeof spec.render !== 'function') throw new Error('view spec.render must be a function');
+  if (kind === 'view' && typeof spec.render !== 'function') throw new Error('view spec.render must be a function');
   spec.__provenance = 'first-party';
-  providers.view = spec;   // single-slot replace; does NOT auto-activate (§5.10)
+  providers[kind] = spec;   // single-slot replace per kind; does NOT auto-activate (§5.10)
   return function unregister() {
-    if (providers.view === spec) {
-      if (activeView === spec) runtimeSetView(null);
-      providers.view = null;
+    if (providers[kind] === spec) {
+      if (kind === 'view' && activeView === spec) runtimeSetView(null);
+      providers[kind] = null;
     }
   };
 }
@@ -3856,12 +3907,15 @@ function runtimeDescribe() {
   // projections measure blocks the same way.
   const blocks = (doc.match(/\bdata-rwa-id\b/g) || []).length;
   const frozenZones = extractFrozenZones(doc).filter(z => !z.error).map(z => z.name);
-  // LIVE affordances = the actual §5.10 provider registry, each mapped to its
-  // {kind,name,label,provenance} record (zero-drift). For v1 the only slot is
-  // `view`; this equals KIND_PROVIDERS[kind] by construction (spec SD-03), so a
-  // registry/kind mismatch surfaces as a real bug rather than being papered over.
+  // LIVE affordances = the actual provider registry (view / edit-surface /
+  // compute), each mapped to its {kind,name,label,provenance} record (zero-drift,
+  // spec §3.1). A file that REGISTERS an edit-surface/compute provider (the
+  // datatable) is reported here LIVE — describe() never under- or over-claims.
   const affordances = [];
-  if (providers.view) affordances.push({ kind: 'view', name: providers.view.name, label: providers.view.label, provenance: 'first-party' });
+  for (const k of ['view', 'edit-surface', 'compute']) {
+    const p = providers[k];
+    if (p) affordances.push({ kind: k, name: p.name, label: p.label, provenance: p.__provenance || 'first-party' });
+  }
   return {
     rwa: 'self-description/1',
     source: 'live',
