@@ -164,6 +164,24 @@ function editCell(r, c, value) {
   check('special chars round-trip through stored JSON (no double-escape)',
     storedRows()[1].item === 'Paid search & display');
 
+  // ── Burst: three edits fired back-to-back with NO await between them (fast
+  // typing across cells). This is the exact scenario that throws concurrent_modify
+  // without serialization — the consumer-side contract R5 must preserve. All three
+  // must land, in order, with no lost edit and no error surfaced to the user.
+  const histPreBurst = (await readStore('rwa_hist')) || [];
+  editCell(2, 2, '5');     // Content     qty        → 5
+  editCell(3, 2, '7');     // Design      qty        → 7
+  editCell(4, 3, '300');   // Tools       unit_price → 300
+  await settle();
+  const r = storedRows();
+  check('burst edit 1/3 landed (row2 qty=5)', r[2].qty === 5);
+  check('burst edit 2/3 landed (row3 qty=7)', r[3].qty === 7);
+  check('burst edit 3/3 landed (row4 unit_price=300)', r[4].unit_price === 300);
+  const histPostBurst = (await readStore('rwa_hist')) || [];
+  check('burst produced exactly 3 commits — none lost, none doubled, no concurrent_modify',
+    histPostBurst.length === histPreBurst.length + 3);
+  check('no error surfaced to the user during the burst', !document.getElementById('dt-status') || !document.getElementById('dt-status').textContent);
+
   // ── Tool affordance: an AGENT edits the same data via the rwa-edit/1 contract
   // on #dt-data — through the CLI, no browser. Run against a throwaway copy so
   // the committed artifact stays pristine.
