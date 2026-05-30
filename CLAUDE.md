@@ -67,6 +67,7 @@ One line per file/dir. Versions and changelogs live in the specs and `git log`.
 - `docs/specs/re-write-able-actions-spec-v0.7.md` — canonical action/skill/permission/Worker-mode spec. Earlier drafts (v0.1–v0.6.1-patch) and the working-method companions are read-only history.
 - `docs/specs/rwa-product-types.md` — layer-cake taxonomy (substrate → graph → skill).
 - `docs/specs/rwa-workflow-spec.md` — workflow product shape (linear / foreach / parallel primitives).
+- `docs/specs/rwa-self-description-spec.md` — `self-description/1` contract: what a container reports it is (kind + affordances + baseline), across static / live / declared projections (the "a rewritable knows what it is" surface).
 - `docs/runtime-product-agnosticism-audit.md` — read-only audit; working document, not a spec.
 - `seeds/rewritable.html` — **canonical bootstrap seed**. The service and the CLI both read this to emit fresh containers.
 - `re-write-able-spec.html`, `hello.html` — worked-example references. Bootstrap mirrors `seeds/rewritable.html`.
@@ -74,6 +75,7 @@ One line per file/dir. Versions and changelogs live in the specs and `git log`.
 - `cli/` — `rwa` npm package. `rwa new`, `rwa import <file>`, and `rwa edit <file>`. Offline-first.
 - `tests/` — jsdom + fake-indexeddb harness for the rwa-edit/1 modify pathway.
 - `benchmark/` — fidelity + conformance harness. `npm run conformance`, `npm run fidelity:stub`, `npm run fidelity:dsl`.
+- `tools/` — repo-level scripts: `regenerate-refs.mjs` (rebuild references from the seed) and `self-description.mjs` (the `self-description/1` reference oracle + validator).
 - `README.md` — short pitch.
 
 No build step for references/seed. No lint config at the repository level.
@@ -87,6 +89,7 @@ No build step for references/seed. No lint config at the repository level.
 - **Action/skill/permission/Worker-mode** → `docs/specs/re-write-able-actions-spec-v0.7.md`. Preserve cluster structure (§11.9, §11.10, §11.12). Bump to v0.8 if scope exceeds v0.7.
 - **Product-type taxonomy** → `docs/specs/rwa-product-types.md`. Route to owning spec; don't restate.
 - **Workflow product shape** → `docs/specs/rwa-workflow-spec.md` AND `cli/src/seed.mjs` (`KIND_WORKFLOW_BODY`) AND `SYSTEM_PROMPTS.workflow` in `seeds/rewritable.html`. Three sites must stay aligned. Regenerate references after.
+- **Self-description / affordances** → `docs/specs/rwa-self-description-spec.md` (the `self-description/1` contract) AND `tools/self-description.mjs` (the reference **oracle/source**: `KIND_PROVIDERS`, `validateSelfDescription`, `checkAffordanceAgreement`, `parseDeclaration`, `declarationFacts`) AND `cli/src/identity.mjs` (publish-time mirror, pinned by `cli/tests/identity.test.mjs`) AND `seeds/rewritable.html` (`runtimeProvide`/`runtimeDescribe` — the live registry∪declaration union, mirrors the declaration helpers). **Four sites must stay aligned**; the oracle is the source, the others mirror/consume it. Provider kinds: `view`/`edit-surface`/`compute` (`tool`/`hook` deferred); custom kinds get `[]` static (honest), `declared > live > static` precedence. Regenerate references after a seed change.
 - **Bootstrap** → `seeds/rewritable.html` (canonical). Regenerate `hello.html` and `re-write-able-spec.html` by substituting `DOC_UUID`, `FILE`, and `INLINE_DOC` body into the seed.
 
 ## What re-write-able is (architecture in one page)
