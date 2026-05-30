@@ -39,9 +39,15 @@ Flags:
                  the file using the local pdf/docx skills (Anthropic
                  official). Best fidelity for documents that benefit from
                  skill-driven extraction (multi-column, tables, tracked
-                 changes). Requires the \`claude\` CLI installed and runs
-                 with --permission-mode bypassPermissions; only use on
-                 files you trust.
+                 changes). Requires the \`claude\` CLI installed. The agent
+                 reads the file's contents, so a malicious file could
+                 hijack it: this refuses to run unless you also pass
+                 --trust-input. (Default import, without --claude, parses
+                 the file safely and never executes its contents.)
+  --trust-input  (with --claude) consent to run the extraction agent with
+                 --permission-mode bypassPermissions on this file. Only use
+                 on files whose source you trust — prompt-injection text in
+                 an untrusted file becomes code execution.
   --model <id>   (with --vision) override the OpenRouter model id.
                  Default: google/gemini-3.5-flash.
   --timeout <s>  (with --claude) wall-clock cap for the subprocess in
@@ -451,6 +457,7 @@ function detectProductKind(fileText) {
     const open = rest.includes('--open') || rest.includes('-o');
     const vision = rest.includes('--vision');
     const claude = rest.includes('--claude');
+    const trustInput = rest.includes('--trust-input');
     // --model and --timeout take a value: find the index, then take the next arg.
     const modelIdx = rest.indexOf('--model');
     const model = modelIdx >= 0 ? rest[modelIdx + 1] : undefined;
@@ -482,7 +489,7 @@ function detectProductKind(fileText) {
         process.exitCode = 2;
         return;
       }
-      await importCmd({ inputPath: positional[0], outPath: positional[1], force, open, vision, claude, model, timeoutSec });
+      await importCmd({ inputPath: positional[0], outPath: positional[1], force, open, vision, claude, trustInput, model, timeoutSec });
     } else {
       console.error(`rwa: unknown verb "${verb}". Try --help.`);
       process.exitCode = 2;

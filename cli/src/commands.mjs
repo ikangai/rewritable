@@ -168,7 +168,7 @@ export async function newCmd({ outPath, force, open, kind }) {
 
 export { KNOWN_KINDS };
 
-export async function importCmd({ inputPath, outPath, force, open, vision, claude, model, timeoutSec }) {
+export async function importCmd({ inputPath, outPath, force, open, vision, claude, trustInput, model, timeoutSec }) {
   if (vision && claude) {
     const e = new Error('--vision and --claude are mutually exclusive');
     e.exitCode = 2;
@@ -193,9 +193,13 @@ export async function importCmd({ inputPath, outPath, force, open, vision, claud
     const contents = await fs.readFile(input);
     ({ html, warnings } = await convertPdfViaVision(contents, { model }));
   } else if (claude) {
-    console.error(`note: claude: spawning \`claude -p\`…`);
+    if (trustInput) {
+      console.error(`note: claude: --trust-input set — running the agent with bypassPermissions on ${path.basename(input)}. Only safe for files you trust.`);
+    }
     // Pass the path; the skill reads the file itself via its own tools.
-    const claudeOpts = timeoutSec ? { timeoutMs: timeoutSec * 1000 } : {};
+    // trustInput gates the bypassPermissions agent (see import-claude.mjs); the
+    // consent gate there throws with exitCode 2 when it is absent.
+    const claudeOpts = { trustInput, ...(timeoutSec ? { timeoutMs: timeoutSec * 1000 } : {}) };
     ({ html, warnings } = await convertViaClaudeCli(input, ext, claudeOpts));
   } else {
     // Buffer (not utf8 string) — docx and pdf are binary, and text formats

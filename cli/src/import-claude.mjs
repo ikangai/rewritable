@@ -17,10 +17,19 @@ import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
 // strictly better fidelity than either the local pdfjs heuristic or the
 // raw-vision OpenRouter path, on documents where the skills apply.
 //
-// Trust model: this spawns a Claude Code subprocess with
-// `--permission-mode bypassPermissions`, which lets the agent run shell
-// commands and write files without prompting. The user already trusts
-// their input file (they're importing it). Document this in HELP.
+// Trust model: this spawns a Claude Code subprocess that reads the input file's
+// CONTENTS into an agent context (the pdf/docx skill needs Python — pypdf,
+// pdfplumber, mammoth — to extract them, so the agent genuinely needs tool
+// access). That makes the file attacker-controlled input: prompt-injection text
+// hidden in a third-party PDF/DOCX could hijack the agent. `import` is precisely
+// the command you point at files you received from someone else, so "the user
+// trusts their input file" is the WRONG threat model.
+//
+// Therefore `--claude` is gated behind an explicit `--trust-input` consent flag
+// (convertViaClaudeCli throws below if it is absent). Only when the user vouches
+// for the file do we add `--permission-mode bypassPermissions`. The default
+// import path (pdfjs/mammoth — parses bytes, never executes the file's content)
+// remains the safe, no-flag route. Documented in HELP.
 
 const SKILL_FOR_EXT = { pdf: 'pdf', docx: 'docx' };
 
@@ -99,6 +108,21 @@ export async function convertViaClaudeCli(filePath, ext, opts = {}) {
   const skill = SKILL_FOR_EXT[ext];
   if (!skill) {
     const e = new Error(`--claude only supports .pdf and .docx (got .${ext})`);
+    e.exitCode = 2;
+    throw e;
+  }
+
+  // Consent gate (SECURITY). Refuse to point an autonomous agent at the file
+  // unless the user explicitly vouched for it. Must run BEFORE any file read or
+  // subprocess spawn, so an unconsented file is never touched by the agent.
+  if (!opts.trustInput) {
+    const e = new Error(
+      `refusing to run an autonomous agent on ${filePath} without consent.\n` +
+      `  --claude extraction reads the file's contents into a Claude Code agent, so a\n` +
+      `  malicious file could hijack it (prompt-injection -> code execution).\n` +
+      `  Re-run with --claude --trust-input only if you trust this file's source.\n` +
+      `  (The default import, without --claude, parses the file safely and never executes its contents.)`
+    );
     e.exitCode = 2;
     throw e;
   }
