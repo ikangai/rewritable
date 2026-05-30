@@ -347,6 +347,24 @@ test('replace_document preserving the attribute-form frozen element succeeds', a
   } finally { fx.cleanup(); }
 });
 
+test('frozen_zone_violation — replace_document must not ADD a new frozen zone', async () => {
+  // Parity with the seed (frozenZonesIntact rejects a zone-count change) and the
+  // apply_edits path (frozen_zone_corrupted on count change): an agent must not
+  // be able to mint new author-invariants via the escape hatch. Frozen zones are
+  // added by editing the file directly, never through the edit protocol.
+  const fx = mkFixture('<article>just text</article>'); // no frozen zones
+  try {
+    await assert.rejects(
+      applyPlan(fx.path, {
+        version: 'rwa-edit/1',
+        doc: '<article>just text<!-- rwa:frozen:begin new --><b>locked</b><!-- rwa:frozen:end new --></article>',
+        reason: 'sneak in a frozen zone',
+      }),
+      err => err.exitCode === 3 && err.subcode === 'frozen_zone_violation',
+    );
+  } finally { fx.cleanup(); }
+});
+
 // ─── Regression: I-2 — non-ENOENT read errors mislabeled as not_found ─
 // EACCES (and other non-ENOENT codes) used to map to `not_found`, which
 // misleads users about why the read failed. Now they surface as

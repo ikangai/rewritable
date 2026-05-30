@@ -5,7 +5,7 @@ These items were surfaced during code review of the initial `rwa edit` implement
 ## Task 4 (`cli/src/edit.mjs`) — `replace_document` parity gaps with seed
 
 The CLI's `replace_document` branch checks frozen-zone preservation (marker-form) but does NOT check:
-- Zone count match between current and new doc (a `replace_document` that ADDS a new zone passes the CLI but would be rejected by the seed runtime)
+- ~~Zone count match between current and new doc~~ — **DONE** (2026-05-30): `assertFrozenPreserved` now rejects a `replace_document` that ADDS a marker-form frozen zone (`frozen_zone_violation`), parity with the seed's `frozenZonesIntact` + the apply_edits count check.
 - Unterminated marker detection (a stray `<!-- rwa:frozen:begin orphan -->` without a matching end passes the CLI)
 - ~~Attribute-form `data-rwa-frozen` preservation~~ — **DONE** (2026-05-30): `replace_document` (and the DSL escape op) now enforce attribute-form frozen elements via `assertFrozenPreserved` → `dataRwaFrozenSnapshot`.
 - HTML well-formedness (lone surrogate / parse validity)

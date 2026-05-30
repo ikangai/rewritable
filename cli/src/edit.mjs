@@ -53,6 +53,18 @@ function assertFrozenPreserved(currentDoc, newDoc) {
       });
     }
   }
+  // …and must not ADD new marker-form frozen zones (parity with the seed's
+  // frozenZonesIntact zone-count check and the apply_edits path): an agent can't
+  // mint new author-invariants via the escape hatch. (Attribute-form add/remove
+  // is caught by the dataRwaFrozenSnapshot check below.)
+  for (const name of newByName.keys()) {
+    if (!oldByName.has(name)) {
+      throw new CliError(3, 'frozen_zone_violation', {
+        zone: name,
+        reason: 'replace_document must not add a new frozen zone',
+      });
+    }
+  }
   const a = dataRwaFrozenSnapshot(currentDoc);
   const b = dataRwaFrozenSnapshot(newDoc);
   if (a.length !== b.length || a.some((x, i) => x !== b[i])) {
