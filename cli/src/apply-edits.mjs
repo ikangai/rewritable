@@ -75,6 +75,92 @@ function countOccurrences(haystack, needle) {
   return n;
 }
 
+// Surrounding-context snippets for find_not_unique — mirrors the seed's
+// nearbySnippets so `rwa edit --json` (and the agent loop) can disambiguate.
+// Source of truth: seeds/rewritable.html nearbySnippets (~line 1783).
+function nearbySnippets(haystack, needle, max = 3, ctx = 40) {
+  const out = []; let i = 0;
+  while ((i = haystack.indexOf(needle, i)) !== -1 && out.length < max) {
+    const a = Math.max(0, i - ctx);
+    const b = Math.min(haystack.length, i + needle.length + ctx);
+    out.push({ pos: i, before: haystack.slice(a, i), after: haystack.slice(i + needle.length, b) });
+    i += needle.length;
+  }
+  return out;
+}
+
+// Deterministic near-miss finder for find_not_found. Given a `find` that does
+// NOT appear verbatim in `doc`, return a context fragment {closest, match}
+// describing the closest actual text so an agent (or human) can self-correct
+// the anchor in one retry — no model call (Rule 5). Returns {} when nothing
+// useful is found. Cold path (failure only), so an O(n) projection is fine.
+// Source of truth: seeds/rewritable.html findClosestAnchor — keep in sync.
+function findClosestAnchor(doc, find) {
+  if (!doc || !find) return {};
+  const needleNorm = find.replace(/[ \t\n\r\f]+/g, ' ').trim();
+  if (!needleNorm) return {};
+
+  // Whitespace-collapsed projection of `doc`, with an offset map back to the
+  // original bytes (map[k] = source index of norm[k]; a whitespace run collapses
+  // to one space mapped to its first char). lowNorm mirrors norm length-for-length
+  // (chars whose lowercase isn't single-char are left as-is) so the case pass
+  // shares the same map without desync.
+  let norm = '', lowNorm = '';
+  const map = [];
+  let inWs = false;
+  for (let i = 0; i < doc.length; i++) {
+    const c = doc[i];
+    if (c === ' ' || c === '\t' || c === '\n' || c === '\r' || c === '\f') {
+      if (!inWs) { norm += ' '; lowNorm += ' '; map.push(i); inWs = true; }
+    } else {
+      const lc = c.toLowerCase();
+      norm += c;
+      lowNorm += lc.length === 1 ? lc : c;
+      map.push(i);
+      inWs = false;
+    }
+  }
+  const verbatim = (k, normLen) => {
+    const start = map[k];
+    const end = map[k + normLen - 1] + 1; // trim() guarantees a non-ws final char
+    let text = doc.slice(start, end);
+    const MAX = 300;
+    if (text.length > MAX) text = text.slice(0, MAX - 18) + ' …[' + (text.length - MAX) + ' more]… ';
+    return text;
+  };
+
+  // Pass 1 — whitespace-only mismatch (verbatim normalized match).
+  let k = norm.indexOf(needleNorm);
+  if (k !== -1) return { closest: verbatim(k, needleNorm.length), match: 'whitespace' };
+
+  // Pass 2 — case (± whitespace) mismatch.
+  k = lowNorm.indexOf(needleNorm.toLowerCase());
+  if (k !== -1) return { closest: verbatim(k, needleNorm.length), match: 'case' };
+
+  // Pass 3 — partial: longest matching prefix of the needle (floor 12 chars).
+  // Prefix-match is monotonic in length, so binary-search the longest L.
+  const FLOOR = 12;
+  if (needleNorm.length >= FLOOR) {
+    let lo = FLOOR, hi = needleNorm.length, best = -1, bestK = -1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      const j = norm.indexOf(needleNorm.slice(0, mid));
+      if (j !== -1) { best = mid; bestK = j; lo = mid + 1; } else { hi = mid - 1; }
+    }
+    if (best !== -1) {
+      const start = map[bestK];
+      const matchEnd = map[bestK + best - 1] + 1;
+      const ctxEnd = Math.min(doc.length, matchEnd + 40); // show where it diverges
+      let text = doc.slice(start, ctxEnd);
+      const MAX = 300;
+      if (text.length > MAX) text = text.slice(0, MAX - 18) + ' …[' + (text.length - MAX) + ' more]… ';
+      return { closest: text, match: 'partial' };
+    }
+  }
+
+  return {};
+}
+
 // Extract marker-form frozen zones. Returns array of
 // `{ start, end, name }` covering the entire span from the opening
 // `<!-- rwa:frozen:begin <name> -->` to the closing
@@ -149,8 +235,8 @@ export function applyEdits(doc, edits) {
     }
 
     const count = countOccurrences(working, find);
-    if (count === 0) throw new RwaEditError('find_not_found', i, { find });
-    if (count > 1) throw new RwaEditError('find_not_unique', i, { find, count });
+    if (count === 0) throw new RwaEditError('find_not_found', i, { find, ...findClosestAnchor(working, find) });
+    if (count > 1) throw new RwaEditError('find_not_unique', i, { find, count, hints: nearbySnippets(working, find) });
 
     // Frozen-zone overlap check (marker form). Recompute zones each iteration
     // against `working` so prior edits can't shift the zone boundaries

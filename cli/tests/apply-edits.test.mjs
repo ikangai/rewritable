@@ -35,6 +35,77 @@ test('apply_edits — find_not_unique', () => {
   );
 });
 
+// ─── Self-correcting failures: near-miss anchor hints ───────────────────
+// WHY: find_not_found is the dominant failure mode of the rwa-edit loop. An
+// opaque code gives an agent (or human) nothing to recover with. The runtime
+// computes — deterministically, no model call — the closest text that IS in the
+// doc so the next retry can copy the exact anchor. These tests pin the contract
+// the agent's retry loop and `rwa edit --json` depend on.
+
+test('find_not_found — whitespace-only miss returns verbatim closest', () => {
+  const doc = '<article><p>Hello   world</p></article>'; // 3 spaces
+  assert.throws(
+    () => applyEdits(doc, [{ find: 'Hello world', replace: 'x' }]), // 1 space
+    err => err.code === 'find_not_found'
+      && err.context.match === 'whitespace'
+      && err.context.closest === 'Hello   world'
+  );
+});
+
+test('find_not_found — closest is re-appliable as the next anchor', () => {
+  const doc = '<article><p>Hello   world</p></article>';
+  let closest;
+  try {
+    applyEdits(doc, [{ find: 'Hello world', replace: 'x' }]);
+  } catch (err) {
+    closest = err.context.closest;
+  }
+  // The whole point: feeding `closest` straight back as `find` must succeed.
+  const result = applyEdits(doc, [{ find: closest, replace: 'BYE' }]);
+  assert.equal(result, '<article><p>BYE</p></article>');
+});
+
+test('find_not_found — case-only miss returns verbatim closest', () => {
+  const doc = '<article><h1>Quarterly Report</h1></article>';
+  assert.throws(
+    () => applyEdits(doc, [{ find: 'quarterly report', replace: 'x' }]),
+    err => err.code === 'find_not_found'
+      && err.context.match === 'case'
+      && err.context.closest === 'Quarterly Report'
+  );
+});
+
+test('find_not_found — partial miss surfaces the real surrounding text', () => {
+  const doc = '<article><p>The quick brown fox jumps over</p></article>';
+  assert.throws(
+    () => applyEdits(doc, [{ find: 'The quick brown cat jumps', replace: 'x' }]),
+    err => err.code === 'find_not_found'
+      && err.context.match === 'partial'
+      && err.context.closest.includes('The quick brown fox')
+  );
+});
+
+test('find_not_found — genuinely absent anchor yields no closest', () => {
+  const doc = '<article><p>nothing alike here</p></article>';
+  assert.throws(
+    () => applyEdits(doc, [{ find: 'ZZZZ-absent-XYZ', replace: 'x' }]),
+    err => err.code === 'find_not_found'
+      && err.context.closest === undefined
+      && err.context.match === undefined
+  );
+});
+
+test('find_not_unique — carries surrounding-context hints', () => {
+  const doc = '<article><p>one cat</p><p>two cat</p></article>';
+  assert.throws(
+    () => applyEdits(doc, [{ find: 'cat', replace: 'dog' }]),
+    err => err.code === 'find_not_unique'
+      && err.context.count === 2
+      && Array.isArray(err.context.hints)
+      && err.context.hints.length === 2
+  );
+});
+
 test('containsReservedMarker — detects frozen-begin marker', () => {
   assert.equal(containsReservedMarker('rwa:frozen:begin foo'), true);
 });
