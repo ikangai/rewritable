@@ -121,6 +121,28 @@ test('SD-03: affordance agreement matches the kind table and catches a mismatch'
   assert.equal(checkAffordanceAgreement(installed).ok, true);
 });
 
+test('refinement: KIND_PROVIDERS holds only kinds the runtime first-party-provides', () => {
+  // Illustrative custom-kind entries removed — the real datatable proved them wrong.
+  assert.deepEqual(Object.keys(KIND_PROVIDERS).sort(), ['document', 'presentation', 'workflow']);
+});
+
+test('refinement: a custom kind is not statically guessable; agreement is vacuous', () => {
+  const r = checkAffordanceAgreement({ kind: 'datatable', affordances: [{ kind: 'edit-surface', name: 'cell', provenance: 'first-party' }] });
+  assert.equal(r.ok, true);
+  assert.equal(r.expected, null); // unknown kind → nothing to vouch for; the real answer is declared/live
+});
+
+test('refinement: SUBSET semantics — a file may register beyond its kind template', () => {
+  // a document that registers edit-surface+compute still AGREES (template [] ⊆ registered)
+  const doc = { kind: 'document', affordances: [
+    { kind: 'edit-surface', name: 'cell', provenance: 'first-party' },
+    { kind: 'compute', name: 'total', provenance: 'first-party' },
+  ] };
+  assert.equal(checkAffordanceAgreement(doc).ok, true);
+  // but a presentation that LOST its normative view still fails (missing normative provider)
+  assert.equal(checkAffordanceAgreement({ kind: 'presentation', affordances: [] }).ok, false);
+});
+
 test('not_a_rewritable: plain text throws the deterministic probe error', () => {
   assert.throws(() => computeSelfDescription('<html>not a rewritable</html>'), /not_a_rewritable/);
 });

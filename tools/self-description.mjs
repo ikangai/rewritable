@@ -31,21 +31,17 @@ export const SOURCES = ['static', 'live', 'declared'];
 // label:'Present'} (seeds/rewritable.html:3542-3543) so static == live by
 // construction.
 export const KIND_PROVIDERS = {
+  // ONLY kinds the runtime FIRST-PARTY-provides, so the static kind→affordances
+  // guess is honest. CUSTOM kinds (datatable, application, …) are consumer-built
+  // via runtime.provide() / the #rwa-affordances declaration — NOT first-party,
+  // so the static tier cannot honestly guess them (the real datatable proved an
+  // illustrative guess WRONG: 2 views + edit-surface + compute, no tool). For a
+  // custom kind, computeSelfDescription returns [] (honest "I don't know"); the
+  // LIVE registry or a trustworthy `declared` projection carries the real answer
+  // (precedence declared > live > static, spec §3.1 — don't trade a guess for a lie).
   document: [],
   presentation: [{ kind: 'view', name: 'presentation', label: 'Present' }],
   workflow: [],
-  // illustrative / reserved — not yet shipping as registered providers:
-  datatable: [
-    { kind: 'view', name: 'grid', label: 'Grid' },
-    { kind: 'edit-surface', name: 'cell', label: 'Edit cells' },
-    { kind: 'tool', name: 'derive', label: 'Derive column' },
-    { kind: 'compute', name: 'recalc', label: 'Recompute' },
-  ],
-  application: [
-    { kind: 'view', name: 'app', label: 'App' },
-    { kind: 'edit-surface', name: 'form', label: 'Edit' },
-    { kind: 'tool', name: 'command', label: 'Run command' },
-  ],
 };
 
 // Substrate-universal ops — the SAME for every container regardless of kind
@@ -213,7 +209,11 @@ export function checkAffordanceAgreement(obj) {
   const table = KIND_PROVIDERS[obj.kind];
   if (!table) return { ok: true, expected: null, got }; // unknown kind: nothing to check
   const expected = table.map((p) => p.kind).sort();
-  const ok = expected.length === got.length && expected.every((v, i) => v === got[i]);
+  // SUBSET, not equality: every NORMATIVE first-party provider must be PRESENT,
+  // but a file may REGISTER more than its kind's template (the registry allows
+  // provide() on any kind). A missing normative provider (a presentation that
+  // lost its view) still fails; an extra registered provider does not.
+  const ok = expected.every((k) => got.includes(k));
   return { ok, expected, got };
 }
 
