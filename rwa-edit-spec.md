@@ -1,6 +1,6 @@
-# rwa-edit v1.4 — Anchor-based edit protocol for rewritable containers
+# rwa-edit v1.5 — Anchor-based edit protocol for rewritable containers
 
-**Status:** draft v1.4.
+**Status:** draft v1.5.
 **Targets:** rwa container spec v0.8 and later.
 **Position in the architecture:** Defines how the agent expresses changes to the document. Adopting rwa-edit v1 requires (a) replacing the modify pathway in the bootstrap with a multi-turn tool-use conversation, (b) updating the system prompt, and (c) adopting the typed-record shape for `rwa_hist` entries. It does **not** require changes to IDB store layouts, snapshot format, or the public `runtime.*` surface; the v0.8 disk format is preserved.
 
@@ -97,7 +97,7 @@ The runtime applies a batch in two phases against an in-memory working copy of t
    - `find` non-empty (else `empty_find`)
    - Neither `find` nor `replace` contains a reserved marker substring (else `frozen_zone_violation`)
    - `replace` length is within the per-edit cap (else `replace_too_large`)
-   - After LF canonicalization of the edit's `find`, it appears in the working copy (else `find_not_found`)
+   - After LF canonicalization of the edit's `find`, it appears in the working copy (else `find_not_found`, returned with a near-miss `closest` per §10)
    - It appears exactly once (else `find_not_unique`)
    - Apply the replacement to the working copy so subsequent edits see the new state.
 5. After all edits are applied to the working copy:
@@ -106,7 +106,7 @@ The runtime applies a batch in two phases against an in-memory working copy of t
    - The working copy's structural shape matches the original (else `structural_shape_changed`). See §5.6.
    - The working copy is within the size budget (else `target_size_exceeded`).
 
-If any check fails, the batch is rejected. Nothing is persisted. The runtime returns the failure code, the index of the offending edit when applicable, and helper context (occurrence count and surrounding-context snippets for `find_not_unique`; the parse error message for `parse_error_post_apply`; before/after shape pairs for `structural_shape_changed`).
+If any check fails, the batch is rejected. Nothing is persisted. The runtime returns the failure code, the index of the offending edit when applicable, and helper context (the closest actually-present text for `find_not_found`; occurrence count and surrounding-context snippets for `find_not_unique`; the parse error message for `parse_error_post_apply`; before/after shape pairs for `structural_shape_changed`).
 
 **Phase 2 — Commit (single IDB transaction, matching v0.8 layout):**
 
@@ -391,7 +391,7 @@ The modify pathway is a tool-use loop, not a single-shot completion:
 5. modify() triggers re-render (§11) and releases the mutex.
 ```
 
-**Post-budget UX.** When the retry budget is exhausted, the runtime returns the structured failure to the user with the same helper context the agent saw on its last attempt: occurrence count and snippets for `find_not_unique`, the affected element/region for `frozen_zone_violation`, the shape diff for `structural_shape_changed`, etc. The user can rephrase, narrow the request, or open the file externally. **The runtime does not silently fall back to `replace_document`.** Silent escalation from surgical to wholesale would deliver exactly the format drift the protocol exists to prevent — three failed surgical attempts becoming a complete rewrite is a worse outcome than honest failure.
+**Post-budget UX.** When the retry budget is exhausted, the runtime returns the structured failure to the user with the same helper context the agent saw on its last attempt: the near-miss `closest` for `find_not_found`, occurrence count and snippets for `find_not_unique`, the affected element/region for `frozen_zone_violation`, the shape diff for `structural_shape_changed`, etc. The user can rephrase, narrow the request, or open the file externally. **The runtime does not silently fall back to `replace_document`.** Silent escalation from surgical to wholesale would deliver exactly the format drift the protocol exists to prevent — three failed surgical attempts becoming a complete rewrite is a worse outcome than honest failure.
 
 The retry budget is per-modify, not lifetime. Each ⌘K starts a fresh conversation with a fresh budget.
 
@@ -404,7 +404,7 @@ The retry budget is per-modify, not lifetime. Each ⌘K starts a fresh conversat
 | `version_unsupported` | Envelope `version` is not `rwa-edit/1`. |
 | `malformed_envelope` | Required fields missing or wrong type. |
 | `empty_find` | An edit has `find: ""`. |
-| `find_not_found` | `find` does not appear in the working copy. |
+| `find_not_found` | `find` does not appear in the working copy. When a near-miss exists, returned with `closest` (the closest text actually present, verbatim and copy-pasteable) and `match` (`whitespace` — collapse-whitespace match; `case` — case-insensitive match; `partial` — longest distinctive prefix), computed deterministically without a model call. |
 | `find_not_unique` | `find` appears more than once. Returned with occurrence count and surrounding-context snippets. |
 | `frozen_zone_violation` | An edit's `find` or `replace` contains a reserved marker substring or `data-rwa-frozen`. |
 | `frozen_zone_corrupted` | After applying, frozen-zone names, pairing, or inner content do not match the original. |
@@ -414,7 +414,7 @@ The retry budget is per-modify, not lifetime. Each ⌘K starts a fresh conversat
 | `target_size_exceeded` | Resulting doc exceeds the implementation-defined whole-document size cap. |
 | `concurrent_modify` | A modify is already in progress. Returned by the modify-lifecycle wrapper, not by `apply_edits`. |
 
-Failures during the tool-use loop are returned as `tool_result` blocks with structured payload `{ code, edit_index?, count?, hints?, message?, shape_before?, shape_after? }` so the model can act on them in the next turn.
+Failures during the tool-use loop are returned as `tool_result` blocks with structured payload `{ code, edit_index?, count?, hints?, closest?, match?, message?, shape_before?, shape_after?, hint? }` so the model can act on them in the next turn. `closest`/`match` carry the `find_not_found` near-miss (§10). The runtime MAY add a plain-English `hint` — a one-line, code-keyed recovery instruction — to steer weaker/local models toward a fix; it is advisory and additive, never a substitute for the structured fields.
 
 ---
 
@@ -591,18 +591,25 @@ async function applyEdits(envelope, db) {
 }
 ```
 
-`computeShape(doc, optionalParsedDoc)` returns `{ scripts, styles }` by parsing the doc once with `DOMParser` and counting. `shapesEqual` is a pair-equality comparison. The remaining helpers are `canonicalizeLineEndings`, `containsReservedMarker`, `countOccurrences`, `nearbySnippets`, `extractFrozenZones`, `frozenZonesIntact`, `parseHtmlFragment`, `reqAsync`.
+`computeShape(doc, optionalParsedDoc)` returns `{ scripts, styles }` by parsing the doc once with `DOMParser` and counting. `shapesEqual` is a pair-equality comparison. The remaining helpers are `canonicalizeLineEndings`, `containsReservedMarker`, `countOccurrences`, `nearbySnippets`, `findClosestAnchor` (the `find_not_found` near-miss; §10), `extractFrozenZones`, `frozenZonesIntact`, `parseHtmlFragment`, `reqAsync`.
 
 ---
 
-## Appendix A — Changes from v1.3 to v1.4
+## Appendix A — Changes from v1.4 to v1.5
+
+- **`find_not_found` near-miss.** The dominant failure now carries a deterministic, code-derived recovery aid: `closest` (the closest text actually present in the working copy, verbatim and copy-pasteable) and `match` (`whitespace` / `case` / `partial`) — so an agent fixes its own anchor inside the existing retry budget and a human sees a legible reason. No model call (Rule 5: code answers). Self-correcting failure, not just a louder code. Updated: §5.1 step 4, §5.1 rejection paragraph, §9.2 post-budget UX, §10 table + payload shape, §18 helper list.
+- **Optional plain-English `hint`.** The tool-use `tool_result` payload MAY include a one-line, failure-code-keyed `hint` to steer weaker/local models toward a fix. Advisory and additive — never a substitute for the structured fields. §10.
+- **`find_not_unique` snippets clarified as mandatory helper context** alongside the new `find_not_found` near-miss (already emitted by the runtime; spec text now enumerates both consistently in §5.1 and §9.2).
+- Wire version unchanged (`rwa-edit/1`): all additions are optional, backward-compatible context fields; a consumer that ignores them behaves exactly as under v1.4.
+
+## Appendix B — Changes from v1.3 to v1.4
 
 - **Structural shape narrowed** from triple `(top-level, script, style)` to pair `(script, style)`. Top-level element count is no longer constrained, because adding a top-level section (e.g. a footer) is a common, intentional edit that should remain in `apply_edits` territory. Script/style count drift remains the realistic accidental-damage signal. Updated: §2 vocab, §5.1 step 5, §5.6, §8 `apply_edits` schema description, §9.1 prompt, §10 `structural_shape_changed`, §13 rule 9, §14, §17, §18 pseudocode.
 - **`replace_too_large` added to §10** as an explicit failure code with default cap of 8 KB. Was referenced in §13 rule 5 and §18 pseudocode but missing from the failure-modes table in v1.3.
 - **§12 size-pressure rationale corrected.** Eliding envelope bodies past the most recent 5 entries is now framed as advisory (IDB quota defence), not normative for "snapshot-format compatibility" — `rwa_hist` is in IndexedDB, not in the snapshot, so elision strategies cannot affect file format.
 - **§6 rule 3 and §7.2 tightened** to require set-equality (not subset) of frozen-zone names post-apply. Adding a new frozen-zone name is a `frozen_zone_corrupted` failure, the same way removing one is. Closes a gap where `replace_document` could introduce new author-only invariants. Implementation already enforces this; the spec text now matches.
 
-## Appendix B — Changes from v1.2 to v1.3
+## Appendix C — Changes from v1.2 to v1.3
 
 (Preserved for review continuity.)
 
@@ -619,7 +626,7 @@ async function applyEdits(envelope, db) {
 - §16 source-format expectations refined.
 - System prompt and tool-schema descriptions updated for shape constraint.
 
-## Appendix C — Changes from v1.1 to v1.2
+## Appendix D — Changes from v1.1 to v1.2
 
 (Preserved.)
 
@@ -639,7 +646,7 @@ async function applyEdits(envelope, db) {
 - §15 adds legacy-comment migration note and `#rwa-doc-mount` reservation.
 - §18 pseudocode updated.
 
-## Appendix D — Changes from v1 to v1.1
+## Appendix E — Changes from v1 to v1.1
 
 (Preserved.)
 
