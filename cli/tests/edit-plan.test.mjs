@@ -370,12 +370,13 @@ test('frozen_zone_violation — replace_document must not ADD a new frozen zone'
 // misleads users about why the read failed. Now they surface as
 // `read_error` with the original errno attached.
 
-test('read_error — non-ENOENT (EACCES via chmod 000)', async () => {
-  // Skip when running as root (e.g. some CI containers) — root bypasses
-  // file mode bits, so chmod 000 cannot trigger EACCES on read.
-  if (process.platform === 'win32' || process.getuid?.() === 0) {
-    return; // implementation still correct; environment can't exercise it
-  }
+// Root (some CI containers) bypasses file mode bits and Windows has no chmod 000,
+// so the environment can't trigger EACCES — report SKIPPED, not a false PASS
+// (Rule 12: an early-return reported as a pass is dishonest test reporting).
+const cannotForceEacces = process.platform === 'win32' || process.getuid?.() === 0;
+test('read_error — non-ENOENT (EACCES via chmod 000)',
+  { skip: cannotForceEacces && 'root/Windows bypasses file mode bits; chmod 000 cannot trigger EACCES here' },
+  async () => {
   const fx = mkFixture('<article>x</article>');
   try {
     execFileSync('chmod', ['000', fx.path]);

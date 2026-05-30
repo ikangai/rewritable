@@ -26,9 +26,9 @@ The atomic write path does `writeFile + rename` but does not `fsync` before rena
 
 `DslCompileError` is local to `dsl-compiler.mjs`. If future callers want `instanceof` discrimination, export it. Also: `applyPlan`'s error wrap drops `e.op` (the offending DSL op object) — pass it through in `details`.
 
-## Task 5 — EACCES test skip mechanism
+## Task 5 — EACCES test skip mechanism — **DONE** (2026-05-30)
 
-The EACCES test in `cli/tests/edit-plan.test.mjs` uses an early-return skip pattern that reports as PASS on Windows/root. Should use `test.todo()` or `node:test`'s `{ skip: <bool> }` option for honest reporting.
+~~The EACCES test in `cli/tests/edit-plan.test.mjs` uses an early-return skip pattern that reports as PASS on Windows/root.~~ Now uses `node:test`'s `{ skip: <reason> }` option, so on root/Windows (where `chmod 000` can't trigger EACCES) it reports SKIPPED with a reason rather than a false PASS — honest reporting (Rule 12).
 
 ## Task 6 — `onRetry` argument shape
 
