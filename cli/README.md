@@ -112,6 +112,24 @@ The payload is also a `self-description/1` object — the answer to *"what is th
 
 `rwa doc` never reads stdin and never writes the file. On a non-rewritable target it exits `2` with `not_a_rewritable` and an empty stdout — a clean "is this a rewritable?" probe. Errors always go to stderr (plain `rwa doc: file_error/not_found {…}`, or `--json` `{code, subcode, details}`), so stdout stays clean for piping.
 
+### `rwa ls [paths...]`
+
+Where `rwa doc` answers *"what is this file?"*, `rwa ls` answers *"what are all these?"* — the inventory of a folder of rewritables, one line each. Hand it a directory (or a list of files; default is `./`) and it prints each rewritable's identity; non-rewritables and bad paths are counted, never hidden.
+
+```sh
+rwa ls                # the rewritables in the current directory
+rwa ls demo/          # …in a folder
+rwa ls a.html b.html  # …an explicit list
+# KIND          TITLE            AFFORDANCES        FILE
+# document      Invoice tracker  —                  demo/invoice-tracker.html
+# presentation  Q1 Architecture  view               demo/q1.html
+# datatable     Sales 2026       view,edit-surface,compute  demo/sales.html
+#
+# 3 rewritables
+```
+
+`--json` emits an array of rows for an agent — `{file, status, self}` where `status` is `rewritable` (with the full `self-description/1` object), `not_a_rewritable`, or `error` (with a `reason`). The scan is lenient like its namesake: one bad path among many is a row, not a fatal exit, so a completed scan exits `0`. This is how an agent handed a project learns its whole rewritable inventory — and every container's affordances — in a single call.
+
 ### Driving a rewritable from an agent — no embedded LLM, no API key
 
 `rwa doc` + `rwa edit --plan` close a fully **deterministic** edit loop. An agent that can already reason (Claude Code, a script, a CI job) doesn't need the in-file `⌘K` model or an OpenRouter key: it reads the body, computes its own `apply_edits` envelope against anchors it can see, and applies it. Read → decide → write → confirm, all offline:

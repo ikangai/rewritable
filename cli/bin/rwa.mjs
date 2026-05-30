@@ -18,10 +18,18 @@ Usage:
   rwa doc <path>              print the editable document body (the exact
                               LF-canonical text the edit contract operates on).
                               The read counterpart to \`rwa edit\`. With --json,
-                              print the full editing contract instead:
-                              {rewritable, uuid, kind, frozenZones, length, doc}.
+                              print the self-description/1 superset instead —
+                              the edit contract plus "what is this, what can be
+                              done with it": {rwa, kind, title, affordances,
+                              baseline, frozenZones, …, doc}.
                               Exit 2 on a non-rewritable file — a clean
                               "is this a rewritable?" probe.
+  rwa ls [paths...]           list the rewritables in a folder (or file list;
+                              default: ./), one line each: kind · title ·
+                              affordances. The "what are all these?" counterpart
+                              to \`rwa doc\`. Non-rewritables are counted, not
+                              hidden. With --json, an array of self-description
+                              rows. Lenient: a completed scan exits 0.
 
 Flags:
   --kind <name>  (new only) starter kind: document (default), workflow, or
@@ -519,6 +527,20 @@ function detectProductKind(fileText) {
         // The byte-exact path is --json's `doc` field.
         process.stdout.write(info.doc.endsWith('\n') ? info.doc : info.doc + '\n');
       }
+      return;
+    }
+
+    // `rwa ls [paths...] [--json]` — collection-scale self-description: the
+    // "what are all these?" counterpart to `rwa doc`'s "what is this?". Reports
+    // each rewritable's identity (kind/title/affordances) across a folder or
+    // file list, flagging non-rewritables and bad paths as rows. Lenient like
+    // its namesake — a completed scan exits 0; per-file issues live in the rows.
+    if (verb === 'ls') {
+      const jsonMode = rest.includes('--json');
+      const paths = rest.filter(a => !a.startsWith('-'));
+      const { listRewritables, formatRows } = await import('../src/ls.mjs');
+      const rows = await listRewritables(paths);
+      process.stdout.write((jsonMode ? JSON.stringify(rows) : formatRows(rows)) + '\n');
       return;
     }
 
