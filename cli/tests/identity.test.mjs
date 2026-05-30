@@ -207,3 +207,33 @@ test('CLI declarationFacts/parseDeclaration mirror the oracle on a chrome declar
   assert.deepEqual(declarationFacts(fileText, doc), refDeclarationFacts(fileText));
   assert.deepEqual(parseDeclaration(fileText, doc).declaration, refParseDeclaration(fileText).declaration);
 });
+
+// ─── frozenAttr must be DOM-accurate (the cross-surface trust gate) ────
+// The trust signal must match the SEED's real enforcement (DOM
+// querySelectorAll('[data-rwa-frozen]') / tagHasFrozenAttr, seed 9864a66): a
+// data-rwa-frozen STRING inside an attribute VALUE — or a longer attribute name —
+// is NOT a frozen attribute. A regex that fires on the bare string would over-trust
+// a declaration the lens can still drift (euler #112). NB the oracle's
+// declarationFacts needs the matching fix to re-align; pinned here is the CLI's
+// correct behavior, not (yet) CLI⇔oracle agreement on this case.
+
+const declAttr = (extraAttr) =>
+  `<script type="application/rwa-affordances+json" id="rwa-affordances"${extraAttr}>${JSON.stringify(ALIGNED_DECL)}</script>`;
+
+test('declarationFacts: data-rwa-frozen in an attribute VALUE is NOT frozenAttr', () => {
+  const doc = `<article><h1>T</h1>${declAttr(' title="data-rwa-frozen tip"')}</article>`;
+  assert.equal(declarationFacts(fileWrap(doc), doc).frozenAttr, false);
+});
+
+test('declarationFacts: a real data-rwa-frozen attribute IS frozenAttr', () => {
+  const doc = `<article><h1>T</h1>${declAttr(' data-rwa-frozen')}</article>`;
+  assert.equal(declarationFacts(fileWrap(doc), doc).frozenAttr, true);
+});
+
+test('resolveSelfDescription does NOT trust a body declaration frozen only by a value-mention → static', () => {
+  // Edit-reachable (in the body, no real data-rwa-frozen) → the lens can drift it
+  // → not trustworthy → static fallback, even though the string appears in the tag.
+  const doc = `<article><h1>T</h1>${declAttr(' title="data-rwa-frozen"')}</article>`;
+  const self = resolveSelfDescription({ fileText: fileWrap(doc), doc, uuid: 'u', kind: 'datatable', frozenZones: [] });
+  assert.equal(self.source, 'static');
+});

@@ -302,3 +302,18 @@ test('attribute-form: a document with no data-rwa-frozen is unaffected (regressi
   const doc = '<article><h1>Plain</h1><p>body</p></article>';
   assert.equal(applyEdits(doc, [{ find: 'body', replace: 'text' }]), '<article><h1>Plain</h1><p>text</p></article>');
 });
+
+test('attribute-form: data-rwa-frozen in an attribute VALUE is not a frozen element (edit allowed)', () => {
+  // The string in class="data-rwa-frozen" is NOT a real data-rwa-frozen attribute,
+  // so the seed lens (DOM querySelectorAll('[data-rwa-frozen]')) does NOT freeze
+  // it. The CLI must agree (DOM-accurate via tagHasFrozenAttr), or it over-freezes
+  // vs the seed — the cross-surface divergence euler caught (seed 9864a66).
+  const doc = '<article><div class="data-rwa-frozen"><p>editable</p></div></article>';
+  const out = applyEdits(doc, [{ find: 'editable', replace: 'edited' }]);
+  assert.equal(out, '<article><div class="data-rwa-frozen"><p>edited</p></div></article>');
+});
+
+test('attribute-form: a longer attribute name (data-rwa-frozen-note) is not frozen', () => {
+  const doc = '<article><div data-rwa-frozen-note="x"><p>editable</p></div></article>';
+  assert.match(applyEdits(doc, [{ find: 'editable', replace: 'edited' }]), /edited/);
+});

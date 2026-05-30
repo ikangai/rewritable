@@ -239,6 +239,24 @@ function matchingCloseEnd(doc, tag, from) {
   return -1;
 }
 
+// True iff `openTag` carries data-rwa-frozen as an actual attribute NAME — not
+// inside a quoted value (class="data-rwa-frozen") and not a prefix of a longer
+// name (data-rwa-frozen-note). Mirror of the seed's tagHasFrozenAttr
+// (seeds/rewritable.html:2112) so the CLI's byte-range frozen detection agrees
+// with the real DOM enforcement (querySelectorAll('[data-rwa-frozen]')) — the
+// cheap /\bdata-rwa-frozen\b/ pre-filter's value/longer-name matches no longer
+// false-positive. KEEP IN STEP with the seed.
+export function tagHasFrozenAttr(openTag) {
+  const am = /^<[a-zA-Z][a-zA-Z0-9]*((?:\s[^>]*)?)\/?>$/.exec(openTag);
+  if (!am) return false;
+  const attrRe = /([^\s=/>]+)(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+))?/g;
+  let a;
+  while ((a = attrRe.exec(am[1])) !== null) {
+    if (a[1] === 'data-rwa-frozen') return true;
+  }
+  return false;
+}
+
 // Parser-free mirror of the seed's dataRwaFrozenSnapshot (seeds/rewritable.html
 // :2971): each data-rwa-frozen element captured as `tagName\0outerHTML`, sorted.
 // applyEdits compares this before/after to reject ANY change (inner text,
@@ -259,6 +277,7 @@ export function dataRwaFrozenSnapshot(doc) {
   while ((m = openRe.exec(doc)) !== null) {
     const tag = m[1].toLowerCase();
     const openTag = m[0];
+    if (!tagHasFrozenAttr(openTag)) continue; // the cheap regex matched a value/longer-name; not a real frozen element
     if (VOID_ELEMENTS.has(tag) || /\/>\s*$/.test(openTag)) {
       out.push(tag + '\0' + openTag); // self-contained: no inner, no close
       continue;

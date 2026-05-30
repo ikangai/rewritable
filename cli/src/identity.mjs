@@ -13,6 +13,8 @@
 // the reference; the full assembled object deep-equals computeSelfDescription in
 // doc.test.mjs). Drift fails loudly. KEEP IN STEP with tools/self-description.mjs.
 
+import { tagHasFrozenAttr } from './apply-edits.mjs';
+
 export const SCHEMA_TAG = 'self-description/1';
 // Mirror of tools/self-description.mjs AFFORDANCE_KINDS / PROVENANCES — used by the
 // declared-projection conformance gate (declaredIsConforming). Keep in step.
@@ -134,7 +136,10 @@ export function declarationFacts(fileText, doc) {
   const m = hay.match(DECL_RE);
   if (!m) return { found: false, inEditableBody: false, frozenAttr: false };
   const openTag = m[0].slice(0, m[0].indexOf('>') + 1);
-  return { found: true, inEditableBody, frozenAttr: /\bdata-rwa-frozen\b/.test(openTag) };
+  // DOM-accurate: data-rwa-frozen must be a real attribute NAME (not a value-
+  // mention / longer name), matching the seed's actual enforcement — else the
+  // CLI would over-trust a declaration the lens can still drift (euler #112).
+  return { found: true, inEditableBody, frozenAttr: tagHasFrozenAttr(openTag) };
 }
 
 export const SOURCES = ['static', 'live', 'declared'];
