@@ -2502,12 +2502,33 @@ async function callAgentSingleShot(prompt) {
   return (msg?.content || '').trim();
 }
 
+// Single source of truth for the bridge shell command. Both bridge entry points
+// (callBridgeSingleShot + modifyViaBridge) route through here so the security
+// posture is defined once.
+//
+// SECURITY (audit 2026-05-27): the prompt embeds the whole current document,
+// which is attacker-controlled when the container was shared/received. We do NOT
+// pass --permission-mode bypassPermissions: the bridge agent only has to EMIT
+// TEXT (an rwa-edit envelope / naked HTML) and needs no tools, so bypassing
+// permissions bought nothing but an RCE — prompt-injection text in the document
+// could have run arbitrary shell via the localhost bridge. Default permission
+// mode denies unattended tool use in headless `-p`, leaving the text path intact.
+// (Residual: a user who has globally allowlisted Bash in their own claude config
+// is still exposed in default mode — defense-in-depth tool restriction belongs in
+// web_cli_bridge, which actually executes this command.) The prompt is base64-
+// encoded so the document's quotes/backticks/$/newlines can't break out of the
+// single-quoted echo (the b64 alphabet is shell-safe inside single quotes).
+function bridgeCommand(prompt) {
+  const promptB64 = btoa(unescape(encodeURIComponent(prompt)));
+  return `echo '${promptB64}' | base64 -d | claude -p --output-format text`;
+}
+window.bridgeCommand = bridgeCommand; // expose for tests
+
 // Bridge counterpart to callAgentSingleShot. Anchored commands ask for naked
 // HTML, not a JSON envelope, so we don't run parseBridgeEnvelope — but we do
 // strip a leading ```html / ``` fence in case claude wraps it anyway.
 async function callBridgeSingleShot(prompt) {
-  const promptB64 = btoa(unescape(encodeURIComponent(prompt)));
-  const cmd = `echo '${promptB64}' | base64 -d | claude -p --output-format text --permission-mode bypassPermissions`;
+  const cmd = bridgeCommand(prompt);
   let resp;
   try {
     resp = await fetch(RWA.BRIDGE_URL, {
@@ -3735,12 +3756,11 @@ async function modifyViaBridge(instr, lensMeta = null) {
       '{"tool":"replace_document","envelope":{"version":"rwa-edit/1","doc":"...","reason":"..."}}\n\n' +
       'Pick the tool per the same preference rules: structural → apply_dsl_plan, content → apply_edits, wholesale → replace_document.';
 
-    // Encode the prompt as base64 to sidestep shell quoting (the doc may
-    // contain quotes, backticks, dollar signs, newlines — anything). The
-    // shell command decodes and pipes to claude -p's stdin via the
-    // text input mode.
-    const promptB64 = btoa(unescape(encodeURIComponent(prompt)));
-    const cmd = `echo '${promptB64}' | base64 -d | claude -p --output-format text --permission-mode bypassPermissions`;
+    // bridgeCommand base64-encodes the prompt (the doc may contain quotes,
+    // backticks, dollar signs, newlines — anything) and builds the shell command
+    // the localhost shim runs. Single source of truth for the bridge security
+    // posture (see its definition near callBridgeSingleShot).
+    const cmd = bridgeCommand(prompt);
 
     let resp;
     try {
