@@ -2254,6 +2254,75 @@ function nearbySnippets(haystack, needle, max = 3, ctx = 40) {
   return out;
 }
 
+// Deterministic near-miss finder for find_not_found (rwa-edit-spec §10). Given a
+// `find` that does NOT appear verbatim in `doc`, return a context fragment
+// {closest, match, truncated?} describing the closest actual text so the agent
+// self-corrects its anchor inside the retry budget — no model call (Rule 5).
+// Returns {} when nothing useful is found. Cold path (failure only), so an O(n)
+// projection is fine. Mirrored in cli/src/apply-edits.mjs — keep in sync.
+function findClosestAnchor(doc, find) {
+  if (!doc || !find) return {};
+  const needleNorm = find.replace(/[ \t\n\r\f]+/g, ' ').trim();
+  if (!needleNorm) return {};
+
+  // Whitespace-collapsed projection of `doc` with an offset map back to the
+  // original bytes (map[k] = source index of norm[k]; a whitespace run collapses
+  // to one space mapped to its first char). lowNorm mirrors norm length-for-length
+  // (chars whose lowercase isn't single-char are left as-is) so the case pass
+  // shares the same map without desync.
+  let norm = '', lowNorm = '';
+  const map = [];
+  let inWs = false;
+  for (let i = 0; i < doc.length; i++) {
+    const c = doc[i];
+    if (c === ' ' || c === '\t' || c === '\n' || c === '\r' || c === '\f') {
+      if (!inWs) { norm += ' '; lowNorm += ' '; map.push(i); inWs = true; }
+    } else {
+      const lc = c.toLowerCase();
+      norm += c;
+      lowNorm += lc.length === 1 ? lc : c;
+      map.push(i);
+      inWs = false;
+    }
+  }
+  // Cap the payload so an oversized anchor can't bloat the tool_result. When
+  // elided, flag truncated:true — the elided text LOCATES the region but is NOT
+  // byte-for-byte re-appliable, so the consumer must shorten its anchor.
+  const MAX = 300;
+  const mk = (raw, match) => raw.length <= MAX
+    ? { closest: raw, match }
+    : { closest: raw.slice(0, MAX - 18) + ' …[' + (raw.length - MAX) + ' more]… ', match, truncated: true };
+  const span = (k, normLen) => doc.slice(map[k], map[k + normLen - 1] + 1); // trim() ⇒ non-ws ends
+
+  // Pass 1 — whitespace-only mismatch (verbatim normalized match).
+  let k = norm.indexOf(needleNorm);
+  if (k !== -1) return mk(span(k, needleNorm.length), 'whitespace');
+
+  // Pass 2 — case (± whitespace) mismatch.
+  k = lowNorm.indexOf(needleNorm.toLowerCase());
+  if (k !== -1) return mk(span(k, needleNorm.length), 'case');
+
+  // Pass 3 — partial: longest matching prefix of the needle (floor 12 chars).
+  // Prefix-match is monotonic in length, so binary-search the longest L.
+  const FLOOR = 12;
+  if (needleNorm.length >= FLOOR) {
+    let lo = FLOOR, hi = needleNorm.length, best = -1, bestK = -1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      const j = norm.indexOf(needleNorm.slice(0, mid));
+      if (j !== -1) { best = mid; bestK = j; lo = mid + 1; } else { hi = mid - 1; }
+    }
+    if (best !== -1) {
+      const start = map[bestK];
+      const matchEnd = map[bestK + best - 1] + 1;
+      const ctxEnd = Math.min(doc.length, matchEnd + 40); // show where it diverges
+      return mk(doc.slice(start, ctxEnd), 'partial');
+    }
+  }
+
+  return {};
+}
+
 const escapeRegex = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 // Extract frozen zones. Three marker forms:
@@ -2965,12 +3034,33 @@ async function callAgentSingleShot(prompt) {
   return (msg?.content || '').trim();
 }
 
+// Single source of truth for the bridge shell command. Both bridge entry points
+// (callBridgeSingleShot + modifyViaBridge) route through here so the security
+// posture is defined once.
+//
+// SECURITY (audit 2026-05-27): the prompt embeds the whole current document,
+// which is attacker-controlled when the container was shared/received. We do NOT
+// pass --permission-mode bypassPermissions: the bridge agent only has to EMIT
+// TEXT (an rwa-edit envelope / naked HTML) and needs no tools, so bypassing
+// permissions bought nothing but an RCE — prompt-injection text in the document
+// could have run arbitrary shell via the localhost bridge. Default permission
+// mode denies unattended tool use in headless `-p`, leaving the text path intact.
+// (Residual: a user who has globally allowlisted Bash in their own claude config
+// is still exposed in default mode — defense-in-depth tool restriction belongs in
+// web_cli_bridge, which actually executes this command.) The prompt is base64-
+// encoded so the document's quotes/backticks/$/newlines can't break out of the
+// single-quoted echo (the b64 alphabet is shell-safe inside single quotes).
+function bridgeCommand(prompt) {
+  const promptB64 = btoa(unescape(encodeURIComponent(prompt)));
+  return `echo '${promptB64}' | base64 -d | claude -p --output-format text`;
+}
+window.bridgeCommand = bridgeCommand; // expose for tests
+
 // Bridge counterpart to callAgentSingleShot. Anchored commands ask for naked
 // HTML, not a JSON envelope, so we don't run parseBridgeEnvelope — but we do
 // strip a leading ```html / ``` fence in case claude wraps it anyway.
 async function callBridgeSingleShot(prompt) {
-  const promptB64 = btoa(unescape(encodeURIComponent(prompt)));
-  const cmd = `echo '${promptB64}' | base64 -d | claude -p --output-format text --permission-mode bypassPermissions`;
+  const cmd = bridgeCommand(prompt);
   let resp;
   try {
     resp = await fetch(RWA.BRIDGE_URL, {
@@ -3487,7 +3577,7 @@ async function applyEdits(envelope, currentDocRaw, lensMeta = null) {
     const find = canonLF(edit.find);
     const replace = canonLF(replaceRaw);
     const occ = countOccurrences(work, find);
-    if (occ === 0) throw new RwaEditError('find_not_found', i);
+    if (occ === 0) throw new RwaEditError('find_not_found', i, findClosestAnchor(work, find));
     if (occ > 1) throw new RwaEditError('find_not_unique', i, { count: occ, hints: nearbySnippets(work, find) });
     const idx = work.indexOf(find);
     // rwa-lens/1: class-declared lock check (spec §7). Reject any find range
@@ -4011,10 +4101,27 @@ function buildUserPrompt(instr, doc, frozenZones) {
     '\n\nThe current document follows. Make your edit by calling apply_edits or replace_document.\n\n<DOC>\n' + doc + '\n</DOC>';
 }
 
+// Plain-English, code-keyed recovery hints. Self-documenting failures: the model
+// gets one actionable line in its tool_result, not just a code — steering weaker
+// and local backends toward a fix. A static lookup, never a model call (Rule 5).
+// Mirrored in cli/src/apply-edits.mjs FAILURE_HINTS — keep the shared codes' text
+// identical. No reserved markers in the strings.
+const FAILURE_HINTS = {
+  find_not_found: 'find must match the document byte-for-byte (whitespace and case included). If a closest match is shown, copy it exactly; otherwise pick a shorter, distinctive anchor.',
+  find_not_unique: 'find appears more than once. Extend it with neighbouring text until it is unique; the hints list shows where.',
+  frozen_zone_violation: 'This region is an author-protected frozen zone. Anchor on a different region — frozen zones change only by editing the file outside the runtime.',
+  structural_shape_changed: 'The edit would change the document script/style tag count. Keep edits content-only, or use apply_dsl_plan for structural changes.',
+  replace_too_large: 'replace exceeds the per-edit size cap. Split the change into smaller anchored edits.',
+  empty_find: 'find must be a non-empty string — provide the exact text to anchor on.',
+  parse_error_post_apply: 'The result was not well-formed HTML — check that the tags in replace are balanced.',
+};
+
 function failureToToolResult(err) {
   const payload = { ok: false, code: err.code };
   if (err.editIndex != null) payload.edit_index = err.editIndex;
   if (err.context) Object.assign(payload, err.context);
+  const hint = FAILURE_HINTS[err.code];
+  if (hint && payload.hint == null) payload.hint = hint;
   return JSON.stringify(payload);
 }
 
@@ -4198,12 +4305,11 @@ async function modifyViaBridge(instr, lensMeta = null) {
       '{"tool":"replace_document","envelope":{"version":"rwa-edit/1","doc":"...","reason":"..."}}\n\n' +
       'Pick the tool per the same preference rules: structural → apply_dsl_plan, content → apply_edits, wholesale → replace_document.';
 
-    // Encode the prompt as base64 to sidestep shell quoting (the doc may
-    // contain quotes, backticks, dollar signs, newlines — anything). The
-    // shell command decodes and pipes to claude -p's stdin via the
-    // text input mode.
-    const promptB64 = btoa(unescape(encodeURIComponent(prompt)));
-    const cmd = `echo '${promptB64}' | base64 -d | claude -p --output-format text --permission-mode bypassPermissions`;
+    // bridgeCommand base64-encodes the prompt (the doc may contain quotes,
+    // backticks, dollar signs, newlines — anything) and builds the shell command
+    // the localhost shim runs. Single source of truth for the bridge security
+    // posture (see its definition near callBridgeSingleShot).
+    const cmd = bridgeCommand(prompt);
 
     let resp;
     try {
