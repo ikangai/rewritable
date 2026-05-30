@@ -14,10 +14,13 @@ affordances on one self-rewriting page, served to both humans and agents:
 | **Compute** | the **Total** column + grand total | pure derivation at render — never stored, so it can't drift |
 | **Tool** | an agent edits rows via the `rwa-edit/1` contract | `rwa edit` / the lens, operating on `#dt-data` |
 
-It **declares** these in a machine-readable `#rwa-affordances` block shaped to the
-ratified [`self-description/1`](../../docs/specs/rwa-self-description-spec.md)
-contract — so an agent (or a future runtime introspector) can learn what the file
-is *without executing any JavaScript*.
+It **declares** these in a machine-readable `#rwa-affordances` block shaped toward
+the [`self-description/1`](../../docs/specs/rwa-self-description-spec.md) contract —
+so an agent (or a future runtime introspector) can learn what the file is *without
+executing any JavaScript*. The block carries `data-rwa-frozen`, so the runtime/lens
+edit path can't silently drift the file's self-knowledge. (The exact declaration
+schema — and whether a reader should prefer a declaration over the kind-template —
+is being ratified by the team as `self-description/1` v1.1; this block tracks it.)
 
 ## Try it
 

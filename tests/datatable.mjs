@@ -116,6 +116,17 @@ function editCell(r, c, value) {
     manifest.affordances.map(a => a.kind).sort().join(',') === 'compute,edit-surface,view,view');
   check('every declared affordance carries kind + name + provenance (Provider shape)',
     manifest.affordances.every(a => a.kind && a.name && a.provenance === 'first-party'));
+  // The declaration sits in a data-rwa-frozen zone so the agent/lens edit path
+  // can't silently drift the file's self-knowledge (newton + euler's constraint).
+  // The runtime rejects any edit that mutates the frozen #rwa-affordances block.
+  let frozenRejected = null;
+  try {
+    await window.runtime.applyEnvelope(
+      { version: 'rwa-edit/1', edits: [{ find: '"kind": "datatable"', replace: '"kind": "spreadsheet"' }] },
+      { surface: 'test:tamper' });
+  } catch (e) { frozenRejected = e && (e.code || e.message); }
+  check('runtime rejects an edit that would drift the frozen #rwa-affordances declaration', !!frozenRejected);
+  check('declaration unchanged after the rejected tamper', JSON.parse(document.getElementById('rwa-affordances').textContent).kind === 'datatable');
 
   // ── Initial render: View + Compute.
   check('grid renders 6 data rows', grid().querySelectorAll('tbody tr').length === 6);
