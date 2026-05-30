@@ -23,22 +23,13 @@ export const PROVENANCES = ['first-party', 'installed'];
 // `provenance:'first-party'` is added per emit (bootstrap-resident providers).
 // The presentation entry mirrors the seed presentationProvider {name:'presentation',
 // label:'Present'} (seeds/rewritable.html:3542-3543) so static == live by construction.
+// ONLY kinds the runtime FIRST-PARTY-provides — custom kinds (datatable, …) are
+// consumer-built via provide()/the declaration, so their honest static answer is
+// [] (declared > static supplies the real affordances when a declaration exists).
 export const KIND_PROVIDERS = {
   document: [],
   presentation: [{ kind: 'view', name: 'presentation', label: 'Present' }],
   workflow: [],
-  // illustrative / reserved — not yet shipping as registered providers:
-  datatable: [
-    { kind: 'view', name: 'grid', label: 'Grid' },
-    { kind: 'edit-surface', name: 'cell', label: 'Edit cells' },
-    { kind: 'tool', name: 'derive', label: 'Derive column' },
-    { kind: 'compute', name: 'recalc', label: 'Recompute' },
-  ],
-  application: [
-    { kind: 'view', name: 'app', label: 'App' },
-    { kind: 'edit-surface', name: 'form', label: 'Edit' },
-    { kind: 'tool', name: 'command', label: 'Run command' },
-  ],
 };
 
 // Substrate-universal ops — the SAME for every container regardless of kind. The

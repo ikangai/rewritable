@@ -137,7 +137,7 @@ test('resolveSelfDescription does NOT trust an edit-reachable (unfrozen body) de
   const doc = bodyWith(ALIGNED_DECL, { frozen: false });
   const self = resolveSelfDescription({ fileText: fileWrap(doc), doc, uuid: 'u', kind: 'datatable', frozenZones: [] });
   assert.equal(self.source, 'static');
-  assert.deepEqual(kinds(self), ['view', 'edit-surface', 'tool', 'compute']); // the kind-template guess
+  assert.deepEqual(kinds(self), []); // custom kind → no first-party template → honest-unknown (not a wrong guess)
 });
 
 test('resolveSelfDescription falls back to static for a trusted but NON-conforming declaration', () => {
