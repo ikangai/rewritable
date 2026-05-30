@@ -50,6 +50,19 @@ body{font-family:var(--font-ui);background:var(--bg);color:var(--text);min-heigh
 .rwa-set-base-url-line button:hover{background:var(--gray-200);}
 .rwa-set-hint{font-family:var(--font-mono);font-size:10px;line-height:1.5;color:var(--gray-500);}
 .rwa-set-hint:empty{display:none;}
+#rwa-info-panel{position:fixed;top:50px;right:12px;background:var(--white);border:1px solid var(--gray-200);border-radius:var(--radius-sm);padding:18px 20px;display:none;max-width:340px;z-index:999;box-shadow:0 4px 16px rgba(0,0,0,0.08);font-family:var(--font-ui);font-size:13px;line-height:1.55;color:var(--gray-700);}
+#rwa-info-panel.open{display:block;}
+#rwa-info-panel h4{margin:0 0 6px;font-size:15px;color:var(--gray-900);font-weight:600;}
+#rwa-info-panel p{margin:0 0 8px;}
+#rwa-info-panel .rwa-info-kind{font-family:var(--font-mono);font-size:9px;letter-spacing:1.5px;text-transform:uppercase;color:var(--gray-500);margin-bottom:8px;}
+#rwa-info-panel .rwa-info-meta{font-family:var(--font-mono);font-size:10px;color:var(--gray-500);margin-bottom:10px;}
+#rwa-info-panel .rwa-info-lbl{font-family:var(--font-mono);font-size:9px;letter-spacing:1.5px;text-transform:uppercase;color:var(--gray-500);margin:10px 0 4px;}
+#rwa-info-panel ul{margin:4px 0 0;padding:0;list-style:none;}
+#rwa-info-panel li{margin:5px 0;padding-left:14px;position:relative;}
+#rwa-info-panel li::before{content:'·';position:absolute;left:3px;color:var(--gray-400);}
+#rwa-info-panel .rwa-info-foot{margin-top:12px;padding-top:10px;border-top:1px solid var(--gray-100);font-size:11px;color:var(--gray-500);line-height:1.5;}
+#rwa-info-panel strong{color:var(--gray-900);font-weight:600;}
+#rwa-info-panel code{font-family:var(--font-mono);font-size:11px;background:var(--gray-50);padding:1px 5px;border-radius:4px;color:var(--gray-700);}
 .rwa-set-hint code{background:var(--gray-100);padding:1px 4px;border-radius:3px;font-size:10px;}
 .rwa-set-hint.ok{color:#15803d;}
 .rwa-set-hint.err{color:#b91c1c;}
@@ -820,7 +833,7 @@ async function runtimeUndo() { return undo(); }
 async function runtimeApplyEnvelope(envelope, options) {
   options = options || {};
   if (!envelope || typeof envelope !== 'object') throw new TypeError('runtime.applyEnvelope: envelope is required');
-  return synthesizeAndCommit(envelope, options.surface || 'runtime:apply-envelope', options.instruction || '');
+  return synthesizeAndCommit(envelope, options.surface || 'runtime:apply-envelope', options.instruction || '', options.actor);
 }
 
 async function getDoc() {
@@ -988,6 +1001,7 @@ function buildUI() {
   document.getElementById('rwa-runtime').innerHTML = `
 <div id="rwa-set">
   <button class="rwa-st-btn" id="rwa-st-status">● ready</button>
+  <button class="rwa-st-btn" id="rwa-st-info" title="what is this?" aria-label="what is this?">ⓘ</button>
   <button class="rwa-st-btn" id="rwa-st-cog">⚙</button>
   <button class="rwa-st-btn pri" id="rwa-st-commit">⌘S</button>
 </div>
@@ -998,6 +1012,7 @@ function buildUI() {
   <div class="rwa-set-row" id="rwa-set-row-model"><label>Model</label><input type="text" id="rwa-model" autocomplete="off" list="rwa-model-options"><datalist id="rwa-model-options"></datalist></div>
   <div class="rwa-set-row" id="rwa-set-row-hint" style="display:none;"><div id="rwa-backend-hint" class="rwa-set-hint"></div></div>
 </div>
+<div id="rwa-info-panel"></div>
 <div id="rwa-pal">
   <div id="rwa-pal-box">
     <div class="rwa-pal-top">
@@ -1152,7 +1167,19 @@ function buildUI() {
     }
   };
 
-  document.getElementById('rwa-st-cog').onclick = () => document.getElementById('rwa-set-panel').classList.toggle('open');
+  document.getElementById('rwa-st-cog').onclick = () => {
+    document.getElementById('rwa-info-panel').classList.remove('open');   // panels are mutually exclusive
+    document.getElementById('rwa-set-panel').classList.toggle('open');
+  };
+  // ⓘ "what is this?" — render the rwa-identity/1 bundle as prose on open so it
+  // reflects current state every time (title/blocks/locked regions change as the
+  // doc is edited). Mutually exclusive with the settings panel.
+  document.getElementById('rwa-st-info').onclick = () => {
+    document.getElementById('rwa-set-panel').classList.remove('open');
+    const panel = document.getElementById('rwa-info-panel');
+    if (!panel.classList.contains('open')) panel.innerHTML = renderInfoPanel();
+    panel.classList.toggle('open');
+  };
   document.getElementById('rwa-st-commit').onclick = commit;
 
   const pal = document.getElementById('rwa-pal'), inp = document.getElementById('rwa-pal-inp'), go = document.getElementById('rwa-pal-go');
@@ -2789,11 +2816,39 @@ function synthesizeDefaultAppend(text) {
 if (typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent)) {
   window.__synthesizeDefaultAppend = synthesizeDefaultAppend;
 }
-async function synthesizeAndCommit(envelope, surface, instruction) {
-  // Test seam preserved.
+// R5 Step-1 (docs/plans/2026-05-30-r5-write-path-design.md): serializes NON-AGENT
+// commits (the lens direct-text path + runtime.applyEnvelope) so a rapid 2nd
+// commit WAITS for the 1st instead of throwing concurrent_modify. commitCore holds
+// modifyMutex through renderDoc and releases only in `finally`, so before this a
+// fast follow-up landed in a held mutex and an edit-surface (datatable cells,
+// compute cascades) had to hand-roll its own serialization (window.__dtBusy). The
+// queue moves that into the runtime. Initialized to a resolved promise so the
+// first commit chains cleanly.
+let nonAgentCommitChain = Promise.resolve();
+
+async function synthesizeAndCommit(envelope, surface, instruction, actor) {
+  // Test seam preserved (kept 3-arg so existing stubs keep matching; the actor
+  // passthrough is exercised via the rwa_hist integration tests, not the seam).
   if (typeof window.__synthesizeAndCommit === 'function') {
     return window.__synthesizeAndCommit(envelope, surface, instruction);
   }
+  // Chain onto the tail so concurrent non-agent commits run one-at-a-time: `run`
+  // executes only after the prior commitCore has fully settled (post-`finally`,
+  // so modifyMutex is free). The caller gets the real result/rejection (return p);
+  // the chain stores p.catch() so a failed commit (frozen_zone_violation, or
+  // concurrent_modify when an AGENT loop holds the mutex) does not poison the
+  // queue for the next writer. Agent-loop exclusivity is unchanged — only
+  // non-agent-vs-non-agent races now serialize.
+  const run = () => commitCore(envelope, surface, instruction, actor);
+  const p = nonAgentCommitChain.then(run, run);
+  nonAgentCommitChain = p.catch(() => {});
+  return p;
+}
+
+// The reentrant commit body. Assumes the queue above serializes it, so the
+// `if (modifyMutex) throw` guard now fires only when an AGENT loop (modify /
+// modifyViaBridge / runAnchoredCommand) holds the mutex — a genuine conflict.
+async function commitCore(envelope, surface, instruction, actor) {
   // Acquire modifyMutex around the read+commit window. Without this, two
   // concurrent ⌘Enter submits could race against each other: both read the
   // same currentDoc, both push it onto rwa_undo, and the later commit
@@ -2823,7 +2878,10 @@ async function synthesizeAndCommit(envelope, surface, instruction) {
       scope: lensState.anchor
         ? { type: 'block', block_id: String(lensState.anchor.start) }
         : { type: 'eof' },
-      actor: 'user:lens',
+      // Default 'user:lens' for the direct-text path; runtime.applyEnvelope can
+      // pass an actor (e.g. 'user:edit-surface', 'compute:derived') so a non-lens
+      // writer self-attributes in rwa_hist instead of masquerading as the lens.
+      actor: actor || 'user:lens',
     };
     let result;
     if (!envelope) {
@@ -3417,7 +3475,7 @@ let modifyMutex = false;
 // stay null for every non-presentation container — the PRODUCT_KIND-gated
 // bootstrap block (below) is the ONLY caller of runtimeProvide / runtimeSetView,
 // so this whole subsystem is inert unless PRODUCT_KIND === 'presentation'.
-const providers = { view: null };
+const providers = { view: null, 'edit-surface': null, compute: null };
 let activeView = null;
 
 const RWA_VIEW_RESERVED_IDS = ['rwa-doc-mount', 'rwa-lens', 'rwa-runtime'];
@@ -3458,20 +3516,24 @@ function validateViewOutput(html, spec) {
   return html;
 }
 
-// runtime.provide(kind, spec) -> unregister closure (spec §5.10).
+// runtime.provide(kind, spec) -> unregister closure (spec §5.10, §3.1).
+// `view` is executed by the render path (requires render()). `edit-surface` /
+// `compute` are DECLARATIVE affordance records: the document's own JS owns the
+// edit/compute logic; the provider just makes describe() report the affordance
+// LIVE (spec §3.1 — no ui()/logic() execution contract invented in v1).
 function runtimeProvide(kind, spec) {
-  if (kind !== 'view') throw new Error('unknown provider kind: ' + kind);
-  if (!spec || spec.kind !== 'view') throw new Error("view spec.kind must be 'view'");
-  for (const f of ['name', 'label', 'render']) {
-    if (spec[f] == null) throw new Error('view spec missing required field: ' + f);
+  if (kind !== 'view' && kind !== 'edit-surface' && kind !== 'compute') throw new Error('unknown provider kind: ' + kind);
+  if (!spec || spec.kind !== kind) throw new Error(kind + " spec.kind must be '" + kind + "'");
+  for (const f of ['name', 'label']) {
+    if (spec[f] == null) throw new Error(kind + ' spec missing required field: ' + f);
   }
-  if (typeof spec.render !== 'function') throw new Error('view spec.render must be a function');
+  if (kind === 'view' && typeof spec.render !== 'function') throw new Error('view spec.render must be a function');
   spec.__provenance = 'first-party';
-  providers.view = spec;   // single-slot replace; does NOT auto-activate (§5.10)
+  providers[kind] = spec;   // single-slot replace per kind; does NOT auto-activate (§5.10)
   return function unregister() {
-    if (providers.view === spec) {
-      if (activeView === spec) runtimeSetView(null);
-      providers.view = null;
+    if (providers[kind] === spec) {
+      if (kind === 'view' && activeView === spec) runtimeSetView(null);
+      providers[kind] = null;
     }
   };
 }
@@ -3497,6 +3559,94 @@ function runtimeSetView(name) {
 }
 function rwaViewKey() { return 'rwa_view_active_' + DOC_UUID; }
 function rwaSlideKey() { return 'rwa_view_slide_' + DOC_UUID; }
+
+// ─── rwa-identity/1: a rewritable knows what it is (self-description) ──
+// Computes the LIVE identity bundle — what this container IS and what can be
+// done with it — by introspecting actual runtime state: PRODUCT_KIND, the live
+// §5.10 view-provider registry, author-declared frozen zones, the doc's <h1>
+// title and addressable-block (data-rwa-id) count. This is the `source:'live'`
+// emitter; cli/src/doc.mjs emits the matching `source:'static'` bundle from the
+// file bytes. The agent reads it via runtime.describe(); the human reads it via
+// the ⓘ "what is this?" panel (renderInfoPanel). Honest by construction: it
+// reports only affordances that actually exist (history is ['undo'] — there is
+// no redo) and only views actually registered (zero-drift vs a kind-hardcoded
+// guess). Wire shape tracks the rwa-identity/1 contract (re-write-able-spec
+// §5.11 candidate); see docs/plans/2026-05-30-rwa-identity-design.md.
+function rwaIdentityDoc() {
+  return (typeof currentDocCache === 'string' && currentDocCache !== null) ? currentDocCache : INLINE_DOC;
+}
+function rwaIdentityTitle(doc) {
+  try {
+    const p = new DOMParser().parseFromString('<!DOCTYPE html><html><body>' + (doc || '') + '</body></html>', 'text/html');
+    const h1 = p.querySelector('h1');
+    const t = h1 && h1.textContent.trim();
+    return t || null;
+  } catch (_) { return null; }
+}
+function runtimeDescribe() {
+  const doc = rwaIdentityDoc();
+  // Same token the static reader counts (tools/self-description.mjs), so the two
+  // projections measure blocks the same way.
+  const blocks = (doc.match(/\bdata-rwa-id\b/g) || []).length;
+  const frozenZones = extractFrozenZones(doc).filter(z => !z.error).map(z => z.name);
+  // LIVE affordances = the actual provider registry (view / edit-surface /
+  // compute), each mapped to its {kind,name,label,provenance} record (zero-drift,
+  // spec §3.1). A file that REGISTERS an edit-surface/compute provider (the
+  // datatable) is reported here LIVE — describe() never under- or over-claims.
+  const affordances = [];
+  for (const k of ['view', 'edit-surface', 'compute']) {
+    const p = providers[k];
+    if (p) affordances.push({ kind: k, name: p.name, label: p.label, provenance: p.__provenance || 'first-party' });
+  }
+  return {
+    rwa: 'self-description/1',
+    source: 'live',
+    uuid: DOC_UUID,
+    kind: PRODUCT_KIND,
+    title: rwaIdentityTitle(doc),
+    blocks,
+    affordances,
+    frozenZones,
+    // Substrate-universals — true of every container, NOT type affordances (spec
+    // §2). Surfaced so a reader can see "what can be done with me"; history is
+    // undo-only — there is no redo (re-write-able-spec Invariant 7).
+    baseline: { edit: ['lens'], tools: ['apply_dsl_plan', 'apply_edits', 'replace_document'], export: ['html', 'print'], history: ['undo'] },
+    activeView: activeView ? activeView.name : null,
+  };
+}
+
+// Render the identity bundle as friendly, scannable prose for a human who just
+// opened the file and wants to know "what is this?". Reads runtime.describe() so
+// it stays truthful to live state. Decoupled from the wire shape: only this
+// function knows the prose, so reshaping the contract touches runtimeDescribe()
+// and this reader together, nothing else.
+function renderInfoPanel() {
+  const d = runtimeDescribe();
+  const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const title = d.title ? '“' + esc(d.title) + '”' : '<span style="color:var(--gray-400)">untitled</span>';
+  const lines = ['<strong>Edit</strong> — describe a change in the lens (<code>⌘K</code>) and the AI rewrites it in place'];
+  // A registered view provider (e.g. presentation) becomes a "toggle the X view"
+  // line; a base document has none, so this is simply skipped.
+  const viewAff = d.affordances.find(a => a.kind === 'view');
+  if (viewAff) {
+    const label = viewAff.label || viewAff.name;
+    lines.push('<strong>' + esc(label) + '</strong> — toggle the <code>' + esc(viewAff.name) + '</code> view' + (d.activeView === viewAff.name ? ' (active now)' : ''));
+  }
+  lines.push('<strong>Undo</strong> — <code>⌘Z</code> steps back');
+  lines.push('<strong>Save</strong> — <code>⌘S</code> writes your changes back into this file');
+  const fz = d.frozenZones;
+  const meta = [d.blocks + ' addressable block' + (d.blocks === 1 ? '' : 's')];
+  if (fz.length) meta.push(fz.length + ' locked region' + (fz.length === 1 ? '' : 's') + ' (' + fz.map(esc).join(', ') + ')');
+  return [
+    '<div class="rwa-info-kind">re-writeable · ' + esc(d.kind) + '</div>',
+    '<h4>' + title + '</h4>',
+    '<p>A self-contained <strong>' + esc(d.kind) + '</strong> that edits itself — one HTML file, no server, no account.</p>',
+    '<div class="rwa-info-meta">' + meta.join(' · ') + '</div>',
+    '<p class="rwa-info-lbl">What you can do</p>',
+    '<ul><li>' + lines.join('</li><li>') + '</li></ul>',
+    '<div class="rwa-info-foot">Identity <code>' + esc(String(d.uuid).slice(0, 8)) + '</code> · runs anywhere — email it, host it, open it offline. <strong>The file knows what it is.</strong></div>',
+  ].join('');
+}
 
 // ─── First-party 'presentation' view provider (spec §5.10) ──────────
 // WRAP-IN-PLACE: split the doc at <h1>/<h2> boundaries into
@@ -4101,6 +4251,7 @@ document.addEventListener('keydown', e => {
       on:     runtimeOn,
       provide: runtimeProvide,   // spec §5.10 — register a view provider
       setView: runtimeSetView,   // spec §5.10 — activate/deactivate a render mode
+      describe: runtimeDescribe, // rwa-identity/1 — what this container is + can do
     };
     // `status` is a getter so each read returns a fresh snapshot of
     // dirty/fsa/storage; an enumerable data prop would let stale references

@@ -3475,7 +3475,7 @@ let modifyMutex = false;
 // stay null for every non-presentation container — the PRODUCT_KIND-gated
 // bootstrap block (below) is the ONLY caller of runtimeProvide / runtimeSetView,
 // so this whole subsystem is inert unless PRODUCT_KIND === 'presentation'.
-const providers = { view: null };
+const providers = { view: null, 'edit-surface': null, compute: null };
 let activeView = null;
 
 const RWA_VIEW_RESERVED_IDS = ['rwa-doc-mount', 'rwa-lens', 'rwa-runtime'];
@@ -3516,20 +3516,24 @@ function validateViewOutput(html, spec) {
   return html;
 }
 
-// runtime.provide(kind, spec) -> unregister closure (spec §5.10).
+// runtime.provide(kind, spec) -> unregister closure (spec §5.10, §3.1).
+// `view` is executed by the render path (requires render()). `edit-surface` /
+// `compute` are DECLARATIVE affordance records: the document's own JS owns the
+// edit/compute logic; the provider just makes describe() report the affordance
+// LIVE (spec §3.1 — no ui()/logic() execution contract invented in v1).
 function runtimeProvide(kind, spec) {
-  if (kind !== 'view') throw new Error('unknown provider kind: ' + kind);
-  if (!spec || spec.kind !== 'view') throw new Error("view spec.kind must be 'view'");
-  for (const f of ['name', 'label', 'render']) {
-    if (spec[f] == null) throw new Error('view spec missing required field: ' + f);
+  if (kind !== 'view' && kind !== 'edit-surface' && kind !== 'compute') throw new Error('unknown provider kind: ' + kind);
+  if (!spec || spec.kind !== kind) throw new Error(kind + " spec.kind must be '" + kind + "'");
+  for (const f of ['name', 'label']) {
+    if (spec[f] == null) throw new Error(kind + ' spec missing required field: ' + f);
   }
-  if (typeof spec.render !== 'function') throw new Error('view spec.render must be a function');
+  if (kind === 'view' && typeof spec.render !== 'function') throw new Error('view spec.render must be a function');
   spec.__provenance = 'first-party';
-  providers.view = spec;   // single-slot replace; does NOT auto-activate (§5.10)
+  providers[kind] = spec;   // single-slot replace per kind; does NOT auto-activate (§5.10)
   return function unregister() {
-    if (providers.view === spec) {
-      if (activeView === spec) runtimeSetView(null);
-      providers.view = null;
+    if (providers[kind] === spec) {
+      if (kind === 'view' && activeView === spec) runtimeSetView(null);
+      providers[kind] = null;
     }
   };
 }
@@ -3585,12 +3589,15 @@ function runtimeDescribe() {
   // projections measure blocks the same way.
   const blocks = (doc.match(/\bdata-rwa-id\b/g) || []).length;
   const frozenZones = extractFrozenZones(doc).filter(z => !z.error).map(z => z.name);
-  // LIVE affordances = the actual §5.10 provider registry, each mapped to its
-  // {kind,name,label,provenance} record (zero-drift). For v1 the only slot is
-  // `view`; this equals KIND_PROVIDERS[kind] by construction (spec SD-03), so a
-  // registry/kind mismatch surfaces as a real bug rather than being papered over.
+  // LIVE affordances = the actual provider registry (view / edit-surface /
+  // compute), each mapped to its {kind,name,label,provenance} record (zero-drift,
+  // spec §3.1). A file that REGISTERS an edit-surface/compute provider (the
+  // datatable) is reported here LIVE — describe() never under- or over-claims.
   const affordances = [];
-  if (providers.view) affordances.push({ kind: 'view', name: providers.view.name, label: providers.view.label, provenance: 'first-party' });
+  for (const k of ['view', 'edit-surface', 'compute']) {
+    const p = providers[k];
+    if (p) affordances.push({ kind: k, name: p.name, label: p.label, provenance: p.__provenance || 'first-party' });
+  }
   return {
     rwa: 'self-description/1',
     source: 'live',

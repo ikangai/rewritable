@@ -12,7 +12,8 @@
     "test:identity": "node identity.mjs",
     "test:datatable": "node datatable.mjs",
     "test:write-path": "node write-path.mjs",
-    "test:r5": "node r5-concurrent-commit.mjs"
+    "test:r5": "node r5-concurrent-commit.mjs",
+    "test:kernel": "node affordance-kernel.mjs"
   },
   "dependencies": {
     "fake-indexeddb": "^6.0.0",
