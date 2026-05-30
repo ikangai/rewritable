@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+  /* Datatable affordance demo — crafted within the seed's grayscale ramp
+     (--gray-50…900) + semantic (--green/--red/--blue), system fonts only.
+     Specificity stays low so the seed's :where(#rwa-doc-mount) baseline still
+     loses to these, but nothing here fights the runtime chrome. */
+  .dt-doc { max-width: 860px; margin: 56px auto 96px; padding: 0 28px; }
+  .dt-doc h1 { font-size: 1.5rem; font-weight: 650; letter-spacing: -.02em; margin: 0 0 4px; color: var(--gray-900); }
+  .dt-sub { font-family: var(--font-mono); font-size: 11px; letter-spacing: .4px; color: var(--gray-500); margin: 0 0 24px; }
+  .dt-sub b { color: var(--gray-700); font-weight: 600; }
+
+  .dt-bar { display: flex; align-items: center; gap: 8px; margin: 0 0 14px; }
+  .dt-seg { display: inline-flex; border: 1px solid var(--gray-200); border-radius: 8px; overflow: hidden; }
+  .dt-seg button { background: var(--white); border: 0; border-right: 1px solid var(--gray-200); color: var(--gray-500);
+    font-family: var(--font-mono); font-size: 10px; letter-spacing: .8px; text-transform: uppercase;
+    padding: 6px 12px; cursor: pointer; transition: background .15s, color .15s; }
+  .dt-seg button:last-child { border-right: 0; }
+  .dt-seg button[aria-pressed="true"] { background: var(--gray-900); color: var(--white); }
+  .dt-spacer { flex: 1; }
+  .dt-add { background: var(--gray-900); color: var(--white); border: 0; border-radius: 8px;
+    font-family: var(--font-ui); font-size: 12px; font-weight: 500; padding: 7px 14px; cursor: pointer; transition: opacity .15s; }
+  .dt-add:hover { opacity: .88; }
+
+  table.dt { width: 100%; border-collapse: collapse; font-size: 14px; }
+  table.dt thead th { font-family: var(--font-mono); font-size: 10px; font-weight: 600; letter-spacing: .8px;
+    text-transform: uppercase; color: var(--gray-500); text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--gray-300); }
+  table.dt thead th.num { text-align: right; }
+  table.dt tbody td { padding: 0; border-bottom: 1px solid var(--gray-200); color: var(--gray-900); vertical-align: middle; }
+  .dt-cell { padding: 9px 10px; cursor: text; min-height: 18px; transition: background .12s; }
+  .dt-cell:hover { background: var(--gray-50); }
+  .dt-cell.num, td.dt-total { text-align: right; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+  td.dt-total { padding: 9px 10px; background: var(--gray-50); color: var(--gray-500); cursor: not-allowed;
+    font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+  .dt-edit { width: 100%; box-sizing: border-box; border: 0; padding: 9px 10px; margin: 0;
+    font: inherit; color: var(--gray-900); background: var(--white); outline: 2px solid var(--gray-900); outline-offset: -2px; border-radius: 3px; }
+  .dt-cell.num .dt-edit, td.dt-edit-num .dt-edit { text-align: right; font-family: var(--font-mono); }
+  .dt-del { background: transparent; border: 0; color: var(--gray-300); cursor: pointer; font-size: 16px; line-height: 1;
+    padding: 6px 8px; transition: color .15s; }
+  .dt-del:hover { color: var(--red); }
+  tfoot td { padding: 11px 10px; border-top: 2px solid var(--gray-400); font-weight: 650; color: var(--gray-900); }
+  tfoot td.num { text-align: right; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+  .dt-foot-label { font-family: var(--font-ui); letter-spacing: 0; }
+
+  /* Summary view: same data, alternative rendering (the View affordance). */
+  .dt-summary { margin-top: 4px; }
+  .dt-srow { display: grid; grid-template-columns: 130px 1fr 90px 52px; align-items: center; gap: 12px; padding: 9px 2px; border-bottom: 1px solid var(--gray-200); }
+  .dt-scat { font-size: 13px; color: var(--gray-900); font-weight: 500; }
+  .dt-strack { height: 8px; background: var(--gray-100); border-radius: 4px; overflow: hidden; }
+  .dt-sfill { height: 100%; background: var(--gray-900); border-radius: 4px; }
+  .dt-samt { text-align: right; font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 13px; color: var(--gray-900); }
+  .dt-spct { text-align: right; font-family: var(--font-mono); font-size: 11px; color: var(--gray-500); }
+  .dt-note { margin-top: 18px; font-size: 12px; color: var(--gray-500); line-height: 1.55; }
+  .dt-note code { font-family: var(--font-mono); font-size: 11px; background: var(--gray-100); padding: 1px 5px; border-radius: 4px; color: var(--gray-700); }
+</style>
+</head>
+<body>
+<article class="dt-doc">
+  <h1>Q1 2026 — Marketing Budget</h1>
+  <p class="dt-sub">A datatable that <b>knows what it is</b> · click any cell to edit — <b>no model needed</b> · ⌘S commits · ⌘Z undoes</p>
+
+  <script type="application/rwa-affordances+json" id="rwa-affordances">
+{
+  "schema": "self-description/1",
+  "source": "declared",
+  "kind": "datatable",
+  "title": "Q1 2026 — Marketing Budget",
+  "data": "#dt-data",
+  "affordances": [
+    { "kind": "view",         "name": "grid",    "label": "Grid",                    "provenance": "first-party" },
+    { "kind": "view",         "name": "summary", "label": "Summary by category",      "provenance": "first-party" },
+    { "kind": "edit-surface", "name": "cell",    "label": "Edit cells directly (no model)", "provenance": "first-party", "surface": "datatable:cell-edit", "target": "#dt-data" },
+    { "kind": "compute",      "name": "total",   "label": "Total = qty × unit_price", "provenance": "first-party", "inputs": ["qty", "unit_price"], "output": "total" }
+  ],
+  "frozenZones": [],
+  "baseline": { "edit": ["lens"], "view": ["document"], "export": ["html", "print"], "history": true }
+}
+  </script>
+
+  <script type="application/json" id="dt-data">
+[
+  { "category": "Events",      "item": "Conference sponsorship", "qty": 1, "unit_price": 12000 },
+  { "category": "Advertising", "item": "Paid search (3 mo)",     "qty": 3, "unit_price": 4500 },
+  { "category": "Content",     "item": "Freelance writers",      "qty": 2, "unit_price": 3200 },
+  { "category": "Design",      "item": "Brand contractor",       "qty": 1, "unit_price": 6800 },
+  { "category": "Tools",       "item": "Email platform (3 mo)",  "qty": 3, "unit_price": 290 },
+  { "category": "Brand",       "item": "Swag & print",           "qty": 1, "unit_price": 1500 }
+]
+  </script>
+
+  <div id="dt-grid" aria-live="polite"></div>
+
+  <p class="dt-note">
+    This file is a <b>rewritable</b>. The grid above is a <i>view</i> of the data in
+    <code>#dt-data</code>; the <b>Total</b> column is <i>computed</i> (never stored, so it can't drift);
+    clicking a cell is a model-free <i>edit-surface</i> that commits through the same audited pipeline
+    the AI lens uses (try ⌘Z). An agent can read it with <code>rwa doc</code> and edit rows with
+    <code>rwa edit</code>. It declares all of this in <code>#rwa-affordances</code> — it knows what it is.
+  </p>
+
+  <script>
+  // ── datatable affordance runtime (document-level; runs on every render) ──
+  // The seed re-executes mount <script> tags on each renderDoc, so this IIFE
+  // is idempotent: it rebuilds #dt-grid from #dt-data every time. UI-only view
+  // state lives on window (transient by design — never persisted into the doc).
+  (function () {
+    var grid = document.getElementById('dt-grid');
+    if (!grid) return;
+    var DATA_ID = 'dt-data';
+    var SURFACE = 'datatable:cell-edit';
+    var COLS = [
+      { key: 'category',   label: 'Category', type: 'text' },
+      { key: 'item',       label: 'Item',     type: 'text' },
+      { key: 'qty',        label: 'Qty',      type: 'num'  },
+      { key: 'unit_price', label: 'Unit',     type: 'num'  }
+    ];
+
+    function readRows() {
+      var el = document.getElementById(DATA_ID);
+      try { return JSON.parse(el.textContent); } catch (e) { return []; }
+    }
+    function money(n) {
+      return '$' + (Math.round(n * 100) / 100).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+    }
+    function total(r) { return (Number(r.qty) || 0) * (Number(r.unit_price) || 0); }
+    function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+
+    // ── Extract the EXACT stored #dt-data inner text — the apply_edits anchor.
+    // Reads window.getCurrentDocCache() (the canonical stored doc text), so the
+    // `find` is byte-identical to what's committed (no DOM-textContent drift).
+    // Tolerant of the runtime's data-rwa-id attribute backfill on the tag.
+    function storedDataBlock() {
+      var doc = (typeof window.getCurrentDocCache === 'function') ? window.getCurrentDocCache() : null;
+      if (doc == null) return null;
+      var m = doc.match(/<script\b[^>]*\bid=["']dt-data["'][^>]*>([\s\S]*?)<\/script>/i);
+      return m ? m[1] : null;
+    }
+
+    // ── Persist a mutated row set through the model-free edit path. The find
+    // is the verbatim stored block; the replace is the same block with `mutate`
+    // applied, re-serialized identically. Commits via runtime.applyEnvelope so
+    // undo/history/frozen-zone/shape checks all fire (surface-labelled).
+    // Serialize commits. The runtime holds a modify mutex and only releases it
+    // AFTER re-render, so a fast second edit (rapid typing) can fire while the
+    // first is still settling → concurrent_modify. We chain every commit behind
+    // the previous one's SETTLED promise (window-scoped so it survives the
+    // re-render that re-runs this script), and read the stored block INSIDE the
+    // continuation so each edit sees the prior commit's result.
+    function commitRows(mutate, instruction) {
+      var prev = window.__dtBusy || Promise.resolve();
+      var run = prev.then(function () { return doCommit(mutate, instruction); });
+      window.__dtBusy = run.catch(function () {});   // swallow so the chain survives a failure
+      return run;
+    }
+    async function doCommit(mutate, instruction) {
+      var inner = storedDataBlock();
+      if (inner == null) { status('cannot locate #dt-data'); return; }
+      var rows;
+      try { rows = JSON.parse(inner); } catch (e) { status('data block is not valid JSON'); return; }
+      var next = mutate(rows);
+      if (next === false) return;                 // mutate vetoed (e.g. nothing to do)
+      var replacement = '\n' + JSON.stringify(next, null, 2) + '\n';
+      if (replacement === inner) return;          // no-op: identical
+      // Never let a cell value carry a script-close tag — once committed it
+      // would terminate this document's <script> when the doc is re-rendered
+      // via innerHTML. Build the needle split so this source file itself never
+      // contains the contiguous sequence (which the HTML parser would act on).
+      var CLOSE_TAG = '<' + '/script';
+      if (replacement.toLowerCase().indexOf(CLOSE_TAG) !== -1) { status('a value contains a script-close tag — not allowed'); return; }
+      if (!window.runtime || typeof window.runtime.applyEnvelope !== 'function') { status('runtime unavailable'); return; }
+      var envelope = { version: 'rwa-edit/1', edits: [{ find: inner, replace: replacement }] };
+      var opts = { surface: SURFACE, instruction: instruction || 'edit datatable' };
+      // Bounded retry only for concurrent_modify (e.g. the AI lens committing at
+      // the same instant) — the envelope is unchanged, so it's safe to re-send.
+      for (var attempt = 0; attempt < 4; attempt++) {
+        try { await window.runtime.applyEnvelope(envelope, opts); return; }
+        catch (e) {
+          var code = e && (e.code || e.message);
+          if (code === 'concurrent_modify' && attempt < 3) { await new Promise(function (r) { setTimeout(r, 40); }); continue; }
+          status('edit rejected: ' + (code || 'error'));
+          return;
+        }
+      }
+    }
+
+    function status(msg) {
+      // Lightweight inline status; the runtime's own status bar covers commits.
+      var n = document.getElementById('dt-status');
+      if (!n) { n = document.createElement('span'); n.id = 'dt-status'; n.style.cssText = 'margin-left:10px;color:var(--red);font-size:11px;font-family:var(--font-mono)'; var bar = grid.querySelector('.dt-bar'); if (bar) bar.appendChild(n); }
+      n.textContent = msg;
+    }
+
+    // ── Inline cell editor: swap a cell for an <input>; Enter/blur commit,
+    // Escape cancels. A successful commit re-renders via the runtime.
+    function beginEdit(td) {
+      if (td.querySelector('input')) return;
+      var ri = Number(td.getAttribute('data-row'));
+      var col = COLS[Number(td.getAttribute('data-col'))];
+      var raw = readRows()[ri] ? readRows()[ri][col.key] : '';
+      var input = document.createElement('input');
+      input.className = 'dt-edit';
+      input.value = String(raw == null ? '' : raw);
+      if (col.type === 'num') { input.inputMode = 'decimal'; }
+      td.textContent = '';
+      td.appendChild(input);
+      input.focus();
+      input.select();
+      var done = false;
+      function finish(commit) {
+        if (done) return; done = true;
+        if (!commit) { render(); return; }              // Escape — discard, redraw
+        var v = input.value.trim();
+        var rows = readRows();
+        if (!rows[ri]) { render(); return; }
+        var newVal;
+        if (col.type === 'num') {
+          var num = Number(v);
+          if (v === '' || !isFinite(num)) { status('“' + v + '” is not a number'); render(); return; }
+          newVal = num;
+        } else { newVal = v; }
+        if (rows[ri][col.key] === newVal) { render(); return; }   // unchanged — just redraw
+        // Real change → commit through the model-free path. On success the
+        // runtime re-renders this script, so no manual redraw is needed here.
+        commitRows(function (rs) { if (!rs[ri]) return false; rs[ri][col.key] = newVal; return rs; },
+          'set ' + col.key + ' on row ' + (ri + 1) + ' = ' + v);
+      }
+      input.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+        else if (e.key === 'Escape') { e.preventDefault(); finish(false); }
+      });
+      input.addEventListener('blur', function () { finish(true); });
+    }
+
+    function addRow() {
+      commitRows(function (rows) {
+        rows.push({ category: 'New', item: 'New line item', qty: 1, unit_price: 0 });
+        return rows;
+      }, 'add a row');
+    }
+    function delRow(ri) {
+      commitRows(function (rows) {
+        if (!rows[ri]) return false;
+        rows.splice(ri, 1);
+        return rows;
+      }, 'delete row ' + (ri + 1));
+    }
+
+    function viewMode() { return window.__dtView === 'summary' ? 'summary' : 'grid'; }
+    function setView(v) { window.__dtView = v; render(); }
+
+    function renderGrid(rows) {
+      var grand = rows.reduce(function (a, r) { return a + total(r); }, 0);
+      var head = '<tr>' + COLS.map(function (c) { return '<th class="' + (c.type === 'num' ? 'num' : '') + '">' + esc(c.label) + '</th>'; }).join('') +
+        '<th class="num">Total</th><th></th></tr>';
+      var body = rows.map(function (r, ri) {
+        var cells = COLS.map(function (c, ci) {
+          var val = c.type === 'num' ? r[c.key] : esc(r[c.key]);
+          return '<td><div class="dt-cell ' + (c.type === 'num' ? 'num' : '') + '" data-row="' + ri + '" data-col="' + ci + '" tabindex="0">' + val + '</div></td>';
+        }).join('');
+        return '<tr>' + cells + '<td class="dt-total">' + money(total(r)) + '</td>' +
+          '<td><button class="dt-del" data-del="' + ri + '" title="Delete row" aria-label="Delete row">×</button></td></tr>';
+      }).join('');
+      var foot = '<tr><td class="dt-foot-label" colspan="' + COLS.length + '">Total budget</td>' +
+        '<td class="num">' + money(grand) + '</td><td></td></tr>';
+      return '<table class="dt"><thead>' + head + '</thead><tbody>' + body + '</tbody><tfoot>' + foot + '</tfoot></table>';
+    }
+
+    function renderSummary(rows) {
+      var byCat = {};
+      var grand = 0;
+      rows.forEach(function (r) { var t = total(r); byCat[r.category] = (byCat[r.category] || 0) + t; grand += t; });
+      var cats = Object.keys(byCat).sort(function (a, b) { return byCat[b] - byCat[a]; });
+      var max = cats.reduce(function (m, c) { return Math.max(m, byCat[c]); }, 0) || 1;
+      var rowsHtml = cats.map(function (c) {
+        var amt = byCat[c];
+        var pct = grand ? Math.round(amt / grand * 100) : 0;
+        return '<div class="dt-srow"><div class="dt-scat">' + esc(c) + '</div>' +
+          '<div class="dt-strack"><div class="dt-sfill" style="width:' + (amt / max * 100) + '%"></div></div>' +
+          '<div class="dt-samt">' + money(amt) + '</div><div class="dt-spct">' + pct + '%</div></div>';
+      }).join('');
+      return '<div class="dt-summary">' + rowsHtml +
+        '<div class="dt-srow" style="border-bottom:0"><div class="dt-scat" style="font-weight:650">Total</div><div></div>' +
+        '<div class="dt-samt" style="font-weight:650">' + money(grand) + '</div><div class="dt-spct">100%</div></div></div>';
+    }
+
+    function render() {
+      var rows = readRows();
+      var mode = viewMode();
+      var bar = '<div class="dt-bar"><div class="dt-seg">' +
+        '<button data-view="grid" aria-pressed="' + (mode === 'grid') + '">Grid</button>' +
+        '<button data-view="summary" aria-pressed="' + (mode === 'summary') + '">Summary</button>' +
+        '</div><div class="dt-spacer"></div>' +
+        (mode === 'grid' ? '<button class="dt-add" data-add>+ Add row</button>' : '') + '</div>';
+      grid.innerHTML = bar + (mode === 'grid' ? renderGrid(rows) : renderSummary(rows));
+    }
+
+    // Event delegation on #dt-grid (rebuilt each render, so listeners never stack).
+    grid.addEventListener('click', function (e) {
+      var t = e.target;
+      var view = t.closest && t.closest('[data-view]');
+      if (view) { setView(view.getAttribute('data-view')); return; }
+      if (t.hasAttribute && t.hasAttribute('data-add')) { addRow(); return; }
+      var del = t.closest && t.closest('[data-del]');
+      if (del) { e.stopPropagation(); delRow(Number(del.getAttribute('data-del'))); return; }
+      var cell = t.closest && t.closest('.dt-cell');
+      if (cell) { e.stopPropagation(); beginEdit(cell); }   // stopPropagation: don't let the lens click-to-anchor seam fire
+    });
+    grid.addEventListener('keydown', function (e) {
+      if (e.key !== 'Enter') return;
+      var cell = e.target.closest && e.target.closest('.dt-cell');
+      if (cell && !cell.querySelector('input')) { e.preventDefault(); e.stopPropagation(); beginEdit(cell); }
+    });
+
+    render();
+  })();
+  </script>
+</article>
+</body>
+</html>
