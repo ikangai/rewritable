@@ -5,6 +5,7 @@ import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
 
 import { loadSeed, applySeedSubs, replaceInlineDoc, kindOverrides, KNOWN_KINDS } from './seed.mjs';
+import { findTemplate, stripTemplateAttribute } from './template.mjs';
 import { convert } from './import.mjs';
 import { convertPdfViaVision } from './import-vision.mjs';
 import { convertViaClaudeCli } from './import-claude.mjs';
@@ -132,8 +133,29 @@ function openFile(target, prefill) {
   child.unref();
 }
 
-export async function newCmd({ outPath, force, open, kind }) {
-  const out = path.resolve(outPath || './rewritable.html');
+export async function newCmd({ outPath, force, open, kind, templateName }) {
+  // Two body sources funnel through one seed-subs path. Default: a built-in
+  // starter (kindOverrides). `templateName` set: clone a data-rwa-template-labeled
+  // file from cwd — pristine seed + the template's INLINE_DOC (label stripped),
+  // fresh UUID. A cloned instance is a document with the template's body (the
+  // template `kind` is a discovery label, not a PRODUCT_KIND).
+  let out, bodyOverride, fromMsg = '';
+  let resolvedKind = kind || 'document';
+  if (templateName) {
+    const tmpl = await findTemplate(process.cwd(), templateName);
+    if (!tmpl) {
+      const e = new Error(`no rwa file in ./ is labeled "${templateName}". Mark a doc as the template by adding data-rwa-template="${templateName}" to its root element.`);
+      e.exitCode = 2;
+      throw e;
+    }
+    if (tmpl.ambiguous) console.error(`note: multiple "${templateName}" templates in ./; using ${rel(tmpl.path)} (most recent)`);
+    out = path.resolve(outPath || `./${templateName}-${new Date().toISOString().slice(0, 10)}.html`);
+    bodyOverride = stripTemplateAttribute(tmpl.inlineDoc);
+    resolvedKind = 'document';
+    fromMsg = ` (from template ${rel(tmpl.path)})`;
+  } else {
+    out = path.resolve(outPath || './rewritable.html');
+  }
   await ensureWritable(out, force);
   const seed = await loadSeed(SEED_CANDIDATES);
   const fileMeta = path.basename(out);
@@ -142,7 +164,6 @@ export async function newCmd({ outPath, force, open, kind }) {
   // applied, byte-identical to pre-flag emit). For other kinds, kindOverrides
   // supplies the INLINE_DOC body and lens placeholder; SYSTEM_PROMPT is
   // intentionally left alone (audit R1).
-  const resolvedKind = kind || 'document';
   const overrides = kindOverrides(resolvedKind);
   let result = applySeedSubs(seed, {
     uuid: crypto.randomUUID(),
@@ -154,9 +175,10 @@ export async function newCmd({ outPath, force, open, kind }) {
     productKind:        resolvedKind,                    // audit R1
     lensClickToAnchor:  overrides.lensClickToAnchor,     // audit R3 scoped
   });
-  if (overrides.body != null) result = replaceInlineDoc(result, overrides.body);
+  const body = bodyOverride != null ? bodyOverride : overrides.body;
+  if (body != null) result = replaceInlineDoc(result, body);
   await fs.writeFile(out, result, 'utf8');
-  console.log(`wrote ${rel(out)}${kind && kind !== 'document' ? ` (kind: ${kind})` : ''}`);
+  console.log(`wrote ${rel(out)}${fromMsg || (kind && kind !== 'document' ? ` (kind: ${kind})` : '')}`);
   if (open) {
     const prefill = await collectPrefill();
     if (prefill.key) console.error('note: passing OPENROUTER_API_KEY via ?key= URL parameter');

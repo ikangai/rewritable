@@ -7,6 +7,9 @@ const HELP = `rwa — single-file re-writeable documents
 Usage:
   rwa new [path]              create a fresh rwa document
                               (default: ./rewritable.html, --kind=document)
+  rwa new <kind> [path]       clone a cwd file labeled data-rwa-template="<kind>"
+                              (fresh UUID, label stripped) — your file is the
+                              template. Default out: ./<kind>-YYYY-MM-DD.html.
   rwa import <input> [path]   convert a md/html/txt file into an rwa document
                               (default: <input-basename>.html, in input's dir)
   rwa edit <path> [...]       apply a tool-envelope or instruction to a
@@ -564,7 +567,17 @@ function detectProductKind(fileText) {
     }
     const positional = rest.filter((a, i) => !a.startsWith('-') && rest[i - 1] !== '--model' && rest[i - 1] !== '--timeout' && rest[i - 1] !== '--kind');
     if (verb === 'new') {
-      await newCmd({ outPath: positional[0], force, open, kind });
+      // `rwa new --kind <starter>` selects a built-in starter. Otherwise a bare-word
+      // first positional is a TEMPLATE name (clone a data-rwa-template-labeled file
+      // from cwd); a .html / path-bearing first positional is the output path.
+      let templateName, outPath;
+      if (!kind && positional[0] && !/\.html?$/i.test(positional[0]) && !/[\\/]/.test(positional[0])) {
+        templateName = positional[0];
+        outPath = positional[1];
+      } else {
+        outPath = positional[0];
+      }
+      await newCmd({ outPath, force, open, kind, templateName });
     } else if (verb === 'import') {
       if (!positional[0]) {
         console.error('rwa import: missing <input> argument');

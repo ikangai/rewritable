@@ -42,6 +42,16 @@ Pass `--kind <name>` to scaffold a different primary stance at first paint:
 
 The product-kind taxonomy is documented at `docs/specs/rwa-product-types.md` in the main repo. The substrate runtime is unchanged across kinds — only the `INLINE_DOC` body and lens placeholder vary at emit time.
 
+**Your own templates.** Label any rwa file as a reusable template by adding `data-rwa-template="<name>"` to its root element (the body's first child, typically `<article>`). Then `rwa new <name>` scans the current folder, finds the labeled file, and clones it — pristine seed + the template's content, a fresh `DOC_UUID`, and the label stripped (the clone is an instance, not the template):
+
+```sh
+# label invoice.html: <article data-rwa-template="invoice"> … </article>
+rwa new invoice              # → ./invoice-2026-05-30.html (cloned from invoice.html)
+rwa new invoice april.html   # → ./april.html
+```
+
+No registry, no shipped starters: the file you made yesterday is the template for the file you make tomorrow. A bare-word first argument is a template name; a `.html`/path argument is the output path (so `rwa new notes.html` still writes a blank doc). If no file in the folder carries the label, it exits `2` with a hint. Multiple matches: most-recent wins (printed). The clone always pulls the *latest* bootstrap from the seed, so an old template doesn't lock you into an old runtime. CLI-only for v1 — cross-folder discovery (`~/.rwa/templates/`, `--from`) is deferred.
+
 ### `rwa import <input> [path]`
 
 Embeds the input file's content as the document's initial state. Supported formats:
