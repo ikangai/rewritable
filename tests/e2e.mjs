@@ -3716,6 +3716,26 @@ const metaBootstrap = window.document.querySelector('meta[name="rwa-bootstrap"]'
 check('116f: <meta name="rwa-bootstrap"> tag exists', metaBootstrap !== null);
 check('116f: meta value is "0.9"', metaBootstrap?.getAttribute('content') === '0.9');
 
+console.log('\n== Test 117: data-rwa-frozen detection ignores attribute VALUES + longer names ==');
+// markerZoneRangesIn (which gates id-backfill + replaceDocument lock coverage) used
+// a /\bdata-rwa-frozen\b/ match that fired on the STRING anywhere in a tag — so a
+// block merely MENTIONING "data-rwa-frozen" in a value (class="data-rwa-frozen") or
+// carrying a LONGER attribute (data-rwa-frozen-note) was falsely treated as frozen
+// and skipped. The lens edit path + DOM querySelectorAll('[data-rwa-frozen]') only
+// honor the real ATTRIBUTE, so id-backfill must agree (else those blocks lose their
+// stable data-rwa-id / URL fragment for no reason). WHY it matters: frozen detection
+// is the trust gate — a false positive here is an over-claim of "frozen", and the
+// same buggy pattern in the CLI's declarationFacts over-TRUSTS a declaration.
+const fp117a = window.injectMissingBlockIds('<p class="data-rwa-frozen">value mention only</p>');
+check('117a: data-rwa-frozen in an attribute VALUE is not frozen → block gets a data-rwa-id',
+  /\sdata-rwa-id=/.test(fp117a.text) && fp117a.assigned === 1);
+const fp117b = window.injectMissingBlockIds('<p data-rwa-frozen-note="x">longer attr name</p>');
+check('117b: data-rwa-frozen-<suffix> is a different attribute, not frozen → block gets a data-rwa-id',
+  /\sdata-rwa-id=/.test(fp117b.text) && fp117b.assigned === 1);
+const fp117c = window.injectMissingBlockIds('<p data-rwa-frozen>genuinely frozen</p>');
+check('117c: a REAL data-rwa-frozen element is still skipped (no data-rwa-id) — fix did not under-detect',
+  !/\sdata-rwa-id=/.test(fp117c.text) && fp117c.assigned === 0);
+
 console.log('\n== Summary ==');
 console.log(`pass: ${pass}, fail: ${fail}`);
 process.exit(fail > 0 ? 1 : 0);
