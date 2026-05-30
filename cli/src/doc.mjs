@@ -11,6 +11,7 @@
 import { readFile } from 'node:fs/promises';
 import { extractInlineDoc } from './seed.mjs';
 import { findFrozenZones } from './apply-edits.mjs';
+import { buildSelfDescription } from './identity.mjs';
 import { CliError } from './edit.mjs';
 
 // The bootstrap bakes both consts at emit time (cli/src/seed.mjs applySeedSubs).
@@ -21,10 +22,13 @@ const UUID_RE = /const DOC_UUID = '([0-9a-f-]{36})';/;
 const PRODUCT_KIND_RE = /const PRODUCT_KIND = '([^']*)';/;
 
 /**
- * Read a rewritable's editable document body and contract metadata.
+ * Read a rewritable's editable document body, contract metadata, and the static
+ * `self-description/1` projection (the "what is this?" surface, computed from the
+ * bytes — kind/affordances/title/blocks/baseline; `source:"static"`, no live
+ * block). See ./identity.mjs and docs/specs/rwa-self-description-spec.md.
  *
  * @param {string} filePath — path to the target .html
- * @returns {Promise<{doc: string, uuid: string|null, kind: string, frozenZones: string[]}>}
+ * @returns {Promise<{doc: string, uuid: string|null, kind: string, frozenZones: string[], self: object}>}
  * @throws {CliError} exitCode 2 on file / non-rewritable errors
  */
 export async function inspectDoc(filePath) {
@@ -51,6 +55,9 @@ export async function inspectDoc(filePath) {
   // matching how the runtime and `rwa edit` resolve SYSTEM_PROMPTS.
   const kind = (fileText.match(PRODUCT_KIND_RE) || [])[1] || 'document';
   const frozenZones = findFrozenZones(doc).map(z => z.name);
+  // The static self-description/1 projection — "what is this, what can be done
+  // with it" — assembled from the facts already parsed above (one file parse).
+  const self = buildSelfDescription({ doc, uuid, kind, frozenZones });
 
-  return { doc, uuid, kind, frozenZones };
+  return { doc, uuid, kind, frozenZones, self };
 }

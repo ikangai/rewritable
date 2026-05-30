@@ -16,6 +16,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { replaceInlineDoc, extractInlineDoc } from '../src/seed.mjs';
+import { computeSelfDescription, validateSelfDescription, checkAffordanceAgreement } from '../../tools/self-description.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const RWA_BIN = join(__dirname, '..', 'bin', 'rwa.mjs');
@@ -150,6 +151,59 @@ test('--json kind reflects the container PRODUCT_KIND', async () => {
     assert.equal(code, 0);
     const parsed = JSON.parse(stdout);
     assert.equal(parsed.kind, 'presentation');
+  } finally { fx.cleanup(); }
+});
+
+// ─── Self-description: "what is this, what can be done with it" ───────
+// Why: the read contract should let an agent answer identity + affordances in
+// the same call, not just "give me the body". `rwa doc --json` emits the static
+// self-description/1 projection as a superset of the edit contract. The proof
+// that consumer == contract is to run the SAME bytes through the reference
+// oracle (tools/self-description.mjs) and demand field-for-field agreement —
+// the same tiebreaker the wave agreed on. This test fails loudly if the CLI
+// ever drifts from the committed contract.
+
+const SELF_KEYS = ['rwa', 'source', 'uuid', 'kind', 'title', 'blocks', 'affordances', 'frozenZones', 'baseline'];
+
+for (const [label, mk] of [
+  ['document', () => mkFixture('<article><h1>Quarterly Report</h1><p data-rwa-id="ab12cd34">Revenue up 12%.</p></article>')],
+  ['presentation', () => mkFixture(null, { kind: 'presentation' })],
+]) {
+  test(`--json self-description matches the reference oracle for a ${label}`, async () => {
+    const fx = mk();
+    try {
+      const { code, stdout } = await runRwa(['doc', fx.path, '--json']);
+      assert.equal(code, 0);
+      const payload = JSON.parse(stdout);
+      const ref = computeSelfDescription(readFileSync(fx.path, 'utf8'));
+      // Every self-description field the CLI emits equals the reference's.
+      for (const k of SELF_KEYS) {
+        assert.deepEqual(payload[k], ref[k], `field "${k}" diverged from the reference oracle`);
+      }
+      // The payload itself validates as a self-description/1 (extras ignored),
+      // and the first-party affordances agree with the kind→providers table.
+      const { valid, errors } = validateSelfDescription(payload);
+      assert.ok(valid, `payload should validate; errors: ${errors.join('; ')}`);
+      assert.ok(checkAffordanceAgreement(payload).ok, 'affordances must match the kind bundle');
+    } finally { fx.cleanup(); }
+  });
+}
+
+test('--json stays a superset: the edit-contract fields ride alongside the self-description', async () => {
+  // Why: the identity surface is additive — agents that only read the body must
+  // be unaffected. doc/length/rewritable remain exactly as before.
+  const body = '<article><h1>Contract</h1><p>One call, everything.</p></article>';
+  const fx = mkFixture(body);
+  try {
+    const { stdout } = await runRwa(['doc', fx.path, '--json']);
+    const p = JSON.parse(stdout);
+    assert.equal(p.rewritable, true);
+    assert.equal(p.doc, body);
+    assert.equal(p.length, body.length);
+    assert.equal(p.source, 'static');
+    assert.deepEqual(p.affordances, []);            // base document
+    assert.equal(p.title, 'Contract');
+    assert.deepEqual(p.baseline.history, ['undo']); // undo-only — never advertise redo
   } finally { fx.cleanup(); }
 });
 

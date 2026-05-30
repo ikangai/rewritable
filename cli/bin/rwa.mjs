@@ -500,14 +500,17 @@ function detectProductKind(fileText) {
         throw e;
       }
       if (jsonMode) {
-        // One call gives an agent read (doc) + write-contract (kind, frozen
-        // zones it must preserve, uuid for correlation). `rewritable:true` is
-        // an explicit parsed-field marker, not just an exit code.
+        // One call gives an agent: the read (doc), the write-contract (kind,
+        // frozen zones, uuid), AND the self-description ("what is this, what can
+        // be done with it" — kind/affordances/title/blocks/baseline). The payload
+        // is the minimal SUPERSET of the static self-description/1 object (spec
+        // §3) plus the edit-contract extras, so it validates as self-description/1
+        // (validateSelfDescription ignores the extras) while staying one call.
+        // `rewritable:true` is an explicit parsed-field marker, not just an exit
+        // code. Field-pinned to tools/self-description.mjs by doc.test.mjs.
         process.stdout.write(JSON.stringify({
+          ...info.self,
           rewritable: true,
-          uuid: info.uuid,
-          kind: info.kind,
-          frozenZones: info.frozenZones,
           length: info.doc.length,
           doc: info.doc,
         }) + '\n');

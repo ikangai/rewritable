@@ -98,12 +98,17 @@ The **read** counterpart to `rwa edit`. `rwa edit` writes the editable body; `rw
 rwa doc notes.html
 rwa doc notes.html | grep -n '<h2'
 
-# --json — the full editing contract in a single call.
+# --json — the full editing contract + self-description in a single call.
 rwa doc notes.html --json
-# → {"rewritable":true,"uuid":"…","kind":"document","frozenZones":["sig"],"length":465,"doc":"…"}
+# → {"rwa":"self-description/1","source":"static","uuid":"…","kind":"document",
+#    "title":"Status report","blocks":3,"affordances":[],"frozenZones":["sig"],
+#    "baseline":{"edit":["lens"],"tools":[…],"export":["html","print"],"history":["undo"]},
+#    "rewritable":true,"length":465,"doc":"…"}
 ```
 
 `--json` gives an agent everything it needs to edit safely in one read: `doc` (the byte-exact body), `frozenZones` (author-declared invariants it must preserve, or `apply_edits` rejects the change with `frozen_zone_violation`), `kind` (which framing applies), and `uuid` (to correlate). `rewritable:true` is an explicit parsed-field marker.
+
+The payload is also a `self-description/1` object — the answer to *"what is this, and what can be done with it?"* ([`docs/specs/rwa-self-description-spec.md`](../docs/specs/rwa-self-description-spec.md)): `affordances` (the type's registered provider kinds — `[]` for a base document, `["view"]` for a presentation), `title`, `blocks` (addressable-block count), and `baseline` (the substrate-universal ops every container has — lens-edit, the three edit tools, html/print export, undo). `source:"static"` marks this as computed from the file bytes (no JS executed); the in-browser `runtime.describe()` emits the same shape live. The CLI projection is pinned to the reference oracle (`tools/self-description.mjs`) by test, so it cannot drift from the contract.
 
 `rwa doc` never reads stdin and never writes the file. On a non-rewritable target it exits `2` with `not_a_rewritable` and an empty stdout — a clean "is this a rewritable?" probe. Errors always go to stderr (plain `rwa doc: file_error/not_found {…}`, or `--json` `{code, subcode, details}`), so stdout stays clean for piping.
 
