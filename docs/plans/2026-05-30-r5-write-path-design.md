@@ -200,9 +200,22 @@ The real consumer answered, and it tightens R5 to its minimum:
   test; we pair as a fresh coordinated iteration.
 
 Revised Step-1 success criterion: tesla's two-concurrent-`applyEnvelope` fixture
-passes (both land, ordered, no `concurrent_modify`); `__dtBusy`-style consumer
-hand-serialization becomes unnecessary; all existing suites stay green; the
-`actor` passthrough lets an edit-surface self-attribute.
+passes (both land, ordered, no `concurrent_modify`); all existing suites stay
+green; the `actor` passthrough lets an edit-surface self-attribute.
+
+**Correction (tesla #89, Rule 12) — `__dtBusy` is NOT universally redundant.** R5
+serializes the *commit*, but not a queued caller's *anchor read*: a caller builds
+its `find` from a doc snapshot taken **before** the queue runs. For **disjoint**
+anchors (the fixtures here — `alpha`/`bravo`/`charlie`) every `find` survives the
+others' commits, so no consumer chaining is needed. For a **whole-block-rewrite**
+consumer (the datatable, whose `find` is the entire `#dt-data` block), the 2nd
+queued edit's `find` is stale after the 1st commit rewrites that block →
+`find_not_found`. There, `window.__dtBusy` (which chains *read-then-commit*,
+re-reading the anchor after each commit) stays **load-bearing**. R5 makes
+serialization first-class for disjoint-anchor edits; whole-block consumers still
+own read-after-commit chaining (or must use disjoint/patch-style finds). The real
+fix for whole-block consumers is the deferred Step-2 overlay (no re-read needed
+because the buffer is the source). Documented in `examples/datatable/README.md`.
 
 ---
 
@@ -241,7 +254,8 @@ concurrent ⌘K (its UI serializes).
 (both RED→GREEN); e2e 291, lens 246 (incl. the test seam, R4.11 re-entrancy, and
 the L9.1 actor/surface/scope assertions), view 17, identity 42, datatable 32
 (tesla's burst still green — the runtime queue composes with the consumer's
-`__dtBusy`, which is now redundant), bridge 8, conformance 79/79 — **0 regressions**.
+`__dtBusy`, which stays load-bearing for the datatable's whole-block-rewrite
+finds; see the §8 correction), bridge 8, conformance 79/79 — **0 regressions**.
 The pre-existing affordance-kernel 5-fail (the not-yet-built `provide('edit-surface'/
 'compute')`) is untouched and is exactly what R5 now unblocks for bohr's kernel-ext.
 
