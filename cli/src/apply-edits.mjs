@@ -49,6 +49,23 @@ export class RwaEditError extends Error {
   }
 }
 
+// Plain-English, code-keyed recovery hints. Self-documenting failures: an agent
+// (or `rwa edit --json` consumer) gets one actionable line, not just a code.
+// A static lookup — never a model call (Rule 5). Keep in sync with the seed's
+// FAILURE_HINTS (failureToToolResult). No angle brackets / reserved markers in
+// the strings, so they stay safe to embed in the seed bootstrap and survive the
+// CLI tree's reserved-marker scan.
+export const FAILURE_HINTS = {
+  find_not_found: 'find must match the document byte-for-byte (whitespace and case included). If a closest match is shown, copy it exactly; otherwise pick a shorter, distinctive anchor.',
+  find_not_unique: 'find appears more than once. Extend it with neighbouring text until it is unique; the hints list shows where.',
+  frozen_zone_violation: 'This region is an author-protected frozen zone. Anchor on a different region — frozen zones change only by editing the file outside the runtime.',
+  reserved_substring: 'find or replace contains a reserved rwa marker. Anchor on ordinary document text instead.',
+  structural_shape_changed: 'The edit would change the document script/style tag count. Keep edits content-only, or use a structural plan.',
+  replace_too_large: 'replace exceeds the per-edit size cap. Split the change into smaller anchored edits.',
+  empty_find: 'find must be a non-empty string — provide the exact text to anchor on.',
+  parse_error_post_apply: 'The result was not well-formed HTML — check that the tags in replace are balanced.',
+};
+
 // Source of truth: seeds/rewritable.html RWA_EDIT.RESERVED (line ~1608).
 // The string-concat trick on the comment/attribute markers prevents this
 // source file itself from tripping reserved-marker scans run over the CLI

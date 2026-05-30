@@ -134,6 +134,34 @@ test('plan path — apply_edits via stdin', async () => {
   }
 });
 
+test('plan path — find_not_found --json is self-correcting (closest + hint)', async () => {
+  // The agent-facing contract: when an anchor misses, `rwa edit --json` must
+  // hand back enough to self-correct without a human — the verbatim `closest`
+  // text plus a plain-English `hint`. WHY this matters: an external agent or
+  // script driving `rwa edit` only sees this JSON; a bare code is a dead end.
+  const dir = mkdtempSync(join(tmpdir(), 'rwa-disp-'));
+  const path = join(dir, 'x.html');
+  try {
+    await runRwa(['new', path]);
+    const { extractInlineDoc } = await import('../src/seed.mjs');
+    const body = extractInlineDoc(readFileSync(path, 'utf8'));
+    const real = 'Start writing, or ask the lens';
+    assert.ok(body.includes(real), 'fixture must contain the anchor phrase');
+
+    const nearMiss = 'Start writing,  or ask the lens'; // double space — whitespace-only miss
+    const envelope = JSON.stringify({ version: 'rwa-edit/1', edits: [{ find: nearMiss, replace: 'X' }] });
+    const { code, stderr } = await runRwa(['edit', path, '--json'], { stdin: envelope });
+    assert.equal(code, 3);
+    const last = JSON.parse(stderr.trim().split('\n').filter(Boolean).pop());
+    assert.equal(last.subcode, 'find_not_found');
+    assert.equal(last.details.match, 'whitespace');
+    assert.equal(last.details.closest, real); // verbatim, copy-pasteable as the next anchor
+    assert.match(last.details.hint, /byte-for-byte|copy|closest|anchor/i);
+  } finally {
+    rmSync(dir, { recursive: true });
+  }
+});
+
 test('plan path — apply_dsl_plan via --plan file', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'rwa-disp-'));
   const path = join(dir, 'x.html');

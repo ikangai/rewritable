@@ -13,7 +13,7 @@
 //                         from the underlying modules.
 
 import { readFile, open, rename, unlink } from 'node:fs/promises';
-import { applyEdits, RwaEditError, findFrozenZones } from './apply-edits.mjs';
+import { applyEdits, RwaEditError, findFrozenZones, FAILURE_HINTS } from './apply-edits.mjs';
 import { compileDslPlan } from './dsl-compiler.mjs';
 import { extractInlineDoc, replaceInlineDoc } from './seed.mjs';
 
@@ -23,6 +23,12 @@ export class CliError extends Error {
     this.exitCode = exitCode;
     this.subcode = subcode;
     this.details = details;
+    // Self-documenting failures: attach a one-line, code-keyed recovery hint so
+    // `rwa edit --json` consumers (agents, scripts) get actionable guidance, not
+    // just a code. Mirrors the seed's failureToToolResult. Additive and keyed on
+    // a limited table, so subcodes without a hint (e.g. doc.mjs read errors) are
+    // untouched.
+    if (FAILURE_HINTS[subcode] && this.details.hint == null) this.details.hint = FAILURE_HINTS[subcode];
   }
 }
 
