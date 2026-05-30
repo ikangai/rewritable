@@ -164,10 +164,51 @@ the whole of R5 for now**, and Step 2 waits for a consumer that types live.
   `synthesizeAndCommit`, *not* migrate into `commitCore` (compute/cell flushes
   have no lens anchor). Needs care at extraction.
 
+## 8. Update — tesla's consumer data (datatable, #57) sharpens the scope
+
+The real consumer answered, and it tightens R5 to its minimum:
+
+- **Granularity = commit-on-blur/Enter, not per-keystroke.** So **Step 2 (staged
+  overlay + debounce) is out of scope for R5-v1** — confirmed, not just deferred.
+  Build it only when a consumer edits live; the datatable does not.
+- **The dominant pain is reentrancy, sharper than §1's "agent reads stale doc."**
+  `synthesizeAndCommit` runs `renderDoc` *inside* the held mutex and releases only
+  in `finally`, so an observer sees the edit land in the DOM while the mutex is
+  still held; a rapid **2nd non-agent commit throws `concurrent_modify`** rather
+  than waiting its turn. tesla had to hand-roll a `window.__dtBusy` serialized
+  chain. **R5's real job: make non-agent commits safely QUEUE, so a consumer
+  never hand-serializes.**
+- **So Step 1 reframes from "shared-entry flush" to "a serialized commit queue."**
+  Replace the throw-on-held-mutex (`:2830`) for non-agent writers with an
+  enqueue: a write awaits the in-flight commit's promise, then runs `commitCore`.
+  The agent paths (⌘K) join the same queue at one shared entry (covering the
+  bridge bypass, §2) and flush pending non-agent work before reading the doc.
+  Concurrent **non-agent** commits serialize instead of throwing; whether a 2nd
+  **agent** ⌘K still rejects (today's UX) or also queues is a review question
+  (lean: agent still rejects with its user-facing message — its UI serializes —
+  while non-agent commits queue; one queue, two admission policies).
+- **Additive sub-fix (independent, small): `actor` passthrough.**
+  `synthesizeAndCommit` hardcodes `actor:'user:lens'` (~:2826); `applyEnvelope`
+  should accept `{actor}` and thread it (default `'user:lens'` for back-compat)
+  so an `edit-surface` self-attributes in `rwa_hist` (`'user:edit-surface'`,
+  `'compute:derived'`) instead of being distinguishable only by `surface`. This
+  can land *before* the queue refactor as a 3-line additive change.
+- **Acceptance fixture (tesla owns):** a seed-free `tests/` characterization test
+  — two `applyEnvelope` calls without serialization → today `concurrent_modify`;
+  after R5 → both commit in order, `rwa_hist` grows by 2. "Make this pass" is the
+  R5-Step-1 done-signal. I design the seam against it; tesla brings the failing
+  test; we pair as a fresh coordinated iteration.
+
+Revised Step-1 success criterion: tesla's two-concurrent-`applyEnvelope` fixture
+passes (both land, ordered, no `concurrent_modify`); `__dtBusy`-style consumer
+hand-serialization becomes unnecessary; all existing suites stay green; the
+`actor` passthrough lets an edit-surface self-attribute.
+
 ---
 
-*Status: design only. Step 1 (shared-entry mutex + reentrant `commitCore`) is
-fully specifiable now and independently landable+testable; Step 2 (staged
-overlay) is framed but gated on the consumer's real edit granularity (tesla) to
-avoid building it speculatively. Cites the current seam at
-`seeds/rewritable.html` :2819/:2830/:3072/:3786/:3797/:3813/:3935/:3941.*
+*Status: design only, now sharpened by the real consumer (tesla #57): R5-v1 =
+the serialized-commit-queue + reentrant `commitCore` + `actor` passthrough; the
+staged overlay (Step 2) is out of scope until a live-typing consumer exists. To
+be implemented as a fresh coordinated pass (euler seam + tesla characterization
+test), not crammed here. Cites the current seam at `seeds/rewritable.html`
+:2819/:2826/:2830/:3072/:3786/:3797/:3813/:3935/:3941.*
