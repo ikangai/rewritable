@@ -12,7 +12,8 @@
 //                         plus DslCompileError.code or RwaEditError.code
 //                         from the underlying modules.
 
-import { readFile, open, rename, unlink } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
+import { atomicWrite } from './atomic-write.mjs';
 import { applyEdits, RwaEditError, findFrozenZones, dataRwaFrozenSnapshot, FAILURE_HINTS } from './apply-edits.mjs';
 import { compileDslPlan } from './dsl-compiler.mjs';
 import { extractInlineDoc, replaceInlineDoc } from './seed.mjs';
@@ -169,28 +170,9 @@ export async function applyPlan(filePath, envelope) {
     }
   }
 
-  // 5. Splice the new doc back into the bootstrap and write atomically.
-  // POSIX rename(2) gives crash-safety on the same filesystem — readers
-  // either see the old file or the new one, never a half-written byte stream.
-  // We additionally fsync (datasync) the tmp file's contents before rename:
-  // without it, a power loss between rename and the kernel flushing dirty
-  // pages can land a renamed file with stale/zero bytes. datasync (not sync)
-  // because we don't depend on the tmp file's metadata being durable.
+  // 5. Splice the new doc back into the bootstrap and write atomically (temp +
+  // fsync + rename(2)); the temp is removed on any failure. See ./atomic-write.mjs.
   const newFileText = replaceInlineDoc(fileText, newDoc);
-  const tmp = `${filePath}.rwa-tmp-${process.pid}`;
-  let handle;
-  try {
-    handle = await open(tmp, 'w');
-    await handle.writeFile(newFileText, 'utf8');
-    await handle.datasync();
-  } finally {
-    if (handle) await handle.close();
-  }
-  try {
-    await rename(tmp, filePath);
-  } catch (e) {
-    await unlink(tmp).catch(() => {});
-    throw e;
-  }
+  await atomicWrite(filePath, newFileText);
   return { exitCode: 0 };
 }
