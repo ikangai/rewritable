@@ -140,8 +140,19 @@ function editCell(r, c, value) {
   // parity invariant `live ⊆ declaration` (no drift) holds in BOTH regimes.
   check('parity: live describe() is non-empty and ⊆ declaration (no drift — holds pre- or post-union)',
     live.affordances.length > 0 && live.affordances.every(a => declKN.has(a.kind + ':' + a.name)));
-  check('the 2 in-doc views are in the declaration (declared today; euler\'s union may also surface them live)',
+  check('the 2 in-doc views are in the declaration (and now surfaced live by euler\'s union)',
     declKN.has('view:grid') && declKN.has('view:summary'));
+
+  // euler's registry∪declaration union (86408b2) is LANDED: live describe() now
+  // reports all 4, with the registered providers verified:true (registry-confirmed)
+  // and the declared-only views unverified (author-claimed). The verified flag is
+  // the live-only signal distinguishing WIRED from CLAIMED. Live KINDS now equal
+  // the declaration's, so the LIVE and STATIC(declared, via rwa doc) surfaces converge.
+  check('union: live describe() reports all 4 affordances — KINDS converge with the declaration',
+    [...new Set(liveKN)].sort().join(',') === [...declKN].sort().join(','));
+  check('union: registered providers are verified:true; declared-only views are author-claimed (no verified)',
+    live.affordances.filter(a => a.verified === true).map(a => a.kind + ':' + a.name).sort().join(',') === 'compute:total,edit-surface:cell'
+    && live.affordances.filter(a => !a.verified).map(a => a.kind + ':' + a.name).sort().join(',') === 'view:grid,view:summary');
   // The declaration sits in a data-rwa-frozen zone so the agent/lens edit path
   // can't silently drift the file's self-knowledge (newton + euler's constraint).
   // The runtime rejects any edit that mutates the frozen #rwa-affordances block.
