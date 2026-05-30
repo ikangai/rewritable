@@ -404,7 +404,7 @@ The retry budget is per-modify, not lifetime. Each ⌘K starts a fresh conversat
 | `version_unsupported` | Envelope `version` is not `rwa-edit/1`. |
 | `malformed_envelope` | Required fields missing or wrong type. |
 | `empty_find` | An edit has `find: ""`. |
-| `find_not_found` | `find` does not appear in the working copy. When a near-miss exists, returned with `closest` (the closest text actually present, verbatim and copy-pasteable) and `match` (`whitespace` — collapse-whitespace match; `case` — case-insensitive match; `partial` — longest distinctive prefix), computed deterministically without a model call. |
+| `find_not_found` | `find` does not appear in the working copy. When a near-miss exists, returned with `closest` (the closest text actually present, verbatim and copy-pasteable) and `match` (`whitespace` — collapse-whitespace match; `case` — case-insensitive match; `partial` — longest distinctive prefix), computed deterministically without a model call. An oversized `closest` is elided and flagged `truncated: true` — then it merely locates the region (not directly re-appliable); shorten the anchor. |
 | `find_not_unique` | `find` appears more than once. Returned with occurrence count and surrounding-context snippets. |
 | `frozen_zone_violation` | An edit's `find` or `replace` contains a reserved marker substring or `data-rwa-frozen`. |
 | `frozen_zone_corrupted` | After applying, frozen-zone names, pairing, or inner content do not match the original. |
@@ -414,7 +414,7 @@ The retry budget is per-modify, not lifetime. Each ⌘K starts a fresh conversat
 | `target_size_exceeded` | Resulting doc exceeds the implementation-defined whole-document size cap. |
 | `concurrent_modify` | A modify is already in progress. Returned by the modify-lifecycle wrapper, not by `apply_edits`. |
 
-Failures during the tool-use loop are returned as `tool_result` blocks with structured payload `{ code, edit_index?, count?, hints?, closest?, match?, message?, shape_before?, shape_after?, hint? }` so the model can act on them in the next turn. `closest`/`match` carry the `find_not_found` near-miss (§10). The runtime MAY add a plain-English `hint` — a one-line, code-keyed recovery instruction — to steer weaker/local models toward a fix; it is advisory and additive, never a substitute for the structured fields.
+Failures during the tool-use loop are returned as `tool_result` blocks with structured payload `{ code, edit_index?, count?, hints?, closest?, match?, truncated?, message?, shape_before?, shape_after?, hint? }` so the model can act on them in the next turn. `closest`/`match` carry the `find_not_found` near-miss (§10). The runtime MAY add a plain-English `hint` — a one-line, code-keyed recovery instruction — to steer weaker/local models toward a fix; it is advisory and additive, never a substitute for the structured fields.
 
 ---
 
@@ -597,7 +597,7 @@ async function applyEdits(envelope, db) {
 
 ## Appendix A — Changes from v1.4 to v1.5
 
-- **`find_not_found` near-miss.** The dominant failure now carries a deterministic, code-derived recovery aid: `closest` (the closest text actually present in the working copy, verbatim and copy-pasteable) and `match` (`whitespace` / `case` / `partial`) — so an agent fixes its own anchor inside the existing retry budget and a human sees a legible reason. No model call (Rule 5: code answers). Self-correcting failure, not just a louder code. Updated: §5.1 step 4, §5.1 rejection paragraph, §9.2 post-budget UX, §10 table + payload shape, §18 helper list.
+- **`find_not_found` near-miss.** The dominant failure now carries a deterministic, code-derived recovery aid: `closest` (the closest text actually present in the working copy, verbatim and copy-pasteable; oversized matches are elided and flagged `truncated: true`) and `match` (`whitespace` / `case` / `partial`) — so an agent fixes its own anchor inside the existing retry budget and a human sees a legible reason. No model call (Rule 5: code answers). Self-correcting failure, not just a louder code. Updated: §5.1 step 4, §5.1 rejection paragraph, §9.2 post-budget UX, §10 table + payload shape, §18 helper list.
 - **Optional plain-English `hint`.** The tool-use `tool_result` payload MAY include a one-line, failure-code-keyed `hint` to steer weaker/local models toward a fix. Advisory and additive — never a substitute for the structured fields. §10.
 - **`find_not_unique` snippets clarified as mandatory helper context** alongside the new `find_not_found` near-miss (already emitted by the runtime; spec text now enumerates both consistently in §5.1 and §9.2).
 - Wire version unchanged (`rwa-edit/1`): all additions are optional, backward-compatible context fields; a consumer that ignores them behaves exactly as under v1.4.

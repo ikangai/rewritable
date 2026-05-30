@@ -120,22 +120,23 @@ function findClosestAnchor(doc, find) {
       inWs = false;
     }
   }
-  const verbatim = (k, normLen) => {
-    const start = map[k];
-    const end = map[k + normLen - 1] + 1; // trim() guarantees a non-ws final char
-    let text = doc.slice(start, end);
-    const MAX = 300;
-    if (text.length > MAX) text = text.slice(0, MAX - 18) + ' …[' + (text.length - MAX) + ' more]… ';
-    return text;
-  };
+  // Cap the payload so an oversized anchor can't bloat the tool_result. When
+  // elided, flag truncated:true — the elided text LOCATES the region but is NOT
+  // byte-for-byte re-appliable, so the consumer must shorten its anchor rather
+  // than paste the string back (honest, machine-actionable).
+  const MAX = 300;
+  const mk = (raw, match) => raw.length <= MAX
+    ? { closest: raw, match }
+    : { closest: raw.slice(0, MAX - 18) + ' …[' + (raw.length - MAX) + ' more]… ', match, truncated: true };
+  const span = (k, normLen) => doc.slice(map[k], map[k + normLen - 1] + 1); // trim() ⇒ non-ws ends
 
   // Pass 1 — whitespace-only mismatch (verbatim normalized match).
   let k = norm.indexOf(needleNorm);
-  if (k !== -1) return { closest: verbatim(k, needleNorm.length), match: 'whitespace' };
+  if (k !== -1) return mk(span(k, needleNorm.length), 'whitespace');
 
   // Pass 2 — case (± whitespace) mismatch.
   k = lowNorm.indexOf(needleNorm.toLowerCase());
-  if (k !== -1) return { closest: verbatim(k, needleNorm.length), match: 'case' };
+  if (k !== -1) return mk(span(k, needleNorm.length), 'case');
 
   // Pass 3 — partial: longest matching prefix of the needle (floor 12 chars).
   // Prefix-match is monotonic in length, so binary-search the longest L.
@@ -151,10 +152,7 @@ function findClosestAnchor(doc, find) {
       const start = map[bestK];
       const matchEnd = map[bestK + best - 1] + 1;
       const ctxEnd = Math.min(doc.length, matchEnd + 40); // show where it diverges
-      let text = doc.slice(start, ctxEnd);
-      const MAX = 300;
-      if (text.length > MAX) text = text.slice(0, MAX - 18) + ' …[' + (text.length - MAX) + ' more]… ';
-      return { closest: text, match: 'partial' };
+      return mk(doc.slice(start, ctxEnd), 'partial');
     }
   }
 

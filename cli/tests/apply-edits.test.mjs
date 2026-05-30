@@ -95,6 +95,39 @@ test('find_not_found — genuinely absent anchor yields no closest', () => {
   );
 });
 
+test('find_not_found — newline-reflow miss returns verbatim multi-line closest', () => {
+  // The most common real near-miss: the model reproduced a block but reflowed
+  // the line breaks. Collapsing whitespace must match, and `closest` must hand
+  // back the EXACT bytes (newlines + indentation included) so the retry anchors.
+  const doc = '<article><p>The quarterly numbers\n  are strong this year</p></article>';
+  let ctx;
+  try {
+    applyEdits(doc, [{ find: 'The quarterly numbers are strong this year', replace: 'x' }]);
+  } catch (err) { ctx = err.context; }
+  assert.equal(ctx.match, 'whitespace');
+  assert.equal(ctx.closest, 'The quarterly numbers\n  are strong this year');
+  assert.equal(ctx.truncated, undefined); // a normal-size match is not truncated
+  // and it must re-apply verbatim:
+  const fixed = applyEdits(doc, [{ find: ctx.closest, replace: 'OK' }]);
+  assert.equal(fixed, '<article><p>OK</p></article>');
+});
+
+test('find_not_found — oversized closest is bounded and flagged truncated', () => {
+  // An anchor longer than the payload cap can't be returned whole. Eliding it is
+  // fine for LOCATING the region, but the agent must NOT paste a truncated string
+  // as its next anchor — so the runtime flags truncated:true (honest, machine-
+  // actionable: "shorten your anchor", not "copy this").
+  const big = 'Lorem ipsum '.repeat(40).trim();            // ~470 chars
+  const doc = '<article><p>' + big.replace('Lorem ipsum', 'Lorem  ipsum') + '</p></article>';
+  let ctx;
+  try {
+    applyEdits(doc, [{ find: big, replace: 'x' }]);          // whitespace-off vs the doc
+  } catch (err) { ctx = err.context; }
+  assert.equal(ctx.match, 'whitespace');
+  assert.equal(ctx.truncated, true);
+  assert.ok(ctx.closest.length <= 300, `closest should be bounded, was ${ctx.closest.length}`);
+});
+
 test('find_not_unique — carries surrounding-context hints', () => {
   const doc = '<article><p>one cat</p><p>two cat</p></article>';
   assert.throws(
