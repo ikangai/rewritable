@@ -65,7 +65,7 @@ emitted two ways, distinguished by `source`; the two agree on every shared field
 | Field | Req | Type | Source | Meaning |
 |---|---|---|---|---|
 | `rwa` | ✓ | `"self-description/1"` | constant | Schema discriminator + version. |
-| `source` | ✓ | `"static"` \| `"live"` | emitter | Which surface produced this (§3). The honest-subset flag: `static` omits live-only state and never claims a runtime-registered provider. |
+| `source` | ✓ | `"static"` \| `"live"` \| `"declared"` | emitter | Which surface produced this (§3, §3.1). The honest-subset flag: `static` omits live-only state and never claims a runtime-registered provider; `declared` is the author's embedded claim (§3.1). |
 | `uuid` | ✓ | string \| null | `DOC_UUID` | Container identity. `null` only for pre-UUID legacy containers. |
 | `kind` | ✓ | string | `PRODUCT_KIND` | The product kind. Unknown/absent ⇒ `"document"` (matches `SYSTEM_PROMPTS` resolution). |
 | `affordances` | ✓ | Provider[] | kind ⊕ live registry | The **type's** registered providers (§4). `[]` for a base document. Each: `{ kind, name, label?, provenance }` — see below. |
@@ -140,6 +140,39 @@ holds no installed providers — §6). A static reader MUST NOT imply it enumera
 when the installed path lands (§6) the embedded stamp restores static
 completeness. So the static answer is an *honest whole* for first-party
 containers, flagged by `source`, not a silently-truncated subset.
+
+### 3.1 The `declared` projection + precedence (v1.1)
+
+The kind→providers table (§4) can only *guess* for a custom-affordance file (a
+`datatable` the runtime has no first-party provider for). For those, a file may
+carry its own answer: an inert `<script type="application/rwa-affordances+json"
+id="rwa-affordances">` block holding a `source: "declared"` self-description. It
+is read with no JS — the author's claim of what the file is. It may carry the
+optional per-affordance detail that makes the claim concrete: an `edit-surface`
+adds `{surface, target}`, a `compute` adds `{inputs, output}`, and the top-level
+`data` points at the file's data element. `uuid`/`frozenZones` are **optional** in
+a declaration (the reader fills them from `DOC_UUID` / the bytes — they are
+container facts, not author claims).
+
+**Precedence** (a reader assembling one answer): `declared` (if trustworthy, below)
+> `live` (the registry — *verified*, what's actually wired) > `static` (kind-derived
+— a *guess*). A live producer that unions registry with a declaration SHOULD mark
+each affordance `verified: true` (registry-confirmed) vs absent (author-declared),
+so a reader can tell a wired affordance from a claimed one (Rule 12 — don't trade
+the kind-guess lie for a declaration-drift lie).
+
+**Edit-unreachability (the trust rule).** A declaration is only trustworthy if it
+is **unreachable by the edit path** — otherwise the lens/agent could have drifted
+it, and a drifted declaration is worse than none. A declaration is edit-unreachable
+iff it lives **outside `INLINE_DOC`** (immutable chrome) **or** carries
+**`data-rwa-frozen`** (attribute-form frozen — the lens enforces it today; the CLI
+once attribute-form enforcement lands). `frozenZones` is **not** consulted: it is
+marker-form only on both surfaces (so it never covers an attribute-form
+declaration, and static==live agreement on it holds — SD-04). The oracle reports
+the *facts* (`declarationFacts(fileText)` → `{found, inEditableBody, frozenAttr}`);
+each reader applies the policy per its own enforcement capability. An edit-reachable
+declaration (in the editable body, not frozen) is **advisory** — a reader may
+surface it but must not present it as verified.
 
 ## 4. Computed, not stamped: the kind→providers table
 
@@ -301,6 +334,15 @@ When `describe()` and `rwa doc` disagree, both run through
   was the alternative). Rename is a one-line change if the wave prefers it.
 
 ---
+
+*Version 1.1. Adds the `declared` projection (§3.1): the embedded
+`#rwa-affordances` block, the declared>live>static precedence, the
+edit-unreachability trust rule (keyed on `data-rwa-frozen` / outside-`INLINE_DOC`,
+not `frozenZones`), optional per-affordance detail (`surface`/`target` for
+edit-surface, `inputs`/`output` for compute), the `data` pointer, `baseline.view`,
+and the per-affordance `verified` flag for the registry∪declaration union. The
+schema tag stays `self-description/1`; producer/consumer (static/live) are
+unchanged and backward-compatible. v0.2 base below.*
 
 *Version 0.2 (RFC). Provider-object `affordances`, explicit `source` flag,
 separate `baseline` for substrate universals, `title`/`blocks`; the

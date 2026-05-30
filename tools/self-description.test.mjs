@@ -14,6 +14,8 @@ import {
   AFFORDANCE_KINDS,
   SUBSTRATE_BASELINE,
   SCHEMA_TAG,
+  parseDeclaration,
+  declarationFacts,
 } from './self-description.mjs';
 
 const seedPath = fileURLToPath(new URL('../seeds/rewritable.html', import.meta.url));
@@ -121,4 +123,67 @@ test('SD-03: affordance agreement matches the kind table and catches a mismatch'
 
 test('not_a_rewritable: plain text throws the deterministic probe error', () => {
   assert.throws(() => computeSelfDescription('<html>not a rewritable</html>'), /not_a_rewritable/);
+});
+
+// ── v1.1: the `declared` projection ───────────────────────────────────────
+
+test("v1.1: source 'declared' validates", () => {
+  assert.equal(validateSelfDescription({ ...base(), source: 'declared' }).valid, true);
+});
+
+test("v1.1: tesla's aligned datatable declaration validates against the contract", () => {
+  // The shape tesla aligns to: schema->rwa, history true->['undo'], + per-affordance detail + data ptr.
+  const decl = {
+    rwa: SCHEMA_TAG, source: 'declared', kind: 'datatable',
+    title: 'Q1 2026 — Marketing Budget', data: '#dt-data',
+    affordances: [
+      { kind: 'view', name: 'grid', label: 'Grid', provenance: 'first-party' },
+      { kind: 'view', name: 'summary', label: 'Summary by category', provenance: 'first-party' },
+      { kind: 'edit-surface', name: 'cell', label: 'Edit cells directly (no model)', provenance: 'first-party', surface: 'datatable:cell-edit', target: '#dt-data' },
+      { kind: 'compute', name: 'total', label: 'Total = qty × unit_price', provenance: 'first-party', inputs: ['qty', 'unit_price'], output: 'total' },
+    ],
+    frozenZones: [],
+    baseline: { edit: ['lens'], view: ['document'], export: ['html', 'print'], history: ['undo'] },
+  };
+  const v = validateSelfDescription(decl);
+  assert.equal(v.valid, true, v.errors.join('; '));
+});
+
+test('v1.1: per-affordance verified flag (registry∪declaration union) validates; non-boolean rejected', () => {
+  assert.equal(validateSelfDescription({ ...base(), kind: 'presentation', affordances: [{ ...present(), verified: true }] }).valid, true);
+  assert.equal(validateSelfDescription({ ...base(), kind: 'presentation', affordances: [{ ...present(), verified: 'yes' }] }).valid, false);
+});
+
+test('v1.1: baseline.history must stay honest ops (true/boolean rejected; no redo)', () => {
+  assert.equal(validateSelfDescription({ ...base(), baseline: { ...SUBSTRATE_BASELINE, history: true } }).valid, false);
+  assert.equal(validateSelfDescription({ ...base(), baseline: { ...SUBSTRATE_BASELINE, view: ['document'] } }).valid, true);
+});
+
+test('v1.1: parseDeclaration extracts the embedded #rwa-affordances block', () => {
+  const decl = { rwa: SCHEMA_TAG, source: 'declared', kind: 'datatable', affordances: [], frozenZones: [] };
+  const file = `<html><body><script type="application/rwa-affordances+json" id="rwa-affordances" data-rwa-frozen="affordances">${JSON.stringify(decl)}</script></body></html>`;
+  const p = parseDeclaration(file);
+  assert.equal(p.error, null);
+  assert.equal(p.declaration.kind, 'datatable');
+  assert.equal(parseDeclaration('<html>no declaration</html>').declaration, null);
+});
+
+test('v1.1: declarationFacts reports frozen-attr (the trust basis), not frozenZones', () => {
+  const frozen = '<script type="application/rwa-affordances+json" id="rwa-affordances" data-rwa-frozen="affordances">{}</script>';
+  const f1 = declarationFacts(frozen);
+  assert.equal(f1.found, true);
+  assert.equal(f1.frozenAttr, true);
+  const open = '<script type="application/rwa-affordances+json" id="rwa-affordances">{}</script>';
+  assert.equal(declarationFacts(open).frozenAttr, false);
+  assert.equal(declarationFacts('<html>none</html>').found, false);
+});
+
+test('v1.1: declarationFacts on the REAL datatable — edit-reachable but frozen-attr protected', async () => {
+  const dt = fileURLToPath(new URL('../examples/datatable/datatable.html', import.meta.url));
+  let text;
+  try { text = await readFile(dt, 'utf8'); } catch { return; } // skip if the demo isn't present
+  const f = declarationFacts(text);
+  assert.equal(f.found, true);
+  assert.equal(f.inEditableBody, true, 'the declaration lives inside INLINE_DOC');
+  assert.equal(f.frozenAttr, true, 'tesla froze it (af8e9fa) — trustworthy despite being in the body');
 });

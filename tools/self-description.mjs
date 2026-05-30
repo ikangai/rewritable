@@ -21,7 +21,7 @@ import { findFrozenZones } from '../cli/src/apply-edits.mjs';
 export const SCHEMA_TAG = 'self-description/1';
 export const AFFORDANCE_KINDS = ['view', 'edit-surface', 'tool', 'compute', 'hook'];
 export const PROVENANCES = ['first-party', 'installed'];
-export const SOURCES = ['static', 'live'];
+export const SOURCES = ['static', 'live', 'declared'];
 
 // kind -> registered provider bundle (spec §4): the read-time face of the design
 // doc's type manifest. Each provider is {kind, name, label}; `provenance` is
@@ -134,7 +134,12 @@ export function validateSelfDescription(obj) {
   }
   if (obj.rwa !== SCHEMA_TAG) errors.push(`rwa must be "${SCHEMA_TAG}" (got ${JSON.stringify(obj.rwa)})`);
   if (!SOURCES.includes(obj.source)) errors.push(`source must be one of ${SOURCES.join(' | ')}`);
-  if (!('uuid' in obj) || (obj.uuid !== null && typeof obj.uuid !== 'string')) {
+  // A `declared` object is the author's affordance claim; `uuid`/`frozenZones`
+  // are CONTAINER facts the reader fills from DOC_UUID / the bytes, so they are
+  // optional in a declaration. For static/live (machine-emitted) they're required.
+  if (obj.source === 'declared') {
+    if ('uuid' in obj && obj.uuid !== null && typeof obj.uuid !== 'string') errors.push('uuid, if present, must be a string or null');
+  } else if (!('uuid' in obj) || (obj.uuid !== null && typeof obj.uuid !== 'string')) {
     errors.push('uuid must be a string or null');
   }
   if (typeof obj.kind !== 'string' || obj.kind.length === 0) errors.push('kind must be a non-empty string');
@@ -150,17 +155,30 @@ export function validateSelfDescription(obj) {
       if (typeof a.name !== 'string' || !a.name) errors.push(`affordances[${i}].name must be a non-empty string`);
       if ('label' in a && typeof a.label !== 'string') errors.push(`affordances[${i}].label must be a string`);
       if (!PROVENANCES.includes(a.provenance)) errors.push(`affordances[${i}].provenance must be one of ${PROVENANCES.join(' | ')}`);
+      // Optional per-affordance detail (v1.1): edit-surface {surface,target},
+      // compute {inputs,output}. `verified` marks a live registry-confirmed
+      // affordance vs an author-declared one (the registry∪declaration union).
+      if ('surface' in a && typeof a.surface !== 'string') errors.push(`affordances[${i}].surface must be a string`);
+      if ('target' in a && typeof a.target !== 'string') errors.push(`affordances[${i}].target must be a string`);
+      if ('output' in a && typeof a.output !== 'string') errors.push(`affordances[${i}].output must be a string`);
+      if ('inputs' in a && !isStrArray(a.inputs)) errors.push(`affordances[${i}].inputs must be an array of strings`);
+      if ('verified' in a && typeof a.verified !== 'boolean') errors.push(`affordances[${i}].verified must be a boolean`);
     });
   }
+  if ('data' in obj && obj.data !== null && typeof obj.data !== 'string') errors.push('data must be a string or null (a selector/pointer to the file\'s data element)');
 
-  if (!isStrArray(obj.frozenZones)) errors.push('frozenZones must be an array of strings');
+  if ('frozenZones' in obj) {
+    if (!isStrArray(obj.frozenZones)) errors.push('frozenZones must be an array of strings');
+  } else if (obj.source !== 'declared') {
+    errors.push('frozenZones must be an array of strings');
+  }
 
   if ('baseline' in obj) {
     const b = obj.baseline;
     if (b === null || typeof b !== 'object' || Array.isArray(b)) {
       errors.push('baseline must be an object');
     } else {
-      for (const k of ['edit', 'tools', 'export', 'history']) {
+      for (const k of ['edit', 'tools', 'export', 'history', 'view']) {
         if (k in b && !isStrArray(b[k])) errors.push(`baseline.${k}, if present, must be an array of strings`);
       }
       if (Array.isArray(b.history) && b.history.includes('redo')) {
@@ -197,6 +215,61 @@ export function checkAffordanceAgreement(obj) {
   const expected = table.map((p) => p.kind).sort();
   const ok = expected.length === got.length && expected.every((v, i) => v === got[i]);
   return { ok, expected, got };
+}
+
+// ── The `declared` projection (v1.1) ──────────────────────────────────────
+// A file may carry its own self-description as an inert
+// `<script type="application/rwa-affordances+json" id="rwa-affordances">` block.
+// This is the author's claim — honest for a custom-affordance file the kind
+// table can only guess at, but only TRUSTWORTHY if it is unreachable by the edit
+// path (else the lens/agent could have drifted it). The oracle returns FACTS;
+// each reader applies trust per its own enforcement capability.
+
+const DECL_RE = /<script\b[^>]*\bid=["']rwa-affordances["'][^>]*>([\s\S]*?)<\/script\s*>/i;
+
+// A declaration in the BODY lives inside INLINE_DOC, where its `</script>` is
+// escaped in the raw bytes — so we must search the UNescaped document, not the
+// file text. A declaration in immutable chrome (outside INLINE_DOC) is found in
+// the raw bytes. Return both so a reader can tell which (edit-reachability).
+function declarationLocus(fileText) {
+  let body = null;
+  try { body = extractInlineDoc(fileText); } catch { /* not a rewritable */ }
+  if (body && DECL_RE.test(body)) return { hay: body, inEditableBody: true };
+  return { hay: fileText, inEditableBody: false };
+}
+
+/**
+ * Extract the embedded #rwa-affordances declaration, if any (from the unescaped
+ * INLINE_DOC for a body declaration, or the raw bytes for a chrome declaration).
+ * @param {string} fileText
+ * @returns {{ declaration: object|null, raw: string|null, error: string|null }}
+ */
+export function parseDeclaration(fileText) {
+  const m = declarationLocus(fileText).hay.match(DECL_RE);
+  if (!m) return { declaration: null, raw: null, error: null };
+  try {
+    return { declaration: JSON.parse(m[1]), raw: m[1], error: null };
+  } catch (e) {
+    return { declaration: null, raw: m[1], error: 'invalid JSON: ' + (e && e.message) };
+  }
+}
+
+/**
+ * Edit-reachability FACTS for the declaration (spec §"declared"). A declaration
+ * is trustworthy iff edit-unreachable: `!inEditableBody` (it lives in immutable
+ * chrome) OR `frozenAttr` (it carries data-rwa-frozen — enforced by the lens
+ * today, by the CLI once attribute-form enforcement lands). `frozenZones` is NOT
+ * consulted: it is marker-form only on both surfaces (newton, SD-04), so it never
+ * covers an attribute-form declaration. Readers apply policy per capability.
+ * @param {string} fileText
+ * @returns {{ found: boolean, inEditableBody: boolean, frozenAttr: boolean }}
+ */
+export function declarationFacts(fileText) {
+  const { hay, inEditableBody } = declarationLocus(fileText);
+  const m = hay.match(DECL_RE);
+  if (!m) return { found: false, inEditableBody: false, frozenAttr: false };
+  const openTag = m[0].slice(0, m[0].indexOf('>') + 1);
+  return { found: true, inEditableBody, frozenAttr: /\bdata-rwa-frozen\b/.test(openTag) };
 }
 
 async function main(argv) {
