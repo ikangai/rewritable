@@ -206,9 +206,56 @@ hand-serialization becomes unnecessary; all existing suites stay green; the
 
 ---
 
-*Status: design only, now sharpened by the real consumer (tesla #57): R5-v1 =
-the serialized-commit-queue + reentrant `commitCore` + `actor` passthrough; the
-staged overlay (Step 2) is out of scope until a live-typing consumer exists. To
-be implemented as a fresh coordinated pass (euler seam + tesla characterization
-test), not crammed here. Cites the current seam at `seeds/rewritable.html`
-:2819/:2826/:2830/:3072/:3786/:3797/:3813/:3935/:3941.*
+## 9. As-built (LANDED) — simpler than designed
+
+Implemented and verified. The build came in **smaller than §3's Step-1**: the
+"shared-entry mutex + flush" machinery turned out to be **unnecessary**. Two
+facts (confirmed by an exhaustive caller/mutex map + adversarial review):
+
+- Non-agent commits write **straight to IDB** (`commitCore`→`applyEdits`→
+  `commitDoc`); there is **no buffer to flush**, so there is nothing the agent
+  must flush before reading. The whole flush/shared-entry idea only mattered for
+  the (deferred) Step-2 overlay.
+- The agent path (`modify`/`modifyViaBridge`/`runAnchoredCommand`) commits inside
+  **its own** `modifyMutex` and never routes through `synthesizeAndCommit`; both
+  agent backends already check `modifyMutex` before reading the doc, so the
+  "bridge bypass" was a non-issue once there is no flush hook to miss.
+
+So R5-v1 = **three surgical changes** to `seeds/rewritable.html`, nothing more:
+1. `let nonAgentCommitChain = Promise.resolve();` (module scope).
+2. `synthesizeAndCommit` → test-seam + a promise-chain queue (`run = () =>
+   commitCore(...)`, `p = chain.then(run, run)`, `chain = p.catch(()=>{})`,
+   `return p`) wrapping the extracted reentrant `commitCore(envelope, surface,
+   instruction, actor)`. `commitCore` keeps `if (modifyMutex) throw` — which now
+   fires **only** when an agent loop holds the mutex (the queue prevents
+   non-agent overlap).
+3. `runtimeApplyEnvelope` threads `options.actor`; `lensMeta.actor =
+   actor || 'user:lens'` (back-compat default).
+
+**Admission policy (deliberate):** non-agent-vs-non-agent serializes; non-agent
+arriving during an agent loop still rejects `concurrent_modify` (unchanged — the
+agent loop stays the exclusive writer). The agent ⌘K path still rejects a
+concurrent ⌘K (its UI serializes).
+
+**Verified:** tests/write-path.mjs 10/0 + tests/r5-concurrent-commit.mjs 3/0
+(both RED→GREEN); e2e 291, lens 246 (incl. the test seam, R4.11 re-entrancy, and
+the L9.1 actor/surface/scope assertions), view 17, identity 42, datatable 32
+(tesla's burst still green — the runtime queue composes with the consumer's
+`__dtBusy`, which is now redundant), bridge 8, conformance 79/79 — **0 regressions**.
+The pre-existing affordance-kernel 5-fail (the not-yet-built `provide('edit-surface'/
+'compute')`) is untouched and is exactly what R5 now unblocks for bohr's kernel-ext.
+
+**Known residual (flagged, not fixed — out of minimal scope):** `commitCore`
+keeps the lens re-anchor/scope block verbatim; for a non-lens `applyEnvelope`
+commit fired *while a lens anchor is live*, it reads `lensState.anchor` (a
+pre-existing behavior of the old `synthesizeAndCommit`, preserved not introduced).
+The §7 suggestion to gate it on `actor === 'user:lens'` is a follow-up.
+
+---
+
+*Status: **LANDED** (R5 Step-1). Serialized-commit-queue + reentrant `commitCore`
++ `actor` passthrough — three surgical seed edits, no shared-entry-mutex/flush
+needed. Step-2 (staged overlay) remains out of scope until a live-typing consumer
+exists. Validated by an exhaustive map + 3-lens adversarial review (one of which
+implemented it on a temp copy and ran the full matrix) before landing. Cites the
+seam at `seeds/rewritable.html` :2819/:2830/:3072/:3786/:3797/:3813/:3935/:3941.*

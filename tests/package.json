@@ -10,7 +10,9 @@
     "test:view": "node view.mjs",
     "test:bridge": "node bridge.mjs",
     "test:identity": "node identity.mjs",
-    "test:datatable": "node datatable.mjs"
+    "test:datatable": "node datatable.mjs",
+    "test:write-path": "node write-path.mjs",
+    "test:r5": "node r5-concurrent-commit.mjs"
   },
   "dependencies": {
     "fake-indexeddb": "^6.0.0",

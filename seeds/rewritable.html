@@ -833,7 +833,7 @@ async function runtimeUndo() { return undo(); }
 async function runtimeApplyEnvelope(envelope, options) {
   options = options || {};
   if (!envelope || typeof envelope !== 'object') throw new TypeError('runtime.applyEnvelope: envelope is required');
-  return synthesizeAndCommit(envelope, options.surface || 'runtime:apply-envelope', options.instruction || '');
+  return synthesizeAndCommit(envelope, options.surface || 'runtime:apply-envelope', options.instruction || '', options.actor);
 }
 
 async function getDoc() {
@@ -2816,11 +2816,39 @@ function synthesizeDefaultAppend(text) {
 if (typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent)) {
   window.__synthesizeDefaultAppend = synthesizeDefaultAppend;
 }
-async function synthesizeAndCommit(envelope, surface, instruction) {
-  // Test seam preserved.
+// R5 Step-1 (docs/plans/2026-05-30-r5-write-path-design.md): serializes NON-AGENT
+// commits (the lens direct-text path + runtime.applyEnvelope) so a rapid 2nd
+// commit WAITS for the 1st instead of throwing concurrent_modify. commitCore holds
+// modifyMutex through renderDoc and releases only in `finally`, so before this a
+// fast follow-up landed in a held mutex and an edit-surface (datatable cells,
+// compute cascades) had to hand-roll its own serialization (window.__dtBusy). The
+// queue moves that into the runtime. Initialized to a resolved promise so the
+// first commit chains cleanly.
+let nonAgentCommitChain = Promise.resolve();
+
+async function synthesizeAndCommit(envelope, surface, instruction, actor) {
+  // Test seam preserved (kept 3-arg so existing stubs keep matching; the actor
+  // passthrough is exercised via the rwa_hist integration tests, not the seam).
   if (typeof window.__synthesizeAndCommit === 'function') {
     return window.__synthesizeAndCommit(envelope, surface, instruction);
   }
+  // Chain onto the tail so concurrent non-agent commits run one-at-a-time: `run`
+  // executes only after the prior commitCore has fully settled (post-`finally`,
+  // so modifyMutex is free). The caller gets the real result/rejection (return p);
+  // the chain stores p.catch() so a failed commit (frozen_zone_violation, or
+  // concurrent_modify when an AGENT loop holds the mutex) does not poison the
+  // queue for the next writer. Agent-loop exclusivity is unchanged — only
+  // non-agent-vs-non-agent races now serialize.
+  const run = () => commitCore(envelope, surface, instruction, actor);
+  const p = nonAgentCommitChain.then(run, run);
+  nonAgentCommitChain = p.catch(() => {});
+  return p;
+}
+
+// The reentrant commit body. Assumes the queue above serializes it, so the
+// `if (modifyMutex) throw` guard now fires only when an AGENT loop (modify /
+// modifyViaBridge / runAnchoredCommand) holds the mutex — a genuine conflict.
+async function commitCore(envelope, surface, instruction, actor) {
   // Acquire modifyMutex around the read+commit window. Without this, two
   // concurrent ⌘Enter submits could race against each other: both read the
   // same currentDoc, both push it onto rwa_undo, and the later commit
@@ -2850,7 +2878,10 @@ async function synthesizeAndCommit(envelope, surface, instruction) {
       scope: lensState.anchor
         ? { type: 'block', block_id: String(lensState.anchor.start) }
         : { type: 'eof' },
-      actor: 'user:lens',
+      // Default 'user:lens' for the direct-text path; runtime.applyEnvelope can
+      // pass an actor (e.g. 'user:edit-surface', 'compute:derived') so a non-lens
+      // writer self-attributes in rwa_hist instead of masquerading as the lens.
+      actor: actor || 'user:lens',
     };
     let result;
     if (!envelope) {
