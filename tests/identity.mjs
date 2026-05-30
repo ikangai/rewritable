@@ -199,6 +199,58 @@ async function boot({ kind = 'document', title = 'Doc', body = null } = {}) {
   check('SD-06: agent-facing source unchanged by describe()/panel', before === after);
   check('SD-06: agent-facing source carries no self-description manifest', !/self-description\/1/.test(after) && !/rwa-info-panel/.test(after));
 
+  console.log('\n== self-description/1: registry ∪ declaration union (§3.1 live) ==');
+  // A file may REGISTER affordances live (verified) AND carry an embedded
+  // #rwa-affordances declaration naming MORE (e.g. in-doc views that aren't
+  // setView providers). describe() must report the UNION: registry → verified:true,
+  // declared-only → author-claimed (no verified). A declaration is trusted only if
+  // it is edit-unreachable (data-rwa-frozen — the lens can't drift it), the same
+  // safeguard the static CLI reader applies. WHY: otherwise the live producer
+  // under-reports a custom file (the datatable's 2 views vanish), or — worse —
+  // trusts a declaration the agent could have rewritten (Rule 12).
+  const decl = (frozen) => [
+    '<article>',
+    '  <h1>Budget</h1>',
+    '  <p>some rows here</p>',
+    '  <script type="application/rwa-affordances+json" id="rwa-affordances"' + (frozen ? ' data-rwa-frozen' : '') + '>',
+    '  {"rwa":"self-description/1","kind":"datatable","affordances":[',
+    '    {"kind":"view","name":"grid","label":"Grid","provenance":"first-party"},',
+    '    {"kind":"edit-surface","name":"cell","label":"Edit cells","provenance":"first-party"}',
+    '  ]}',
+    '  </script>',
+    '</article>',
+  ].join('\n');
+
+  const u = await boot({ kind: 'document', title: 'Budget', body: decl(true) });
+  // Register edit-surface:cell (also declared → dedupe) + compute:total (not declared).
+  u.window.runtime.provide('edit-surface', { kind: 'edit-surface', name: 'cell', label: 'Edit cells' });
+  u.window.runtime.provide('compute', { kind: 'compute', name: 'total', label: 'Total' });
+  await tick();
+  const ud = u.window.runtime.describe();
+  check('union describe() validates against the self-description/1 oracle', validateSelfDescription(ud).valid);
+  const cell = ud.affordances.find(a => a.kind === 'edit-surface' && a.name === 'cell');
+  const total = ud.affordances.find(a => a.kind === 'compute' && a.name === 'total');
+  check('registered edit-surface reported verified:true', !!cell && cell.verified === true);
+  check('registered compute reported verified:true', !!total && total.verified === true);
+  const grid = ud.affordances.find(a => a.kind === 'view' && a.name === 'grid');
+  check('declared-only view:grid unioned in from the trustworthy declaration', !!grid);
+  check('declared-only affordance is author-claimed — no verified field (§3.1)', !!grid && !('verified' in grid));
+  check('registry wins on collision — edit-surface:cell appears exactly once, verified',
+    ud.affordances.filter(a => a.kind === 'edit-surface' && a.name === 'cell').length === 1);
+  // The ⓘ panel must NOT advertise the declared-only view:grid as a toggle — it is
+  // not a setView provider (no view registered here), so runtime.setView('grid')
+  // would throw. The panel offers a toggle only for a verified/activatable view.
+  u.document.getElementById('rwa-st-info').onclick();
+  const uProse = u.document.getElementById('rwa-info-panel').textContent;
+  check('panel does not offer a setView toggle for a declared-only view', !/toggle the/i.test(uProse));
+
+  // An EDITABLE (non-frozen) declaration is the agent's claim and could be drifted
+  // — the live path must NOT trust it (no union), exactly like the static reader.
+  const u2 = await boot({ kind: 'document', title: 'Budget', body: decl(false) });
+  const u2d = u2.window.runtime.describe();
+  check('an editable (non-frozen) declaration is NOT trusted — its view is not unioned',
+    !u2d.affordances.some(a => a.kind === 'view' && a.name === 'grid'));
+
   console.log(`\n== Summary ==\n${pass} pass, ${fail} fail`);
   if (fail > 0) process.exit(1);
 })().catch(e => { console.error(e); process.exit(1); });
