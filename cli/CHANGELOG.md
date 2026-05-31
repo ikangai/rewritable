@@ -2,7 +2,7 @@
 
 All notable changes to the `rewritable` CLI (`rwa`).
 
-## [Unreleased]
+## [0.4.0] - 2026-05-31
 
 ### Added
 - **`rwa create <task...>` / `rwa draft <task...>`** — scaffold *and* agent-fill a new
