@@ -52,11 +52,34 @@ Three ways, all produce the same self-contained `.html`:
 ```sh
 # CLI — offline, npm
 npx rwa new                       # → ./rewritable.html
+npx rwa new presentation          # → built-in slide deck (bare word = a kind, or
+                                  #   a cwd data-rwa-template="presentation" file)
 npx rwa import notes.md           # → ./notes.html  (md/html/txt/csv/docx/pdf)
 npx rwa import scan.pdf --vision  # PDF → HTML via an OpenRouter vision model
 npx rwa import scan.pdf --claude  # PDF/docx → HTML via local `claude -p` + the
                                   #   pdf/docx skills under ~/.claude/skills/
 ```
+
+`rwa new <name>` resolves the bare word **template-first, then kind**: a `.html` in
+the current folder labeled `data-rwa-template="<name>"` is cloned (fresh `DOC_UUID`,
+label stripped); otherwise a built-in kind (`document`, `workflow`, `presentation`)
+is scaffolded. `new`/`import` are deterministic and offline.
+
+```sh
+# Intent-driven creation — scaffold AND fill, in one command (calls a model)
+npx rwa create a presentation about the rewritable architecture
+npx rwa create an interactive doc that visualizes token usage --data tokens.json
+npx rwa draft presentation --from ./q2-deck.html --data q3.csv --out q3-deck.html
+```
+
+`rwa create` (alias `rwa draft`) bootstraps a container, hands the brief to the
+model, and bakes the generated content into the file — which is then an ordinary,
+**self-contained** rewritable (edit it with `⌘K`, or re-run for a fresh one). The
+leading word picks a frame like `rwa new`; the rest is the brief. Created output is
+held to a code-enforced no-external-dependency bar — no runtime CDN/remote
+references; charts are hand-rolled SVG/Canvas, data is embedded — so "send the file,
+they have everything" always holds. Unlike `new`/`import`, `create` is online (it
+calls a model), but its *output* never is.
 
 `rwa new -o` and `rwa import -o` open the resulting file in the default browser. The bootstrap lifts three optional URL params into `sessionStorage` on first paint, then scrubs them from the URL so the values don't sit in browser history. The CLI populates these from environment / `./.env`:
 
@@ -98,6 +121,15 @@ The instruction path uses the same backend as the browser (OpenRouter / Ollama /
 ## Sharing a snapshot
 
 From `rewritable.ikangai.com/new` or `/import`, click **Publish & share** to put an immutable snapshot at `<short>.rewritable.ikangai.com/`. Anonymous, 24h expiry, no signup. Each share lives at its own origin (8-char alphanumeric subdomain) so the browser's same-origin policy isolates every share's IDB, sessionStorage, and OPFS — a malicious publisher's bootstrap can't read or enumerate any other share's storage. The published version carries its own `DOC_UUID`, so each viewer's edits land in their own browser-local IDB at that share's origin — they fork the doc locally rather than co-edit. For permanent or collaborative hosting, host the `.html` yourself: any static host works, because the file is the app.
+
+From the command line, `rwa publish <file>` does the same in one step — it POSTs a local rewritable to the share service and prints the URL:
+
+```sh
+rwa publish notes.html          # → https://<short>.rewritable.ikangai.com/
+rwa publish notes.html --json   # {"short":"…","url":"…","expiresAt":…} on stdout
+```
+
+Intentionally online (the offline-first guarantee of `new`/`import` doesn't apply to publishing). `--url` overrides the service base for self-hosted deployments.
 
 ## The specs
 
