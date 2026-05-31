@@ -1,17 +1,31 @@
 #!/usr/bin/env node
-import { newCmd, importCmd, version, KNOWN_KINDS } from '../src/commands.mjs';
+import { newCmd, importCmd, version, KNOWN_KINDS, openWithPrefill, SEED_CANDIDATES } from '../src/commands.mjs';
 import { resolveApiKey } from '../src/backend.mjs';
+import { parseCreateArgs, createCmd } from '../src/create.mjs';
+import { relative } from 'node:path';
 
 const HELP = `rwa — single-file re-writeable documents
 
 Usage:
   rwa new [path]              create a fresh rwa document
                               (default: ./rewritable.html, --kind=document)
-  rwa new <kind> [path]       clone a cwd file labeled data-rwa-template="<kind>"
-                              (fresh UUID, label stripped) — your file is the
-                              template. Default out: ./<kind>-YYYY-MM-DD.html.
+  rwa new <name> [path]       a bare <name> resolves template-first: clone a cwd
+                              file labeled data-rwa-template="<name>" (fresh UUID,
+                              label stripped) if one exists; else, if <name> is a
+                              known kind (document/workflow/presentation), create
+                              that built-in kind. So "rwa new presentation" makes a
+                              deck, and your own labeled file overrides the builtin.
+                              Default out: ./<name>-YYYY-MM-DD.html.
   rwa import <input> [path]   convert a md/html/txt file into an rwa document
                               (default: <input-basename>.html, in input's dir)
+  rwa create <task...>        scaffold + agent-fill a new rewritable from a
+  rwa draft  <task...>        natural-language task, baked into a self-contained
+                              file. Leading word picks a frame (template/kind)
+                              like 'rwa new'; the rest is the brief. Flags:
+                              --kind/--from/--data (- = stdin)/--out plus the
+                              --backend/--model/--base-url/--api-key backend flags.
+                              Output is held to a strict no-external-dependency
+                              bar (exit 4 on a CDN/remote ref). 'draft' = 'create'.
   rwa edit <path> [...]       apply a tool-envelope or instruction to a
                               rewritable in place. Plan path: pipe an
                               apply_edits / apply_dsl_plan / replace_document
@@ -34,6 +48,12 @@ Usage:
                               to \`rwa doc\`. Non-rewritables are counted, not
                               hidden. With --json, an array of self-description
                               rows. Lenient: a completed scan exits 0.
+  rwa publish <path>          publish a local rewritable to the share service
+                              and print the hosted URL. POSTs your edited bytes;
+                              the hosted snapshot is anonymous, 24h, with a fresh
+                              DOC_UUID. Target: --url > \$RWA_PUBLISH_URL >
+                              https://rewritable.ikangai.com. --json emits
+                              {short,url,expiresAt}.
 
 Flags:
   --kind <name>  (new only) starter kind: document (default), workflow, or
@@ -599,6 +619,34 @@ function detectProductKind(fileText) {
           '  Expires: in 24 hours (anonymous share)\n' +
           '  Note:    the hosted copy gets a fresh DOC_UUID (distinct container)\n',
         );
+      }
+      return;
+    }
+
+    // `rwa create <task…>` / `rwa draft <task…>` (design 2026-05-31 §4): scaffold
+    // + agent-fill a self-contained rewritable in one shot. Its own flag grammar
+    // (parseCreateArgs), so it returns before the new/import positional handling.
+    if (verb === 'create' || verb === 'draft') {
+      const parsed = parseCreateArgs(rest);
+      if (!parsed.words.length && !parsed.from && !parsed.kind) {
+        console.error('rwa create: missing <task> (e.g. "rwa create a presentation about Q3")');
+        process.exitCode = 2;
+        return;
+      }
+      // --data - reads stdin (design §4.3); drain it here so createCmd stays IO-pure
+      // about its data source.
+      let stdinData;
+      if (parsed.data === '-') stdinData = await readStdin();
+      try {
+        const { out, kind: rk, fromMsg } = await createCmd(parsed, { seedCandidates: SEED_CANDIDATES, cwd: process.cwd(), stdinData });
+        const kindMsg = rk !== 'document' ? ` (kind: ${rk})` : '';
+        console.log(`wrote ${relative(process.cwd(), out) || out}${fromMsg || kindMsg}`);
+        if (parsed.open) await openWithPrefill(out);
+      } catch (e) {
+        const label = [e && e.subcode].filter(Boolean).join('/') || (e && e.message) || String(e);
+        const details = e && e.details && Object.keys(e.details).length ? ' ' + JSON.stringify(e.details) : '';
+        console.error('rwa create: ' + label + details);
+        process.exitCode = (e && e.exitCode) || 1;
       }
       return;
     }

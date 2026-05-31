@@ -22,3 +22,22 @@ export function resolveApiKey(backendName, flagValue, env = process.env) {
   }
   return undefined;
 }
+
+/**
+ * Default OpenAI-compatible base URL for a backend — mirrors the inline
+ * `envBaseUrl` in bin/rwa.mjs (and seeds/rewritable.html resolveBackendConfig).
+ * ollama and lmstudio honor RWA_*_URL overrides (remote host / non-standard port);
+ * openrouter is fixed (the URL has never drifted in the seed). Shared by `rwa edit`
+ * and `rwa create` so the default never diverges between the two.
+ * @param {string} name — 'openrouter' | 'ollama' | 'lmstudio'
+ * @param {Record<string,string|undefined>} [env] — environment (injectable for tests)
+ * @returns {string|undefined}
+ */
+export function envBaseUrl(name, env = process.env) {
+  switch (name) {
+    case 'openrouter': return 'https://openrouter.ai/api/v1';
+    case 'ollama':     return env.RWA_OLLAMA_URL || 'http://localhost:11434/v1';
+    case 'lmstudio':   return env.RWA_LMSTUDIO_URL || 'http://localhost:1234/v1';
+    default:           return undefined;
+  }
+}

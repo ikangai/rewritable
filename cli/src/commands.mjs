@@ -5,7 +5,7 @@ import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
 
 import { loadSeed, applySeedSubs, replaceInlineDoc, kindOverrides, KNOWN_KINDS } from './seed.mjs';
-import { findTemplate, stripTemplateAttribute } from './template.mjs';
+import { resolveBareWord } from './template.mjs';
 import { convert } from './import.mjs';
 import { convertPdfViaVision } from './import-vision.mjs';
 import { convertViaClaudeCli } from './import-claude.mjs';
@@ -133,6 +133,18 @@ function openFile(target, prefill) {
   child.unref();
 }
 
+// Open a freshly-written container, lifting env / .env prefills into the
+// file:// URL (key/backend/model) exactly as the new/import open paths do.
+// Exported so `rwa create` can honor --open without duplicating openFile +
+// collectPrefill. (newCmd/importCmd keep their inline blocks unchanged.)
+export async function openWithPrefill(out) {
+  const prefill = await collectPrefill();
+  if (prefill.key) console.error('note: passing OPENROUTER_API_KEY via ?key= URL parameter');
+  if (prefill.backend) console.error(`note: passing RWA_BACKEND=${prefill.backend} via ?backend= URL parameter`);
+  if (prefill.model) console.error(`note: passing RWA_MODEL=${prefill.model} via ?model= URL parameter`);
+  openFile(out, prefill);
+}
+
 export async function newCmd({ outPath, force, open, kind, templateName }) {
   // Two body sources funnel through one seed-subs path. Default: a built-in
   // starter (kindOverrides). `templateName` set: clone a data-rwa-template-labeled
@@ -142,17 +154,28 @@ export async function newCmd({ outPath, force, open, kind, templateName }) {
   let out, bodyOverride, fromMsg = '';
   let resolvedKind = kind || 'document';
   if (templateName) {
-    const tmpl = await findTemplate(process.cwd(), templateName);
-    if (!tmpl) {
-      const e = new Error(`no rwa file in ./ is labeled "${templateName}". Mark a doc as the template by adding data-rwa-template="${templateName}" to its root element.`);
+    // Template-first, kind-fallback (design 2026-05-31 §3.2), via the ONE resolver
+    // shared with `rwa create`: a bare word is first a cwd template label to clone;
+    // on a miss, if it names a built-in kind, emit that kind; otherwise error naming
+    // both misses. A user's labeled file thus overrides the built-in starter, and
+    // `rwa new presentation` makes the deck.
+    const frame = await resolveBareWord(templateName, process.cwd());
+    const dated = `./${templateName}-${new Date().toISOString().slice(0, 10)}.html`;
+    if (frame && frame.source === 'template') {
+      if (frame.ambiguous) console.error(`note: multiple "${templateName}" templates in ./; using ${rel(frame.templatePath)} (most recent)`);
+      out = path.resolve(outPath || dated);
+      bodyOverride = frame.body;        // already label-stripped by the resolver
+      resolvedKind = 'document';
+      fromMsg = ` (from template ${rel(frame.templatePath)})`;
+    } else if (frame && frame.source === 'kind') {
+      resolvedKind = frame.kind;
+      out = path.resolve(outPath || dated);
+      // bodyOverride stays unset → kindOverrides(resolvedKind) supplies the body.
+    } else {
+      const e = new Error(`no rwa file in ./ is labeled "${templateName}", and "${templateName}" is not a known kind (${KNOWN_KINDS.join(', ')}). Add data-rwa-template="${templateName}" to a doc's root element to make it a template, or use a known kind.`);
       e.exitCode = 2;
       throw e;
     }
-    if (tmpl.ambiguous) console.error(`note: multiple "${templateName}" templates in ./; using ${rel(tmpl.path)} (most recent)`);
-    out = path.resolve(outPath || `./${templateName}-${new Date().toISOString().slice(0, 10)}.html`);
-    bodyOverride = stripTemplateAttribute(tmpl.inlineDoc);
-    resolvedKind = 'document';
-    fromMsg = ` (from template ${rel(tmpl.path)})`;
   } else {
     out = path.resolve(outPath || './rewritable.html');
   }
@@ -178,7 +201,10 @@ export async function newCmd({ outPath, force, open, kind, templateName }) {
   const body = bodyOverride != null ? bodyOverride : overrides.body;
   if (body != null) result = replaceInlineDoc(result, body);
   await fs.writeFile(out, result, 'utf8');
-  console.log(`wrote ${rel(out)}${fromMsg || (kind && kind !== 'document' ? ` (kind: ${kind})` : '')}`);
+  // Annotate with the resolved kind (covers both `--kind presentation` and the
+  // bare-word `rwa new presentation` fallback); a template clone reports its source.
+  const kindMsg = resolvedKind !== 'document' ? ` (kind: ${resolvedKind})` : '';
+  console.log(`wrote ${rel(out)}${fromMsg || kindMsg}`);
   if (open) {
     const prefill = await collectPrefill();
     if (prefill.key) console.error('note: passing OPENROUTER_API_KEY via ?key= URL parameter');

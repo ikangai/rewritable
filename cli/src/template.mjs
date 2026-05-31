@@ -10,7 +10,7 @@
 
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
-import { extractInlineDoc } from './seed.mjs';
+import { extractInlineDoc, KNOWN_KINDS } from './seed.mjs';
 
 const HTML_RE = /\.html?$/i;
 // The first opening tag inside the body (the template's root element).
@@ -74,4 +74,36 @@ export async function findTemplate(dir, name) {
   if (!matches.length) return null;
   matches.sort((a, b) => b.mtime - a.mtime); // most-recent first
   return { path: matches[0].path, inlineDoc: matches[0].inlineDoc, ambiguous: matches.length > 1 };
+}
+
+/**
+ * Resolve a bare word to a creation frame, template-first then built-in kind
+ * (design 2026-05-31 §3.2). This is THE single resolver shared by `rwa new <word>`
+ * and `rwa create <word> …` so the two surfaces never diverge.
+ *
+ *   1. a cwd file labeled data-rwa-template="<word>" → clone it
+ *      → { source:'template', kind:'document', body:<stripped>, templatePath, ambiguous }
+ *   2. else <word> ∈ KNOWN_KINDS → emit that built-in kind
+ *      → { source:'kind', kind:<word>, body:null }  (body comes from kindOverrides)
+ *   3. else → null  (caller decides: error, or Stage-2 inference)
+ *
+ * @param {string} word — the bare leading token
+ * @param {string} cwd — directory to scan for a labeled template
+ * @returns {Promise<{source:string, kind:string, body:string|null, templatePath?:string, ambiguous?:boolean}|null>}
+ */
+export async function resolveBareWord(word, cwd) {
+  const tmpl = await findTemplate(cwd, word);
+  if (tmpl) {
+    return {
+      source: 'template',
+      kind: 'document',
+      body: stripTemplateAttribute(tmpl.inlineDoc),
+      templatePath: tmpl.path,
+      ambiguous: tmpl.ambiguous,
+    };
+  }
+  if (KNOWN_KINDS.includes(word)) {
+    return { source: 'kind', kind: word, body: null };
+  }
+  return null;
 }

@@ -65,6 +65,20 @@ Embeds the input file's content as the document's initial state. Supported forma
 
 Output defaults to `<input-basename>.html` in the input's directory. Conversion is deterministic and offline — no API key, no network.
 
+### `rwa create <task...>` (alias `rwa draft`)
+
+Scaffold **and** agent-fill a new rewritable in one shot, from a natural-language task. The CLI bootstraps the container, hands the brief to the model, and bakes the generated content into the file — which is then an ordinary, self-contained rewritable (edit it in-browser with `⌘K`, or re-run `rwa create` for a fresh one). Unlike `new`/`import`, this verb calls the model, so it is **not** offline; but its **output** is always self-contained.
+
+```sh
+rwa create a presentation about the rewritable architecture
+rwa create an interactive document that visualizes token usage --data tokens.json
+rwa draft presentation --from ./q2-deck.html --data q3.csv --out q3-deck.html
+```
+
+The leading word resolves a **frame** by the same template-first precedence as `rwa new` (a cwd `data-rwa-template` match, else a built-in kind); the rest is the brief. Flags: `--kind <name>` forces the kind (and disables leading-word detection); `--from <file>` bases the artifact on an existing rewritable's body; `--data <file>` (or `-` for stdin) bakes a dataset inline; `--out <path>` sets the output (default `./<kind>-YYYY-MM-DD.html`); `--force`/`--open`; and the backend flags (`--backend`/`--model`/`--base-url`/`--api-key`) as in `rwa edit`.
+
+Created output is held to a **stricter, code-enforced self-containment bar** than `new`/`import`: no runtime CDN/remote references (`<script src>`, `<link href>`, `@import`, `url()`, `srcset`, …) — visualizations are hand-rolled SVG/Canvas, data is embedded. A violation fails loud (exit 4, `not_self_contained`) and writes no file. The write is atomic: a failed run (agent, envelope, or self-containment) leaves nothing at `--out`. Exit codes match `rwa edit`: 0 ok · 1 usage · 2 file · 3 envelope · 4 agent. The API key is used only for the model call and never written into the artifact.
+
 ### `rwa edit <path> [instruction]`
 
 Programmatic edit entry point. Applies an `rwa-edit/1` tool envelope (`apply_edits`, `apply_dsl_plan`, or `replace_document`) to an existing rwa container in place. Three invocation forms:
