@@ -538,6 +538,71 @@ function detectProductKind(fileText) {
       return;
     }
 
+    // `rwa publish <file> [--url <base>] [--json]` — publish a local rewritable
+    // to the service's snapshot endpoint and print the share URL. Thin client
+    // for `POST /publish`; see src/publish.mjs. Intentionally online (the
+    // offline-first invariant of new/import does not apply to a publish action).
+    if (verb === 'publish') {
+      const jsonMode = rest.includes('--json');
+      // `--url` takes a value, so its value token must NOT be mistaken for the
+      // positional file. Skip the index right after `--url` when finding it.
+      const urlFlag = getFlag('--url', rest);
+      const urlIdx = rest.indexOf('--url');
+      const skip = urlIdx >= 0 ? urlIdx + 1 : -1;
+      const filePath = rest.find((a, i) => !a.startsWith('-') && i !== skip);
+      // Publish has its OWN exit-4 label: a network/remote failure is a
+      // `publish_error`, not the shared codeName(4)='agent_error'. File (2) and
+      // usage (1) errors reuse codeName — they mean the same across verbs.
+      const emitPublish = (payload) => {
+        if (jsonMode) {
+          process.stderr.write(JSON.stringify(payload) + '\n');
+        } else {
+          const parts = [payload.code, payload.subcode].filter(Boolean);
+          let line = 'rwa publish: ' + parts.join('/');
+          if (payload.details && Object.keys(payload.details).length) {
+            line += ' ' + JSON.stringify(payload.details);
+          }
+          process.stderr.write(line + '\n');
+        }
+      };
+      if (!filePath) {
+        emitPublish({ code: 'usage_error', subcode: 'missing_file_arg' });
+        process.exitCode = 1;
+        return;
+      }
+      if (urlFlag.present && (urlFlag.value === undefined || urlFlag.value.startsWith('-'))) {
+        emitPublish({ code: 'usage_error', subcode: 'missing_flag_value', details: { flag: '--url' } });
+        process.exitCode = 1;
+        return;
+      }
+      // Resolution: --url > RWA_PUBLISH_URL > hardcoded default (in publish.mjs).
+      const baseUrl = urlFlag.value || process.env.RWA_PUBLISH_URL || undefined;
+      const { publishCmd } = await import('../src/publish.mjs');
+      let result;
+      try {
+        result = await publishCmd(filePath, { baseUrl });
+      } catch (e) {
+        if (e && typeof e.exitCode === 'number') {
+          const code = e.exitCode === 4 ? 'publish_error' : codeName(e.exitCode);
+          emitPublish({ code, subcode: e.subcode, details: e.details });
+          process.exitCode = e.exitCode;
+          return;
+        }
+        throw e;
+      }
+      if (jsonMode) {
+        process.stdout.write(JSON.stringify(result) + '\n');
+      } else {
+        process.stdout.write(
+          '✓ Published!\n' +
+          `  URL:     ${result.url}\n` +
+          '  Expires: in 24 hours (anonymous share)\n' +
+          '  Note:    the hosted copy gets a fresh DOC_UUID (distinct container)\n',
+        );
+      }
+      return;
+    }
+
     const force = rest.includes('--force') || rest.includes('-f');
     const open = rest.includes('--open') || rest.includes('-o');
     const vision = rest.includes('--vision');
