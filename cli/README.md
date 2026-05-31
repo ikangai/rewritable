@@ -28,6 +28,8 @@ rwa edit notes.html --plan plan.json                # envelope from a file
 
 rwa doc notes.html                                  # print the editable body
 rwa doc notes.html --json                           # read + edit-contract, one call
+
+rwa publish notes.html                              # → a hosted 24h share URL
 ```
 
 ### `rwa new`
@@ -141,6 +143,24 @@ rwa ls a.html b.html  # …an explicit list
 ```
 
 `--json` emits an array of rows for an agent — `{file, status, self}` where `status` is `rewritable` (with the full `self-description/1` object), `not_a_rewritable`, or `error` (with a `reason`). The scan is lenient like its namesake: one bad path among many is a row, not a fatal exit, so a completed scan exits `0`. This is how an agent handed a project learns its whole rewritable inventory — and every container's affordances — in a single call.
+
+### `rwa publish <path>`
+
+Publish a local rewritable to the hosted share service and get back a URL. A rewritable is already shareable as a file — it's a self-contained `.html` you can email or host anywhere — but `rwa publish` is the one-command path to an *anonymous, hosted* snapshot: create with `rwa new`, edit locally, publish.
+
+```
+rwa publish notes.html
+# ✓ Published!
+#   URL:     https://ab12cd34.rewritable.ikangai.com/
+#   Expires: in 24 hours (anonymous share)
+#   Note:    the hosted copy gets a fresh DOC_UUID (distinct container)
+
+rwa publish notes.html --json   # {"short":"…","url":"…","expiresAt":…} on stdout
+```
+
+It POSTs **your edited bytes** (the current `INLINE_DOC`), unlike the browser `/new` and `/import` pages, which publish a fresh or freshly-converted container. The hosted snapshot gets its own fresh `DOC_UUID` (a distinct container at its own origin) and is **anonymous, ephemeral (24h), and rate-limited** — it's a share link, not durable storage. The file on your disk remains the durable artifact.
+
+**Target** resolves `--url <base>` › `$RWA_PUBLISH_URL` › `https://rewritable.ikangai.com` (point it at a self-hosted service or local dev with either). The file is checked locally first — a non-rewritable exits `2` (`not_a_rewritable`) **before any network call**. Remote/network failures exit `4` with an honest reason on stderr (`publish_error/network_error`, `/rate_limited`, `/body_too_large`, `/validation_failed`, …); `--json` emits those as `{code, subcode, details}`. stdout stays clean for the URL/JSON.
 
 ### Driving a rewritable from an agent — no embedded LLM, no API key
 
