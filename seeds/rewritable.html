@@ -52,6 +52,18 @@ body{font-family:var(--font-ui);background:var(--bg);color:var(--text);min-heigh
 .rwa-set-hint:empty{display:none;}
 #rwa-info-panel{position:fixed;top:50px;right:12px;background:var(--white);border:1px solid var(--gray-200);border-radius:var(--radius-sm);padding:18px 20px;display:none;max-width:340px;z-index:999;box-shadow:0 4px 16px rgba(0,0,0,0.08);font-family:var(--font-ui);font-size:13px;line-height:1.55;color:var(--gray-700);}
 #rwa-info-panel.open{display:block;}
+#rwa-skin-panel{position:fixed;top:50px;right:12px;background:var(--white);border:1px solid var(--gray-200);border-radius:var(--radius-sm);padding:14px;display:none;width:300px;z-index:999;box-shadow:0 4px 16px rgba(0,0,0,0.08);}
+#rwa-skin-panel.open{display:block;}
+#rwa-skin-panel .rwa-skin-hd{font-family:var(--font-mono);font-size:9px;letter-spacing:1.5px;text-transform:uppercase;color:var(--gray-500);margin-bottom:10px;display:flex;justify-content:space-between;}
+.rwa-skin-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
+.rwa-skin-sw{display:flex;flex-direction:column;gap:5px;padding:8px;background:var(--white);border:1px solid var(--gray-200);border-radius:8px;cursor:pointer;text-align:left;transition:border-color .15s;}
+.rwa-skin-sw:hover{border-color:var(--gray-400);}
+.rwa-skin-sw[aria-current="true"]{border-color:var(--gray-900);}
+.rwa-skin-sw .rwa-skin-prev{display:flex;align-items:center;gap:6px;height:34px;border-radius:5px;padding:0 9px;font-size:15px;font-weight:600;overflow:hidden;}
+.rwa-skin-sw .rwa-skin-nm{font-family:var(--font-mono);font-size:10px;color:var(--gray-600);}
+.rwa-skin-ft{display:flex;justify-content:flex-end;margin-top:10px;}
+.rwa-skin-ft button{background:var(--gray-100);border:1px solid var(--gray-200);border-radius:8px;padding:5px 11px;cursor:pointer;font-family:var(--font-mono);font-size:10px;color:var(--gray-700);}
+.rwa-skin-ft button:hover{background:var(--gray-200);}
 #rwa-info-panel h4{margin:0 0 6px;font-size:15px;color:var(--gray-900);font-weight:600;}
 #rwa-info-panel p{margin:0 0 8px;}
 #rwa-info-panel .rwa-info-kind{font-family:var(--font-mono);font-size:9px;letter-spacing:1.5px;text-transform:uppercase;color:var(--gray-500);margin-bottom:8px;}
@@ -1003,6 +1015,7 @@ function buildUI() {
   <button class="rwa-st-btn" id="rwa-st-status">● ready</button>
   <button class="rwa-st-btn" id="rwa-st-info" title="what is this?" aria-label="what is this?">ⓘ</button>
   <button class="rwa-st-btn" id="rwa-st-cog">⚙</button>
+  <button class="rwa-st-btn" id="rwa-st-skin" title="skins — pick a look" aria-label="skins">✦</button>
   <button class="rwa-st-btn pri" id="rwa-st-commit">⌘S</button>
 </div>
 <div id="rwa-set-panel">
@@ -1013,6 +1026,7 @@ function buildUI() {
   <div class="rwa-set-row" id="rwa-set-row-hint" style="display:none;"><div id="rwa-backend-hint" class="rwa-set-hint"></div></div>
 </div>
 <div id="rwa-info-panel"></div>
+<div id="rwa-skin-panel"></div>
 <div id="rwa-pal">
   <div id="rwa-pal-box">
     <div class="rwa-pal-top">
@@ -1169,6 +1183,7 @@ function buildUI() {
 
   document.getElementById('rwa-st-cog').onclick = () => {
     document.getElementById('rwa-info-panel').classList.remove('open');   // panels are mutually exclusive
+    document.getElementById('rwa-skin-panel').classList.remove('open');
     document.getElementById('rwa-set-panel').classList.toggle('open');
   };
   // ⓘ "what is this?" — render the rwa-identity/1 bundle as prose on open so it
@@ -1176,9 +1191,16 @@ function buildUI() {
   // doc is edited). Mutually exclusive with the settings panel.
   document.getElementById('rwa-st-info').onclick = () => {
     document.getElementById('rwa-set-panel').classList.remove('open');
+    document.getElementById('rwa-skin-panel').classList.remove('open');
     const panel = document.getElementById('rwa-info-panel');
     if (!panel.classList.contains('open')) panel.innerHTML = renderInfoPanel();
     panel.classList.toggle('open');
+  };
+  // ✦ skins — toggle the gallery (openSkinPanel closes the other two panels).
+  document.getElementById('rwa-st-skin').onclick = () => {
+    const panel = document.getElementById('rwa-skin-panel');
+    if (panel && panel.classList.contains('open')) { panel.classList.remove('open'); return; }
+    openSkinPanel();
   };
   document.getElementById('rwa-st-commit').onclick = commit;
 
@@ -2660,6 +2682,43 @@ if (typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent)) {
     if (typeof showAffordance === 'function') showAffordance('skin removed');
   }
   window.applySkin = applySkin; window.resetSkin = resetSkin;
+  // The ✦ gallery: a runtime-chrome panel (frozen bootstrap, never INLINE_DOC).
+  // Each swatch is a pure-CSS mini-preview built from the preset's 3-stop swatch
+  // (bg / ink / accent) — no images, no fetch. A click dispatches applySkin
+  // (one deterministic commit); the active card reads the live data-rwa-skin attr.
+  function rwaSkinSwatch(name) {
+    const s = RWA_SKINS[name]; const c = (s && s.swatch) || ['#ffffff', '#111111', '#888888'];
+    return '<button class="rwa-skin-sw" data-skin="' + name + '" role="option" title="' + (s.label || name) + '">'
+      + '<span class="rwa-skin-prev" style="background:' + c[0] + ';color:' + c[1] + '">Aa'
+      + '<span style="flex:1"></span>'
+      + '<span style="width:16px;height:6px;border-radius:3px;background:' + c[2] + '"></span></span>'
+      + '<span class="rwa-skin-nm">' + (s.label || name) + '</span></button>';
+  }
+  function currentSkinName() {
+    const el = document.querySelector('#rwa-doc-mount style[data-rwa-skin]') || document.querySelector('style[data-rwa-skin]');
+    const v = el && el.getAttribute('data-rwa-skin');
+    return v || null;
+  }
+  function openSkinPanel() {
+    const panel = document.getElementById('rwa-skin-panel');
+    if (!panel) return;
+    const setP = document.getElementById('rwa-set-panel'); if (setP) setP.classList.remove('open');
+    const infoP = document.getElementById('rwa-info-panel'); if (infoP) infoP.classList.remove('open');
+    const active = currentSkinName();
+    panel.innerHTML =
+      '<div class="rwa-skin-hd"><span>Skins</span><span>' + (active || '—') + '</span></div>'
+      + '<div class="rwa-skin-grid">' + Object.keys(RWA_SKINS).map(rwaSkinSwatch).join('') + '</div>'
+      + '<div class="rwa-skin-ft"><button type="button" data-skin-reset>Reset skin</button></div>';
+    const cur = active && panel.querySelector('.rwa-skin-sw[data-skin="' + active + '"]');
+    if (cur) cur.setAttribute('aria-current', 'true');
+    panel.querySelectorAll('.rwa-skin-sw').forEach(function (b) {
+      b.onclick = function () { panel.classList.remove('open'); Promise.resolve(applySkin(b.getAttribute('data-skin'))).catch(function (e) { showAffordance('skin failed: ' + (e && e.code || e)); }); };
+    });
+    const rb = panel.querySelector('[data-skin-reset]');
+    if (rb) rb.onclick = function () { panel.classList.remove('open'); Promise.resolve(resetSkin()).catch(function () {}); };
+    panel.classList.add('open');
+  }
+  window.openSkinPanel = openSkinPanel;
   // ─── end Skin runtime ─────────────────────────────────────────────────
 
 // rwa-lens/1: submit dispatcher. Routes (state × mode) → envelope/agent path.
