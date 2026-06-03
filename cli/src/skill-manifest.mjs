@@ -96,6 +96,42 @@ export function validateInstall(envelope, { signed, verified } = {}) {
   return { ok: errors.length === 0, errors };
 }
 
+/** Locate the inner HTML of the agent-unreachable `<div data-rwa-frozen id="rwa-skills">` zone.
+ *  Only this zone is trusted (§8): a skill <script> placed elsewhere in the editable doc is ignored.
+ *  Safe with a flat scan because envelopes are base64 (no </div> in the content). */
+function extractRwaSkillsZone(doc) {
+  const open = /<div\b[^>]*\bid="rwa-skills"[^>]*>/i.exec(String(doc || ''));
+  if (!open || !/\bdata-rwa-frozen\b/i.test(open[0])) return null;
+  const start = open.index + open[0].length;
+  const end = doc.indexOf('</div>', start);
+  return end < 0 ? null : doc.slice(start, end);
+}
+
+/** §8 static projection: parse installed skills from the frozen zone, re-verify each signature.
+ *  Each block is base64(JSON(envelope)) → robust through escapeForTL / frozen-snapshot / div-scoping. */
+export async function parseSkillZone(doc) {
+  const zone = extractRwaSkillsZone(doc);
+  if (!zone) return [];
+  const blocks = [...zone.matchAll(/<script\s+type="application\/rwa-skill\+json">([\s\S]*?)<\/script>/g)];
+  const out = [];
+  for (const m of blocks) {
+    let envelope;
+    try { envelope = JSON.parse(atob(m[1].trim())); }
+    catch { continue; } // malformed block → skip (never blocks siblings)
+    const skill = envelope && envelope.skill;
+    if (!skill || typeof skill.name !== 'string') continue;
+    const { verified } = await verifyEnvelope(envelope);
+    out.push({
+      skillId: await skillId(skill.name, skill.author_pubkey),
+      kind: skill.kind,
+      name: skill.name,
+      verified,
+      provenance: 'installed',
+    });
+  }
+  return out;
+}
+
 /** §3.3 signature verification — Ed25519 over signingMessage(manifest‖code). Matches the seed's WebCrypto Ed25519. */
 export async function verifyEnvelope(envelope) {
   const sig = envelope && envelope.signature;
