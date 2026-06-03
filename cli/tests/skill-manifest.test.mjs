@@ -14,18 +14,18 @@ const PK_B = 'QkJCQi1wdWJrZXktQg==';
 
 // §3.2 skillId = base64url(sha256(name ‖ 0x00 ‖ author_pubkey))
 test('skillId is deterministic for the same name+pubkey', async () => {
-  const a = await skillId('gh-stars', PK_A);
-  const b = await skillId('gh-stars', PK_A);
+  const a = skillId('gh-stars', PK_A);
+  const b = skillId('gh-stars', PK_A);
   assert.equal(a, b);
   assert.match(a, /^[A-Za-z0-9_-]+$/); // base64url, no padding/+//
 });
 
 test('skillId differs by author pubkey (key is identity, not name)', async () => {
-  assert.notEqual(await skillId('gh-stars', PK_A), await skillId('gh-stars', PK_B));
+  assert.notEqual(skillId('gh-stars', PK_A), skillId('gh-stars', PK_B));
 });
 
 test('skillId differs by name', async () => {
-  assert.notEqual(await skillId('gh-stars', PK_A), await skillId('word-count', PK_A));
+  assert.notEqual(skillId('gh-stars', PK_A), skillId('word-count', PK_A));
 });
 
 // §3.3 canonical manifest: stable key order, excludes signature, order-independent
@@ -39,8 +39,8 @@ test('canonicalManifest is key-order independent and drops the signature field',
 // signing message couples manifest+code atomically (§3.3 / Invariant 20)
 test('signingMessage changes when code changes (manifest fixed)', async () => {
   const m = { name: 'x', version: '1.0.0', kind: 'tool', permissions: ['network:api.x'], author_pubkey: PK_A };
-  const s1 = await signingMessage(m, 'async function run(i,r){return 1}');
-  const s2 = await signingMessage(m, 'async function run(i,r){return 2}');
+  const s1 = signingMessage(m, 'async function run(i,r){return 1}');
+  const s2 = signingMessage(m, 'async function run(i,r){return 2}');
   assert.notDeepEqual([...s1], [...s2]);
 });
 
@@ -114,23 +114,23 @@ test('verifyEnvelope verifies a correctly signed envelope and rejects tampering'
   const pubB64 = Buffer.from(rawPub).toString('base64');
   const manifest = { name: 'gh-stars', version: '1.0.0', kind: 'tool', permissions: ['network:api.github.com'], author_pubkey: pubB64 };
   const code = 'async function run(input, runtime){ return await runtime.fetch("https://api.github.com"); }';
-  const msg = await signingMessage(manifest, code);
+  const msg = signingMessage(manifest, code);
   const sig = new Uint8Array(await webcrypto.subtle.sign({ name: 'Ed25519' }, kp.privateKey, msg));
   const envelope = { format: 'rwa-skill/1', skill: { ...manifest, code }, signature: Buffer.from(sig).toString('base64') };
 
-  const good = await verifyEnvelope(envelope);
+  const good = verifyEnvelope(envelope);
   assert.equal(good.signed, true);
   assert.equal(good.verified, true);
 
   // tamper the code → signature must no longer verify
   const tampered = { ...envelope, skill: { ...envelope.skill, code: code + '/* evil */' } };
-  const bad = await verifyEnvelope(tampered);
+  const bad = verifyEnvelope(tampered);
   assert.equal(bad.verified, false);
 });
 
 test('verifyEnvelope reports unsigned envelopes as signed:false verified:false', async () => {
   const env = { format: 'rwa-skill/1', skill: { name: 'wc', kind: 'compute', permissions: [], author_pubkey: PK_A, code: 'async function run(){}' } };
-  const r = await verifyEnvelope(env);
+  const r = verifyEnvelope(env);
   assert.equal(r.signed, false);
   assert.equal(r.verified, false);
 });

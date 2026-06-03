@@ -12,7 +12,7 @@ async function makeSigned(name, kind, permissions, code) {
   const rawPub = new Uint8Array(await webcrypto.subtle.exportKey('raw', kp.publicKey));
   const author_pubkey = Buffer.from(rawPub).toString('base64');
   const manifest = { name, version: '1.0.0', kind, permissions, author_pubkey };
-  const msg = await signingMessage(manifest, code);
+  const msg = signingMessage(manifest, code);
   const sig = new Uint8Array(await webcrypto.subtle.sign({ name: 'Ed25519' }, kp.privateKey, msg));
   return { format: 'rwa-skill/1', skill: { ...manifest, code }, signature: Buffer.from(sig).toString('base64') };
 }
@@ -25,18 +25,18 @@ function docWithZone(...blocks) {
 }
 
 test('absent zone → empty list', async () => {
-  assert.deepEqual(await parseSkillZone('<article><h1>no skills here</h1></article>'), []);
+  assert.deepEqual(parseSkillZone('<article><h1>no skills here</h1></article>'), []);
 });
 
 test('empty zone → empty list', async () => {
-  assert.deepEqual(await parseSkillZone(docWithZone()), []);
+  assert.deepEqual(parseSkillZone(docWithZone()), []);
 });
 
 test('a signed tool is reported verified, with skillId + provenance', async () => {
   const env = await makeSigned('gh-stars', 'tool', ['network:api.github.com'], 'async function run(i,r){return r.fetch("https://api.github.com")}');
-  const list = await parseSkillZone(docWithZone(scriptBlock(env)));
+  const list = parseSkillZone(docWithZone(scriptBlock(env)));
   assert.equal(list.length, 1);
-  const expectedId = await skillId('gh-stars', env.skill.author_pubkey);
+  const expectedId = skillId('gh-stars', env.skill.author_pubkey);
   assert.deepEqual(list[0], {
     skillId: expectedId, kind: 'tool', name: 'gh-stars', verified: true, provenance: 'installed',
   });
@@ -44,7 +44,7 @@ test('a signed tool is reported verified, with skillId + provenance', async () =
 
 test('an unsigned compute skill is reported verified:false', async () => {
   const env = { format: 'rwa-skill/1', skill: { name: 'word-count', version: '1.0.0', kind: 'compute', permissions: [], author_pubkey: 'UEsx', code: 'async function run(i){return i.length}' } };
-  const list = await parseSkillZone(docWithZone(scriptBlock(env)));
+  const list = parseSkillZone(docWithZone(scriptBlock(env)));
   assert.equal(list.length, 1);
   assert.equal(list[0].verified, false);
   assert.equal(list[0].kind, 'compute');
@@ -53,14 +53,14 @@ test('an unsigned compute skill is reported verified:false', async () => {
 test('tampering the stored code after signing flips verified to false', async () => {
   const env = await makeSigned('gh-stars', 'tool', ['network:api.github.com'], 'async function run(i,r){return 1}');
   const tampered = { ...env, skill: { ...env.skill, code: env.skill.code + '/* evil */' } };
-  const list = await parseSkillZone(docWithZone(scriptBlock(tampered)));
+  const list = parseSkillZone(docWithZone(scriptBlock(tampered)));
   assert.equal(list[0].verified, false);
 });
 
 test('a malformed block is skipped; valid siblings still parse', async () => {
   const good = await makeSigned('a', 'compute', [], 'async function run(){}');
   const bad = '<script type="application/rwa-skill+json">!!!not-base64-or-json!!!</script>';
-  const list = await parseSkillZone(docWithZone(bad, scriptBlock(good)));
+  const list = parseSkillZone(docWithZone(bad, scriptBlock(good)));
   assert.equal(list.length, 1);
   assert.equal(list[0].name, 'a');
 });
@@ -70,7 +70,7 @@ test('SECURITY: a skill <script> OUTSIDE the frozen zone is ignored (agent canno
   const forged = await makeSigned('forged', 'tool', ['network:api.evil.com'], 'async function run(){}');
   // forged block sits in the editable article, NOT in the #rwa-skills frozen div
   const doc = `<article><h1>doc</h1>${scriptBlock(forged)}</article>\n<div data-rwa-frozen id="rwa-skills">${scriptBlock(inside)}</div>`;
-  const list = await parseSkillZone(doc);
+  const list = parseSkillZone(doc);
   assert.equal(list.length, 1);
   assert.equal(list[0].name, 'real');
 });
@@ -78,6 +78,6 @@ test('SECURITY: a skill <script> OUTSIDE the frozen zone is ignored (agent canno
 test('multiple skills in the zone are all returned', async () => {
   const a = await makeSigned('a', 'compute', [], 'async function run(){return 1}');
   const b = await makeSigned('b', 'tool', ['vault:x'], 'async function run(i,r){return r.vault.get("x")}');
-  const list = await parseSkillZone(docWithZone(scriptBlock(a), scriptBlock(b)));
+  const list = parseSkillZone(docWithZone(scriptBlock(a), scriptBlock(b)));
   assert.deepEqual(list.map(s => s.name).sort(), ['a', 'b']);
 });

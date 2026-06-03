@@ -1,58 +1,40 @@
 // Foundational skill-manifest logic for the v0.8 skill layer.
-// Spec: docs/specs/re-write-able-actions-spec-v0.8.md §3 (skillId, signature, install gates), §4 (permission grammar).
-// Pure/Node-side; the seed runtime mirrors this (4-site pattern). No external deps.
-import { webcrypto } from 'node:crypto';
+// Spec: docs/specs/re-write-able-actions-spec-v0.8.md §3 (skillId, signature, install gates), §4 (permission grammar), §8 (parseSkillZone).
+// SYNCHRONOUS (node:crypto) so it slots into the sync self-description projection without rippling
+// async through the deep-equal-pinned 4-site mirror. The seed mirrors this LOGIC with async WebCrypto,
+// caching `verified` at boot so its sync describe() reports the cached result. No external deps.
+import { createHash, createPublicKey, verify as edVerify } from 'node:crypto';
 
 const enc = new TextEncoder();
-const NUL = new Uint8Array([0]);
+const NUL = Buffer.from([0]);
+// SPKI DER prefix for an Ed25519 public key (wraps a raw 32-byte key into a KeyObject-importable form).
+const ED25519_SPKI_PREFIX = Buffer.from('302a300506032b6570032100', 'hex');
 
-function concatBytes(...parts) {
-  const total = parts.reduce((n, p) => n + p.length, 0);
-  const out = new Uint8Array(total);
-  let o = 0;
-  for (const p of parts) { out.set(p, o); o += p.length; }
-  return out;
-}
-
-async function sha256(bytes) {
-  return new Uint8Array(await webcrypto.subtle.digest('SHA-256', bytes));
-}
-
-function b64urlFromBytes(bytes) {
-  let bin = '';
-  for (const b of bytes) bin += String.fromCharCode(b);
-  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-}
-
-function bytesFromB64(b64) {
-  const bin = atob(b64);
-  const out = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-  return out;
+function sha256(buf) {
+  return createHash('sha256').update(buf).digest();
 }
 
 /** §3.2 skillId = base64url(sha256(name ‖ 0x00 ‖ author_pubkey)). */
-export async function skillId(name, authorPubkey) {
-  const digest = await sha256(concatBytes(enc.encode(String(name)), NUL, enc.encode(String(authorPubkey))));
-  return b64urlFromBytes(digest);
+export function skillId(name, authorPubkey) {
+  return sha256(Buffer.concat([Buffer.from(enc.encode(String(name))), NUL, Buffer.from(enc.encode(String(authorPubkey)))]))
+    .toString('base64url');
 }
 
 /** §3.3 canonical manifest: stable-key-ordered over the signed fields; excludes signature + code. */
 export function canonicalManifest(manifest) {
   const m = manifest || {};
-  const obj = {
+  return JSON.stringify({
     author_pubkey: m.author_pubkey ?? null,
     kind: m.kind ?? null,
     name: m.name ?? null,
     permissions: Array.isArray(m.permissions) ? m.permissions : [],
     version: m.version ?? null,
-  };
-  return JSON.stringify(obj); // keys already in sorted order; array order preserved
+  });
 }
 
 /** §3.3 signing message bytes = sha256(canonicalManifest ‖ 0x00 ‖ code). */
-export async function signingMessage(manifest, code) {
-  return sha256(concatBytes(enc.encode(canonicalManifest(manifest)), NUL, enc.encode(String(code ?? ''))));
+export function signingMessage(manifest, code) {
+  return sha256(Buffer.concat([Buffer.from(enc.encode(canonicalManifest(manifest))), NUL, Buffer.from(enc.encode(String(code ?? '')))]));
 }
 
 const VAULT_NS = /^[a-z0-9_](?:[a-z0-9_-]{0,62}[a-z0-9_])?$/;
@@ -96,8 +78,24 @@ export function validateInstall(envelope, { signed, verified } = {}) {
   return { ok: errors.length === 0, errors };
 }
 
+/** §3.3 signature verification — Ed25519 over signingMessage(manifest‖code). Sync (node:crypto).
+ *  Seed mirror uses async WebCrypto Ed25519 over the identical message; result is the same boolean. */
+export function verifyEnvelope(envelope) {
+  const sig = envelope && envelope.signature;
+  if (!sig) return { signed: false, verified: false };
+  const skill = envelope.skill || {};
+  try {
+    const raw = Buffer.from(skill.author_pubkey, 'base64');
+    const key = createPublicKey({ key: Buffer.concat([ED25519_SPKI_PREFIX, raw]), format: 'der', type: 'spki' });
+    const verified = edVerify(null, signingMessage(skill, skill.code), key, Buffer.from(sig, 'base64'));
+    return { signed: true, verified: !!verified };
+  } catch {
+    return { signed: true, verified: false };
+  }
+}
+
 /** Locate the inner HTML of the agent-unreachable `<div data-rwa-frozen id="rwa-skills">` zone.
- *  Only this zone is trusted (§8): a skill <script> placed elsewhere in the editable doc is ignored.
+ *  Only this zone is trusted (§8): a skill <script> elsewhere in the editable doc is ignored.
  *  Safe with a flat scan because envelopes are base64 (no </div> in the content). */
 function extractRwaSkillsZone(doc) {
   const open = /<div\b[^>]*\bid="rwa-skills"[^>]*>/i.exec(String(doc || ''));
@@ -108,21 +106,21 @@ function extractRwaSkillsZone(doc) {
 }
 
 /** §8 static projection: parse installed skills from the frozen zone, re-verify each signature.
- *  Each block is base64(JSON(envelope)) → robust through escapeForTL / frozen-snapshot / div-scoping. */
-export async function parseSkillZone(doc) {
+ *  Each block is base64(JSON(envelope)). Returns [{skillId,kind,name,verified,provenance:'installed'}]. */
+export function parseSkillZone(doc) {
   const zone = extractRwaSkillsZone(doc);
   if (!zone) return [];
   const blocks = [...zone.matchAll(/<script\s+type="application\/rwa-skill\+json">([\s\S]*?)<\/script>/g)];
   const out = [];
   for (const m of blocks) {
     let envelope;
-    try { envelope = JSON.parse(atob(m[1].trim())); }
+    try { envelope = JSON.parse(Buffer.from(m[1].trim(), 'base64').toString('utf8')); }
     catch { continue; } // malformed block → skip (never blocks siblings)
     const skill = envelope && envelope.skill;
     if (!skill || typeof skill.name !== 'string') continue;
-    const { verified } = await verifyEnvelope(envelope);
+    const { verified } = verifyEnvelope(envelope);
     out.push({
-      skillId: await skillId(skill.name, skill.author_pubkey),
+      skillId: skillId(skill.name, skill.author_pubkey),
       kind: skill.kind,
       name: skill.name,
       verified,
@@ -130,19 +128,4 @@ export async function parseSkillZone(doc) {
     });
   }
   return out;
-}
-
-/** §3.3 signature verification — Ed25519 over signingMessage(manifest‖code). Matches the seed's WebCrypto Ed25519. */
-export async function verifyEnvelope(envelope) {
-  const sig = envelope && envelope.signature;
-  if (!sig) return { signed: false, verified: false };
-  const skill = envelope.skill || {};
-  try {
-    const pub = await webcrypto.subtle.importKey('raw', bytesFromB64(skill.author_pubkey), { name: 'Ed25519' }, false, ['verify']);
-    const msg = await signingMessage(skill, skill.code);
-    const verified = await webcrypto.subtle.verify({ name: 'Ed25519' }, pub, bytesFromB64(sig), msg);
-    return { signed: true, verified: !!verified };
-  } catch {
-    return { signed: true, verified: false };
-  }
 }
