@@ -17,6 +17,7 @@ import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { extractInlineDoc } from '../cli/src/seed.mjs';
 import { findFrozenZones, tagHasFrozenAttr } from '../cli/src/apply-edits.mjs';
+import { parseSkillZone } from '../cli/src/skill-manifest.mjs';
 
 export const SCHEMA_TAG = 'self-description/1';
 export const AFFORDANCE_KINDS = ['view', 'edit-surface', 'tool', 'compute', 'hook'];
@@ -42,6 +43,11 @@ export const KIND_PROVIDERS = {
   document: [],
   presentation: [{ kind: 'view', name: 'presentation', label: 'Present' }],
   workflow: [],
+  // A skill-host has NO first-party affordances; everything it offers is an
+  // INSTALLED skill (provenance:'installed'), emitted by parseSkillZone (§8) from
+  // the frozen #rwa-skills zone, not from this table. Explicit [] (not the ||[]
+  // fallback) so a missing kind is still distinguishable from "no providers".
+  'skill-host': [],
 };
 
 // Substrate-universal ops — the SAME for every container regardless of kind
@@ -99,7 +105,13 @@ export function computeSelfDescription(fileText) {
   // Affordances are DERIVED from kind (§4), never stamped (§5). Each provider
   // ships first-party. Unknown kinds fall back to [] — a type the reader has no
   // manifest for offers no affordances it can vouch for.
-  const affordances = (KIND_PROVIDERS[kind] || []).map((p) => ({ ...p, provenance: 'first-party' }));
+  // First-party (kind-derived) affordances + INSTALLED skills parsed from the
+  // frozen #rwa-skills zone (§8). Installed entries carry provenance:'installed'
+  // + skillId + verified (re-checked signature), so static == live == CLI.
+  const affordances = [
+    ...(KIND_PROVIDERS[kind] || []).map((p) => ({ ...p, provenance: 'first-party' })),
+    ...parseSkillZone(doc),
+  ];
   // frozenZones: same call cli/src/doc.mjs makes, so static and CLI agree (SD-04).
   const frozenZones = findFrozenZones(doc).map((z) => z.name);
   const blocks = (doc.match(/\bdata-rwa-id\b/g) || []).length;

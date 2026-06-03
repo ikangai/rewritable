@@ -123,7 +123,10 @@ test('SD-03: affordance agreement matches the kind table and catches a mismatch'
 
 test('refinement: KIND_PROVIDERS holds only kinds the runtime first-party-provides', () => {
   // Illustrative custom-kind entries removed — the real datatable proved them wrong.
-  assert.deepEqual(Object.keys(KIND_PROVIDERS).sort(), ['document', 'presentation', 'workflow']);
+  // skill-host is a KNOWN kind with NO first-party affordances ([]) — everything it
+  // offers is an installed skill (provenance:'installed'), emitted by parseSkillZone,
+  // not this table — so it belongs here with an empty bundle (like document/workflow).
+  assert.deepEqual(Object.keys(KIND_PROVIDERS).sort(), ['document', 'presentation', 'skill-host', 'workflow']);
 });
 
 test('refinement: a custom kind is not statically guessable; agreement is vacuous', () => {

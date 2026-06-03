@@ -14,6 +14,7 @@
 // doc.test.mjs). Drift fails loudly. KEEP IN STEP with tools/self-description.mjs.
 
 import { tagHasFrozenAttr } from './apply-edits.mjs';
+import { parseSkillZone } from './skill-manifest.mjs';
 
 export const SCHEMA_TAG = 'self-description/1';
 // Mirror of tools/self-description.mjs AFFORDANCE_KINDS / PROVENANCES — used by the
@@ -32,6 +33,9 @@ export const KIND_PROVIDERS = {
   document: [],
   presentation: [{ kind: 'view', name: 'presentation', label: 'Present' }],
   workflow: [],
+  // skill-host: no first-party affordances; installed skills (provenance:'installed')
+  // come from parseSkillZone (§8), not this table. Explicit [] mirrors the oracle.
+  'skill-host': [],
 };
 
 // Substrate-universal ops — the SAME for every container regardless of kind. The
@@ -76,7 +80,12 @@ export function countBlocks(doc) {
  * @returns {object} a `source:'static'` self-description/1 object (spec §2)
  */
 export function buildSelfDescription({ doc, uuid, kind, frozenZones }) {
-  const affordances = (KIND_PROVIDERS[kind] || []).map((p) => ({ ...p, provenance: 'first-party' }));
+  // First-party (kind-derived) + INSTALLED skills from the frozen #rwa-skills zone
+  // (§8). Mirrors tools/self-description.mjs computeSelfDescription exactly.
+  const affordances = [
+    ...(KIND_PROVIDERS[kind] || []).map((p) => ({ ...p, provenance: 'first-party' })),
+    ...parseSkillZone(doc),
+  ];
   return {
     rwa: SCHEMA_TAG,
     source: 'static',

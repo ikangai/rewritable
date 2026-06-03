@@ -303,3 +303,35 @@ test('--json error is structured JSON on stderr (not stdout)', async () => {
   assert.equal(payload.code, 'file_error');
   assert.equal(payload.subcode, 'not_found');
 } );
+
+// ─── Installed skills: the v0.8 self-description integration (§8) ──────
+// A skill-host carries installed skills as base64(JSON(envelope)) <script> blocks
+// inside the agent-unreachable <div data-rwa-frozen id="rwa-skills">. rwa doc must
+// report them as affordances (provenance:'installed'), agreeing with the oracle (SD-04).
+function skillZoneBody(skills) {
+  const blocks = skills.map(s =>
+    `<script type="application/rwa-skill+json">${Buffer.from(JSON.stringify({ format: 'rwa-skill/1', skill: s })).toString('base64')}</script>`
+  ).join('');
+  return `<article><h1>Skill Host</h1></article>\n<div data-rwa-frozen id="rwa-skills">${blocks}</div>`;
+}
+
+test('rwa doc --json reports installed skills from the frozen zone (agrees with the oracle)', async () => {
+  const body = skillZoneBody([
+    { name: 'word-count', version: '1.0.0', kind: 'compute', permissions: [], author_pubkey: 'UEsx', code: 'async function run(i){return i.length}' },
+  ]);
+  const fix = mkFixture(body);
+  try {
+    const { code, stdout } = await runRwa(['doc', fix.path, '--json']);
+    assert.equal(code, 0);
+    const got = JSON.parse(stdout);
+    const inst = got.affordances.find(a => a.provenance === 'installed');
+    assert.ok(inst, 'rwa doc --json includes the installed skill');
+    assert.equal(inst.name, 'word-count');
+    assert.equal(inst.kind, 'compute');
+    assert.equal(inst.verified, false); // unsigned
+    // SD-04: the static CLI projection equals the reference oracle, installed skills included
+    const oracle = computeSelfDescription(readFileSync(fix.path, 'utf8'));
+    assert.deepEqual(got.affordances, oracle.affordances);
+    assert.equal(validateSelfDescription(got).valid, true);
+  } finally { fix.cleanup(); }
+});
