@@ -30,6 +30,9 @@ rwa doc notes.html                                  # print the editable body
 rwa doc notes.html --json                           # read + edit-contract, one call
 
 rwa publish notes.html                              # → a hosted 24h share URL
+
+rwa skin notes.html notion-clean                    # apply a named style preset
+rwa skin notes.html reset                           # remove the skin
 ```
 
 ### `rwa new`
@@ -175,6 +178,19 @@ rwa publish notes.html --json   # {"short":"…","url":"…","expiresAt":…} on
 It POSTs **your edited bytes** (the current `INLINE_DOC`), unlike the browser `/new` and `/import` pages, which publish a fresh or freshly-converted container. The hosted snapshot gets its own fresh `DOC_UUID` (a distinct container at its own origin) and is **anonymous, ephemeral (24h), and rate-limited** — it's a share link, not durable storage. The file on your disk remains the durable artifact.
 
 **Target** resolves `--url <base>` › `$RWA_PUBLISH_URL` › `https://rewritable.ikangai.com` (point it at a self-hosted service or local dev with either). The file is checked locally first — a non-rewritable exits `2` (`not_a_rewritable`) **before any network call**. Remote/network failures exit `4` with an honest reason on stderr (`publish_error/network_error`, `/rate_limited`, `/body_too_large`, `/validation_failed`, …); `--json` emits those as `{code, subcode, details}`. stdout stays clean for the URL/JSON.
+
+### `rwa skin <path> <name>`
+
+Pick a **named look** for a rewritable instead of hand-styling it from the blank lens. A skin is one self-contained `<style data-rwa-skin="NAME">` block — system fonts only, no web fonts or remote assets — that the command splices into the **document body**. So it commits with the document, ships inside the exported `.html`, survives sharing, and one in-browser undo (`⌘Z`) reverts it.
+
+```
+rwa skin notes.html notion-clean        # apply (notion-clean | linear-dark | editorial-serif)
+rwa skin notes.html editorial-serif     # re-skin — replaces the current skin, never stacks
+rwa skin notes.html reset               # remove the skin
+rwa skin notes.html linear-dark --json  # {"exitCode":0,"mode":"insert","skin":"linear-dark"}
+```
+
+This is **deterministic and offline** — no model, no key. The block is scoped to `#rwa-doc-mount`, so it overrides the seed's baseline typography while leaving the runtime chrome's palette untouched (a dark skin re-tints the document, not the lens). Applying the first skin inserts the block (a `replace_document`); re-skinning swaps it in place (an `apply_edits`); `reset` removes it — each one commit. Routed through the same write path as `rwa edit`, so frozen zones and `data-rwa-id`s are preserved and a non-rewritable target exits `2` (`not_a_rewritable`). `--theme-only` is the explicit name for this deterministic swap; an always-on, content-aware restyle (the model rewrites markup to make the look land) is a planned later phase (`docs/plans/2026-06-03-skinning-design.md`).
 
 ### Driving a rewritable from an agent — no embedded LLM, no API key
 
