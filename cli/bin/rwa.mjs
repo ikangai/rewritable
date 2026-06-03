@@ -65,12 +65,14 @@ Usage:
                               {exitCode,mode,skin}.
 
 Flags:
-  --kind <name>  (new only) starter kind: document (default), workflow, or
-                 presentation. 'document' is the canonical prose container.
-                 'workflow' scaffolds three stages (Inbox / In progress /
-                 Done). 'presentation' scaffolds a prose deck that the
+  --kind <name>  (new only) starter kind: document (default), workflow,
+                 presentation, or skill-host. 'document' is the canonical prose
+                 container. 'workflow' scaffolds three stages (Inbox / In
+                 progress / Done). 'presentation' scaffolds a prose deck that the
                  'Present' toggle displays as slides (split on h1/h2) without
-                 changing the stored text. See docs/specs/rwa-product-types.md.
+                 changing the stored text. 'skill-host' hosts permission-gated
+                 skills installed from .rwa-skill.json files (v0.8 actions spec).
+                 See docs/specs/rwa-product-types.md.
   --skin <name>  (new only) bake a style preset into the new container:
                  notion-clean, linear-dark, editorial-serif, stripe-docs,
                  terminal-mono. Orthogonal to
