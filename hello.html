@@ -323,6 +323,10 @@ const RWA = {
   // Per-backend base-URL overrides for local OpenAI-compatible servers.
   // Empty/unset falls back to DEFAULT_*_URL below.
   K_BASE_URL_OLLAMA:'rwa_base_url_ollama', K_BASE_URL_LMSTUDIO:'rwa_base_url_lmstudio',
+  // Bridge SESSION backend (persistent claude via web_cli_bridge /session/*).
+  // Unlike single-shot /run, /session/* is token-mandatory + origin-allowlisted,
+  // and create() needs a server-side working dir for the claude session.
+  K_BRIDGE_TOKEN:'rwa_bridge_token', K_BRIDGE_CWD:'rwa_bridge_cwd',
   MODEL:'google/gemini-3.5-flash',
   FILE:'hello.html',
   // OpenAI-compat localhost defaults — both Ollama and LM Studio ship the
@@ -359,7 +363,7 @@ try {
     qs.delete('key');
   }
   const b = qs.get('backend');
-  if (b && ['openrouter','ollama','lmstudio','bridge'].includes(b)) {
+  if (b && ['openrouter','ollama','lmstudio','bridge','bridge-session'].includes(b)) {
     sessionStorage.setItem(RWA.K_BACKEND, b);
     qs.delete('backend');
   }
@@ -1019,8 +1023,10 @@ function buildUI() {
   <button class="rwa-st-btn pri" id="rwa-st-commit">⌘S</button>
 </div>
 <div id="rwa-set-panel">
-  <div class="rwa-set-row"><label>Backend</label><select id="rwa-backend"><option value="openrouter">OpenRouter (API key)</option><option value="ollama">Ollama (localhost)</option><option value="lmstudio">LM Studio (localhost)</option><option value="bridge">Bridge (claude -p, localhost)</option></select></div>
+  <div class="rwa-set-row"><label>Backend</label><select id="rwa-backend"><option value="openrouter">OpenRouter (API key)</option><option value="ollama">Ollama (localhost)</option><option value="lmstudio">LM Studio (localhost)</option><option value="bridge">Bridge (claude -p, localhost)</option><option value="bridge-session">Bridge session (claude, persistent)</option></select></div>
   <div class="rwa-set-row" id="rwa-set-row-key"><label>OpenRouter Key</label><input type="password" id="rwa-key" placeholder="sk-or-..." autocomplete="off"></div>
+  <div class="rwa-set-row" id="rwa-set-row-bridge-token" style="display:none;"><label>Bridge Token</label><input type="password" id="rwa-bridge-token" placeholder="WEB_CLI_BRIDGE_TOKEN" autocomplete="off"></div>
+  <div class="rwa-set-row" id="rwa-set-row-bridge-cwd" style="display:none;"><label>Session Dir</label><input type="text" id="rwa-bridge-cwd" placeholder="/path/on/bridge/host" autocomplete="off" spellcheck="false"></div>
   <div class="rwa-set-row" id="rwa-set-row-base-url" style="display:none;"><label>Base URL</label><div class="rwa-set-base-url-line"><input type="text" id="rwa-base-url" autocomplete="off" spellcheck="false"><button type="button" id="rwa-base-url-test">Test</button></div><div id="rwa-base-url-result" class="rwa-set-hint"></div></div>
   <div class="rwa-set-row" id="rwa-set-row-model"><label>Model</label><input type="text" id="rwa-model" autocomplete="off" list="rwa-model-options"><datalist id="rwa-model-options"></datalist></div>
   <div class="rwa-set-row" id="rwa-set-row-hint" style="display:none;"><div id="rwa-backend-hint" class="rwa-set-hint"></div></div>
@@ -1056,6 +1062,23 @@ function buildUI() {
   k.oninput = e => sessionStorage.setItem(RWA.K_API, e.target.value.trim());
   m.oninput = e => sessionStorage.setItem(RWA.K_MODEL, e.target.value.trim() || RWA.MODEL);
 
+  // Bridge SESSION backend config: the bearer token the bridge requires on every
+  // /session/* call, and a server-side working dir for the claude session.
+  const bridgeTokEl = document.getElementById('rwa-bridge-token');
+  const bridgeCwdEl = document.getElementById('rwa-bridge-cwd');
+  bridgeTokEl.value = sessionStorage.getItem(RWA.K_BRIDGE_TOKEN) || '';
+  bridgeCwdEl.value = sessionStorage.getItem(RWA.K_BRIDGE_CWD) || '';
+  bridgeTokEl.oninput = e => {
+    const v = e.target.value.trim();
+    if (v) sessionStorage.setItem(RWA.K_BRIDGE_TOKEN, v);
+    else sessionStorage.removeItem(RWA.K_BRIDGE_TOKEN);
+  };
+  bridgeCwdEl.oninput = e => {
+    const v = e.target.value.trim();
+    if (v) sessionStorage.setItem(RWA.K_BRIDGE_CWD, v);
+    else sessionStorage.removeItem(RWA.K_BRIDGE_CWD);
+  };
+
   const backendEl = document.getElementById('rwa-backend');
   const baseUrlEl = document.getElementById('rwa-base-url');
   const baseUrlTestBtn = document.getElementById('rwa-base-url-test');
@@ -1084,6 +1107,11 @@ function buildUI() {
       showKey: false, showBaseUrl: false, showModel: false, showHint: false,
       hintHTML: '',
     },
+    'bridge-session': {
+      showKey: false, showBaseUrl: false, showModel: false, showHint: true,
+      showBridgeToken: true, showBridgeCwd: true,
+      hintHTML: 'Persistent claude session via <code>web_cli_bridge</code> /session/*. Run the bridge with <code>WEB_CLI_BRIDGE_TOKEN</code> (paste it as the Bridge Token above) and <code>WCB_ALLOWED_ORIGINS</code> set to this page&#39;s origin (<code>' + (location.origin || 'null') + '</code>). Session Dir is a path on the bridge host where the claude session runs.',
+    },
   };
 
   // Curated OpenRouter model suggestions. Populated into the datalist when the
@@ -1107,6 +1135,8 @@ function buildUI() {
     document.getElementById('rwa-set-row-base-url').style.display = meta.showBaseUrl ? '' : 'none';
     document.getElementById('rwa-set-row-model').style.display  = meta.showModel   ? '' : 'none';
     document.getElementById('rwa-set-row-hint').style.display   = meta.showHint    ? '' : 'none';
+    document.getElementById('rwa-set-row-bridge-token').style.display = meta.showBridgeToken ? '' : 'none';
+    document.getElementById('rwa-set-row-bridge-cwd').style.display   = meta.showBridgeCwd   ? '' : 'none';
     if (meta.showBaseUrl) {
       baseUrlEl.placeholder = meta.defaultUrl;
       baseUrlEl.value = sessionStorage.getItem(meta.storageKey) || '';
@@ -2792,6 +2822,7 @@ window.submitLens = submitLens;
 function getActiveActor() {
   const backend = sessionStorage.getItem(RWA.K_BACKEND) || 'openrouter';
   if (backend === 'bridge') return 'bridge:claude-p';
+  if (backend === 'bridge-session') return 'bridge:claude-session';
   return sessionStorage.getItem(RWA.K_MODEL) || RWA.MODEL;
 }
 
@@ -2817,6 +2848,9 @@ function resolveBackendConfig() {
   }
   if (backend === 'bridge') {
     return { backend, kind:'bridge' };
+  }
+  if (backend === 'bridge-session') {
+    return { backend, kind:'bridge-session' };
   }
   // openrouter (and unknown values default here)
   return {
@@ -2865,7 +2899,7 @@ async function listOpenAiCompatModels(cfg) {
 // omitting tools.
 async function callAgentSingleShot(prompt) {
   const cfg = resolveBackendConfig();
-  if (cfg.kind === 'bridge') return callBridgeSingleShot(prompt);
+  if (cfg.kind === 'bridge' || cfg.kind === 'bridge-session') return callBridgeSingleShot(prompt);
   if (cfg.requiresKey && !cfg.apiKey) throw new Error('no API key');
   const model = sessionStorage.getItem(RWA.K_MODEL) || RWA.MODEL;
   const data = await openAiCompatChat(cfg, {
@@ -2904,11 +2938,17 @@ window.bridgeCommand = bridgeCommand; // expose for tests
 // strip a leading ```html / ``` fence in case claude wraps it anyway.
 async function callBridgeSingleShot(prompt) {
   const cmd = bridgeCommand(prompt);
+  // Send the bridge token if one is configured. The bridge-session backend
+  // requires a token (anchored slash commands route here for naked-HTML output);
+  // the tokenless `bridge` backend leaves it unset, so this is a no-op there.
+  const headers = { 'Content-Type': 'application/json' };
+  const tok = (sessionStorage.getItem(RWA.K_BRIDGE_TOKEN) || '').trim();
+  if (tok) headers['Authorization'] = 'Bearer ' + tok;
   let resp;
   try {
     resp = await fetch(RWA.BRIDGE_URL, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({ command: cmd }),
     });
   } catch (err) {
@@ -4168,6 +4208,7 @@ async function modify(instr, lensMeta = null) {
 
   const cfg = resolveBackendConfig();
   if (cfg.kind === 'bridge') return modifyViaBridge(instr, lensMeta);
+  if (cfg.kind === 'bridge-session') return modifyViaSession(instr, lensMeta);
 
   const model = sessionStorage.getItem(RWA.K_MODEL) || RWA.MODEL;
   if (cfg.requiresKey && !cfg.apiKey) {
@@ -4433,6 +4474,281 @@ function parseBridgeEnvelope(text) {
   }
   return null;
 }
+
+// ─── Bridge SESSION backend (persistent claude TUI via web_cli_bridge) ──────
+//
+// modifyViaBridge's persistent cousin. Instead of a fresh `claude -p` per ⌘K, it
+// drives a long-lived claude session through web_cli_bridge's /session/*
+// endpoints: create once per container, then stream a turn per edit. The doc is
+// STAGED to a per-turn file the bridge writes and claude only READS (Strategy C —
+// the rwa stays the sole doc writer); claude WRITES its envelope to a rendezvous
+// file the bridge reads back byte-exact and hands to /session/get-envelope. The
+// envelope-in/envelope-out contract is identical to modifyViaBridge (same
+// applyEdits / compileDslPlan / replaceDocument dispatch), so this is a drop-in
+// with conversation continuity added.
+//
+// Unlike single-shot /run, /session/* is token-MANDATORY and origin-allowlisted
+// (web_cli_bridge's loopback-RCE defense). Run the bridge with
+// WEB_CLI_BRIDGE_TOKEN + WCB_ALLOWED_ORIGINS=<this origin>, and set the matching
+// token (and a server-side Session Dir) in ⚙ settings.
+function bridgeOrigin() {
+  // /session/* lives beside /run on the same host:port — derive it from
+  // BRIDGE_URL so there is one source of truth for where the bridge is.
+  return RWA.BRIDGE_URL.replace(/\/run\/?$/, '');
+}
+function bridgeSessionHeaders() {
+  const h = { 'Content-Type': 'application/json' };
+  const tok = (sessionStorage.getItem(RWA.K_BRIDGE_TOKEN) || '').trim();
+  if (tok) h['Authorization'] = 'Bearer ' + tok;
+  return h;
+}
+async function bridgeSessionFetch(pathName, body, signal) {
+  try {
+    return await fetch(bridgeOrigin() + pathName, {
+      method: 'POST', headers: bridgeSessionHeaders(), body: JSON.stringify(body), signal,
+    });
+  } catch (err) {
+    if (err && err.name === 'AbortError') throw err;   // the caller labels the timeout
+    throw new Error('bridge unreachable at ' + bridgeOrigin() + ' — is web_cli_bridge running?');
+  }
+}
+
+const BRIDGE_SESSION_KEY = 'rwa_bridge_session_' + DOC_UUID;
+function readCachedSession() {
+  try {
+    const s = JSON.parse(sessionStorage.getItem(BRIDGE_SESSION_KEY) || 'null');
+    if (s && typeof s.session_id === 'string' && typeof s.cap === 'string') return s;
+  } catch (_) {}
+  return null;
+}
+function writeCachedSession(s) {
+  sessionStorage.setItem(BRIDGE_SESSION_KEY, JSON.stringify({ session_id: s.session_id, cap: s.cap }));
+}
+function clearCachedSession() { sessionStorage.removeItem(BRIDGE_SESSION_KEY); }
+
+async function createBridgeSession() {
+  const cwd = (sessionStorage.getItem(RWA.K_BRIDGE_CWD) || '').trim();
+  if (!cwd) throw new Error('set a Bridge Session Dir (a path on the bridge host) in ⚙ settings');
+  const resp = await bridgeSessionFetch('/session/create', { cwd, cols: 120, rows: 40 });
+  if (resp.status === 401) throw new Error('bridge rejected the token — set the Bridge Token in ⚙ settings (run the bridge with WEB_CLI_BRIDGE_TOKEN)');
+  if (resp.status === 403) throw new Error("bridge rejected this page's origin — add " + (location.origin || 'null') + ' to the bridge WCB_ALLOWED_ORIGINS');
+  if (!resp.ok) {
+    const e = await resp.json().catch(() => ({}));
+    throw new Error('bridge /session/create http ' + resp.status + (e && e.error ? ': ' + e.error : ''));
+  }
+  const s = await resp.json();           // {session_id, cap, rendezvous_dir, created_at}
+  // Validate the shape at the source (mirrors readCachedSession's guard) so a
+  // malformed 200 can't cache a {session_id:undefined, cap:undefined} session
+  // that then 400s on every subsequent /session/* call.
+  if (!s || typeof s.session_id !== 'string' || typeof s.cap !== 'string') {
+    throw new Error('bridge /session/create returned a malformed session (missing session_id/cap)');
+  }
+  writeCachedSession(s);
+  return s;
+}
+async function getOrCreateBridgeSession() {
+  return readCachedSession() || await createBridgeSession();
+}
+
+// Consume an SSE response: call onEvent(name, data) per block, return the final
+// `done` payload. Prefers a streaming reader so progress chips update live;
+// falls back to the whole body where ReadableStream isn't available.
+async function consumeSessionStream(resp, onEvent) {
+  let done = null;
+  const handleBlock = (block) => {
+    let ev = null, dataStr = null;
+    for (const line of block.split('\n')) {
+      if (line.startsWith('event: ')) ev = line.slice(7);
+      else if (line.startsWith('data: ')) dataStr = line.slice(6);
+    }
+    if (ev == null) return;
+    let data = null;
+    try { data = dataStr ? JSON.parse(dataStr) : null; } catch (_) {}
+    if (ev === 'done') done = data; else onEvent(ev, data);
+  };
+  if (resp.body && typeof resp.body.getReader === 'function') {
+    const reader = resp.body.getReader();
+    const dec = new TextDecoder();
+    let buf = '';
+    for (;;) {
+      const { value, done: rdone } = await reader.read();
+      if (value) buf += dec.decode(value, { stream: true });
+      let idx;
+      while ((idx = buf.indexOf('\n\n')) >= 0) { handleBlock(buf.slice(0, idx)); buf = buf.slice(idx + 2); }
+      if (rdone) break;
+    }
+    if (buf.trim()) handleBlock(buf);
+  } else {
+    const text = await resp.text();
+    for (const block of text.split('\n\n')) if (block.trim()) handleBlock(block);
+  }
+  return done;
+}
+
+async function streamBridgeTurn(session, instruction, doc) {
+  // Client-side abort budget just above the server timeout(180) so a half-open
+  // connection (the bridge killed mid-stream, a TCP black hole) can't wedge the
+  // SSE reader — and thus modifyMutex — forever. Degrades gracefully where
+  // AbortController is unavailable.
+  const ac = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+  const timer = ac ? setTimeout(() => ac.abort(), 200000) : null;
+  try {
+    const resp = await bridgeSessionFetch('/session/stream', {
+      session_id: session.session_id, cap: session.cap, doc, instruction, timeout: 180,
+    }, ac ? ac.signal : undefined);
+    // 401/403/404 before any stream commit -> caller may recreate the session.
+    if (resp.status === 401 || resp.status === 403 || resp.status === 404) return { httpError: resp.status };
+    if (resp.status === 409) {
+      const e = await resp.json().catch(() => ({}));
+      throw new Error('bridge session: ' + ((e && e.error) || 'busy (409)'));
+    }
+    if (!resp.ok) throw new Error('bridge /session/stream http ' + resp.status);
+    const done = await consumeSessionStream(resp, (ev, data) => {
+      if (ev === 'state' && data && data.state) {
+        const label = data.state === 'awaiting_input' ? 'claude needs input…'
+          : data.state === 'streaming' ? 'Streaming…' : 'Thinking…';
+        setLensProgress('thinking', label);
+      }
+    });
+    return { done };
+  } catch (err) {
+    if (err && err.name === 'AbortError') throw new Error('bridge session timed out (>200s) — the bridge may be stuck or the connection dropped');
+    throw err;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+async function fetchBridgeEnvelope(session, turnUuid) {
+  const resp = await bridgeSessionFetch('/session/get-envelope', {
+    session_id: session.session_id, cap: session.cap, turn_uuid: turnUuid,
+  });
+  if (!resp.ok) {
+    const e = await resp.json().catch(() => ({}));
+    throw new Error('bridge /session/get-envelope http ' + resp.status + (e && e.error ? ': ' + e.error : ''));
+  }
+  // Bytes are claude's verbatim envelope; the same parser the single-shot path
+  // uses extracts and shape-validates it.
+  return parseBridgeEnvelope(await resp.text());
+}
+
+// The bridge appends a `<!-- rwa:gen <uuid> -->` sentinel to the doc claude
+// READS (for stale-write rejection). A replace_document envelope can echo it
+// back; strip it so this reserved rwa: comment never lands in the stored doc.
+function stripGenSentinel(text) {
+  if (typeof text !== 'string') return text;
+  return text.replace(/\n?<!-- rwa:gen [0-9a-f-]{36} -->[ \t]*\n?/gi, '\n');
+}
+
+// replace_document, but first strip the bridge's gen sentinel from the doc body
+// (claude can echo it back from the staged doc it Read). Fail LOUD if a reserved
+// rwa:gen comment survives the canonical strip (a reformatted/non-canonical
+// variant) rather than silently committing a reserved marker. Used by BOTH the
+// direct replace_document branch AND the DSL-compiled replace_document escape,
+// so the strip can't be missed on one path.
+async function replaceDocumentStripped(envelope, cur, lensMeta) {
+  const doc = stripGenSentinel(envelope.doc);
+  if (typeof doc === 'string' && /<!--\s*rwa:gen\b/i.test(doc)) {
+    throw new RwaEditError('frozen_zone_violation', null, { marker: 'rwa:gen' });
+  }
+  return await replaceDocument({ ...envelope, doc }, cur, lensMeta);
+}
+
+function buildSessionInstruction(instr, cur, frozenZones) {
+  // Mirror modifyViaBridge's fidelity-audited prompt body (system rules + doc +
+  // the three envelope shapes), MINUS the single-shot "output JSON to stdout"
+  // channel line — the bridge's per-turn prompt owns the file-rendezvous channel
+  // (Read the staged doc, WRITE the envelope file).
+  return SYSTEM_PROMPT + '\n\n' + buildUserPrompt(instr, cur, frozenZones) +
+    '\n\nProduce exactly one rwa-edit/1 envelope (no commentary). It MUST be one of these three shapes:\n\n' +
+    '{"tool":"apply_dsl_plan","envelope":{"version":"rwa-edit-dsl/1","ops":[/* per the rules above */]}}\n\n' +
+    '{"tool":"apply_edits","envelope":{"version":"rwa-edit/1","edits":[{"find":"...","replace":"..."}]}}\n\n' +
+    '{"tool":"replace_document","envelope":{"version":"rwa-edit/1","doc":"...","reason":"..."}}\n\n' +
+    'Pick the tool per the preference rules: structural → apply_dsl_plan, content → apply_edits, wholesale → replace_document.';
+}
+
+async function applyParsedEnvelope(parsed, cur, lensMeta) {
+  if (parsed.tool === 'apply_dsl_plan') {
+    const compiled = compileDslPlan(parsed.envelope, cur);
+    if (compiled.tool === 'apply_edits') return await applyEdits(compiled.envelope, cur, lensMeta);
+    if (compiled.tool === 'replace_document') return await replaceDocumentStripped(compiled.envelope, cur, lensMeta);
+    throw new RwaEditError('unknown_tool', null, { name: compiled.tool });
+  }
+  if (parsed.tool === 'apply_edits') return await applyEdits(parsed.envelope, cur, lensMeta);
+  if (parsed.tool === 'replace_document') return await replaceDocumentStripped(parsed.envelope, cur, lensMeta);
+  throw new RwaEditError('unknown_tool', null, { name: parsed.tool });
+}
+
+async function modifyViaSession(instr, lensMeta = null) {
+  if (modifyMutex) {
+    setPalSt('err', '✗ another modify in progress');
+    setLensProgress('error', 'another modify in progress');
+    throw new RwaEditError('concurrent_modify');
+  }
+  modifyMutex = true;
+  closePal();
+  setStatus('run', '⌘K running (session)');
+  setLensProgress('thinking', 'Asking claude (session)…');
+
+  try {
+    const cur = canonLF(await getDoc());
+    const frozenZones = extractFrozenZones(cur);
+    const instruction = buildSessionInstruction(instr, cur, frozenZones);
+
+    let session = await getOrCreateBridgeSession();
+    let res = await streamBridgeTurn(session, instruction, cur);
+    // A stale cached session (server restarted / reaped) -> recreate once.
+    if (res.httpError === 404 || res.httpError === 403) {
+      clearCachedSession();
+      session = await createBridgeSession();
+      res = await streamBridgeTurn(session, instruction, cur);
+    }
+    if (res.httpError === 401) throw new Error('bridge rejected the token — set the Bridge Token in ⚙ settings');
+    if (res.httpError) throw new Error('bridge session http ' + res.httpError);
+
+    const done = res.done;
+    if (!done) throw new Error('bridge session: stream ended without a done event');
+    if (done.reason === 'awaiting_input') throw new Error('claude is waiting for input — resolve it in the session, then retry');
+    if (done.reason === 'dead') { clearCachedSession(); throw new Error('the bridge session ended — retry to start a fresh one'); }
+    if (done.reason === 'envelope_rejected') throw new Error('bridge rejected the envelope (stale or mismatched write)');
+    if (done.reason !== 'idle') throw new Error('claude produced no envelope (' + done.reason + ')');
+
+    setLensProgress('thinking', 'Fetching envelope…');
+    const parsed = await fetchBridgeEnvelope(session, done.turn_uuid);
+    if (!parsed) throw new Error('bridge: response did not contain a parseable rwa-edit/1 envelope');
+
+    setLensProgress('thinking', `Applying ${friendlyToolName(parsed.tool)}…`);
+    const newDoc = await applyParsedEnvelope(parsed, cur, lensMeta);
+
+    renderDoc(newDoc);
+    setDirty(true);
+    await rwaBumpDirtyCount().catch(() => {});
+    rwaCheckQuota();
+    // Defer the emit so `finally` releases modifyMutex before any listener fires
+    // (a listener calling runtime.modify() would otherwise hit concurrent_modify
+    // and have it swallowed by emitRuntimeEvent's try/catch — same as Fix I2).
+    queueMicrotask(() => {
+      emitRuntimeEvent('modify', { instruction: instr, lensMeta });
+      emitRuntimeEvent('status', getStatusSnapshot());
+    });
+    setStatus('ok', '✓ done');
+    setLensProgress('done', 'Done');
+  } catch (e) {
+    if (e instanceof RwaEditError) {
+      const code = e.code + (e.editIndex != null ? ' [edit ' + e.editIndex + ']' : '');
+      setStatus('err', '✗ ' + code);
+      setLensProgress('error', code);
+    } else {
+      setStatus('err', '✗ ' + e.message);
+      setLensProgress('error', e.message);
+    }
+    console.error(e);
+  } finally {
+    modifyMutex = false;
+  }
+}
+window.modifyViaSession = modifyViaSession;          // expose for tests
+window.buildSessionInstruction = buildSessionInstruction;
 
 async function undo() {
   // ⌘Z must not race a ⌘K commit: modify() holds `cur` from before its fetch,
