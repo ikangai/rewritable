@@ -31,6 +31,22 @@ const check = (label, cond) => {
 const sse = (events) =>
   events.map(([e, d]) => `event: ${e}\ndata: ${JSON.stringify(d)}\n\n`).join('');
 
+// A stream response whose body.getReader() yields the SSE bytes in 3 chunks,
+// cut mid-frame and across a '\n\n' separator — exercises the real-browser
+// streaming-reader branch of consumeSessionStream (the other mocks omit `body`
+// and so hit the resp.text() fallback).
+function chunkedStream(sseStr) {
+  const bytes = new TextEncoder().encode(sseStr);
+  const c1 = Math.max(1, Math.floor(bytes.length * 0.3));
+  const c2 = Math.max(c1 + 1, Math.floor(bytes.length * 0.7));
+  const chunks = [bytes.slice(0, c1), bytes.slice(c1, c2), bytes.slice(c2)];
+  let i = 0;
+  return { ok: true, status: 200, body: { getReader: () => ({
+    read: () => Promise.resolve(i < chunks.length
+      ? { value: chunks[i++], done: false } : { value: undefined, done: true }),
+  }) } };
+}
+
 const RESP = {
   create: () => ({ ok: true, status: 200,
     json: async () => ({ session_id: 'a'.repeat(32), cap: 'c'.repeat(64),
@@ -44,12 +60,13 @@ const RESP = {
     envelope: { version: 'rwa-edit/1', doc: '<p>SESSION_OK</p>', reason: 't' },
     turn_uuid: UUID, gen: UUID }) }),
 };
-const mock = { calls: [], create: RESP.create, stream: RESP.stream, env: RESP.env };
+const mock = { calls: [], lastHeaders: null, create: RESP.create, stream: RESP.stream, env: RESP.env };
 const resetResponses = () => { mock.create = RESP.create; mock.stream = RESP.stream; mock.env = RESP.env; };
 
-function router(url) {
+function router(url, opts) {
   const u = new URL(typeof url === 'string' ? url : url.url);
   mock.calls.push(u.pathname);
+  mock.lastHeaders = (opts && opts.headers) || null;
   if (u.pathname === '/session/create') return mock.create();
   if (u.pathname === '/session/stream') return mock.stream();
   if (u.pathname === '/session/get-envelope') return mock.env();
@@ -70,7 +87,9 @@ const dom = new JSDOM(html, {
     window.sessionStorage.setItem('rwa_backend', 'bridge-session');
     window.sessionStorage.setItem('rwa_bridge_token', 'tok');
     window.sessionStorage.setItem('rwa_bridge_cwd', '/tmp/sess');
-    window.fetch = async (url) => router(url);
+    window.fetch = async (url, opts) => router(url, opts);
+    window.TextDecoder = globalThis.TextDecoder;   // for the getReader streaming path
+    window.TextEncoder = globalThis.TextEncoder;
     window.BroadcastChannel = globalThis.BroadcastChannel;
     Object.defineProperty(window.navigator, 'storage', {
       value: { persist: () => Promise.resolve(false),
@@ -162,6 +181,49 @@ await window.modifyViaSession('x');
 check('7. missing Session Dir: a clear error is surfaced', /Session Dir/i.test(progText()));
 check('7. missing Session Dir: no /session/create attempted', createCalls() === 0);
 window.sessionStorage.setItem('rwa_bridge_cwd', '/tmp/sess');
+
+// 8. The gen sentinel is ALSO stripped on the DSL-compiled replace_document
+// escape (apply_dsl_plan -> sole-op replace_document), not only the direct path.
+clearSession(); mock.calls = [];
+mock.env = () => ({ ok: true, status: 200, text: async () => JSON.stringify({
+  tool: 'apply_dsl_plan',
+  envelope: { version: 'rwa-edit-dsl/1', ops: [
+    { op: 'replace_document', doc: '<p>DSL_CLEAN</p>\n<!-- rwa:gen ' + UUID + ' -->\n', reason: 't' }] },
+  turn_uuid: UUID, gen: UUID }) });
+await window.modifyViaSession('dsl rewrite with a sentinel');
+check('8. DSL replace_document content stored', /DSL_CLEAN/.test(mountHtml()));
+check('8. DSL-escape path ALSO strips the gen sentinel', !/rwa:gen/.test(mountHtml()));
+resetResponses();
+
+// 9. The real-browser streaming reader path (resp.body.getReader) parses SSE
+// split across chunk boundaries — not just the resp.text() fallback.
+clearSession(); mock.calls = [];
+mock.stream = () => chunkedStream(sse([
+  ['state', { state: 'thinking' }],
+  ['done', { reason: 'idle', turn_uuid: UUID, alive: true, state: 'idle' }]]));
+mock.env = () => ({ ok: true, status: 200, text: async () => JSON.stringify({
+  tool: 'replace_document',
+  envelope: { version: 'rwa-edit/1', doc: '<p>STREAMED</p>', reason: 't' },
+  turn_uuid: UUID, gen: UUID }) });
+await window.modifyViaSession('a streamed turn');
+check('9. getReader path parsed chunked SSE and applied the edit', /STREAMED/.test(mountHtml()));
+resetResponses();
+
+// 10. A malformed /session/create 200 (missing session_id/cap) fails loud and is
+// NOT cached (no poisoned session that 400s every later call).
+clearSession(); mock.calls = [];
+mock.create = () => ({ ok: true, status: 200, json: async () => ({ rendezvous_dir: '/x' }) });
+await window.modifyViaSession('malformed create');
+check('10. malformed create surfaces an error', /malformed session/i.test(progText()));
+check('10. malformed create was not cached', !window.sessionStorage.getItem(SESSION_KEY));
+resetResponses();
+
+// 11. The configured bearer token is sent on /session/* requests.
+clearSession(); mock.calls = []; mock.lastHeaders = null;
+await window.modifyViaSession('token check');
+check('11. Authorization: Bearer <token> sent on /session/* calls',
+  !!mock.lastHeaders && mock.lastHeaders.Authorization === 'Bearer tok');
+resetResponses();
 
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail > 0) process.exit(1);
