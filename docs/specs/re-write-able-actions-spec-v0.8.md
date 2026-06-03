@@ -278,11 +278,15 @@ AES-GCM auth fails throws **`vault_decrypt_failed`**; IDB quota/IO failure throw
 `data-rwa-frozen` snapshot-equality guard rejects any drift). The runtime edits it by making the ⌘S commit
 path **registry-aware**: `commit()` (today seed ~L4478 calls `buildFile(await getDoc())` directly) must first
 call `buildSkillZone(installedSkills)` — regenerate the `<div data-rwa-frozen id="rwa-skills">` with one
-`<script type="application/rwa-skill+json">{manifest,code,signature}</script>` per record — swap it into the
-in-memory doc, then run the existing `buildFile`→`escapeForTL` round-trip unchanged (escapes
-`\`/`` ` ``/`${`/`</script` — byte-verified for arbitrary skill JS). The snapshot guard then sees a
-self-consistent zone (the runtime wrote it) and passes; any *other* writer's drift still fails. This single
-mechanism serves install, update, and uninstall.
+`<script type="application/rwa-skill+json">base64(JSON(envelope))</script>` per record — swap it into the
+in-memory doc, then run the existing `buildFile`→`escapeForTL` round-trip. **Each envelope is base64-encoded**
+(refinement validated in `parseSkillZone` impl): base64 contains no `</script>`/`</div>`/backtick/`${`, so
+the stored block round-trips through escapeForTL and the frozen snapshot with zero encoding landmines (X1
+neutralized at the encoding layer rather than relying on escape ordering), and the static parser can scope to
+the frozen `</div>` by a flat scan. The snapshot guard then sees a self-consistent zone (the runtime wrote
+it) and passes; any *other* writer's drift still fails. This single mechanism serves install, update, uninstall.
+`parseSkillZone` (§8) reverses it: base64-decode → `JSON.parse` → re-verify. It trusts **only** blocks inside
+the `data-rwa-frozen #rwa-skills` div (a skill `<script>` placed in the editable doc is ignored — agent cannot forge).
 
 **CSP** is a boot-time property: at boot the runtime parses the frozen zone, unions all *signed* skills'
 `network:` origins, and injects `<meta http-equiv="Content-Security-Policy" content="… connect-src 'self'
