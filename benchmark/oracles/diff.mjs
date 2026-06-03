@@ -149,9 +149,33 @@ export function computeDriftFromEdits(fixture, edits, expectedRegions = []) {
   let driftBytes = 0;
   const spans = [];
   for (const edit of edits) {
-    const idxFix = A.indexOf(edit.find);
+    const find = edit.find ?? '';
+    const replace = edit.replace ?? '';
+    const idxFix = A.indexOf(find);
     if (idxFix < 0) { spans.push(null); continue; }
-    const span = [idxFix, idxFix + edit.find.length];
+    // The bytes a (find, replace) pair ACTUALLY changes are only those that
+    // differ between find and replace; the shared leading/trailing context is
+    // byte-identical on both sides and is spliced back unchanged. The system
+    // prompt tells the model to widen anchors with surrounding context for
+    // uniqueness (seeds/rewritable.html ~§rules), so measuring the full find
+    // span would score that safe padding as a side effect when it changes no
+    // bytes outside its core. Strip the common prefix/suffix to get the
+    // effective changed core. A genuine co-modification (the model also edits
+    // adjacent bytes) keeps the core wide enough to fall outside a narrow
+    // expected region, so real drift is still caught.
+    let pre = 0;
+    const minLen = Math.min(find.length, replace.length);
+    while (pre < minLen && find.charCodeAt(pre) === replace.charCodeAt(pre)) pre++;
+    let suf = 0;
+    while (
+      suf < minLen - pre &&
+      find.charCodeAt(find.length - 1 - suf) === replace.charCodeAt(replace.length - 1 - suf)
+    ) {
+      suf++;
+    }
+    const coreStart = idxFix + pre;
+    const coreEnd = idxFix + find.length - suf; // end of changed bytes within the find
+    const span = [coreStart, Math.max(coreStart, coreEnd)];
     spans.push(span);
     const inRegion = expectedRegions.some(([lo, hi]) => span[0] >= lo && span[1] <= hi);
     if (!inRegion) driftBytes += span[1] - span[0];
