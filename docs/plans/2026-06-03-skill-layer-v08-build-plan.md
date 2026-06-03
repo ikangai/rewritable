@@ -1,0 +1,59 @@
+# Skill layer v0.8 — build order (TDD, dependency-sequenced)
+
+Spec: `docs/specs/re-write-able-actions-spec-v0.8.md`. Built on branch `feat/skill-layer-v08`
+(worktree `.worktrees/skill-layer-v08`, off `main`). TDD throughout. Seed-free increments first
+(additive, collision-free on a shared merge); seed edits are **coordinated** with dirac/kepler.
+
+## Increments
+
+1. **[DONE — `00ebee9`] skill-manifest foundation** — `cli/src/skill-manifest.mjs` + test (17/17).
+   skillId, canonicalManifest, signingMessage, parsePermission (grammar), validateInstall (gates),
+   verifyEnvelope (Ed25519). Seed-free. The seed will mirror this in JS (WebCrypto identical).
+
+2. **parseSkillZone (static projection)** — parse the `#rwa-skills` `data-rwa-frozen` div from doc bytes,
+   JSON.parse each `<script type="application/rwa-skill+json">`, re-verify signature, return
+   `[{skillId, kind, name, verified}]`. Home: oracle `tools/self-description.mjs` (uses
+   `extractFrozenZones` filtered to `rwa-skills`), byte-mirror in `cli/src/identity.mjs`. Tests:
+   new `cli/tests/skill-manifest.test.mjs` cases + extend `identity.test.mjs`. **Mirrors → touches 2 of the
+   4 self-description sites** (coordinate the seed mirror in incr 5).
+
+3. **CLI self-description union** — `rwa doc --json`/`ls` emit installed skills as affordances
+   (`kind:'tool'|'compute'`, `provenance:'installed'`, `verified`). `KIND_PROVIDERS['skill-host']=[]`
+   (explicit). Extend `doc.test.mjs` so static==live (SD-04). Touches `cli/src/doc.mjs`, `identity.mjs`.
+
+4. **`skill-host` PRODUCT_KIND** — `KIND_TABLE`+`kindOverrides` (`cli/src/seed.mjs`), `SYSTEM_PROMPTS`
+   (seed), `rwa new`/`detectProductKind` dispatch (`cli/bin/rwa.mjs`), `cli/README.md`. INLINE_DOC stub:
+   title + installed-skills list + Install button + empty `<div data-rwa-frozen id="rwa-skills"></div>`.
+   **SEED EDIT** — coordinate (kepler also adds kind regions; keep applySeedSubs exactly-one-match disjoint).
+
+5. **Seed runtime: registry + describe union** — `installedSkills` Map, `runtime.installSkill/uninstall/
+   invoke/listSkills`; `runtimeProvide` accept `'tool'`; `runtimeDescribe` add `'tool'` + union installed
+   skills. Mirror the skill-manifest logic into the seed. **SEED EDIT.** Tests: `tests/` (jsdom) +
+   re-pin the 4-site mirror tests.
+
+6. **Worker spawn & bridge (§5a)** — blob Worker, synchronous global removal (Object.defineProperty
+   non-writable undefined ×10), bridged `fetch`/`vault` w/ `identity_tag`, `Promise.race` 5s + terminate.
+   Bridgeless for compute. **SEED EDIT.** **Browser-tested** (chrome-devtools): assert a compute Worker
+   cannot read sessionStorage/IDB/document (Invariant 18 / §12.4), and fetch allowed/denied (§12.3).
+
+7. **CSP boot-inject + registry-aware commit (§7)** — boot: union signed skills' `network:` → inject
+   `<meta>` connect-src into `<head>`. Commit: `buildSkillZone(installedSkills)` before `buildFile`
+   (the runtime-owned-region rewrite; Inv 19a/19b). **SEED EDIT + the SHARED "runtime-owned-region commit"
+   primitive with kepler — write the mini-spec with dirac first** (kepler's skin compose-then-commit == this).
+
+8. **Vault (§6)** — PBKDF2-200k/AES-GCM, IDB `rwa_vault`, namespaces, session key in sessionStorage,
+   error vocab (`null`/`vault_locked`/`vault_namespace_denied`/`vault_decrypt_failed`/quota/storage). **SEED EDIT.**
+
+9. **Install dialog + scan + provenance (§1/§3.5)** — the dialog (kept from v0.7) with the normative prose,
+   capability-scan note, compound callout, lookalike (Levenshtein≤2, `rwa_sources` rebuilt at boot), update
+   diff + re-affirm. **SEED EDIT + UI.**
+
+10. **MVP acceptance (§12)** — the 7-step end-to-end in real Chrome on a generated `skill-host`:
+    word-count (compute) + gh-stars (network, Worker-isolated) → install/invoke/update/uninstall/email.
+
+## Coordination
+- Incrs 1–3 are additive (new files + mirrors) → land on `main` via explicit-path commits anytime.
+- Incrs 4–9 edit `seeds/rewritable.html` (and `cli/src/seed.mjs`) — the hot, shared files. Sequence one-at-a-time
+  with dirac/kepler; the **runtime-owned-region commit primitive (incr 7)** is shared with kepler's skinning v2
+  — design it once, both ride it. Announce each seed edit in the group chat before it lands.
+- Merge `feat/skill-layer-v08` → `main` per the shared-tree protocol when an increment is green.
