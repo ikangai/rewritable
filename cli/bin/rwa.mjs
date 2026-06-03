@@ -54,6 +54,14 @@ Usage:
                               DOC_UUID. Target: --url > \$RWA_PUBLISH_URL >
                               https://rewritable.ikangai.com. --json emits
                               {short,url,expiresAt}.
+  rwa skin <path> <name>      apply a named style preset to a rewritable in
+                              place (deterministic, offline, model-free). Names:
+                              notion-clean, linear-dark, editorial-serif.
+                              \`rwa skin <path> reset\` removes the skin. The
+                              preset's <style data-rwa-skin> block rides inside
+                              the document, so it ships in the exported file and
+                              one undo (⌘Z in the app) reverts it. --json emits
+                              {exitCode,mode,skin}.
 
 Flags:
   --kind <name>  (new only) starter kind: document (default), workflow, or
@@ -116,6 +124,8 @@ Flags:
   --api-key <k>  (edit only, instruction path) API key for the backend.
                  Openrouter: required, falls back to \$RWA_OPENROUTER_KEY
                  then \$OPENROUTER_API_KEY. Other backends ignore this flag.
+  --theme-only   (skin only) apply just the preset's deterministic theme block
+                 — the v1 behavior — and silence the "theme-only" note.
   --version      print version and exit
   --help, -h     this help
 
@@ -619,6 +629,73 @@ function detectProductKind(fileText) {
           '  Expires: in 24 hours (anonymous share)\n' +
           '  Note:    the hosted copy gets a fresh DOC_UUID (distinct container)\n',
         );
+      }
+      return;
+    }
+
+    // `rwa skin <file> <name|reset> [--theme-only] [--json]` — deterministic,
+    // model-free theme swap. Applies a preset's <style data-rwa-skin> block to a
+    // rewritable in place: first skin INSERTS via replace_document (adding a
+    // <style> changes the structural shape), re-skin SWAPS via apply_edits, reset
+    // removes it — all routed through the same applyPlan write path as `rwa edit`
+    // for atomic write + frozen-zone safety + the shared file_error surface. v1
+    // ships theme-only; the always-on content-aware restyle is a later phase
+    // (docs/plans/2026-06-03-skinning-design.md).
+    if (verb === 'skin') {
+      const jsonMode = rest.includes('--json');
+      const themeOnly = rest.includes('--theme-only');
+      const positionals = rest.filter(a => !a.startsWith('-'));
+      const filePath = positionals[0];
+      const action = positionals[1];
+      const emitSkin = (payload) => {
+        if (jsonMode) {
+          process.stderr.write(JSON.stringify(payload) + '\n');
+        } else {
+          const parts = [payload.code, payload.subcode].filter(Boolean);
+          let line = 'rwa skin: ' + parts.join('/');
+          if (payload.details && Object.keys(payload.details).length) {
+            line += ' ' + JSON.stringify(payload.details);
+          }
+          process.stderr.write(line + '\n');
+        }
+      };
+      if (!filePath || !action) {
+        emitSkin({ code: 'usage_error', subcode: 'missing_args', details: { usage: 'rwa skin <file> <name|reset> [--theme-only]' } });
+        process.exitCode = 1;
+        return;
+      }
+      const { skinCmd } = await import('../src/skin.mjs');
+      let result;
+      try {
+        result = await skinCmd(filePath, action);
+      } catch (e) {
+        if (e && typeof e.exitCode === 'number') {
+          // unknown_skin carries a known-list message; surface it verbatim in
+          // plain mode so the user sees their options (mirrors unknown --kind).
+          if (!jsonMode && e.subcode === 'unknown_skin') {
+            process.stderr.write('rwa skin: ' + e.message + '\n');
+          } else {
+            emitSkin({ code: codeName(e.exitCode), subcode: e.subcode, details: e.details });
+          }
+          process.exitCode = e.exitCode;
+          return;
+        }
+        throw e;
+      }
+      if (jsonMode) {
+        process.stdout.write(JSON.stringify(result) + '\n');
+      } else if (result.mode === 'noop') {
+        process.stdout.write(`note: ${filePath} has no skin — nothing to reset\n`);
+      } else if (result.mode === 'reset') {
+        process.stdout.write(`✓ skin removed from ${filePath}\n`);
+      } else {
+        const word = result.mode === 'insert' ? 'applied' : 'changed to';
+        process.stdout.write(`✓ skin ${word} "${result.skin}" (theme-only)\n`);
+        // Not a silent downgrade (Rule 12): tell the user this is the
+        // deterministic theme only. --theme-only signals "I know" and silences it.
+        if (!themeOnly) {
+          process.stderr.write('note: applied the deterministic theme only — the always-on content-aware restyle is a later version. Pass --theme-only to silence this note.\n');
+        }
       }
       return;
     }
