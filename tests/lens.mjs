@@ -1663,5 +1663,45 @@ console.log('\n== Test R5.9: dot-segment rejection ==');
   }
 }
 
+console.log('\n== Test L-TABLE: anchoring ordinal alignment across a <table> (regression, gh #134) ==');
+{
+  // WHY: buildSourcePositionMap descends into TABLE to record per-<td> entries
+  // (TD is anchorable, spec 0.11), but anchorableOrdinal/liveNodeForEntry used
+  // to stop at the TABLE. The two TD entries then shifted every ordinal AFTER
+  // the table, so clicking the trailing <p> resolved to a <td>'s source slice —
+  // a later anchored edit would splice into the cell, not the paragraph. The
+  // three walks must agree; this pins that.
+  const doc = '<p>before</p>\n<table><tbody><tr><td>cell A</td><td>cell B</td></tr></tbody></table>\n<p>after</p>';
+  await window.__setDocForTest(doc);
+  const map = window.getSourceMap();
+  const mount = window.document.getElementById('rwa-doc-mount');
+  const beforeP = [...mount.querySelectorAll('p')].find(p => p.textContent === 'before');
+  const afterP  = [...mount.querySelectorAll('p')].find(p => p.textContent === 'after');
+  const tds     = [...mount.querySelectorAll('td')];
+
+  check('sourceMap records P,TABLE,TD,TD,P (5 anchorables)',
+    map.length === 5, 'tags=' + map.map(e => e.tag).join(','));
+  check('pre-table <p> is ordinal 0', window.anchorableOrdinal(mount, beforeP) === 0);
+
+  // The core regression: the trailing <p> must resolve to its OWN source slice.
+  const ordAfter = window.anchorableOrdinal(mount, afterP);
+  const entryAfter = map[ordAfter];
+  check('post-table <p> ordinal maps to <p>after</p> source slice (not a TD)',
+    !!entryAfter && doc.slice(entryAfter.start, entryAfter.end) === '<p>after</p>',
+    'ord=' + ordAfter + ' slice=' + (entryAfter ? JSON.stringify(doc.slice(entryAfter.start, entryAfter.end)) : 'undef'));
+  check('logical entry tag === live highlighted element tagName (no desync)',
+    !!entryAfter && entryAfter.tag === afterP.tagName);
+  check('liveNodeForEntry round-trips the post-table <p>',
+    window.liveNodeForEntry(entryAfter) === afterP);
+
+  // TDs are now reachable (were a no-op: anchorableOrdinal returned -1).
+  const ordTd0 = window.anchorableOrdinal(mount, tds[0]);
+  check('clicking a <td> resolves to a valid ordinal (not -1)', ordTd0 >= 0, 'ord=' + ordTd0);
+  check('that <td> ordinal maps to its own cell source',
+    map[ordTd0] && doc.slice(map[ordTd0].start, map[ordTd0].end) === '<td>cell A</td>',
+    map[ordTd0] ? JSON.stringify(doc.slice(map[ordTd0].start, map[ordTd0].end)) : 'undef');
+  check('liveNodeForEntry round-trips the <td>', window.liveNodeForEntry(map[ordTd0]) === tds[0]);
+}
+
 console.log(`\n${pass} pass, ${fail} fail`);
 process.exit(fail > 0 ? 1 : 0);

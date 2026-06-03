@@ -2378,7 +2378,13 @@ function anchorableOrdinal(root, target) {
       if (ANCHORABLE_TAGS.has(child.tagName)) {
         if (child === target) { found = i; return; }
         i++;
-        // Outer-wins: don't descend into anchorables.
+        // Outer-wins: don't descend into anchorables — EXCEPT TABLE, whose
+        // <td> cells are themselves anchorable (spec 0.11). buildSourcePositionMap
+        // descends into TABLE to record per-TD entries; if these live walks
+        // don't, every ordinal AFTER a table is shifted by the table's TD
+        // count and a click anchors to the wrong source slice. All three walks
+        // must agree.
+        if (child.tagName === 'TABLE') walk(child);
       } else {
         walk(child);
       }
@@ -2406,6 +2412,9 @@ function liveNodeForEntry(entry) {
       if (ANCHORABLE_TAGS.has(child.tagName)) {
         if (i === ord) { found = child; return; }
         i++;
+        // Mirror buildSourcePositionMap's TABLE descent (see anchorableOrdinal)
+        // so post-table ordinals stay aligned with the source-position map.
+        if (child.tagName === 'TABLE') walk(child);
       } else {
         walk(child);
       }
@@ -2413,6 +2422,8 @@ function liveNodeForEntry(entry) {
   })(mount);
   return found;
 }
+window.anchorableOrdinal = anchorableOrdinal; // expose for tests
+window.liveNodeForEntry = liveNodeForEntry;   // expose for tests
 
 function anchorTo(entry) {
   lensState.anchor = entry;

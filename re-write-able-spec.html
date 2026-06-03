@@ -2565,6 +2565,24 @@ function lockedRangesIn(doc) {
 // substrings and their byte content is invariant, so the fences are part of
 // the protected range. Used by replaceDocument's class-lock coverage check
 // to verify .rwa-locked ranges are entirely contained within marker zones.
+// True iff `openTag` (a full opening tag, e.g. '<div a="x" data-rwa-frozen>') carries
+// data-rwa-frozen as an actual attribute NAME — not inside a quoted value
+// (class="data-rwa-frozen") and not a prefix of a longer name (data-rwa-frozen-note).
+// Walks the attribute list skipping quoted values, so the cheap /\bdata-rwa-frozen\b/
+// pre-filter's matches on a value or longer name no longer false-positive. This makes
+// byte-range frozen detection agree with the actual enforcement, DOM
+// querySelectorAll('[data-rwa-frozen]') (dataRwaFrozenSnapshot).
+function tagHasFrozenAttr(openTag) {
+  const am = /^<[a-zA-Z][a-zA-Z0-9]*((?:\s[^>]*)?)\/?>$/.exec(openTag);
+  if (!am) return false;
+  const attrRe = /([^\s=/>]+)(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+))?/g;
+  let a;
+  while ((a = attrRe.exec(am[1])) !== null) {
+    if (a[1] === 'data-rwa-frozen') return true;
+  }
+  return false;
+}
+
 function markerZoneRangesIn(doc) {
   if (!doc) return [];
   const out = [];
@@ -2595,9 +2613,13 @@ function markerZoneRangesIn(doc) {
     const endOfEnd = e.index + e[0].length;
     out.push([startOfBegin, endOfEnd]);
   }
-  // data-rwa-frozen elements: scan for opening tags carrying that attribute.
+  // data-rwa-frozen elements: scan for opening tags carrying that attribute. The
+  // /\bdata-rwa-frozen\b/ is a cheap pre-filter (it fires on the string anywhere in
+  // the tag); tagHasFrozenAttr then confirms data-rwa-frozen is a real attribute NAME
+  // so a value mention or longer-named attribute does not over-claim a frozen zone.
   const fzAttr = /<([a-zA-Z][a-zA-Z0-9]*)\b[^>]*\bdata-rwa-frozen\b[^>]*>/g;
   while ((m = fzAttr.exec(doc)) !== null) {
+    if (!tagHasFrozenAttr(m[0])) continue;
     const tag = m[1];
     const start = m.index;
     const end = findCloseTagEnd(doc, tag, m.index + m[0].length);
@@ -2819,7 +2841,13 @@ function anchorableOrdinal(root, target) {
       if (ANCHORABLE_TAGS.has(child.tagName)) {
         if (child === target) { found = i; return; }
         i++;
-        // Outer-wins: don't descend into anchorables.
+        // Outer-wins: don't descend into anchorables — EXCEPT TABLE, whose
+        // <td> cells are themselves anchorable (spec 0.11). buildSourcePositionMap
+        // descends into TABLE to record per-TD entries; if these live walks
+        // don't, every ordinal AFTER a table is shifted by the table's TD
+        // count and a click anchors to the wrong source slice. All three walks
+        // must agree.
+        if (child.tagName === 'TABLE') walk(child);
       } else {
         walk(child);
       }
@@ -2847,6 +2875,9 @@ function liveNodeForEntry(entry) {
       if (ANCHORABLE_TAGS.has(child.tagName)) {
         if (i === ord) { found = child; return; }
         i++;
+        // Mirror buildSourcePositionMap's TABLE descent (see anchorableOrdinal)
+        // so post-table ordinals stay aligned with the source-position map.
+        if (child.tagName === 'TABLE') walk(child);
       } else {
         walk(child);
       }
@@ -2854,6 +2885,8 @@ function liveNodeForEntry(entry) {
   })(mount);
   return found;
 }
+window.anchorableOrdinal = anchorableOrdinal; // expose for tests
+window.liveNodeForEntry = liveNodeForEntry;   // expose for tests
 
 function anchorTo(entry) {
   lensState.anchor = entry;
