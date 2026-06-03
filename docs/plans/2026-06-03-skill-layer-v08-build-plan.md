@@ -21,10 +21,10 @@ Spec: `docs/specs/re-write-able-actions-spec-v0.8.md`. Built on branch `feat/ski
    no duplication, deep-equal pin holds. Explicit `KIND_PROVIDERS['skill-host']=[]` both sites. `rwa doc --json`
    reports installed skills, agrees with the oracle (SD-04). Full cli + oracle suites green.
 
-4. **`skill-host` PRODUCT_KIND** — `KIND_TABLE`+`kindOverrides` (`cli/src/seed.mjs`), `SYSTEM_PROMPTS`
-   (seed), `rwa new`/`detectProductKind` dispatch (`cli/bin/rwa.mjs`), `cli/README.md`. INLINE_DOC stub:
-   title + installed-skills list + Install button + empty `<div data-rwa-frozen id="rwa-skills"></div>`.
-   **SEED EDIT** — coordinate (kepler also adds kind regions; keep applySeedSubs exactly-one-match disjoint).
+4. **[DONE — `26aee84`] `skill-host` PRODUCT_KIND** — `KIND_TABLE` entry (`cli/src/seed.mjs`) + help/README.
+   INLINE_DOC stub: intro article + empty `<div data-rwa-frozen id="rwa-skills"></div>`. **CLI-only/additive**
+   (no seed edit — `SYSTEM_PROMPTS['skill-host']` deferred to the document fallback / the seed slice). `rwa new
+   --kind skill-host` + `rwa doc` (kind:'skill-host', [] affordances) green. ⇐ end of the additive, mergeable foundation.
 
 5. **Seed runtime: registry + describe union** — `installedSkills` Map, `runtime.installSkill/uninstall/
    invoke/listSkills`; `runtimeProvide` accept `'tool'`; `runtimeDescribe` add `'tool'` + union installed
