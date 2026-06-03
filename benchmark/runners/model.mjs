@@ -201,6 +201,16 @@ export function openRouterModel(opts = {}) {
  */
 export function bridgeModel(opts = {}) {
   const url = opts.url || process.env.RWA_BRIDGE_URL || 'http://127.0.0.1:8765/run';
+  // The bridge requires a bearer token when one is configured (web_cli_bridge
+  // gained token auth after the 2026-05-27 RCE fix). Read it from the
+  // environment so the secret never lands in source. Empty/absent → no header
+  // (auth-off bridges still work).
+  const token = opts.token || process.env.RWA_BRIDGE_TOKEN || '';
+  // The bridge runs commands under a GUI-launched process whose PATH is the
+  // bare system default (no homebrew/npm). Allow pointing at an absolute
+  // `claude` so the shim can find it; defaults to bare `claude` for shells
+  // that already have it on PATH.
+  const claudeBin = opts.claudeBin || process.env.RWA_CLAUDE_BIN || 'claude';
   // Opus calls regularly hit 30–90s on long docs; benchmark scenarios with
   // ~2k input tokens land in that range. 6 minutes leaves headroom for the
   // longest legitimate calls without wedging the bench on a hung claude.
@@ -245,7 +255,12 @@ export function bridgeModel(opts = {}) {
     // Base64-encode so shell quoting can't trip on backticks / $ / newlines
     // in the doc. The CLI side decodes and pipes to claude -p's stdin.
     const promptB64 = Buffer.from(fullPrompt, 'utf8').toString('base64');
-    const cmd = `echo '${promptB64}' | base64 -d | claude -p --output-format json --permission-mode bypassPermissions`;
+    // No --permission-mode bypassPermissions: the bridge agent only emits a
+    // text envelope (it needs no tools), so granting unattended tool access
+    // would be both pointless and the exact RCE anti-pattern the shared seed's
+    // bridgeCommand removed (audit 2026-05-27). Default mode never prompts here
+    // because the single-shot prompt asks only for JSON text.
+    const cmd = `echo '${promptB64}' | base64 -d | ${claudeBin} -p --output-format json`;
 
     const ctrl = new AbortController();
     const timer = setTimeout(
@@ -255,7 +270,10 @@ export function bridgeModel(opts = {}) {
     try {
       const r = await fetch(url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
         body: JSON.stringify({ command: cmd }),
         signal: ctrl.signal,
       });
