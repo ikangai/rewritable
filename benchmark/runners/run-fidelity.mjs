@@ -243,12 +243,26 @@ async function main() {
     process.exit(2);
   }
   fs.mkdirSync(RESULTS_DIR, { recursive: true });
-  const scenarios = await discoverScenarios();
-  console.log(`== rwa-edit fidelity — ${scenarios.length} scenario(s) discovered (model=${modelName}, mode=${mode}) ==\n`);
+  let scenarios = await discoverScenarios();
+  // RWA_FID_ONLY: comma-separated filter terms; a scenario matches if any term
+  // equals/prefixes its id or is a substring of its category/tag. Lets slow
+  // real-model (bridge) runs target a representative subset instead of all 108.
+  const only = (process.env.RWA_FID_ONLY || '').trim();
+  if (only) {
+    const terms = only.split(',').map(t => t.trim().toLowerCase()).filter(Boolean);
+    scenarios = scenarios.filter(s => {
+      const id = (s.id || '').toLowerCase();
+      const cat = (s.category || '').toLowerCase();
+      const tag = (s.tag || '').toLowerCase();
+      return terms.some(t => id === t || id.startsWith(t) || cat.includes(t) || tag.includes(t));
+    });
+  }
+  console.log(`== rwa-edit fidelity — ${scenarios.length} scenario(s)${only ? ` (filtered by RWA_FID_ONLY=${only})` : ''} (model=${modelName}, mode=${mode}) ==\n`);
 
   const allResults = [];
   for (const s of scenarios) {
-    const N = s.N || 5;
+    // RWA_FID_N overrides per-scenario N (e.g. =1 to keep slow bridge runs short).
+    const N = process.env.RWA_FID_N ? Math.max(1, parseInt(process.env.RWA_FID_N, 10) || 1) : (s.N || 5);
     process.stdout.write(`  [${s.id}] ${s.description || ''} (N=${N}) `);
     const runs = [];
     for (let i = 0; i < N; i++) {
