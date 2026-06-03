@@ -181,10 +181,10 @@ It POSTs **your edited bytes** (the current `INLINE_DOC`), unlike the browser `/
 
 ### `rwa skin <path> <name>`
 
-Pick a **named look** for a rewritable instead of hand-styling it from the blank lens. A skin is one self-contained `<style data-rwa-skin="NAME">` block — system fonts only, no web fonts or remote assets — that the command splices into the **document body**. So it commits with the document, ships inside the exported `.html`, survives sharing, and one in-browser undo (`⌘Z`) reverts it.
+Pick a **named look** for a rewritable instead of hand-styling it from the blank lens. A skin is one self-contained `<style data-rwa-skin="NAME">` block — system fonts only, no web fonts or remote assets — that the command splices into the **document body**. So it commits with the document, ships inside the exported `.html`, survives sharing, and one in-browser undo (`⌘Z`) reverts it. Five presets ship today: `notion-clean`, `linear-dark`, `editorial-serif`, `stripe-docs`, `terminal-mono` (clean · dark · editorial · docs · terminal).
 
 ```
-rwa skin notes.html notion-clean        # apply (notion-clean | linear-dark | editorial-serif)
+rwa skin notes.html notion-clean        # apply (an unknown name lists every preset)
 rwa skin notes.html editorial-serif     # re-skin — replaces the current skin, never stacks
 rwa skin notes.html reset               # remove the skin
 rwa skin notes.html linear-dark --json  # {"exitCode":0,"mode":"insert","skin":"linear-dark"}

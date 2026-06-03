@@ -56,7 +56,8 @@ Usage:
                               {short,url,expiresAt}.
   rwa skin <path> <name>      apply a named style preset to a rewritable in
                               place (deterministic, offline, model-free). Names:
-                              notion-clean, linear-dark, editorial-serif.
+                              notion-clean, linear-dark, editorial-serif,
+                              stripe-docs, terminal-mono.
                               \`rwa skin <path> reset\` removes the skin. The
                               preset's <style data-rwa-skin> block rides inside
                               the document, so it ships in the exported file and
@@ -70,6 +71,12 @@ Flags:
                  Done). 'presentation' scaffolds a prose deck that the
                  'Present' toggle displays as slides (split on h1/h2) without
                  changing the stored text. See docs/specs/rwa-product-types.md.
+  --skin <name>  (new only) bake a style preset into the new container:
+                 notion-clean, linear-dark, editorial-serif, stripe-docs,
+                 terminal-mono. Orthogonal to
+                 --kind (a skinned document or presentation). Deterministic and
+                 offline; change or remove it later with
+                 \`rwa skin <file> <name|reset>\`.
   --force, -f    overwrite the destination if it exists
   --open, -o     open the resulting file in the default app. First-paint
                  sessionStorage is pre-populated from env / ./.env:
@@ -755,7 +762,17 @@ function detectProductKind(fileText) {
       process.exitCode = 2;
       return;
     }
-    const positional = rest.filter((a, i) => !a.startsWith('-') && rest[i - 1] !== '--model' && rest[i - 1] !== '--timeout' && rest[i - 1] !== '--kind');
+    // `rwa new --skin <name>` bakes a preset's <style data-rwa-skin> block into
+    // the emitted container (deterministic, offline). Orthogonal to --kind. An
+    // unknown name is caught by newCmd (skinByName throws exit-2 with the list).
+    const skinIdx = rest.indexOf('--skin');
+    const skinName = skinIdx >= 0 ? rest[skinIdx + 1] : undefined;
+    if (skinIdx >= 0 && (!skinName || skinName.startsWith('-'))) {
+      console.error('rwa: --skin requires a name (e.g. --skin notion-clean)');
+      process.exitCode = 2;
+      return;
+    }
+    const positional = rest.filter((a, i) => !a.startsWith('-') && rest[i - 1] !== '--model' && rest[i - 1] !== '--timeout' && rest[i - 1] !== '--kind' && rest[i - 1] !== '--skin');
     if (verb === 'new') {
       // `rwa new --kind <starter>` selects a built-in starter. Otherwise a bare-word
       // first positional is a TEMPLATE name (clone a data-rwa-template-labeled file
@@ -767,7 +784,7 @@ function detectProductKind(fileText) {
       } else {
         outPath = positional[0];
       }
-      await newCmd({ outPath, force, open, kind, templateName });
+      await newCmd({ outPath, force, open, kind, templateName, skin: skinName });
     } else if (verb === 'import') {
       if (!positional[0]) {
         console.error('rwa import: missing <input> argument');

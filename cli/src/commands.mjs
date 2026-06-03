@@ -4,7 +4,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
 
-import { loadSeed, applySeedSubs, replaceInlineDoc, kindOverrides, KNOWN_KINDS } from './seed.mjs';
+import { loadSeed, applySeedSubs, replaceInlineDoc, extractInlineDoc, kindOverrides, KNOWN_KINDS } from './seed.mjs';
+import { skinByName } from './skins.mjs';
 import { resolveBareWord } from './template.mjs';
 import { convert } from './import.mjs';
 import { convertPdfViaVision } from './import-vision.mjs';
@@ -145,7 +146,7 @@ export async function openWithPrefill(out) {
   openFile(out, prefill);
 }
 
-export async function newCmd({ outPath, force, open, kind, templateName }) {
+export async function newCmd({ outPath, force, open, kind, templateName, skin }) {
   // Two body sources funnel through one seed-subs path. Default: a built-in
   // starter (kindOverrides). `templateName` set: clone a data-rwa-template-labeled
   // file from cwd — pristine seed + the template's INLINE_DOC (label stripped),
@@ -198,7 +199,18 @@ export async function newCmd({ outPath, force, open, kind, templateName }) {
     productKind:        resolvedKind,                    // audit R1
     lensClickToAnchor:  overrides.lensClickToAnchor,     // audit R3 scoped
   });
-  const body = bodyOverride != null ? bodyOverride : overrides.body;
+  let body = bodyOverride != null ? bodyOverride : overrides.body;
+  // --skin: prepend the preset's <style data-rwa-skin> block as the leading child
+  // of INLINE_DOC. Skin is orthogonal to kind (a skinned document/presentation),
+  // and the inject runs AFTER applySeedSubs (the `rwa import` ordering lesson) so
+  // the skin CSS can't false-match a substitution regex. Deterministic, offline,
+  // model-free — the L1 restyle is a later phase. skinByName throws exit-2 on an
+  // unknown name (caught by the bin's outer handler).
+  if (skin) {
+    const { theme } = skinByName(skin);
+    const base = body != null ? body : extractInlineDoc(result);
+    body = theme + '\n' + base;
+  }
   if (body != null) result = replaceInlineDoc(result, body);
   await fs.writeFile(out, result, 'utf8');
   // Annotate with the resolved kind (covers both `--kind presentation` and the

@@ -112,6 +112,75 @@ export const SKINS = Object.freeze({
 #rwa-doc-mount td{border-bottom:1px solid var(--es-line);padding:.5em .7em;}
 </style>`,
   },
+
+  'stripe-docs': {
+    name: 'stripe-docs',
+    label: 'Stripe Docs',
+    swatch: ['#ffffff', '#1a1f36', '#635bff'],
+    theme: `<style data-rwa-skin="stripe-docs">
+#rwa-doc-mount{
+  --sd-ink:#1a1f36; --sd-soft:#3c4257; --sd-faint:#697386; --sd-line:#e3e8ee;
+  --sd-bg:#ffffff; --sd-tint:#f6f9fc; --sd-accent:#635bff; --sd-accent-2:#0073e6;
+  font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  color:var(--sd-ink); line-height:1.65;
+}
+#rwa-doc-mount article{max-width:760px;margin:64px auto;padding:0 36px;}
+#rwa-doc-mount h1{font-size:2.3rem;font-weight:700;letter-spacing:-.02em;line-height:1.15;color:var(--sd-ink);margin:1.4em 0 .4em;}
+#rwa-doc-mount h2{font-size:1.45rem;font-weight:600;color:var(--sd-ink);margin:2em 0 .4em;padding-bottom:.3em;border-bottom:1px solid var(--sd-line);}
+#rwa-doc-mount h3{font-size:1.15rem;font-weight:600;color:var(--sd-soft);margin:1.6em 0 .3em;}
+#rwa-doc-mount p{color:var(--sd-soft);margin:0 0 1em;}
+#rwa-doc-mount a{color:var(--sd-accent);text-decoration:none;font-weight:500;}
+#rwa-doc-mount a:hover{color:var(--sd-accent-2);text-decoration:underline;text-underline-offset:2px;}
+#rwa-doc-mount ul,#rwa-doc-mount ol{color:var(--sd-soft);padding-left:1.5em;margin:0 0 1em;}
+#rwa-doc-mount li{margin:.3em 0;}
+#rwa-doc-mount blockquote{margin:1.2em 0;padding:12px 16px;background:var(--sd-tint);border-left:3px solid var(--sd-accent);border-radius:0 6px 6px 0;color:var(--sd-soft);font-style:normal;}
+#rwa-doc-mount hr{border:0;border-top:1px solid var(--sd-line);margin:2.2em 0;}
+#rwa-doc-mount code{font-family:'SF Mono',Menlo,Monaco,ui-monospace,monospace;font-size:.85em;background:var(--sd-tint);color:var(--sd-accent);border:1px solid var(--sd-line);padding:.1em .4em;border-radius:5px;}
+#rwa-doc-mount pre{background:#0a2540;color:#f6f9fc;border:0;border-radius:10px;padding:18px 20px;box-shadow:0 2px 6px rgba(10,37,64,.18);}
+#rwa-doc-mount pre code{background:transparent;border:0;color:inherit;}
+#rwa-doc-mount table{font-size:.92em;border:1px solid var(--sd-line);border-radius:8px;overflow:hidden;}
+#rwa-doc-mount th{background:var(--sd-tint);color:var(--sd-faint);font-weight:600;text-transform:uppercase;letter-spacing:.04em;font-size:.78rem;border-bottom:1px solid var(--sd-line);padding:.55em .85em;}
+#rwa-doc-mount td{border-bottom:1px solid var(--sd-line);padding:.55em .85em;color:var(--sd-soft);}
+</style>`,
+  },
+
+  'terminal-mono': {
+    name: 'terminal-mono',
+    label: 'Terminal',
+    swatch: ['#080a08', '#9ee69e', '#39ff14'],
+    theme: `<style data-rwa-skin="terminal-mono">
+#rwa-doc-mount{
+  --gray-50:#0c0f0c;--gray-100:#101410;--gray-200:#1b241b;--gray-300:#2c3b2c;
+  --gray-400:#4f7a4f;--gray-500:#6fae6f;--gray-600:#86cd86;--gray-700:#9ee69e;
+  --gray-800:#b6f5b6;--gray-900:#d6ffd6;--white:#080a08;
+  --green:#39ff14;--yellow:#e8e84a;--red:#ff5f56;--blue:#5fd7ff;
+  --radius:0px;--radius-sm:0px;
+  background:#080a08;color:#9ee69e;
+  font-family:var(--font-mono);
+  font-size:15px;line-height:1.55;
+}
+#rwa-doc-mount article{max-width:74ch;margin:40px auto;padding:0 28px;}
+#rwa-doc-mount h1,#rwa-doc-mount h2,#rwa-doc-mount h3,#rwa-doc-mount h4,#rwa-doc-mount h5,#rwa-doc-mount h6{font-family:var(--font-mono);font-weight:700;letter-spacing:0;color:#d6ffd6;text-transform:none;}
+#rwa-doc-mount h1{font-size:1.7rem;}
+#rwa-doc-mount h1::before{content:"# ";color:#4f7a4f;}
+#rwa-doc-mount h2{font-size:1.35rem;}
+#rwa-doc-mount h2::before{content:"## ";color:#4f7a4f;}
+#rwa-doc-mount h3::before{content:"### ";color:#4f7a4f;}
+#rwa-doc-mount p{color:#9ee69e;}
+#rwa-doc-mount a{color:#5fd7ff;text-decoration:underline;text-underline-offset:3px;}
+#rwa-doc-mount a:hover{background:#5fd7ff;color:#080a08;text-decoration:none;}
+#rwa-doc-mount ul,#rwa-doc-mount ol{padding-left:2ch;}
+#rwa-doc-mount ul li{list-style:none;}
+#rwa-doc-mount ul li::before{content:"\\203A ";color:#39ff14;margin-left:-2ch;}
+#rwa-doc-mount blockquote{border-left:0;padding:.4em 1ch;color:#86cd86;font-style:normal;background:#101410;border:1px solid #2c3b2c;}
+#rwa-doc-mount hr{border-top:1px dashed #2c3b2c;}
+#rwa-doc-mount code{background:#101410;color:#39ff14;border-radius:0;padding:.05em .4ch;}
+#rwa-doc-mount pre{background:#0c0f0c;border:1px solid #2c3b2c;border-radius:0;color:#9ee69e;box-shadow:inset 0 0 0 1px #101410;}
+#rwa-doc-mount table{font-size:.95em;}
+#rwa-doc-mount th,#rwa-doc-mount td{border-bottom:1px solid #2c3b2c;}
+#rwa-doc-mount th{background:#101410;color:#39ff14;text-transform:uppercase;letter-spacing:.08em;font-weight:700;}
+</style>`,
+  },
 });
 
 export const SKIN_NAMES = Object.keys(SKINS);
