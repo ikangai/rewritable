@@ -10,16 +10,16 @@ Spec: `docs/specs/re-write-able-actions-spec-v0.8.md`. Built on branch `feat/ski
    skillId, canonicalManifest, signingMessage, parsePermission (grammar), validateInstall (gates),
    verifyEnvelope (Ed25519). Seed-free. The seed will mirror this in JS (WebCrypto identical).
 
-2. **parseSkillZone (static projection)** — parse the `#rwa-skills` `data-rwa-frozen` div from doc bytes,
-   JSON.parse each `<script type="application/rwa-skill+json">`, re-verify signature, return
-   `[{skillId, kind, name, verified}]`. Home: oracle `tools/self-description.mjs` (uses
-   `extractFrozenZones` filtered to `rwa-skills`), byte-mirror in `cli/src/identity.mjs`. Tests:
-   new `cli/tests/skill-manifest.test.mjs` cases + extend `identity.test.mjs`. **Mirrors → touches 2 of the
-   4 self-description sites** (coordinate the seed mirror in incr 5).
+2. **[DONE — `02b7103`, sync `7dec6b2`] parseSkillZone** — `cli/src/skill-manifest.mjs` parses base64(JSON(envelope))
+   `<script>` blocks from ONLY the frozen `#rwa-skills` div, re-verifies, returns
+   `[{skillId,kind,name,verified,provenance:'installed'}]`. Security: a skill `<script>` outside the zone is
+   ignored. Made synchronous (node:crypto Ed25519) so it slots into the sync projection. skill-zone 8/8.
 
-3. **CLI self-description union** — `rwa doc --json`/`ls` emit installed skills as affordances
-   (`kind:'tool'|'compute'`, `provenance:'installed'`, `verified`). `KIND_PROVIDERS['skill-host']=[]`
-   (explicit). Extend `doc.test.mjs` so static==live (SD-04). Touches `cli/src/doc.mjs`, `identity.mjs`.
+3. **[DONE — `ad04061`] self-description union (4-site)** — `computeSelfDescription` (oracle) AND
+   `buildSelfDescription` (CLI mirror) union first-party affordances with `parseSkillZone(doc)`; both IMPORT
+   the single `parseSkillZone` from `cli/src/skill-manifest.mjs` (the oracle already imports from cli/src) →
+   no duplication, deep-equal pin holds. Explicit `KIND_PROVIDERS['skill-host']=[]` both sites. `rwa doc --json`
+   reports installed skills, agrees with the oracle (SD-04). Full cli + oracle suites green.
 
 4. **`skill-host` PRODUCT_KIND** — `KIND_TABLE`+`kindOverrides` (`cli/src/seed.mjs`), `SYSTEM_PROMPTS`
    (seed), `rwa new`/`detectProductKind` dispatch (`cli/bin/rwa.mjs`), `cli/README.md`. INLINE_DOC stub:
