@@ -23,7 +23,10 @@ export default {
 
   async run() {
     const keys = Object.keys(KIND_PROVIDERS).sort();
-    if (JSON.stringify(keys) !== JSON.stringify(['document', 'presentation', 'workflow'])) {
+    // skill-host (v0.8) is a FIRST-PARTY kind with an empty provider bundle ([]) —
+    // like document/workflow; its affordances are all INSTALLED skills, not table-derived.
+    // The guard still rejects CUSTOM/consumer kinds (e.g. datatable) sneaking in.
+    if (JSON.stringify(keys) !== JSON.stringify(['document', 'presentation', 'skill-host', 'workflow'])) {
       return { pass: false, reason: `KIND_PROVIDERS should hold only first-party kinds; got [${keys}]` };
     }
     if (!fs.existsSync(DATATABLE)) return { pass: false, reason: 'datatable fixture missing' };
