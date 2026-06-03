@@ -12,7 +12,7 @@ Usage:
   rwa new <name> [path]       a bare <name> resolves template-first: clone a cwd
                               file labeled data-rwa-template="<name>" (fresh UUID,
                               label stripped) if one exists; else, if <name> is a
-                              known kind (document/workflow/presentation), create
+                              known kind (document/workflow/presentation/skill-host), create
                               that built-in kind. So "rwa new presentation" makes a
                               deck, and your own labeled file overrides the builtin.
                               Default out: ./<name>-YYYY-MM-DD.html.

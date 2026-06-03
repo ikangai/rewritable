@@ -1316,6 +1316,32 @@ const KIND_PRESENTATION_BODY = `<article>
 <p>The view is a pure re-presentation at render time; the bytes on disk never change shape.</p>
 </article>`;
 
+// ── skill-host (v0.8 actions spec §2) ──────────────────────────────────────
+const KIND_SKILLHOST_LENS = 'Describe a change to this skill host.';
+const KIND_SKILLHOST_PAL  = 'edit this skill host...';
+
+const KIND_SKILLHOST_HEADER = `// === PRODUCT HEADER ===
+// Product: skill-host (skill layer — docs/specs/re-write-able-actions-spec-v0.8.md).
+//
+// Hosts permission-gated SKILLS installed from .rwa-skill.json files. Each
+// installed skill's {manifest, code, signature} is stored, base64-encoded, in the
+// runtime-owned frozen zone <div data-rwa-frozen id="rwa-skills"> — the agent/lens
+// can never write it (the data-rwa-frozen snapshot guard); only the runtime
+// rewrites it on install/update/uninstall via a registry-aware commit. Every skill
+// runs in a Web Worker (compute = bridgeless; network:/vault: = bridged), so the
+// install dialog's "a skill cannot reach an origin or vault namespace it didn't
+// declare" holds for every kind. Installed skills are reported through
+// self-description/1 as tool/compute providers (provenance:'installed'). See the
+// v0.8 spec §§2,5-8 and docs/plans/2026-06-03-skill-layer-v08-build-plan.md.
+// === END PRODUCT HEADER ===`;
+
+// Stub: an editable intro article + the EMPTY runtime-owned frozen skill zone.
+const KIND_SKILLHOST_BODY = `<article>
+<h1>Skill host</h1>
+<p>This is a re-writeable <strong>skill host</strong>. Install skills from a <code>.rwa-skill.json</code> file; each runs in an isolated worker, limited to the network and credential permissions you approve at install. Installed skills appear below.</p>
+</article>
+<div data-rwa-frozen id="rwa-skills"></div>`;
+
 const KIND_TABLE = {
   document: {
     body: null,                // pass through seed default
@@ -1339,6 +1365,15 @@ const KIND_TABLE = {
     // Whole-deck lens semantics: edits go through the docked lens, not by
     // anchoring on a slide's paragraph. The provider CODE is bootstrap-resident
     // (spec §5.10); this kind only sets PRODUCT_KIND + starter/framing/lens.
+    lensClickToAnchor: false,
+  },
+  'skill-host': {
+    body: KIND_SKILLHOST_BODY,
+    lensPlaceholder: KIND_SKILLHOST_LENS,
+    palPlaceholder: KIND_SKILLHOST_PAL,
+    productHeader: KIND_SKILLHOST_HEADER,
+    // Not prose-anchored: the editable surface is the intro; installed skills live
+    // in the runtime-owned frozen zone, not authored by clicking a paragraph.
     lensClickToAnchor: false,
   },
   // app, workspace: reserved — wire when the templates land. The CLI rejects

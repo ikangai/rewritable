@@ -44,6 +44,7 @@ Pass `--kind <name>` to scaffold a different primary stance at first paint:
 - `--kind document` (default) — prose container; lens placeholder *"Write, or describe what you want."*
 - `--kind workflow` — three-stage scaffold (Inbox / In progress / Done); lens placeholder *"Add an item, or describe a stage move."*
 - `--kind presentation` — prose slide deck (split on `h1`/`h2`); the *Present* toggle renders it as slides at view time without changing the stored text (spec §5.10); lens placeholder *"Add a slide, or describe a change."*
+- `--kind skill-host` — hosts permission-gated skills installed from `.rwa-skill.json` files; ships an empty runtime-owned frozen `#rwa-skills` zone the runtime (never the agent) rewrites on install/uninstall; installed skills are reported via `rwa doc`/`ls` as `tool`/`compute` affordances (`provenance:'installed'`). See `docs/specs/re-write-able-actions-spec-v0.8.md` §2.
 
 The product-kind taxonomy is documented at `docs/specs/rwa-product-types.md` in the main repo. The substrate runtime is unchanged across kinds — only the `INLINE_DOC` body and lens placeholder vary at emit time.
 
@@ -221,7 +222,7 @@ Because the anchors in step 1 are the *same* text step 3 splices against, what t
 |---|---|
 | `--force`, `-f` | overwrite the destination if it exists |
 | `--open`, `-o` | open the resulting file in the default app |
-| `--kind <name>` | (`rwa new` only) starter kind: `document` (default), `workflow`, `presentation` |
+| `--kind <name>` | (`rwa new` only) starter kind: `document` (default), `workflow`, `presentation`, `skill-host` |
 | `--version` | print version |
 | `--help`, `-h` | usage |
 
