@@ -63,8 +63,16 @@ Spec: `docs/specs/re-write-able-actions-spec-v0.8.md`. Built on branch `feat/ski
    **DEFERRED:** update-diff + re-affirm flow; `rwa_sources`-at-boot (lookalike currently scans the live
    `installedSkills`); persistence of installs to the frozen zone is increment 7 (gated on dirac).
 
-10. **MVP acceptance (§12)** — the 7-step end-to-end in real Chrome on a generated `skill-host`:
-    word-count (compute) + gh-stars (network, Worker-isolated) → install/invoke/update/uninstall/email.
+10. **[DONE — browser-proven] MVP acceptance (§12)** — the 7-step end-to-end run in real Chrome on a
+    generated `skill-host` with word-count (unsigned compute) + gh-stars (signed, `network:api.github.com`):
+    1 install unsigned compute (verified:false) ✓ · 2 install signed tool (verified:true) ✓ · 3 invoke
+    gh-stars → `api.github.com` **200**, `evil.com` **permission_denied** (bridge) ✓ · 4 invoke word-count
+    bridgeless → `{words:N}` ✓ · 5 update gh-stars (+`network:tracker.y`) → same skillId, persisted new perms ✓ ·
+    6 uninstall → reload → gone, compute survives ✓ · 7 2nd machine (no session key) → vault **locked**, secret
+    **null**, signed skill re-verifies from bytes ✓. Codified as `tests/skill-mvp` 7/0 (jsdom steps 1,2,5,6;
+    steps 3/4/7 are browser-only and browser-proven). **DEFERRED (not MVP-blocking):** the CSP half of §12.2/3/6
+    (increment 7b — defense-in-depth behind the proven bridge wall); the §12.5 prose-diff *dialog* (mechanism
+    proven, Shape-C UI deferred from incr 9).
 
 ## Coordination
 - Incrs 1–3 are additive (new files + mirrors) → land on `main` via explicit-path commits anytime.
