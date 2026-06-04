@@ -36,10 +36,18 @@ Spec: `docs/specs/re-write-able-actions-spec-v0.8.md`. Built on branch `feat/ski
    Bridgeless for compute. **SEED EDIT.** **Browser-tested** (chrome-devtools): assert a compute Worker
    cannot read sessionStorage/IDB/document (Invariant 18 / §12.4), and fetch allowed/denied (§12.3).
 
-7. **CSP boot-inject + registry-aware commit (§7)** — boot: union signed skills' `network:` → inject
-   `<meta>` connect-src into `<head>`. Commit: `buildSkillZone(installedSkills)` before `buildFile`
-   (the runtime-owned-region rewrite; Inv 19a/19b). **SEED EDIT + the SHARED "runtime-owned-region commit"
-   primitive with kepler — write the mini-spec with dirac first** (kepler's skin compose-then-commit == this).
+7. Split into 7a (persistence — the gated piece) and 7b (CSP — independent backstop):
+   - **7a. [DONE — browser-proven] registry-aware persistence (§7)** — `buildSkillZone(installedSkills)`
+     (canonical, sorted by skillId) + `runtimeInstallSkill`/`uninstallSkill` persist the frozen `#rwa-skills`
+     zone via dirac's **`runtimeRegionCommit`** (`reachability:'frozen'`) at INSTALL time (durable in IDB before
+     ⌘S; `commit()` unchanged). Boot-parse aligned to utf-8 base64 (matches CLI `parseSkillZone`); records keep
+     the full envelope. Inv 19a/19b upheld by the primitive (scoped bypass + post-commit re-frozen re-assert).
+     `tests/skill-persistence` 12/0 + **browser-proven**: install → real page reload → skill still listed +
+     verified (IDB round-trip). v0.8 §7 + Inv 19b updated to reference the primitive.
+   - **7b. CSP boot-inject (§7)** — boot: union *signed* skills' `network:` origins → inject `<meta>`
+     connect-src into `<head>` before any skill runs. **Ungated** (no primitive needed). CARE: the union must
+     also include the agent-backend origins (openrouter/ollama/lmstudio/bridge) or it breaks ⌘K — browser-test
+     both (agent fetch still works WITH CSP; a skill's undeclared origin blocked as a 2nd wall behind the bridge).
 
 8. **[DONE — `12b297d`, browser-proven] Vault (§6)** — PBKDF2-200k/AES-GCM, IDB `rwa_vault`, namespaces,
    session key in sessionStorage, error vocab (`null`/`vault_locked`/`vault_namespace_denied`/

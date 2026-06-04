@@ -4558,12 +4558,15 @@ async function readTrustworthySkills(doc) {
   const blocks = zone.matchAll(/<script\s+type="application\/rwa-skill\+json">([\s\S]*?)<\/script>/g);
   for (const m of blocks) {
     let env;
-    try { env = JSON.parse(atob(m[1].trim())); } catch (_) { continue; }
+    // utf-8 base64 (matches the canonical CLI parseSkillZone Buffer<->utf8); plain atob
+    // would corrupt any non-Latin1 byte in the skill code/name.
+    try { env = JSON.parse(new TextDecoder().decode(_skFromB64(m[1].trim()))); } catch (_) { continue; }
     const skill = env && env.skill;
     if (!skill || typeof skill.name !== 'string') continue;
     const verified = await _skVerify(env);
     const id = await _skSkillId(skill.name, skill.author_pubkey);
-    out.set(id, { skillId: id, kind: skill.kind, name: skill.name, verified, manifest: skill, code: skill.code });
+    // Keep the FULL envelope (incl. signature) so buildSkillZone can re-emit a re-verifiable block (§7).
+    out.set(id, { skillId: id, kind: skill.kind, name: skill.name, verified, manifest: skill, code: skill.code, envelope: env });
   }
   return out;
 }
@@ -4709,14 +4712,66 @@ async function runtimeReviewSkill(envelope) {
     lookalike, gates: _skValidateInstall(skill, vr),
   };
 }
-// §1/§5 — validate + verify + register in-memory. (Persistence to the frozen zone on ⌘S
-// is increment 7's registry-aware commit; until then an install is session-only.)
+// §7 — serialize the registry into the frozen #rwa-skills zone. CANONICAL: sorted by
+// skillId so the bytes are install-order-independent (dirac's determinism requirement —
+// re-running with the same registry state is a no-op diff). Each record re-emits its FULL
+// envelope as utf-8 base64 (matches the CLI parseSkillZone format) so it re-verifies at boot.
+function buildSkillZone(skills) {
+  const blocks = Array.from(skills.values())
+    .filter(s => s.envelope)
+    .sort((a, b) => (a.skillId < b.skillId ? -1 : a.skillId > b.skillId ? 1 : 0))
+    .map(s => '<script type="application/rwa-skill+json">' + _skB64(_skUtf8(JSON.stringify(s.envelope))) + '<\/script>')
+    .join('');
+  return '<div data-rwa-frozen id="rwa-skills">' + blocks + '</div>';
+}
+// §7 — the region descriptor for dirac's runtimeRegionCommit. select() spans the whole
+// frozen div (base64 content has no '<', so the first </div> after the open tag is the real
+// close); build() re-serializes the registry; frozenId scopes the snapshot bypass + drives
+// the post-commit re-frozen re-assert. insertAt is the rare no-zone fallback (a skill-host
+// always ships the empty zone, so select normally hits).
+function _skSkillsRegion() {
+  return {
+    frozenId: 'rwa-skills',
+    select(doc) {
+      const open = /<div\b[^>]*\bid="rwa-skills"[^>]*>/i.exec(doc);
+      if (!open) return null;
+      const close = doc.indexOf('</div>', open.index + open[0].length);
+      return close < 0 ? null : [open.index, close + 6];
+    },
+    insertAt(doc) { return doc.length; },
+    build() { return buildSkillZone(installedSkills); },
+  };
+}
+// §1/§5/§7 — validate + verify + register, then PERSIST the registry to the frozen zone via
+// runtimeRegionCommit so the install lands in currentDoc/IDB immediately and survives reload
+// (⌘S's buildFile then bakes it into the file, no change to commit()). On a persist failure
+// the in-memory registry is rolled back so it never diverges from what's durable.
 async function runtimeInstallSkill(envelope) {
   const review = await runtimeReviewSkill(envelope);
   if (!review.gates.ok) return { ok: false, errors: review.gates.errors };
   const skill = envelope.skill, id = await _skSkillId(skill.name, skill.author_pubkey);
-  installedSkills.set(id, { skillId: id, kind: skill.kind, name: skill.name, verified: review.verified, manifest: skill, code: skill.code });
+  const prev = installedSkills.get(id); // present ⇒ this is an update
+  installedSkills.set(id, { skillId: id, kind: skill.kind, name: skill.name, verified: review.verified, manifest: skill, code: skill.code, envelope });
+  try {
+    await runtimeRegionCommit({ regions: [_skSkillsRegion()], actor: prev ? 'skill:update' : 'skill:install', reachability: 'frozen' });
+  } catch (e) {
+    if (prev) installedSkills.set(id, prev); else installedSkills.delete(id);
+    return { ok: false, errors: [(e && e.code) || (e && e.message) || 'persist_failed'] };
+  }
   return { ok: true, skillId: id };
+}
+// §7 — remove a skill + persist the emptied/updated zone (same rollback discipline).
+async function runtimeUninstallSkill(skillId) {
+  const prev = installedSkills.get(skillId);
+  if (!prev) return { ok: false, errors: ['not_installed'] };
+  installedSkills.delete(skillId);
+  try {
+    await runtimeRegionCommit({ regions: [_skSkillsRegion()], actor: 'skill:uninstall', reachability: 'frozen' });
+  } catch (e) {
+    installedSkills.set(skillId, prev);
+    return { ok: false, errors: [(e && e.code) || (e && e.message) || 'persist_failed'] };
+  }
+  return { ok: true };
 }
 // §1 — the install dialog (trust anchor). Renders the review and resolves with the user's choice.
 function showSkillInstallDialog(envelope) {
@@ -5843,7 +5898,8 @@ document.addEventListener('keydown', e => {
       listSkills: runtimeListSkills, // v0.8 §8 — installed skills (provenance:'installed')
       invokeSkill: runtimeInvokeSkill, // v0.8 §5a — run a skill in an isolated Worker
       reviewSkill: runtimeReviewSkill, // v0.8 §1 — structured trust info for the install dialog
-      installSkill: runtimeInstallSkill, // v0.8 §1 — validate-gates + verify + register (in-memory; persistence is increment 7)
+      installSkill: runtimeInstallSkill, // v0.8 §1/§7 — gates + verify + register + persist to the frozen zone (survives reload)
+      uninstallSkill: runtimeUninstallSkill, // v0.8 §7 — remove + persist
       showInstallDialog: showSkillInstallDialog, // v0.8 §1 — render the consent dialog for an envelope → resolves with the choice
       promptInstall: runtimePromptInstall, // v0.8 §1.3 — pick a .rwa-skill.json → show the dialog
       vault: { get: runtimeVaultGet, set: runtimeVaultSet, has: runtimeVaultHas, namespaces: runtimeVaultNamespaces, unlock: runtimeVaultUnlock, lock: runtimeVaultLock, isLocked: runtimeVaultIsLocked }, // v0.8 §6

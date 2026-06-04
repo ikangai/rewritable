@@ -274,18 +274,27 @@ AES-GCM auth fails throws **`vault_decrypt_failed`**; IDB quota/IO failure throw
 
 | Artifact | Lives in | Travels with file | Survives IDB eviction |
 |---|---|---|---|
-| Skill `{manifest, code, signature}` | `<div data-rwa-frozen id="rwa-skills">` (frozen zone), written on ⌘S | **Yes** | Yes |
+| Skill `{manifest, code, signature}` | `<div data-rwa-frozen id="rwa-skills">` (frozen zone), written at **install time** (durable in IDB before ⌘S) | **Yes** | Yes |
 | CSP `connect-src` union | recomputed at boot from the frozen zone, injected as `<meta>` in `<head>` | derived | derived |
 | Vault ciphertext | IDB `rwa_vault` | **No (by design)** | No |
 | Vault session key | sessionStorage | No | No |
 | Source records | IDB `rwa_sources`, rebuilt at boot from in-file manifests | rebuilt | rebuilt |
 
 **The runtime is the sole writer of the frozen skill zone.** The agent/lens cannot edit it (the
-`data-rwa-frozen` snapshot-equality guard rejects any drift). The runtime edits it by making the ⌘S commit
-path **registry-aware**: `commit()` (today seed ~L4478 calls `buildFile(await getDoc())` directly) must first
-call `buildSkillZone(installedSkills)` — regenerate the `<div data-rwa-frozen id="rwa-skills">` with one
-`<script type="application/rwa-skill+json">base64(JSON(envelope))</script>` per record — swap it into the
-in-memory doc, then run the existing `buildFile`→`escapeForTL` round-trip. **Each envelope is base64-encoded**
+`data-rwa-frozen` snapshot-equality guard rejects any drift). The runtime edits it through the
+**`runtimeRegionCommit` primitive** (`reachability:'frozen'`; `docs/specs/rwa-runtime-region-commit-spec.md`),
+called at **install / update / uninstall time** — *not* at ⌘S. `runtimeInstallSkill` registers the skill, then
+calls `runtimeRegionCommit({ regions:[{ select:#rwa-skills, build:buildSkillZone, frozenId:'rwa-skills' }],
+actor:'skill:install', reachability:'frozen' })`. `buildSkillZone(installedSkills)` regenerates the
+`<div data-rwa-frozen id="rwa-skills">` with one `<script type="application/rwa-skill+json">base64(JSON(envelope))</script>`
+per record (**canonical: sorted by `skillId`** so the bytes are install-order-independent — the primitive's
+determinism requirement). The primitive splices *only* that region (asserted `region_escaped`), rides the R5
+serialized queue (one `rwa_hist` entry, one ⌘Z), scopes the frozen-snapshot bypass to `rwa-skills` alone (every
+*other* frozen zone stays byte-locked), and **re-asserts the region is still `data-rwa-frozen` post-build**
+(`region_not_refrozen`) so a `buildSkillZone` bug can't ship an agent-writable zone. The write lands in
+`currentDoc`/IDB immediately — **durable across a reload before any ⌘S** — and the existing `commit()` /
+`buildFile(await getDoc())` then bakes it into the file unchanged (no registry logic at save time; `commit()`
+stays a dumb file-builder). **Each envelope is base64-encoded**
 (refinement validated in `parseSkillZone` impl): base64 contains no `</script>`/`</div>`/backtick/`${`, so
 the stored block round-trips through escapeForTL and the frozen snapshot with zero encoding landmines (X1
 neutralized at the encoding layer rather than relying on escape ordering), and the static parser can scope to
@@ -364,10 +373,10 @@ Carries v0.7 invariants 10 (install is the trust anchor), 16 (identity anchored 
   true for every kind because of this.
 - **19a — No one but the runtime may write the frozen skill zone.** The agent/lens can never write it (the
   `data-rwa-frozen` snapshot-equality guard rejects any drift — this exists today).
-- **19b — The runtime is the *active* writer of the zone**, via the registry-aware commit path
-  (`buildSkillZone` before `buildFile`, §7) on install/update/uninstall — the one mechanism that legitimately
-  rewrites it. Skill code + manifest + signature are the durable artifact and travel with the file; vault
-  ciphertext is machine-local and does not travel.
+- **19b — The runtime is the *active* writer of the zone**, via `runtimeRegionCommit` (`reachability:'frozen'`,
+  §7) on install/update/uninstall — the one mechanism that legitimately rewrites it (the agent path has no
+  frozen-bypass, so the wall in 19a still holds). Skill code + manifest + signature are the durable artifact and
+  travel with the file; vault ciphertext is machine-local and does not travel.
 - **20 — A signature covers `manifest ‖ code` atomically.** Unsigned skills are `verified:false`, are limited
   to zero-capability `compute`, and never contribute to the CSP `connect-src` union.
 
