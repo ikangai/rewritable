@@ -3630,7 +3630,7 @@ async function synthesizeAndCommit(envelope, surface, instruction, actor) {
 // The reentrant commit body. Assumes the queue above serializes it, so the
 // `if (modifyMutex) throw` guard now fires only when an AGENT loop (modify /
 // modifyViaBridge / runAnchoredCommand) holds the mutex — a genuine conflict.
-async function commitCore(envelope, surface, instruction, actor) {
+async function commitCore(envelope, surface, instruction, actor, frozenBypass) {
   // Acquire modifyMutex around the read+commit window. Without this, two
   // concurrent ⌘Enter submits could race against each other: both read the
   // same currentDoc, both push it onto rwa_undo, and the later commit
@@ -3683,7 +3683,9 @@ async function commitCore(envelope, surface, instruction, actor) {
       // checks all fire identically — the actor (e.g. 'skin:NAME') rides via
       // lensMeta into rwa_hist. No silent escalation: the caller chose
       // replace_document up front (it is not an apply_edits that escalated).
-      result = await replaceDocument(envelope, await getDoc(), lensMeta);
+      // frozenBypass is non-null only for a runtimeRegionCommit('frozen') write,
+      // scoping the snapshot exception to the region's own id (spec §4.1).
+      result = await replaceDocument(envelope, await getDoc(), lensMeta, frozenBypass);
     } else {
       result = await applyEdits(envelope, await getDoc(), lensMeta);
     }
@@ -3718,6 +3720,95 @@ async function commitCore(envelope, surface, instruction, actor) {
   } finally {
     modifyMutex = false;
   }
+}
+
+// ─── Region commit (dirac) — rwa-runtime-region-commit/1 ───────────────
+// The runtime-owned write path: rewrite ONE region (or a few) deterministically
+// and commit through the R5 serialized queue. This is how the runtime — and ONLY
+// the runtime — edits a region the agent/lens must not touch.
+//
+//   runtimeRegionCommit({ regions, actor, reachability })
+//
+// Each region = { select(doc)->[start,end]|null, build(current,doc)->string,
+// frozenId?, insertAt?(doc)->offset }. The primitive splices build()'s output into
+// select()'s range (or inserts at insertAt when absent), so it changes ONLY the
+// named span(s) — the region-only invariant (asserted as region_escaped). It then
+// rides the SAME nonAgentCommitChain as synthesizeAndCommit (one rwa_hist entry,
+// one undo step, serialized vs other non-agent commits; an agent loop holding
+// modifyMutex still rejects concurrent_modify).
+//
+// reachability:'frozen' (e.g. the #rwa-skills install zone) scopes a frozen-zone
+// snapshot bypass to the region's own id — every OTHER frozen zone stays
+// byte-locked — and re-asserts post-build that the region is still data-rwa-frozen
+// (region_not_refrozen), so a builder bug can't ship an agent-writable zone. The
+// bypass is reachable ONLY here; the agent's apply_edits/replace_document never set
+// it. reachability:'edit-reachable' (default; e.g. a skin <style>) is a plain
+// region splice through the normal frozen guard. Spec:
+// docs/specs/rwa-runtime-region-commit-spec.md.
+async function runtimeRegionCommit({ regions, actor, reachability = 'edit-reachable' } = {}) {
+  if (!Array.isArray(regions) || regions.length === 0)
+    throw new RwaEditError('region_not_found', null, { reason: 'no_regions' });
+  const currentDoc = canonLF(await getDoc());
+
+  // Resolve every region to a [start,end] splice range against the SAME base doc.
+  const spans = regions.map((r, i) => {
+    let range = typeof r.select === 'function' ? r.select(currentDoc) : null;
+    if (!range) {
+      if (typeof r.insertAt === 'function') { const at = r.insertAt(currentDoc); range = [at, at]; }
+      else throw new RwaEditError('region_not_found', i);
+    }
+    const [start, end] = range;
+    const next = String(r.build(currentDoc.slice(start, end), currentDoc));
+    return { start, end, next, frozenId: r.frozenId || null };
+  }).sort((a, b) => a.start - b.start);
+
+  // Reject overlapping regions (ambiguous splice).
+  for (let i = 1; i < spans.length; i++)
+    if (spans[i].start < spans[i - 1].end) throw new RwaEditError('region_overlap', i);
+
+  // Splice right-to-left so earlier offsets stay valid.
+  let newDoc = currentDoc;
+  for (let i = spans.length - 1; i >= 0; i--)
+    newDoc = newDoc.slice(0, spans[i].start) + spans[i].next + newDoc.slice(spans[i].end);
+
+  // Region-only invariant (defense): every byte outside the spliced spans is
+  // identical. True by construction of the splice; asserted so a future bug fails
+  // loud (region_escaped) rather than smuggling a document change behind a write.
+  let cursor = 0, shift = 0, outBefore = '', outAfter = '';
+  for (const s of spans) {
+    outBefore += currentDoc.slice(cursor, s.start);
+    outAfter += newDoc.slice(cursor + shift, s.start + shift);
+    cursor = s.end; shift += s.next.length - (s.end - s.start);
+  }
+  outBefore += currentDoc.slice(cursor);
+  outAfter += newDoc.slice(cursor + shift);
+  if (outBefore !== outAfter) throw new RwaEditError('region_escaped', null);
+
+  const frozen = reachability === 'frozen';
+  const frozenBypass = frozen ? new Set(spans.map(s => s.frozenId).filter(Boolean)) : null;
+
+  // 'frozen' re-assert (pre-commit, so a rejection lands nothing): each named
+  // region must come back as a still-frozen element. The snapshot bypass excluded
+  // this id, so a build that DROPPED data-rwa-frozen would otherwise slip through —
+  // this catches it (region_not_refrozen).
+  if (frozen) {
+    const parsed = parseHtmlFragment(newDoc);
+    if (!parsed.ok) throw new RwaEditError('parse_error_post_apply', null, { message: parsed.error });
+    const frozenEls = Array.from(parsed.doc.querySelectorAll('[data-rwa-frozen]'));
+    for (const s of spans) {
+      if (!s.frozenId) throw new RwaEditError('region_not_refrozen', null, { reason: 'no_frozen_id' });
+      if (!frozenEls.some(el => el.id === s.frozenId))
+        throw new RwaEditError('region_not_refrozen', null, { id: s.frozenId });
+    }
+  }
+
+  // Ride the R5 serialized queue (mirrors synthesizeAndCommit's enqueue), but with
+  // the region's frozenBypass threaded to commitCore→replaceDocument.
+  const envelope = { version: 'rwa-edit/1', doc: newDoc, reason: 'region:' + (actor || reachability) };
+  const run = () => commitCore(envelope, 'region:' + reachability, null, actor || null, frozenBypass);
+  const p = nonAgentCommitChain.then(run, run);
+  nonAgentCommitChain = p.catch(() => {});
+  return p;
 }
 
 // Test seam: directly write a doc to IDB + rebuild the map, no agent loop.
@@ -3790,11 +3881,17 @@ const shapesEqual = (a, b) =>
   a.styles === b.styles &&
   a.topLevelTypes === b.topLevelTypes;
 
-function dataRwaFrozenSnapshot(parsedDoc) {
+// `bypassIds` (a Set of element ids) is the rwa-runtime-region-commit/1 hook: a
+// runtime region write (runtimeRegionCommit, reachability:'frozen') excludes the
+// region's own frozen-id from BOTH the before and after snapshots so it alone may
+// change, while every OTHER frozen zone stays compared (byte-locked). Absent for
+// every agent-facing caller (apply_edits / replace_document) — the wall is intact;
+// only the runtime's own primitive ever passes a bypass. See the spec §4.1.
+function dataRwaFrozenSnapshot(parsedDoc, bypassIds) {
   if (!parsedDoc) return [];
-  return Array.from(parsedDoc.querySelectorAll('[data-rwa-frozen]'))
-    .map(el => el.tagName.toLowerCase() + '\0' + el.outerHTML)
-    .sort();
+  let els = Array.from(parsedDoc.querySelectorAll('[data-rwa-frozen]'));
+  if (bypassIds && bypassIds.size) els = els.filter(el => !bypassIds.has(el.id));
+  return els.map(el => el.tagName.toLowerCase() + '\0' + el.outerHTML).sort();
 }
 
 function snapshotsEqual(a, b) {
@@ -4018,7 +4115,10 @@ async function applyEdits(envelope, currentDocRaw, lensMeta = null) {
   return await commitDoc(currentDoc, work, histRecord);
 }
 
-async function replaceDocument(envelope, currentDocRaw, lensMeta = null) {
+// `frozenBypass` (a Set of frozen-zone ids) is set ONLY by runtimeRegionCommit
+// (rwa-runtime-region-commit/1); the agent's replace_document tool always passes
+// null, so the frozen-zone wall holds for the agent. See the spec §4.1 / §8.
+async function replaceDocument(envelope, currentDocRaw, lensMeta = null, frozenBypass = null) {
   if (envelope?.version !== 'rwa-edit/1') throw new RwaEditError('version_unsupported');
   if (typeof envelope.doc !== 'string' || typeof envelope.reason !== 'string' || !envelope.reason)
     throw new RwaEditError('malformed_envelope');
@@ -4046,7 +4146,7 @@ async function replaceDocument(envelope, currentDocRaw, lensMeta = null) {
   }
 
   const originalFrozen = extractFrozenZones(currentDoc);
-  const originalAttrs = dataRwaFrozenSnapshot(parseHtmlFragment(currentDoc).doc);
+  const originalAttrs = dataRwaFrozenSnapshot(parseHtmlFragment(currentDoc).doc, frozenBypass);
 
   const parseResult = parseHtmlFragment(newDoc);
   if (!parseResult.ok) throw new RwaEditError('parse_error_post_apply', null, { message: parseResult.error });
@@ -4054,7 +4154,7 @@ async function replaceDocument(envelope, currentDocRaw, lensMeta = null) {
   if (!frozenZonesIntact(originalFrozen, extractFrozenZones(newDoc)))
     throw new RwaEditError('frozen_zone_corrupted');
 
-  if (!snapshotsEqual(originalAttrs, dataRwaFrozenSnapshot(parseResult.doc)))
+  if (!snapshotsEqual(originalAttrs, dataRwaFrozenSnapshot(parseResult.doc, frozenBypass)))
     throw new RwaEditError('frozen_zone_corrupted');
 
   const reservedId = findReservedIdViolation(parseResult.doc);

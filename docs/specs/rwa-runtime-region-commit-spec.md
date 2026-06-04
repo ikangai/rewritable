@@ -298,10 +298,19 @@ signature.
 
 ---
 
-*Status: **SPEC** (design, not yet implemented). The shared kernel + the
-`'frozen'` scoped-bypass/re-assert is the buildable unit; shannon's v0.8 §7
-increment 7 is its first consumer (`buildSkillZone`, `reachability:'frozen'`),
-kepler's skinning-v2 L1 is the second (`reachability:'edit-reachable'`). Pinned
-by the §6 characterization test — chiefly `region_escaped` (the runtime cannot
-smuggle a document change behind a skill-zone write). Referenced by
-`re-write-able-actions-spec-v0.8.md` §7 and `2026-06-03-skinning-design.md`.*
+*Status: **IMPLEMENTED** in `seeds/rewritable.html` (`runtimeRegionCommit` beside
+`commitCore`; `commitCore`/`replaceDocument`/`dataRwaFrozenSnapshot` gained the
+additive `frozenBypass`/`bypassIds` param — every existing caller byte-unchanged).
+Pinned by `tests/region-commit.mjs` (the §6 characterization test, 20/0): region-only
+write, scoped bypass (can't smuggle a second frozen id), `region_not_refrozen`
+re-assert, undo, determinism, edit-reachable mode, and **the wall** (the agent's
+`applyEnvelope` still cannot edit the frozen zone — `frozenBypass` is reachable only
+through this primitive). Both the `'frozen'` and `'edit-reachable'` paths ship; the
+`'edit-reachable'` *compose-with-agent-edits* batching is deferred until skinning-v2
+is built. Zero regression across the seed suite (e2e/lens/view/identity/datatable/
+write-path/r5/kernel/session/skill-runtime/vault/skill-install) + CLI 269/0; conformance
+unchanged (57 OK then the pre-existing SNAPSHOT-01 crash, not mine). First consumer:
+shannon's v0.8 §7 increment 7 (`buildSkillZone`, `reachability:'frozen'`) — call
+`runtimeRegionCommit` from `runtimeInstallSkill`/uninstall. Second: kepler's skinning-v2
+L1 (`reachability:'edit-reachable'`). Referenced by `re-write-able-actions-spec-v0.8.md`
+§7 and `2026-06-03-skinning-design.md`.*

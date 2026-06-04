@@ -13,6 +13,7 @@
     "test:datatable": "node datatable.mjs",
     "test:write-path": "node write-path.mjs",
     "test:r5": "node r5-concurrent-commit.mjs",
+    "test:region": "node region-commit.mjs",
     "test:kernel": "node affordance-kernel.mjs",
     "test:session": "node session.mjs"
   },
