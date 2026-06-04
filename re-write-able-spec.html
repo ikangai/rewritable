@@ -4541,6 +4541,122 @@ function _skVaultAllowed(skill, ns) {
   return perms.indexOf('vault:' + ns) !== -1;
 }
 
+// ─── Install dialog (shannon, v0.8 §1) — the trust anchor. Mirrors of the cli
+// consent helpers (permissionToProse/compoundRisk/capabilityScan/levenshtein). ──────
+function _skEsc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+function _skPermProse(perm) {
+  const s = String(perm);
+  if (s.startsWith('network:')) {
+    const v = s.slice(8);
+    if (v === '*') return 'Make network requests to ANY domain on the internet — the runtime cannot tell you where this skill sends data. Review the code carefully.';
+    if (v.startsWith('**.')) return 'Make network requests to ' + v.slice(3) + ' and any subdomain at any depth — broad; review whether the skill needs this.';
+    if (v.startsWith('*.')) return 'Make network requests to any direct subdomain of ' + v.slice(2) + ' (such as api.' + v.slice(2) + ').';
+    return 'Make network requests to ' + v + '.';
+  }
+  if (s.startsWith('vault:')) {
+    const v = s.slice(6);
+    if (v === '*') return 'Read and write credentials stored under ANY vault namespace — every credential you have stored. Use only for vault administration.';
+    return 'Read and write credentials stored under ' + v + '.';
+  }
+  return s;
+}
+function _skCompoundRisk(perms) {
+  perms = Array.isArray(perms) ? perms : [];
+  if (perms.some(p => String(p).startsWith('vault:')) && perms.some(p => String(p).startsWith('network:')))
+    return 'This skill can both read your stored credentials AND make network requests. A skill with this combination can send credentials to its allowed destination — intentionally or by mistake. Install only if you fully trust this author.';
+  return null;
+}
+function _skCapabilityScan(code) {
+  const c = String(code || ''), notes = [];
+  if (/\beval\s*\(/.test(c)) notes.push('Uses eval() — dynamic code execution. Review what is being evaluated.');
+  if (/\bFunction\s*\(/.test(c)) notes.push('Uses the Function constructor — dynamic code execution.');
+  if (/\b(setTimeout|setInterval)\s*\(\s*['"`]/.test(c)) notes.push('Calls setTimeout/setInterval with a string argument — review what is being scheduled.');
+  if (/\b(globalThis|self|window)\s*\[/.test(c)) notes.push('Uses dynamic property indexing on a global — can reach APIs the permission manifest does not constrain.');
+  return notes;
+}
+function _skLevenshtein(a, b) {
+  a = String(a); b = String(b); const m = a.length, n = b.length;
+  if (!m) return n; if (!n) return m;
+  let prev = Array.from({ length: n + 1 }, (_, j) => j);
+  for (let i = 1; i <= m; i++) { const cur = [i]; for (let j = 1; j <= n; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)); prev = cur; }
+  return prev[n];
+}
+// §3.4 install gates (mirror cli validateInstall).
+function _skValidateInstall(skill, vr) {
+  const perms = Array.isArray(skill.permissions) ? skill.permissions : [], errors = [];
+  for (const p of perms) { const tier = String(p).split(':')[0]; if (tier !== 'network' && tier !== 'vault') errors.push('unknown_permission_tier'); }
+  if (skill.kind === 'compute' && perms.length > 0) errors.push('compute_with_permissions');
+  if (!vr.signed && perms.length > 0) errors.push('unsigned_with_permissions');
+  if (skill.kind === 'tool' && !vr.verified) errors.push('unsigned_capability');
+  return { ok: errors.length === 0, errors };
+}
+// §1 — the structured trust info the dialog renders.
+async function runtimeReviewSkill(envelope) {
+  const skill = (envelope && envelope.skill) || {};
+  const perms = Array.isArray(skill.permissions) ? skill.permissions : [];
+  const vr = { signed: !!(envelope && envelope.signature), verified: await _skVerify(envelope) };
+  let lookalike = null;
+  for (const s of installedSkills.values()) {
+    const d = _skLevenshtein(s.name, skill.name);
+    if (s.manifest && s.manifest.author_pubkey !== skill.author_pubkey && d >= 1 && d <= 2 && String(skill.name).length >= 4) { lookalike = s.name; break; }
+  }
+  return {
+    name: skill.name, version: skill.version, kind: skill.kind,
+    purpose: skill.description || '(no description provided)',
+    author_pubkey: skill.author_pubkey, signed: vr.signed, verified: vr.verified,
+    permissions: perms.map(p => ({ perm: p, prose: _skPermProse(p) })),
+    compoundRisk: _skCompoundRisk(perms), scanNotes: _skCapabilityScan(skill.code),
+    lookalike, gates: _skValidateInstall(skill, vr),
+  };
+}
+// §1/§5 — validate + verify + register in-memory. (Persistence to the frozen zone on ⌘S
+// is increment 7's registry-aware commit; until then an install is session-only.)
+async function runtimeInstallSkill(envelope) {
+  const review = await runtimeReviewSkill(envelope);
+  if (!review.gates.ok) return { ok: false, errors: review.gates.errors };
+  const skill = envelope.skill, id = await _skSkillId(skill.name, skill.author_pubkey);
+  installedSkills.set(id, { skillId: id, kind: skill.kind, name: skill.name, verified: review.verified, manifest: skill, code: skill.code });
+  return { ok: true, skillId: id };
+}
+// §1 — the install dialog (trust anchor). Renders the review and resolves with the user's choice.
+function showSkillInstallDialog(envelope) {
+  return runtimeReviewSkill(envelope).then(rv => new Promise(resolve => {
+    const prev = document.getElementById('rwa-skill-install'); if (prev) prev.remove();
+    const overlay = document.createElement('div'); overlay.id = 'rwa-skill-install';
+    overlay.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;';
+    const card = document.createElement('div');
+    card.style.cssText = 'background:#fff;max-width:560px;width:92%;max-height:86vh;overflow:auto;border-radius:18px;padding:26px 28px;font:14px/1.5 var(--font-ui,system-ui);box-shadow:0 12px 48px rgba(0,0,0,.28);';
+    const permsHtml = rv.permissions.length ? '<ul style="margin:.4em 0;padding-left:1.2em">' + rv.permissions.map(p => '<li>' + _skEsc(p.prose) + '</li>').join('') + '</ul>' : '<p style="color:#666">No special capabilities — this skill runs with no network or credential access.</p>';
+    const authorHtml = rv.signed
+      ? (rv.verified ? 'Signed by key <code>' + _skEsc(String(rv.author_pubkey).slice(0, 12)) + '…</code>' : '⚠ Signature does NOT verify — the code may have been modified.')
+      : '⚠ Unsigned — the runtime can\'t verify the author or that the code is unmodified.';
+    card.innerHTML =
+      '<h2 style="margin:0 0 .2em;font-size:1.25rem">Install ' + _skEsc(rv.name) + '?</h2>' +
+      '<p style="margin:.2em 0 1em;color:#444"><strong>What it claims to do:</strong> ' + _skEsc(rv.purpose) + '</p>' +
+      '<p style="margin:.2em 0"><strong>Author.</strong> ' + authorHtml + '</p>' +
+      (rv.lookalike ? '<p style="background:#fef3c7;border-radius:8px;padding:8px 10px;margin:.6em 0">⚠ This name closely matches <strong>' + _skEsc(rv.lookalike) + '</strong>, which you installed from a DIFFERENT key. The author is identified by the key, not the name.</p>' : '') +
+      '<p style="margin:1em 0 .2em"><strong>What it can do on your machine</strong></p>' + permsHtml +
+      (rv.compoundRisk ? '<p style="background:#fee2e2;border-radius:8px;padding:8px 10px;margin:.6em 0">⚠ ' + _skEsc(rv.compoundRisk) + '</p>' : '') +
+      (rv.scanNotes.length ? '<p style="margin:1em 0 .2em"><strong>Notes from the runtime\'s code review</strong></p><ul style="margin:.2em 0;padding-left:1.2em;color:#555">' + rv.scanNotes.map(n => '<li>' + _skEsc(n) + '</li>').join('') + '</ul>' : '') +
+      '<p style="margin:1.2em 0 .4em;color:#444"><strong>The runtime shows you what this skill <em>can</em> do. It cannot tell you whether it <em>should</em> do it.</strong> Within these limits, the skill\'s code decides what to do — the runtime can\'t tell whether its author wrote it to help you or to harm you.</p>' +
+      (rv.gates.ok ? '' : '<p style="background:#fee2e2;border-radius:8px;padding:8px 10px;margin:.6em 0">Cannot install: ' + _skEsc(rv.gates.errors.join(', ')) + '</p>') +
+      '<div style="display:flex;gap:10px;margin-top:1.2em;justify-content:flex-end">' +
+        '<button data-act="cancel" style="padding:9px 16px;border:1px solid #ccc;border-radius:10px;background:#fff;cursor:pointer">Cancel</button>' +
+        (rv.gates.ok ? '<button data-act="install" style="padding:9px 16px;border:none;border-radius:10px;background:var(--gray-900,#111);color:#fff;cursor:pointer">I have reviewed this skill and want to install it</button>' : '') +
+      '</div>';
+    overlay.appendChild(card); document.body.appendChild(overlay);
+    const close = (r) => { overlay.remove(); resolve(r); };
+    card.querySelector('[data-act=cancel]').onclick = () => close({ ok: false, errors: ['cancelled'] });
+    const ib = card.querySelector('[data-act=install]'); if (ib) ib.onclick = async () => close(await runtimeInstallSkill(envelope));
+  }));
+}
+// §1.3 — install trigger: pick a .rwa-skill.json, parse, show the dialog.
+function runtimePromptInstall() {
+  const inp = document.createElement('input'); inp.type = 'file'; inp.accept = '.rwa-skill.json,application/json,.json';
+  inp.onchange = () => { const f = inp.files && inp.files[0]; if (!f) return; const rd = new FileReader(); rd.onload = () => { let env; try { env = JSON.parse(rd.result); } catch (_) { setStatus && setStatus('err', 'invalid .rwa-skill.json'); return; } showSkillInstallDialog(env); }; rd.readAsText(f); };
+  inp.click();
+}
+
 // §4/§5a — does a network: host pattern admit a host? Mirror of cli/src/skill-manifest.mjs
 // matchNetworkOrigin (keep in step). The bridge's per-call origin check.
 function _skMatchNetworkOrigin(pattern, host) {
@@ -5626,6 +5742,10 @@ document.addEventListener('keydown', e => {
       describe: runtimeDescribe, // rwa-identity/1 — what this container is + can do
       listSkills: runtimeListSkills, // v0.8 §8 — installed skills (provenance:'installed')
       invokeSkill: runtimeInvokeSkill, // v0.8 §5a — run a skill in an isolated Worker
+      reviewSkill: runtimeReviewSkill, // v0.8 §1 — structured trust info for the install dialog
+      installSkill: runtimeInstallSkill, // v0.8 §1 — validate-gates + verify + register (in-memory; persistence is increment 7)
+      showInstallDialog: showSkillInstallDialog, // v0.8 §1 — render the consent dialog for an envelope → resolves with the choice
+      promptInstall: runtimePromptInstall, // v0.8 §1.3 — pick a .rwa-skill.json → show the dialog
       vault: { get: runtimeVaultGet, set: runtimeVaultSet, has: runtimeVaultHas, namespaces: runtimeVaultNamespaces, unlock: runtimeVaultUnlock, lock: runtimeVaultLock, isLocked: runtimeVaultIsLocked }, // v0.8 §6
     };
     // `status` is a getter so each read returns a fresh snapshot of

@@ -168,3 +168,30 @@ test('vaultNamespaceAllowed: exact vault:<ns> match', () => {
   assert.equal(vaultNamespaceAllowed(['vault:a', 'vault:b'], 'b'), true);
   assert.equal(vaultNamespaceAllowed([], 'x'), false);
 });
+
+// §1/§3 install-dialog content helpers (the trust-anchor prose; mirrored in the seed)
+import { permissionToProse, compoundRisk, capabilityScan, levenshtein } from '../src/skill-manifest.mjs';
+test('permissionToProse renders network tiers honestly', () => {
+  assert.match(permissionToProse('network:api.github.com'), /network requests to api\.github\.com/i);
+  assert.match(permissionToProse('network:*.github.com'), /direct subdomain of github\.com/i);
+  assert.match(permissionToProse('network:**.github.com'), /any subdomain|any depth/i);
+  assert.match(permissionToProse('network:*'), /any (domain|origin)/i);
+  assert.match(permissionToProse('vault:github-prod'), /credentials stored under .?github-prod/i);
+});
+test('compoundRisk fires only on vault + network together', () => {
+  assert.equal(compoundRisk(['vault:x', 'network:api.y']) !== null, true);
+  assert.equal(compoundRisk(['network:api.y']), null);
+  assert.equal(compoundRisk(['vault:x']), null);
+  assert.match(compoundRisk(['vault:x', 'network:api.y']), /credential|send your secrets|combination/i);
+});
+test('capabilityScan flags dynamic-code patterns, clean code → []', () => {
+  assert.ok(capabilityScan("var x = eval('1');").some(n => /eval/.test(n)));
+  assert.ok(capabilityScan("setTimeout('alert(1)', 0)").some(n => /setTimeout|string/i.test(n)));
+  assert.ok(capabilityScan("new Function('return 1')").some(n => /Function/.test(n)));
+  assert.deepEqual(capabilityScan("async function run(i){ return i.length; }"), []);
+});
+test('levenshtein edit distance (for lookalike)', () => {
+  assert.equal(levenshtein('Acme Skills', 'Acme Skills'), 0);
+  assert.equal(levenshtein('Acme Skills', 'Acme Skils'), 1); // missing l
+  assert.equal(levenshtein('abc', 'xyz'), 3);
+});

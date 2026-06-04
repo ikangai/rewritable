@@ -88,6 +88,58 @@ export function vaultNamespaceAllowed(permissions, ns) {
   return perms.indexOf('vault:' + ns) !== -1;
 }
 
+/** §1/§3 — render one permission as plain-English dialog prose (the trust-anchor content). */
+export function permissionToProse(perm) {
+  const s = String(perm);
+  if (s.startsWith('network:')) {
+    const v = s.slice(8);
+    if (v === '*') return 'Make network requests to ANY domain on the internet — the runtime cannot tell you where this skill sends data. Review the code carefully.';
+    if (v.startsWith('**.')) return `Make network requests to ${v.slice(3)} and any subdomain at any depth — broad; review whether the skill needs this.`;
+    if (v.startsWith('*.')) return `Make network requests to any direct subdomain of ${v.slice(2)} (such as api.${v.slice(2)}).`;
+    return `Make network requests to ${v}.`;
+  }
+  if (s.startsWith('vault:')) {
+    const v = s.slice(6);
+    if (v === '*') return 'Read and write credentials stored under ANY vault namespace — every credential you have stored. Use only for vault administration.';
+    return `Read and write credentials stored under \`${v}\`.`;
+  }
+  return s;
+}
+
+/** §3.7/E — the compound-risk callout when vault + network co-occur, else null. */
+export function compoundRisk(permissions) {
+  const perms = Array.isArray(permissions) ? permissions : [];
+  const hasVault = perms.some(p => String(p).startsWith('vault:'));
+  const hasNetwork = perms.some(p => String(p).startsWith('network:'));
+  if (hasVault && hasNetwork) return 'This skill can both read your stored credentials AND make network requests. A skill with this combination can send credentials to its allowed destination — intentionally or by mistake. Install only if you fully trust this author.';
+  return null;
+}
+
+/** §3/§4.1 — advisory capability-scan notes (NEVER an auto-reject; structural enforcement is the wall). */
+export function capabilityScan(code) {
+  const c = String(code || '');
+  const notes = [];
+  if (/\beval\s*\(/.test(c)) notes.push('Uses eval() — dynamic code execution. Review what is being evaluated.');
+  if (/\bFunction\s*\(/.test(c)) notes.push('Uses the Function constructor — dynamic code execution. Review what is being constructed.');
+  if (/\b(setTimeout|setInterval)\s*\(\s*['"`]/.test(c)) notes.push('Calls setTimeout/setInterval with a string argument — review what is being scheduled.');
+  if (/\b(globalThis|self|window)\s*\[/.test(c)) notes.push('Uses dynamic property indexing on a global — can reach APIs the permission manifest does not constrain. Review the code.');
+  return notes;
+}
+
+/** Levenshtein edit distance (Wagner-Fischer) — for §2.3 lookalike-source detection. */
+export function levenshtein(a, b) {
+  a = String(a); b = String(b);
+  const m = a.length, n = b.length;
+  if (!m) return n; if (!n) return m;
+  let prev = Array.from({ length: n + 1 }, (_, j) => j);
+  for (let i = 1; i <= m; i++) {
+    const cur = [i];
+    for (let j = 1; j <= n; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    prev = cur;
+  }
+  return prev[n];
+}
+
 /** §3.4 install gates. Pure; takes the verification result so it stays synchronous. */
 export function validateInstall(envelope, { signed, verified } = {}) {
   const skill = (envelope && envelope.skill) || {};

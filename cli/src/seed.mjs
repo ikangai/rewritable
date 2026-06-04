@@ -1338,7 +1338,8 @@ const KIND_SKILLHOST_HEADER = `// === PRODUCT HEADER ===
 // Stub: an editable intro article + the EMPTY runtime-owned frozen skill zone.
 const KIND_SKILLHOST_BODY = `<article>
 <h1>Skill host</h1>
-<p>This is a re-writeable <strong>skill host</strong>. Install skills from a <code>.rwa-skill.json</code> file; each runs in an isolated worker, limited to the network and credential permissions you approve at install. Installed skills appear below.</p>
+<p>This is a re-writeable <strong>skill host</strong>. Install skills from a <code>.rwa-skill.json</code> file; each runs in an isolated worker, limited to the network and credential permissions you approve at install.</p>
+<p><button onclick="runtime.promptInstall()" style="padding:9px 16px;border:none;border-radius:10px;background:var(--gray-900,#111);color:#fff;font:inherit;cursor:pointer">Install a skill…</button></p>
 </article>
 <div data-rwa-frozen id="rwa-skills"></div>`;
 

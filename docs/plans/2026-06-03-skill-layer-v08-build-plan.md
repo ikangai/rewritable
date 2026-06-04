@@ -41,12 +41,19 @@ Spec: `docs/specs/re-write-able-actions-spec-v0.8.md`. Built on branch `feat/ski
    (the runtime-owned-region rewrite; Inv 19a/19b). **SEED EDIT + the SHARED "runtime-owned-region commit"
    primitive with kepler — write the mini-spec with dirac first** (kepler's skin compose-then-commit == this).
 
-8. **Vault (§6)** — PBKDF2-200k/AES-GCM, IDB `rwa_vault`, namespaces, session key in sessionStorage,
-   error vocab (`null`/`vault_locked`/`vault_namespace_denied`/`vault_decrypt_failed`/quota/storage). **SEED EDIT.**
+8. **[DONE — `12b297d`, browser-proven] Vault (§6)** — PBKDF2-200k/AES-GCM, IDB `rwa_vault`, namespaces,
+   session key in sessionStorage, error vocab (`null`/`vault_locked`/`vault_namespace_denied`/
+   `vault_bad_passphrase`/`vault_decrypt_failed`/storage). bridge:vault per-skill namespace gate. **SEED EDIT.**
+   `tests/vault` 16/0 + browser (tool skill set/get its declared ns; undeclared→`vault_namespace_denied`).
 
-9. **Install dialog + scan + provenance (§1/§3.5)** — the dialog (kept from v0.7) with the normative prose,
-   capability-scan note, compound callout, lookalike (Levenshtein≤2, `rwa_sources` rebuilt at boot), update
-   diff + re-affirm. **SEED EDIT + UI.**
+9. **[DONE — browser-proven] Install dialog + scan + provenance (§1/§3.5)** — `runtime.reviewSkill`
+   (structured trust info) + `runtime.installSkill` (gates + Ed25519 verify + register in-memory) +
+   `showInstallDialog`/`promptInstall` + the consent DOM with normative prose, permission→prose,
+   capability-scan note, compound-risk callout, lookalike (Levenshtein≤2), the "can vs should" framing,
+   plus an "Install a skill…" trigger in the skill-host starter body. **SEED EDIT + UI + cli helpers.**
+   `tests/skill-install` 13/0 + browser-verified (dialog renders all sections; affirm→install→worker runs).
+   **DEFERRED:** update-diff + re-affirm flow; `rwa_sources`-at-boot (lookalike currently scans the live
+   `installedSkills`); persistence of installs to the frozen zone is increment 7 (gated on dirac).
 
 10. **MVP acceptance (§12)** — the 7-step end-to-end in real Chrome on a generated `skill-host`:
     word-count (compute) + gh-stars (network, Worker-isolated) → install/invoke/update/uninstall/email.
