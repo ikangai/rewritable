@@ -31,7 +31,7 @@ Spec: `docs/specs/re-write-able-actions-spec-v0.8.md`. Built on branch `feat/ski
    skills. Mirror the skill-manifest logic into the seed. **SEED EDIT.** Tests: `tests/` (jsdom) +
    re-pin the 4-site mirror tests.
 
-6. **Worker spawn & bridge (§5a)** — blob Worker, synchronous global removal (Object.defineProperty
+6. **[DONE — browser-proven] Worker spawn & bridge (§5a)** — blob Worker, synchronous global removal (Object.defineProperty
    non-writable undefined ×10), bridged `fetch`/`vault` w/ `identity_tag`, `Promise.race` 5s + terminate.
    Bridgeless for compute. **SEED EDIT.** **Browser-tested** (chrome-devtools): assert a compute Worker
    cannot read sessionStorage/IDB/document (Invariant 18 / §12.4), and fetch allowed/denied (§12.3).
