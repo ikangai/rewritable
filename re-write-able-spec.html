@@ -4545,7 +4545,13 @@ function runtimeInvokeSkill(skillId, input) {
       if (msg.type === 'bridge:fetch') {
         let origin; try { origin = new URL(msg.payload.url).origin; } catch (_) { reply(msg.id, false, { error: 'invalid_argument' }); return; }
         if (!_skNetworkAllowed(skill, origin)) { reply(msg.id, false, { error: 'permission_denied' }); return; }
-        try { const r = await fetch(msg.payload.url, msg.payload.opts || {}); reply(msg.id, true, { result: { status: r.status, ok: r.ok, body: await r.text() } }); }
+        // redirect:'error' — reject on ANY 3xx WITHOUT contacting the target, so a
+        // declared origin (or a compromised one) cannot redirect the request to an
+        // UNDECLARED/internal origin and bypass the per-call allowlist (SSRF). The
+        // pre-check only validates the initial origin; a post-hoc r.url check would be
+        // too late (the redirect request would already have been sent). Force it after
+        // the opts spread so a skill cannot override it.
+        try { const r = await fetch(msg.payload.url, Object.assign({}, msg.payload.opts || {}, { redirect: 'error' })); reply(msg.id, true, { result: { status: r.status, ok: r.ok, body: await r.text() } }); }
         catch (_) { reply(msg.id, false, { error: 'network_error' }); }
         return;
       }
