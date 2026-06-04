@@ -6,17 +6,23 @@
 // task owns that. Pure and dependency-free (built-in JS only) so it can be
 // mirrored to the browser /import path the way the rest of the CLI is.
 
-// Decode the handful of named/numeric entities that show up in titles.
-// Titles come from og:title / <title> / <h1>, which are entity-encoded in
-// source HTML; we only need this minimal set for human-readable titles.
+// Decode the entities that show up in titles. Titles come from og:title /
+// <title> / <h1>, which are entity-encoded in source HTML. WordPress wptexturize
+// emits numeric smart-punctuation (&#8217; etc.), so we decode numeric entities
+// generically plus a few common named ones. &amp; is decoded LAST so a
+// double-encoded "&amp;#8217;" doesn't get unescaped into a live entity.
 function decodeEntities(s) {
   return s
-    .replace(/&amp;/g, '&')
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCodePoint(parseInt(h, 16)))
+    .replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(parseInt(d, 10)))
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&hellip;/g, '…')
+    .replace(/&mdash;/g, '—')
+    .replace(/&ndash;/g, '–')
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
     .replace(/&quot;/g, '"')
-    .replace(/&#0*39;/g, "'")
-    .replace(/&#x0*27;/gi, "'");
+    .replace(/&amp;/g, '&');
 }
 
 function stripTags(s) {
@@ -56,12 +62,36 @@ function extractTitle(html) {
 // Find the index of the opening tag for the element whose class attribute
 // contains `cls`. Returns the index of the '<' or -1.
 function findClassOpen(html, cls) {
+  // Bound the class token on the class-list separators (start/space/quote)
+  // rather than \b, so "entry-content" does NOT match inside
+  // "entry-content-wrapper" or "entry-content-meta" — a hyphen is a \w
+  // boundary-free char, so \b would false-match the prefix.
   const re = new RegExp(
-    `<([a-z][a-z0-9]*)\\b[^>]*\\bclass\\s*=\\s*["'][^"']*\\b${cls}\\b[^"']*["'][^>]*>`,
+    `<([a-z][a-z0-9]*)\\b[^>]*\\bclass\\s*=\\s*(["'])(?:[^"']*[\\s])?${cls}(?=[\\s]|\\2)[^"']*\\2[^>]*>`,
     'i',
   );
   const m = re.exec(html);
-  return m ? { index: m.index, tag: m[1].toLowerCase(), openEnd: m.index + m[0].length } : null;
+  if (!m) return null;
+  // Compute the opening-tag end quote-aware: the regex's trailing [^>]*> stops
+  // at the first '>', which may be inside a later attribute value (e.g.
+  // title="a>b"). tagEnd skips quoted regions so openEnd lands on the real '>'.
+  const gt = tagEnd(html, m.index);
+  return { index: m.index, tag: m[1].toLowerCase(), openEnd: gt === -1 ? m.index + m[0].length : gt + 1 };
+}
+
+// Find the index of the '>' that ends a tag starting at/after `from`, skipping
+// over quoted attribute regions so a '>' inside an attribute value (e.g.
+// <div title="a>b">) is not mistaken for the tag end. Returns -1 if none.
+function tagEnd(html, from) {
+  let i = from, q = null;
+  while (i < html.length) {
+    const ch = html[i];
+    if (q) { if (ch === q) q = null; }
+    else if (ch === '"' || ch === "'") q = ch;
+    else if (ch === '>') return i;
+    i++;
+  }
+  return -1;
 }
 
 // THE CRUX — balanced extraction, parser-free.
@@ -77,14 +107,19 @@ function findClassOpen(html, cls) {
 //
 // Returns the INNER HTML of the container (between openEnd and the matching
 // close), or null if no balanced close is found.
-function balancedInner(html, tagName, startIndex) {
-  // Locate end of the opening tag at startIndex.
-  const openTagEnd = html.indexOf('>', startIndex);
+function balancedInner(html, tagName, startIndex, openEnd) {
+  // Locate end of the opening tag at startIndex. Use the caller-supplied
+  // openEnd (from findClassOpen, already quote-aware) when available; else
+  // scan quote-aware so a '>' inside an attribute value doesn't end the tag.
+  const openTagEnd = openEnd != null ? openEnd - 1 : tagEnd(html, startIndex);
   if (openTagEnd === -1) return null;
   const innerStart = openTagEnd + 1;
 
   const openRe = new RegExp(`<${tagName}\\b`, 'gi');
   const closeRe = new RegExp(`</${tagName}\\s*>`, 'gi');
+  // Raw-text elements: their content is CDATA-like (never markup), so a literal
+  // "</div>" or "<div" inside a <script>/<style> must not perturb the scan.
+  const rawTextRe = /<(script|style)\b/gi;
 
   let depth = 1;
   let pos = innerStart;
@@ -99,14 +134,28 @@ function balancedInner(html, tagName, startIndex) {
     }
     openRe.lastIndex = pos;
     closeRe.lastIndex = pos;
+    rawTextRe.lastIndex = pos;
     const o = openRe.exec(html);
     const c = closeRe.exec(html);
+    const r = rawTextRe.exec(html);
     if (!c) break; // unbalanced — no matching close
+    // If a raw-text element opens before the next same-name open/close event,
+    // fast-forward past its matching </script>/</style> (raw-text elements
+    // don't nest), so its text — which may contain "</div>" or "<div" — is
+    // never interpreted as markup.
+    if (r && r.index < c.index && (!o || r.index < o.index)) {
+      const close = new RegExp(`</${r[1]}\\s*>`, 'i');
+      const after = r.index + r[0].length;
+      const m = close.exec(html.slice(after));
+      pos = m ? after + m.index + m[0].length : html.length;
+      continue;
+    }
     if (o && o.index < c.index) {
       // Next event is a nested open of the same tag. Self-closing (<tag .../>)
       // wouldn't add depth; div/article aren't void so we treat all as nesting,
-      // but guard the self-closing form just in case.
-      const gt = html.indexOf('>', o.index);
+      // but guard the self-closing form just in case. Quote-aware tag end so a
+      // '>' inside an attribute value doesn't end the tag early.
+      const gt = tagEnd(html, o.index);
       const selfClosing = gt !== -1 && html[gt - 1] === '/';
       if (!selfClosing) depth++;
       pos = (gt === -1 ? html.length : gt + 1);
@@ -184,7 +233,7 @@ export function extractArticle(html) {
   // "entry-content" (appears once per post page).
   const ec = findClassOpen(html, 'entry-content');
   if (ec) {
-    const inner = balancedInner(html, ec.tag, ec.index);
+    const inner = balancedInner(html, ec.tag, ec.index, ec.openEnd);
     if (inner != null) return { title, html: inner };
   }
 
