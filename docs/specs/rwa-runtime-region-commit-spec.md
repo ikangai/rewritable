@@ -57,7 +57,8 @@ runtimeRegionCommit({ regions, actor, reachability }) → Promise<result>
     load-bearing: the same registry state must yield byte-identical output so the
     frozen snapshot and the export round-trip are stable.
 - **`actor`** — the `rwa_hist` attribution string for this commit
-  (`'runtime:skill-install'`, `'runtime:skill-uninstall'`, `'skin:NAME'`, …).
+  (`'skill:install'`, `'skill:uninstall'`, `'skill:update'`, `'skin:NAME'`, …
+  — caller-chosen; shannon's incr-7 vocabulary is `'skill:install'` et al.).
   Threaded verbatim through `commitCore`'s `lensMeta.actor` (R5 §9 passthrough).
 - **`reachability`** — `'frozen'` | `'edit-reachable'`. Selects how the
   frozen-zone guard is treated for the target regions (§4). Default
@@ -144,6 +145,19 @@ not). The kernel:
    `region_not_refrozen` (§5) and the commit does not land. This closes the
    obvious attack: a `'frozen'` write that emits a region *without* the frozen
    marker would leave an agent-writable skill zone next boot.
+
+   *Placement note (refines #162 / shannon #186).* The original negotiation put
+   this re-assert as **shannon's layer on top of the kernel**; I pull it **into**
+   the primitive's `'frozen'` branch instead. Rationale: the re-assert is generic
+   ("the bytes I just wrote to a frozen-id are still framed as frozen") — it does
+   not know skills exist, so every future `'frozen'` consumer inherits the re-lock
+   for free, and the primitive's contract becomes the clean *"I hand the region
+   back frozen."* It is cheap (one marker check on the just-built region) and
+   guards a real escalation path — a `buildSkillZone` bug that dropped
+   `data-rwa-frozen` — that "frozen by construction" alone does not. Open to
+   shannon's pushback: if you'd rather own it as your layer, the primitive drops
+   step 2 and you assert it post-call. I lean keep-it-in (defense in depth, Rule
+   12: fail loud on the serializer bug rather than ship an agent-writable zone).
 3. **Content well-formedness is the consumer's contract, re-checked by the
    reader.** The primitive does not validate that `build` emitted valid skill
    records — that is `buildSkillZone`'s job, re-verified at boot by
@@ -195,10 +209,10 @@ One characterization test gates the primitive, mirrored for both modes:
 
 > Given a doc with two `data-rwa-frozen` elements `#rwa-skills` and `#other`,
 > a marker-form zone `cfg`, and editable prose carrying `data-rwa-id`s:
-> `runtimeRegionCommit({ regions:[{select:#rwa-skills, build:…}], actor:'runtime:skill-install', reachability:'frozen' })`
+> `runtimeRegionCommit({ regions:[{select:#rwa-skills, build:…}], actor:'skill:install', reachability:'frozen' })`
 > **(a)** rewrites `#rwa-skills` to the new bytes, **(b)** leaves `#other`, `cfg`,
 > the prose, and every `data-rwa-id` **byte-identical**, **(c)** lands as exactly
-> one `rwa_hist` record with `actor:'runtime:skill-install'` and one `rwa_undo`
+> one `rwa_hist` record with `actor:'skill:install'` and one `rwa_undo`
 > push, **(d)** ⌘Z restores the prior zone, **(e)** a second identical call is a
 > no-op diff (determinism), **(f)** a `build` that drops `data-rwa-frozen`
 > rejects `region_not_refrozen` and does not land, **(g)** a `build` that also
@@ -237,7 +251,7 @@ Consumers (NOT this spec's code — they call the primitive):
   `<div data-rwa-frozen id="rwa-skills">…</div>` with one base64
   `<script type="application/rwa-skill+json">` per record). `runtimeInstallSkill`
   / uninstall / update call `runtimeRegionCommit({ regions:[{select:#rwa-skills,
-  build:buildSkillZone, insertAt:…}], actor:'runtime:skill-install',
+  build:buildSkillZone, insertAt:…}], actor:'skill:install',
   reachability:'frozen' })` so the install lands in `currentDoc`/IDB immediately
   (durable across reload) and ⌘S's existing `buildFile(await getDoc())` (`:5137`)
   bakes it with **no change to `commit()`** — the registry-aware step happens at
@@ -261,7 +275,7 @@ Consumers (NOT this spec's code — they call the primitive):
   scope.
 - **Atomic commit, no undo state in the commit.** Inherited from `commitCore` /
   `commitDoc` unchanged.
-- **`rwa_hist.actor` is first-class.** `'runtime:skill-install'` etc. attribute
+- **`rwa_hist.actor` is first-class.** `'skill:install'` etc. attribute
   the write exactly as `'user:lens'` / `'skin:NAME'` do today.
 - **The frozen wall still holds for the agent.** The scoped bypass is reachable
   **only** through `runtimeRegionCommit` with an explicit region identity; the
