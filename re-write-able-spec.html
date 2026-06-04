@@ -780,7 +780,7 @@ window.ANCHORABLE_TAGS = ANCHORABLE_TAGS; // expose for tests
 // ─── Storage ────────────────────────────────────────────────────────
 const RWA = {
   DB:'rwa_'+DOC_UUID, KEY:'self',
-  DOC:'rwa_doc', UNDO:'rwa_undo', HIST:'rwa_hist', FSA:'rwa_fsa', STATE:'rwa_state',
+  DOC:'rwa_doc', UNDO:'rwa_undo', HIST:'rwa_hist', FSA:'rwa_fsa', STATE:'rwa_state', VAULT:'rwa_vault',
   UNDO_CAP:10, HIST_CAP:1000, NUDGE_THRESHOLD:5,
   K_API:'rwa_apikey', K_MODEL:'rwa_model', K_BACKEND:'rwa_backend',
   // Per-backend base-URL overrides for local OpenAI-compatible servers.
@@ -845,7 +845,7 @@ try {
 const canonLF = s => s == null ? '' : String(s).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
 
 let _db;
-const REQUIRED_STORES = [RWA.DOC, RWA.UNDO, RWA.HIST, RWA.FSA, RWA.STATE];
+const REQUIRED_STORES = [RWA.DOC, RWA.UNDO, RWA.HIST, RWA.FSA, RWA.STATE, RWA.VAULT];
 // User-declared store registry. Persisted to RWA.STATE so declarations survive
 // reload. The openDB() upgrade handler creates declared stores on every bump.
 // Populated at bootstrap via loadUserStoreDecls(); mutated by runtime.db.open.
@@ -4471,6 +4471,76 @@ function runtimeListSkills() {
   return Array.from(installedSkills.values()).map(s => ({ skillId: s.skillId, kind: s.kind, name: s.name, verified: s.verified }));
 }
 
+// ─── Vault (shannon, v0.8 §6) — PBKDF2-200k + AES-256-GCM credential store ────────
+// Stored as ONE record in IDB rwa_vault: { salt, check, entries:{ "ns\0key":{iv,ct} } }.
+// salt is plaintext; `check` is an encrypted verifier (proves the passphrase); entries are
+// per-entry AES-GCM. The session AES key is cached in sessionStorage (machine-local, never
+// persisted to the file, cleared on lock / tab close). A Worker reaches the vault ONLY via
+// the bridge (bridge:vault), which gates on the skill's vault:<ns> perm. Argon2id deferred.
+let _vaultKey = null, _vaultRec = null;
+function _skB64(bytes) { let s = ''; for (const b of bytes) s += String.fromCharCode(b); return btoa(s); } // standard base64 (vault-internal)
+async function _vaultLoadRec() {
+  if (_vaultRec) return _vaultRec;
+  let rec = null; try { rec = await idbGet(RWA.VAULT); } catch (_) {}
+  if (!rec || typeof rec !== 'object') rec = { salt: _skB64(crypto.getRandomValues(new Uint8Array(16))), check: null, entries: {} };
+  _vaultRec = rec; return rec;
+}
+async function _vaultDeriveKey(passphrase, saltB64) {
+  const km = await crypto.subtle.importKey('raw', _skUtf8(passphrase), 'PBKDF2', false, ['deriveKey']);
+  return crypto.subtle.deriveKey({ name: 'PBKDF2', salt: _skFromB64(saltB64), iterations: 200000, hash: 'SHA-256' }, km, { name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
+}
+async function _vaultEnc(text) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, _vaultKey, _skUtf8(text)));
+  return { iv: _skB64(iv), ct: _skB64(ct) };
+}
+async function _vaultDec(entry) {
+  return new TextDecoder().decode(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: _skFromB64(entry.iv) }, _vaultKey, _skFromB64(entry.ct)));
+}
+async function runtimeVaultUnlock(passphrase) {
+  const rec = await _vaultLoadRec();
+  const key = await _vaultDeriveKey(passphrase, rec.salt);
+  _vaultKey = key;
+  if (rec.check) { try { await _vaultDec(rec.check); } catch (_) { _vaultKey = null; throw new Error('vault_bad_passphrase'); } }
+  else { rec.check = await _vaultEnc('rwa-vault-ok'); try { await idbPut(RWA.VAULT, rec); } catch (_) { _vaultKey = null; throw new Error('vault_storage_error'); } }
+  try { sessionStorage.setItem('rwa_vault_key', _skB64(new Uint8Array(await crypto.subtle.exportKey('raw', key)))); } catch (_) {}
+  return true;
+}
+async function _vaultReimportSession() {
+  if (_vaultKey) return;
+  let b = null; try { b = sessionStorage.getItem('rwa_vault_key'); } catch (_) { return; }
+  if (!b) return;
+  try { _vaultKey = await crypto.subtle.importKey('raw', _skFromB64(b), { name: 'AES-GCM' }, true, ['encrypt', 'decrypt']); } catch (_) {}
+}
+function runtimeVaultIsLocked() { return !_vaultKey; }
+function runtimeVaultLock() { _vaultKey = null; try { sessionStorage.removeItem('rwa_vault_key'); } catch (_) {} }
+async function runtimeVaultGet(ns, key) { // §6: locked-or-missing → null (never throws)
+  if (!_vaultKey) return null;
+  const rec = await _vaultLoadRec();
+  const entry = rec.entries[ns + '\0' + key];
+  if (!entry) return null;
+  let text; try { text = await _vaultDec(entry); } catch (_) { throw new Error('vault_decrypt_failed'); }
+  try { return JSON.parse(text); } catch (_) { return text; }
+}
+async function runtimeVaultSet(ns, key, value) {
+  if (!_vaultKey) throw new Error('vault_locked');
+  const rec = await _vaultLoadRec();
+  rec.entries[ns + '\0' + key] = await _vaultEnc(JSON.stringify(value));
+  try { await idbPut(RWA.VAULT, rec); } catch (_) { throw new Error('vault_storage_error'); }
+  return true;
+}
+async function runtimeVaultHas(ns, key) { const rec = await _vaultLoadRec(); return Object.prototype.hasOwnProperty.call(rec.entries, ns + '\0' + key); }
+async function runtimeVaultNamespaces() {
+  const rec = await _vaultLoadRec(); const set = new Set();
+  for (const k of Object.keys(rec.entries)) { const i = k.indexOf('\0'); if (i > 0) set.add(k.slice(0, i)); }
+  return Array.from(set);
+}
+// §6 — the bridge's per-call vault gate (mirror of cli/src/skill-manifest.mjs vaultNamespaceAllowed).
+function _skVaultAllowed(skill, ns) {
+  const perms = (skill.manifest && Array.isArray(skill.manifest.permissions)) ? skill.manifest.permissions : [];
+  return perms.indexOf('vault:' + ns) !== -1;
+}
+
 // §4/§5a — does a network: host pattern admit a host? Mirror of cli/src/skill-manifest.mjs
 // matchNetworkOrigin (keep in step). The bridge's per-call origin check.
 function _skMatchNetworkOrigin(pattern, host) {
@@ -4556,9 +4626,14 @@ function runtimeInvokeSkill(skillId, input) {
         return;
       }
       if (msg.type === 'bridge:vault') {
-        // Vault not yet implemented (increment 8): get -> null, write -> locked.
-        if (msg.payload && msg.payload.op === 'get') reply(msg.id, true, { result: null });
-        else reply(msg.id, false, { error: 'vault_locked' });
+        const pl = msg.payload || {};
+        if (!_skVaultAllowed(skill, pl.ns)) { reply(msg.id, false, { error: 'vault_namespace_denied' }); return; } // §6 per-call gate
+        try {
+          if (pl.op === 'get') reply(msg.id, true, { result: await runtimeVaultGet(pl.ns, pl.key) });
+          else if (pl.op === 'has') reply(msg.id, true, { result: await runtimeVaultHas(pl.ns, pl.key) });
+          else if (pl.op === 'set') { await runtimeVaultSet(pl.ns, pl.key, pl.val); reply(msg.id, true, { result: true }); }
+          else reply(msg.id, false, { error: 'invalid_argument' });
+        } catch (e) { reply(msg.id, false, { error: String(e && e.message || 'vault_error') }); }
         return;
       }
     };
@@ -5520,6 +5595,7 @@ document.addEventListener('keydown', e => {
       installedSkills.clear();
       skMap.forEach((v, k) => installedSkills.set(k, v));
     } catch (_) { /* no installed skills */ }
+    await _vaultReimportSession().catch(() => {}); // v0.8 §6 — restore an unlocked vault within the tab session
     // Spec §7: expose the public runtime API. Only constructed on the success
     // path (after private-mode detection + openDB() + block-id seeding) so
     // documents never see a half-initialized runtime. Private-mode early-return
@@ -5550,6 +5626,7 @@ document.addEventListener('keydown', e => {
       describe: runtimeDescribe, // rwa-identity/1 — what this container is + can do
       listSkills: runtimeListSkills, // v0.8 §8 — installed skills (provenance:'installed')
       invokeSkill: runtimeInvokeSkill, // v0.8 §5a — run a skill in an isolated Worker
+      vault: { get: runtimeVaultGet, set: runtimeVaultSet, has: runtimeVaultHas, namespaces: runtimeVaultNamespaces, unlock: runtimeVaultUnlock, lock: runtimeVaultLock, isLocked: runtimeVaultIsLocked }, // v0.8 §6
     };
     // `status` is a getter so each read returns a fresh snapshot of
     // dirty/fsa/storage; an enumerable data prop would let stale references

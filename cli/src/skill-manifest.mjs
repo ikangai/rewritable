@@ -81,6 +81,13 @@ export function matchNetworkOrigin(pattern, host) {
   return host === pattern;
 }
 
+/** §6 — does a skill's permission set grant a vault namespace? Exact vault:<ns> match.
+ *  Pure; the bridge's per-call vault gate (mirrored in the seed). */
+export function vaultNamespaceAllowed(permissions, ns) {
+  const perms = Array.isArray(permissions) ? permissions : [];
+  return perms.indexOf('vault:' + ns) !== -1;
+}
+
 /** §3.4 install gates. Pure; takes the verification result so it stays synchronous. */
 export function validateInstall(envelope, { signed, verified } = {}) {
   const skill = (envelope && envelope.skill) || {};

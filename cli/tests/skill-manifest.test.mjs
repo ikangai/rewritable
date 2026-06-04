@@ -158,3 +158,13 @@ test('matchNetworkOrigin: multi-label wildcard = base + any depth', () => {
 test('matchNetworkOrigin: catch-all', () => {
   assert.equal(matchNetworkOrigin('*', 'anything.example'), true);
 });
+
+// §6 vault namespace gate (the bridge's per-call vault check; mirrored in the seed)
+import { vaultNamespaceAllowed } from '../src/skill-manifest.mjs';
+test('vaultNamespaceAllowed: exact vault:<ns> match', () => {
+  assert.equal(vaultNamespaceAllowed(['vault:github-prod'], 'github-prod'), true);
+  assert.equal(vaultNamespaceAllowed(['vault:github-prod'], 'github-stage'), false);
+  assert.equal(vaultNamespaceAllowed(['network:api.x'], 'github-prod'), false);
+  assert.equal(vaultNamespaceAllowed(['vault:a', 'vault:b'], 'b'), true);
+  assert.equal(vaultNamespaceAllowed([], 'x'), false);
+});
