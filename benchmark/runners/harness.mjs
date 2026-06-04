@@ -126,7 +126,27 @@ export async function fresh(opts = {}) {
     setFetchHandler(h) { fetchHandler = h; },
     bootstrapErrors: () => errors.slice(),
     readSeedBytes: () => SEED_HTML,
-    dispose() { try { window.close(); } catch (_) { /* swallow */ } },
+    // Drain the in-flight commit tail against a LIVE window before teardown.
+    // A commit through commitCore() resolves its IDB writes on setImmediate
+    // (fake-indexeddb's scheduler) and then defers emitRuntimeEvent to a
+    // microtask (Fix I2); a surface like SKIN-02's swatch click also leaves a
+    // fire-and-forget applySkin(...) tail. A scenario that breaks as soon as
+    // the doc renders (SKIN-02 polls getDoc) disposes while that tail is still
+    // suspended on an IDB await. Closing synchronously — or on setTimeout(0),
+    // which fires in the timers phase BEFORE the check phase where the IDB
+    // completion runs — lets the tail fire post-close on a torn-down
+    // `document`: it throws, and jsdom's microtask error reporter then crashes
+    // reading `window.location` (null `_document`) — the SNAPSHOT-01 process
+    // crash. setImmediate runs in the check phase alongside the IDB completion,
+    // so draining a few cycles (measured tail: 1) lets the whole tail —
+    // including the trailing emit microtask each await flushes — settle while
+    // the window is still alive. Fire-and-forget: callers stay synchronous.
+    dispose() {
+      (async () => {
+        for (let i = 0; i < 4; i++) await new Promise(r => setImmediate(r));
+        try { window.close(); } catch (_) { /* swallow */ }
+      })();
+    },
   };
 
   return ctx;
