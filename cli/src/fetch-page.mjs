@@ -54,28 +54,78 @@ function v4Category([a, b, c]) {
   return null;
 }
 
+// Expand an IPv6 literal into its full 16 bytes, dep-free: handles `::`
+// compression and an embedded dotted-quad tail (::ffff:a.b.c.d / ::a.b.c.d).
+// Returns a 16-element byte array, or null if it does not parse as v6. Operating
+// on bytes (not string regexes) makes the dotted and hex spellings of the same
+// address — e.g. ::ffff:127.0.0.1 and ::ffff:7f00:1 — classify identically.
+function expandV6(host) {
+  if (isIP(host) !== 6) return null;
+  let s = host.toLowerCase();
+  // Split out an embedded IPv4 tail (last group with dots) into two hex groups.
+  const dot = s.lastIndexOf(':');
+  const tail = s.slice(dot + 1);
+  let v4Bytes = null;
+  if (tail.includes('.')) {
+    const quad = parseV4(tail);
+    if (!quad) return null;
+    v4Bytes = quad;
+    s = s.slice(0, dot + 1); // keep trailing ':' so the group count stays right
+  }
+  // Split around the `::` compression point (at most one).
+  const halves = s.split('::');
+  if (halves.length > 2) return null;
+  const splitGroups = (part) => (part === '' ? [] : part.split(':').filter((g) => g !== ''));
+  const head = splitGroups(halves[0]);
+  const tailGroups = halves.length === 2 ? splitGroups(halves[1]) : [];
+  // Each remaining group is one 16-bit hex word; the v4 tail (if any) is 2 words.
+  const v4Words = v4Bytes ? 2 : 0;
+  const words = [];
+  for (const g of head) words.push(parseInt(g, 16));
+  if (halves.length === 2) {
+    const fill = 8 - head.length - tailGroups.length - v4Words;
+    if (fill < 0) return null;
+    for (let i = 0; i < fill; i++) words.push(0);
+  }
+  for (const g of tailGroups) words.push(parseInt(g, 16));
+  if (words.length !== 8 - v4Words) return null;
+  const bytes = [];
+  for (const w of words) { bytes.push((w >> 8) & 0xff, w & 0xff); }
+  if (v4Bytes) bytes.push(...v4Bytes);
+  if (bytes.length !== 16) return null;
+  return bytes;
+}
+
 // Normalize a v6 literal: returns a category string if it must be blocked, or
-// 'mapped:<v4>' to signal an IPv4-mapped address whose embedded v4 must be
-// re-checked, or null if it is a public v6 address.
+// 'mapped:<v4>' to signal an IPv4-mapped (or -compatible) address whose embedded
+// v4 must be re-checked through the v4 category logic, or null for a public v6.
 function v6Category(host) {
-  const lower = host.toLowerCase();
-  // IPv4-mapped (::ffff:a.b.c.d, optionally ::ffff:0:a.b.c.d) — must re-check
-  // the embedded v4 so ::ffff:127.0.0.1 cannot smuggle loopback past us.
-  const mapped = lower.match(/:(\d+\.\d+\.\d+\.\d+)$/);
-  if (mapped && /::ffff:/.test(lower)) return `mapped:${mapped[1]}`;
-  if (lower === '::1') return 'loopback';
-  if (lower === '::') return 'unspecified';
+  const b = expandV6(host);
+  if (!b) return null;
+  const allZeroThrough = (n) => b.slice(0, n).every((x) => x === 0);
+  // IPv4-mapped ::ffff:a.b.c.d — first 10 bytes zero, bytes 11-12 = 0xff,0xff.
+  if (allZeroThrough(10) && b[10] === 0xff && b[11] === 0xff) {
+    return `mapped:${b[12]}.${b[13]}.${b[14]}.${b[15]}`;
+  }
+  // ::1 loopback / :: unspecified (must come before the v4-compatible check).
+  if (allZeroThrough(15) && b[15] === 1) return 'loopback';
+  if (b.every((x) => x === 0)) return 'unspecified';
+  // Deprecated IPv4-compatible ::a.b.c.d — first 12 bytes zero, low 32 bits a
+  // real v4. Re-check the embedded v4 the same way as the mapped form.
+  if (allZeroThrough(12)) {
+    return `mapped:${b[12]}.${b[13]}.${b[14]}.${b[15]}`;
+  }
   // fc00::/7 — Unique Local Addresses (fc.. and fd..).
-  if (/^f[cd][0-9a-f]*:/.test(lower) || lower === 'fc00::1') return 'private';
-  // fe80::/10 — link-local (fe80..febf).
-  if (/^fe[89ab][0-9a-f]*:/.test(lower)) return 'link-local';
+  if ((b[0] & 0xfe) === 0xfc) return 'private';
+  // fe80::/10 — link-local.
+  if (b[0] === 0xfe && (b[1] & 0xc0) === 0x80) return 'link-local';
   return null;
 }
 
 // Classify a single IP literal (v4 or v6). Throws CloneError(blocked_host) for
 // any non-public address; returns silently for a public address. Shared by the
 // sync URL check and the async DNS-rebinding check.
-export function assertPublicIp(ip, host = ip) {
+function assertPublicIp(ip, host = ip) {
   const fam = isIP(ip);
   if (fam === 4) {
     const cat = v4Category(parseV4(ip));
