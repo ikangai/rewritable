@@ -87,6 +87,14 @@ check('runtime exposes reviewSkill + installSkill', typeof w.runtime?.reviewSkil
   const aprime = await makeSigned('github-helpr', 'compute', [], 'async function run(){}'); // distance 1, different key
   const rv = await w.runtime.reviewSkill(aprime);
   check('review: a lookalike name from a different key is flagged', rv.lookalike === 'github-helper');
+  // F4: EXACT-name impersonation (distance 0, DIFFERENT key) is the strongest spoof — must fire too
+  const exactImpostor = await makeSigned('github-helper', 'compute', [], 'async function run(){return 666}');
+  const rv2 = await w.runtime.reviewSkill(exactImpostor);
+  check('review: an EXACT-name skill from a DIFFERENT key is flagged as a lookalike (F4)', rv2.lookalike === 'github-helper');
+  // a genuine self-update (SAME key, same name) must NOT false-fire as a lookalike
+  const selfUpdate = { ...a, skill: { ...a.skill, code: 'async function run(){return 1}' } };
+  const rv3 = await w.runtime.reviewSkill(selfUpdate);
+  check('review: a same-key same-name update is NOT a lookalike (no false positive)', rv3.lookalike === null);
 }
 
 console.log(`\n== ${pass} pass, ${fail} fail ==`);

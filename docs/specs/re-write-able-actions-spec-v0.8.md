@@ -203,7 +203,15 @@ bootstrap that, **before loading the skill code**, sets these globals to non-wri
 `WebSocket`, `EventSource`, `indexedDB`, `eval`, `Function` (`window`/`document`/`sessionStorage` do not
 exist in a Worker). Then:
 
-- **`compute` (bridgeless):** no `fetch`, no `vault` — nothing to reach. "Zero capability" is structural.
+- **`compute` (bridgeless):** no `fetch`, no `vault` — the bridge is never installed. **Caveat (known gap):**
+  the global-removal list (§5a.2) cannot neutralize dynamic `import()` — it is a syntactic operator, not a
+  `self` property — so a classic Worker can still reach the network via `import('https://…')`. The runtime
+  therefore **rejects skill code containing `import(`** at install *and* invoke (`dynamic_import_forbidden`,
+  every kind). That reject is a speed-bump, not the wall — it is evadable via the Function-constructor→`import`
+  chain (which the capability scan flags). The structural wall against `import()` is a **worker-scoped CSP that
+  includes `script-src` (not just `connect-src`)**, tracked as increment 7b; until it lands, compute's
+  "zero network" is defense-in-depth, not absolute. "Zero capability is structural" holds for the *bridge*
+  surface (no `fetch`/`vault`), not yet for dynamic code loading.
 - **`tool` (bridged):** the bootstrap installs proxied `fetch` and `runtime.vault` that tunnel over the
   message channel. Each message carries a per-invocation `identity_tag` (`crypto.randomUUID()` minted at
   spawn, validated on the main thread to bind the message to this live invocation — anti-confusion, not a
@@ -218,13 +226,18 @@ invoke → terminate. A `fetch` to an origin not matching the skill's `network:`
 timeout as `timeout`.
 
 **Capability scan** runs on the envelope (manifest + code string) **before persistence**: a regex heuristic
-(`\beval\s*\(`, `\bFunction\s*\(`, string-first `setTimeout`/`setInterval`, computed-member access). It is
-**advisory and incomplete** (evadable via `Function.prototype.constructor`, blind to `postMessage`): its
-output is a dialog note, **never an auto-reject**. The defense that *holds* is structural (§5a), not the scan.
+(`\beval\s*\(`, `\bFunction\s*\(`, string-first `setTimeout`/`setInterval`, computed-member access,
+`\bimport\s*\(`). It is **advisory and incomplete** (evadable via `Function.prototype.constructor`, blind to
+`postMessage`): its output is a dialog note, **never an auto-reject** — *except* dynamic `import(`, which is a
+hard reject (`dynamic_import_forbidden`, §5 caveat) because it is an un-gated network channel, not merely a
+code-execution smell. The defense that *holds* is structural (§5a), not the scan.
 
 ### 5a. Worker spawn & bridge (normative)
 1. **Spawn.** From the persisted code string, build a blob Worker: a runtime bootstrap prologue + the skill
-   code. (Module vs classic worker is an impl choice; classic + `self`-scoped is sufficient.)
+   code. (Classic vs module worker is **security-load-bearing**, not a free impl choice: a classic blob worker
+   supports dynamic `import()`, which the global-removal cannot stop — see the §5 compute caveat. The real fix
+   is a worker-scoped CSP with `script-src`/`default-src`/`worker-src`, verified in Chromium to actually block
+   `import()` of a remote URL; tracked as 7b. Until then `import(` is rejected in skill code as defense-in-depth.)
 2. **Global removal, synchronously before the skill code runs.** For each of `importScripts`, `Worker`,
    `SharedWorker`, `ServiceWorkerContainer`, `XMLHttpRequest`, `WebSocket`, `EventSource`, `indexedDB`,
    `eval`, `Function`: `Object.defineProperty(self, name, {value: undefined, writable: false, configurable:
@@ -369,8 +382,11 @@ Carries v0.7 invariants 10 (install is the trust anchor), 16 (identity anchored 
 (permission patterns left-anchored & typed). Adds:
 
 - **18 — Every skill executes in a Web Worker.** No main-thread skill path exists; compute runs bridgeless,
-  capability skills run with the `fetch`/`vault` bridge as the sole I/O path. The dialog's boundary claim is
-  true for every kind because of this.
+  capability skills run with the `fetch`/`vault` bridge as the sole I/O path. **Known gap (see §5 caveat):**
+  the bridge is the sole *bridged* path, but a classic Worker's dynamic `import()` is a parallel network
+  channel the global-removal cannot close; `import(` is hard-rejected as a speed-bump, and the structural
+  closure (worker-scoped `script-src` CSP) is increment 7b. So the dialog's network-boundary claim is true for
+  the bridge surface and for `import(`-free code, not yet absolute against the Function-constructor→`import` chain.
 - **19a — No one but the runtime may write the frozen skill zone.** The agent/lens can never write it (the
   `data-rwa-frozen` snapshot-equality guard rejects any drift — this exists today).
 - **19b — The runtime is the *active* writer of the zone**, via `runtimeRegionCommit` (`reachability:'frozen'`,
@@ -410,7 +426,9 @@ v0.8 is proven when, on a real `rwa new --kind skill-host` container, these pass
 3. Invoke `gh-stars` → Worker spawn → globals removed → bridged fetch: `api.github.com` allowed, `evil.com`
    denied by **both** CSP and the bridge → terminate (the whole trust model).
 4. Invoke `word-count` in a bridgeless Worker; **assert it cannot read `sessionStorage`/`indexedDB`/
-   `document`/`fetch`** (Invariant 18 as a test, not a claim).
+   `document`/`fetch`** (Invariant 18 as a test, not a claim). Also assert a skill whose code uses dynamic
+   `import(` is **refused** (`dynamic_import_forbidden`) at install and invoke — and (once 7b lands) that a
+   worker-scoped CSP makes `import('https://<undeclared>/x')` itself reject inside both worker kinds.
 5. Update `gh-stars` (+`network:tracker.y`) → prose diff + re-affirmation (Shape C).
 6. Uninstall `gh-stars` → ⌘S → manifest gone from bytes → reload → CSP no longer lists `api.github.com`
    (Invariant 19 + CSP tighten).

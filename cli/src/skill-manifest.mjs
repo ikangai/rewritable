@@ -123,6 +123,7 @@ export function capabilityScan(code) {
   if (/\bFunction\s*\(/.test(c)) notes.push('Uses the Function constructor — dynamic code execution. Review what is being constructed.');
   if (/\b(setTimeout|setInterval)\s*\(\s*['"`]/.test(c)) notes.push('Calls setTimeout/setInterval with a string argument — review what is being scheduled.');
   if (/\b(globalThis|self|window)\s*\[/.test(c)) notes.push('Uses dynamic property indexing on a global — can reach APIs the permission manifest does not constrain. Review the code.');
+  if (/\bimport\s*\(/.test(c)) notes.push('Uses dynamic import() — can load remote code and reach the network outside the permission manifest.');
   return notes;
 }
 
@@ -171,12 +172,25 @@ export function verifyEnvelope(envelope) {
   }
 }
 
+/** Does an open tag carry `data-rwa-frozen` as a real attribute NAME (not a substring like
+ *  data-rwa-frozen-note= or class="…data-rwa-frozen")? Mirrors the seed's tagHasFrozenAttr —
+ *  trust-read MUST match the write-time frozen guard or a lookalike attribute forges trust. */
+function tagHasFrozenAttr(openTag) {
+  const am = /^<[a-zA-Z][a-zA-Z0-9]*((?:\s[^>]*)?)\/?>$/.exec(openTag);
+  if (!am) return false;
+  const attrRe = /([^\s=/>]+)(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+))?/g;
+  let a;
+  while ((a = attrRe.exec(am[1])) !== null) if (a[1] === 'data-rwa-frozen') return true;
+  return false;
+}
+
 /** Locate the inner HTML of the agent-unreachable `<div data-rwa-frozen id="rwa-skills">` zone.
  *  Only this zone is trusted (§8): a skill <script> elsewhere in the editable doc is ignored.
+ *  STRICT data-rwa-frozen attribute-name check (not substring) so a lookalike cannot forge trust.
  *  Safe with a flat scan because envelopes are base64 (no </div> in the content). */
 function extractRwaSkillsZone(doc) {
   const open = /<div\b[^>]*\bid="rwa-skills"[^>]*>/i.exec(String(doc || ''));
-  if (!open || !/\bdata-rwa-frozen\b/i.test(open[0])) return null;
+  if (!open || !tagHasFrozenAttr(open[0])) return null;
   const start = open.index + open[0].length;
   const end = doc.indexOf('</div>', start);
   return end < 0 ? null : doc.slice(start, end);

@@ -32,6 +32,23 @@ test('empty zone → empty list', async () => {
   assert.deepEqual(parseSkillZone(docWithZone()), []);
 });
 
+// F2 (security): a LOOKALIKE data-rwa-frozen attribute must NOT be trusted — only a real
+// attribute NAME. Else an agent-committed fake #rwa-skills div forges an installed skill in
+// the static `rwa doc --json` projection. Mirrors the seed's strict tagHasFrozenAttr check.
+test('lookalike data-rwa-frozen attribute is NOT trusted (no forgery)', async () => {
+  const env = await makeSigned('forged', 'tool', ['network:api.evil.test'], 'async function run(){}');
+  const blk = scriptBlock(env);
+  for (const fakeOpen of [
+    `<div id="rwa-skills" data-rwa-frozen-note="x">`,   // attribute-name prefix lookalike
+    `<div id="rwa-skills" class="box data-rwa-frozen">`, // value-substring lookalike
+    `<div id="rwa-skills" data-rwa-frozenish>`,          // suffix lookalike
+  ]) {
+    assert.deepEqual(parseSkillZone(`<article></article>\n${fakeOpen}${blk}</div>`), [], `forged via ${fakeOpen}`);
+  }
+  // control: a genuine attribute IS trusted
+  assert.equal(parseSkillZone(docWithZone(blk)).length, 1);
+});
+
 test('a signed tool is reported verified, with skillId + provenance', async () => {
   const env = await makeSigned('gh-stars', 'tool', ['network:api.github.com'], 'async function run(i,r){return r.fetch("https://api.github.com")}');
   const list = parseSkillZone(docWithZone(scriptBlock(env)));

@@ -4081,7 +4081,11 @@ async function _skVerify(env) {
 // trusted; base64 envelopes contain no </div> so a flat scan is safe.
 function _skExtractZone(doc) {
   const open = /<div\b[^>]*\bid="rwa-skills"[^>]*>/i.exec(String(doc || ''));
-  if (!open || !/\bdata-rwa-frozen\b/i.test(open[0])) return null;
+  // STRICT: data-rwa-frozen must be a real attribute NAME (tagHasFrozenAttr), not a substring
+  // match — else a lookalike (data-rwa-frozen-note=…, class="…data-rwa-frozen") would be trusted
+  // as the runtime-owned zone and an agent-committed fake #rwa-skills div could forge an installed
+  // skill. This MUST match the commit-time guard (dataRwaFrozenSnapshot) so trust-read == write-guard.
+  if (!open || !tagHasFrozenAttr(open[0])) return null;
   const start = open.index + open[0].length;
   const end = doc.indexOf('</div>', start);
   return end < 0 ? null : doc.slice(start, end);
@@ -4212,7 +4216,16 @@ function _skCapabilityScan(code) {
   if (/\bFunction\s*\(/.test(c)) notes.push('Uses the Function constructor — dynamic code execution.');
   if (/\b(setTimeout|setInterval)\s*\(\s*['"`]/.test(c)) notes.push('Calls setTimeout/setInterval with a string argument — review what is being scheduled.');
   if (/\b(globalThis|self|window)\s*\[/.test(c)) notes.push('Uses dynamic property indexing on a global — can reach APIs the permission manifest does not constrain.');
+  if (/\bimport\s*\(/.test(c)) notes.push('Uses dynamic import() — can load remote code and reach the network outside the permission manifest.');
   return notes;
+}
+// F1 hard guard: dynamic import() is a network/code channel the Worker global-removal CANNOT close
+// (it's a syntactic operator, not a `self` property). Until a worker-scoped CSP (script-src, 7b)
+// is the real wall, REFUSE skill code that uses it — at install AND invoke, for every kind. This is
+// defense-in-depth (evadable via the Function constructor, which the capability scan flags), not the
+// wall, but it blocks the low-friction exfil path that falsifies compute's "zero network" property.
+function _skCodeForbidden(code) {
+  return /\bimport\s*\(/.test(String(code || '')) ? 'dynamic_import_forbidden' : null;
 }
 function _skLevenshtein(a, b) {
   a = String(a); b = String(b); const m = a.length, n = b.length;
@@ -4238,7 +4251,11 @@ async function runtimeReviewSkill(envelope) {
   let lookalike = null;
   for (const s of installedSkills.values()) {
     const d = _skLevenshtein(s.name, skill.name);
-    if (s.manifest && s.manifest.author_pubkey !== skill.author_pubkey && d >= 1 && d <= 2 && String(skill.name).length >= 4) { lookalike = s.name; break; }
+    // A DIFFERENT key with the same/near name is impersonation. Exact-name (d===0) ALWAYS fires —
+    // it's the strongest spoof and the §3.3 case lookalike is responsible for; a near miss (1–2 edits)
+    // fires only when both names are long enough that 1–2 edits is "similar", not "unrelated".
+    const exact = d === 0, near = d >= 1 && d <= 2 && String(skill.name).length >= 4 && String(s.name).length >= 4;
+    if (s.manifest && s.manifest.author_pubkey !== skill.author_pubkey && (exact || near)) { lookalike = s.name; break; }
   }
   return {
     name: skill.name, version: skill.version, kind: skill.kind,
@@ -4286,6 +4303,8 @@ function _skSkillsRegion() {
 async function runtimeInstallSkill(envelope) {
   const review = await runtimeReviewSkill(envelope);
   if (!review.gates.ok) return { ok: false, errors: review.gates.errors };
+  const forbidden = _skCodeForbidden((envelope.skill || {}).code);
+  if (forbidden) return { ok: false, errors: [forbidden] };
   const skill = envelope.skill, id = await _skSkillId(skill.name, skill.author_pubkey);
   const prev = installedSkills.get(id); // present ⇒ this is an update
   installedSkills.set(id, { skillId: id, kind: skill.kind, name: skill.name, verified: review.verified, manifest: skill, code: skill.code, envelope });
@@ -4406,8 +4425,18 @@ const SKILL_WORKER_PROLOGUE = `(function(){
 function runtimeInvokeSkill(skillId, input) {
   const skill = installedSkills.get(skillId);
   if (!skill) return Promise.reject(new Error('skill_not_found'));
-  const identity_tag = crypto.randomUUID();
   const isTool = skill.kind === 'tool';
+  // §3.4/Inv 20 gate at the capability boundary: a `tool` that did not re-verify from the bytes
+  // (unsigned, or signed-then-tampered → boot re-verify flips verified:false) must NOT reach the
+  // fetch/vault bridge. This makes boot-time re-verification load-bearing and stops a hand-embedded
+  // unsigned tool skill (which loads at boot WITHOUT the install dialog) from getting bridge access.
+  // Compute skills are bridgeless/zero-capability, so they need no verified gate.
+  if (isTool && !skill.verified) return Promise.reject(new Error('unsigned_capability'));
+  // F1: refuse code with dynamic import() before any Worker spawns — covers boot-loaded/forged
+  // skills (which never passed through runtimeInstallSkill's gate), every kind.
+  const forbidden = _skCodeForbidden(skill.code);
+  if (forbidden) return Promise.reject(new Error(forbidden));
+  const identity_tag = crypto.randomUUID();
   const blob = new Blob([SKILL_WORKER_PROLOGUE + '\n' + String(skill.code || '')], { type: 'text/javascript' });
   const url = URL.createObjectURL(blob);
   const w = new Worker(url);
