@@ -26,7 +26,7 @@ Spec: `docs/specs/re-write-able-actions-spec-v0.8.md`. Built on branch `feat/ski
    (no seed edit — `SYSTEM_PROMPTS['skill-host']` deferred to the document fallback / the seed slice). `rwa new
    --kind skill-host` + `rwa doc` (kind:'skill-host', [] affordances) green. ⇐ end of the additive, mergeable foundation.
 
-5. **Seed runtime: registry + describe union** — `installedSkills` Map, `runtime.installSkill/uninstall/
+5. **[DONE — see commit] Seed runtime: registry + describe union — `installedSkills` Map, `runtime.installSkill/uninstall/
    invoke/listSkills`; `runtimeProvide` accept `'tool'`; `runtimeDescribe` add `'tool'` + union installed
    skills. Mirror the skill-manifest logic into the seed. **SEED EDIT.** Tests: `tests/` (jsdom) +
    re-pin the 4-site mirror tests.
