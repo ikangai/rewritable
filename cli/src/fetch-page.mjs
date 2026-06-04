@@ -49,7 +49,11 @@ function v4Category([a, b, c]) {
   if (a === 172 && b >= 16 && b <= 31) return 'private'; // 172.16/12
   if (a === 192 && b === 168) return 'private'; // 192.168/16
   if (a === 100 && b >= 64 && b <= 127) return 'reserved'; // 100.64/10 CGNAT
-  if (a === 192 && b === 0 && c === 2) return 'reserved'; // 192.0.2/24 TEST-NET
+  if (a === 192 && b === 0 && c === 2) return 'reserved'; // 192.0.2/24 TEST-NET-1
+  if (a === 198 && (b === 18 || b === 19)) return 'reserved'; // 198.18/15 benchmarking
+  if (a === 198 && b === 51 && c === 100) return 'reserved'; // 198.51.100/24 TEST-NET-2
+  if (a === 203 && b === 0 && c === 113) return 'reserved'; // 203.0.113/24 TEST-NET-3
+  if (a === 192 && b === 88 && c === 99) return 'reserved'; // 192.88.99/24 6to4 anycast
   if (a >= 224) return 'reserved';              // 224/4 multicast + 240/4 reserved
   return null;
 }
@@ -72,7 +76,9 @@ function expandV6(host) {
     v4Bytes = quad;
     s = s.slice(0, dot + 1); // keep trailing ':' so the group count stays right
   }
-  // Split around the `::` compression point (at most one).
+  // Split around the `::` compression point (at most one). The length-mismatch
+  // and multiple-`::` guards below are belt-and-suspenders — isIP() already
+  // rejected malformed literals, but we re-check on raw bytes for defence-in-depth.
   const halves = s.split('::');
   if (halves.length > 2) return null;
   const splitGroups = (part) => (part === '' ? [] : part.split(':').filter((g) => g !== ''));
@@ -115,10 +121,25 @@ function v6Category(host) {
   if (allZeroThrough(12)) {
     return `mapped:${b[12]}.${b[13]}.${b[14]}.${b[15]}`;
   }
+  // ff00::/8 — IPv6 multicast (mirrors the v4 224/4 block; closes the asymmetry).
+  if (b[0] === 0xff) return 'reserved';
   // fc00::/7 — Unique Local Addresses (fc.. and fd..).
   if ((b[0] & 0xfe) === 0xfc) return 'private';
   // fe80::/10 — link-local.
   if (b[0] === 0xfe && (b[1] & 0xc0) === 0x80) return 'link-local';
+  // 2001:db8::/32 — documentation range (RFC 3849), never routable.
+  if (b[0] === 0x20 && b[1] === 0x01 && b[2] === 0x0d && b[3] === 0xb8) return 'reserved';
+  // NAT64 64:ff9b::/96 — bytes 0-1 = 00 64, 2-3 = ff 9b, bytes 4-11 zero, the
+  // embedded v4 in bytes 12-15 is reachable through a NAT64 gateway. Re-check it.
+  if (b[0] === 0x00 && b[1] === 0x64 && b[2] === 0xff && b[3] === 0x9b &&
+      b.slice(4, 12).every((x) => x === 0)) {
+    return `mapped:${b[12]}.${b[13]}.${b[14]}.${b[15]}`;
+  }
+  // 6to4 2002::/16 — bytes 0-1 = 20 02, the embedded v4 is bytes 2-5; reachable
+  // through a 6to4 relay. Re-check the embedded v4.
+  if (b[0] === 0x20 && b[1] === 0x02) {
+    return `mapped:${b[2]}.${b[3]}.${b[4]}.${b[5]}`;
+  }
   return null;
 }
 
@@ -137,6 +158,8 @@ function assertPublicIp(ip, host = ip) {
     const cat = v6Category(ip);
     if (cat && cat.startsWith('mapped:')) {
       const v4 = cat.slice('mapped:'.length);
+      // [255,255] sentinel: if the embedded quad somehow fails to re-parse, force
+      // a blocking category (255 ⇒ a>=224 'reserved') rather than failing open.
       const c4 = v4Category(parseV4(v4) || [255, 255]);
       if (c4) throw new CloneError(2, 'blocked_host', { host, ip, category: c4,
         message: `blocked ${c4} address ${v4} (IPv4-mapped IPv6)` });
@@ -184,11 +207,11 @@ export function assertFetchableUrl(url) {
 
 // Resolve a non-literal hostname and re-classify every resolved address, so a
 // public-looking name that resolves to a private IP (DNS rebinding) is blocked.
-async function assertHostResolvesPublic(host) {
+async function assertHostResolvesPublic(host, lookupImpl = lookup) {
   if (isIP(host)) return; // already validated as a literal
   let addrs;
   try {
-    addrs = await lookup(host, { all: true });
+    addrs = await lookupImpl(host, { all: true });
   } catch (err) {
     throw new CloneError(2, 'fetch_failed', { host, message: `DNS lookup failed: ${err.message}` });
   }
@@ -198,14 +221,19 @@ async function assertHostResolvesPublic(host) {
   for (const { address } of addrs) assertPublicIp(address, host);
 }
 
-export async function fetchPage(url, { maxBytes = 3_000_000, timeoutMs = 15000, maxRedirects = 5 } = {}) {
+export async function fetchPage(url, { maxBytes = 3_000_000, timeoutMs = 15000, maxRedirects = 5, deps = {} } = {}) {
+  // Injection seam (testing only): defaults are the real node:dns lookup and the
+  // global fetch, so the public call signature is unchanged for real callers.
+  const lookupImpl = deps.lookup || lookup;
+  const fetchImpl = deps.fetchImpl || fetch;
+
   let current = assertFetchableUrl(url);
-  await assertHostResolvesPublic(bareHost(current.hostname));
+  await assertHostResolvesPublic(bareHost(current.hostname), lookupImpl);
 
   let response;
   for (let hop = 0; ; hop++) {
     try {
-      response = await fetch(current.href, {
+      response = await fetchImpl(current.href, {
         redirect: 'manual',
         signal: AbortSignal.timeout(timeoutMs),
         headers: {
@@ -220,7 +248,7 @@ export async function fetchPage(url, { maxBytes = 3_000_000, timeoutMs = 15000, 
     // 3xx with a Location → manual per-hop revalidation (NEVER redirect:'follow').
     if (response.status >= 300 && response.status < 400 && response.headers.get('location')) {
       if (hop >= maxRedirects) {
-        throw new CloneError(2, 'too_many_redirects', { url, hops: hop + 1 });
+        throw new CloneError(2, 'too_many_redirects', { url: current.href, hops: hop + 1 });
       }
       let next;
       try {
@@ -229,7 +257,7 @@ export async function fetchPage(url, { maxBytes = 3_000_000, timeoutMs = 15000, 
         throw new CloneError(2, 'fetch_failed', { url: current.href, message: 'malformed redirect Location' });
       }
       current = assertFetchableUrl(next.href);
-      await assertHostResolvesPublic(bareHost(current.hostname));
+      await assertHostResolvesPublic(bareHost(current.hostname), lookupImpl);
       continue;
     }
     break;
@@ -240,7 +268,10 @@ export async function fetchPage(url, { maxBytes = 3_000_000, timeoutMs = 15000, 
   }
 
   const contentType = response.headers.get('content-type') || '';
-  if (!/text\/html|application\/xhtml\+xml/i.test(contentType)) {
+  // Match the media type only — an unanchored substring test would wrongly pass
+  // e.g. `image/svg+xml; charset=text/html` (a parameter that mentions text/html).
+  const mime = contentType.split(';')[0].trim().toLowerCase();
+  if (mime !== 'text/html' && mime !== 'application/xhtml+xml') {
     throw new CloneError(2, 'not_html', { url: current.href, contentType });
   }
 
