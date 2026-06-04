@@ -108,5 +108,15 @@ console.log('== increment 5: seed skill registry + describe union ==');
   check('listSkills() empty on a fresh skill-host', w.runtime.listSkills().length === 0);
 }
 
+// 5. invokeSkill API surface (the ACTUAL Worker isolation, Invariant 18, is browser-only —
+//    jsdom has no Workers; verified in real Chrome. Here: existence + the no-Worker error path).
+{
+  const w = await boot(kindOverrides('skill-host').body);
+  check('runtime exposes invokeSkill', typeof w.runtime.invokeSkill === 'function');
+  let code = null;
+  try { await w.runtime.invokeSkill('nonexistent-id', {}); } catch (e) { code = e.message; }
+  check('invokeSkill rejects an unknown skillId with skill_not_found', code === 'skill_not_found');
+}
+
 console.log(`\n== ${pass} pass, ${fail} fail ==`);
 process.exit(fail ? 1 : 0);

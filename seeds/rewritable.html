@@ -4007,6 +4007,97 @@ async function readTrustworthySkills(doc) {
 function runtimeListSkills() {
   return Array.from(installedSkills.values()).map(s => ({ skillId: s.skillId, kind: s.kind, name: s.name, verified: s.verified }));
 }
+
+// §4/§5a — does a network: host pattern admit a host? Mirror of cli/src/skill-manifest.mjs
+// matchNetworkOrigin (keep in step). The bridge's per-call origin check.
+function _skMatchNetworkOrigin(pattern, host) {
+  if (pattern === '*') return true;
+  if (pattern.startsWith('**.')) { const base = pattern.slice(3); return host === base || host.endsWith('.' + base); }
+  if (pattern.startsWith('*.')) {
+    const label = pattern.slice(2);
+    if (!host.endsWith('.' + label)) return false;
+    const prefix = host.slice(0, host.length - label.length - 1);
+    return prefix.length > 0 && !prefix.includes('.');
+  }
+  return host === pattern;
+}
+function _skNetworkAllowed(skill, origin) {
+  let host; try { host = new URL(origin).host; } catch (_) { return false; }
+  const perms = (skill.manifest && Array.isArray(skill.manifest.permissions)) ? skill.manifest.permissions : [];
+  for (const p of perms) if (p.indexOf('network:') === 0 && _skMatchNetworkOrigin(p.slice(8), host)) return true;
+  return false;
+}
+
+// §5a — the Worker bootstrap prologue (runs FIRST in the blob worker, before the skill
+// code that defines `run(input, runtime)`). Removes capability globals; for a tool skill
+// installs bridged fetch/vault that tunnel over the message channel. This string must
+// contain no backticks, no dollar-brace, and no closing-script-tag substring (it lives in
+// the FROZEN bootstrap and must round-trip verbatim).
+const SKILL_WORKER_PROLOGUE = `(function(){
+  'use strict';
+  var REMOVE = ['importScripts','Worker','SharedWorker','ServiceWorkerContainer','XMLHttpRequest','WebSocket','EventSource','indexedDB','eval','Function','fetch'];
+  for (var i=0;i<REMOVE.length;i++){ try { Object.defineProperty(self, REMOVE[i], { value: undefined, writable: false, configurable: false }); } catch(_e){} }
+  var IDENTITY=null, BRIDGED=false, _seq=0, _pending=new Map(), RUNTIME={};
+  function _bridge(type, payload){ return new Promise(function(res,rej){ var id=++_seq; _pending.set(id,{res:res,rej:rej}); self.postMessage({ type:type, id:id, identity_tag:IDENTITY, payload:payload }); }); }
+  function _serializeOpts(o){ if(!o||typeof o!=='object') return undefined; var out={}; if(o.method) out.method=String(o.method); if(typeof o.body==='string') out.body=o.body; if(o.headers&&typeof o.headers==='object') out.headers=o.headers; return out; }
+  function _installBridge(){
+    RUNTIME.fetch=function(url,opts){ return _bridge('bridge:fetch',{ url:String(url), opts:_serializeOpts(opts) }); };
+    RUNTIME.vault={ get:function(ns,k){ return _bridge('bridge:vault',{op:'get',ns:ns,key:k}); }, set:function(ns,k,v){ return _bridge('bridge:vault',{op:'set',ns:ns,key:k,val:v}); }, has:function(ns,k){ return _bridge('bridge:vault',{op:'has',ns:ns,key:k}); } };
+  }
+  self.onmessage=function(e){
+    var msg=e.data; if(!msg) return;
+    if(msg.type==='init'){ IDENTITY=msg.identity_tag; BRIDGED=!!msg.bridged; if(BRIDGED) _installBridge(); return; }
+    if(msg.type==='bridge:response'){ var p=_pending.get(msg.id); if(p){ _pending.delete(msg.id); msg.ok? p.res(msg.result): p.rej(new Error(msg.error||'bridge_error')); } return; }
+    if(msg.type==='invoke'){
+      Promise.resolve().then(function(){ if(typeof run!=='function') throw new Error('skill defines no run(input, runtime)'); return run(msg.input, RUNTIME); })
+        .then(function(result){ self.postMessage({ type:'result', id:msg.id, identity_tag:IDENTITY, ok:true, result:result }); })
+        .catch(function(err){ self.postMessage({ type:'result', id:msg.id, identity_tag:IDENTITY, ok:false, error:String(err&&err.message||err) }); });
+      return;
+    }
+  };
+})();
+`;
+
+// §5a — invoke an installed skill in an isolated Worker. compute = bridgeless; tool =
+// bridged fetch/vault with per-call origin/namespace enforcement on THIS (main) thread.
+// Per-invocation identity_tag binds responses; 5s timeout; spawn -> invoke -> terminate.
+// (Vault is a stub until increment 8; CSP backstop is increment 7.)
+function runtimeInvokeSkill(skillId, input) {
+  const skill = installedSkills.get(skillId);
+  if (!skill) return Promise.reject(new Error('skill_not_found'));
+  const identity_tag = crypto.randomUUID();
+  const isTool = skill.kind === 'tool';
+  const blob = new Blob([SKILL_WORKER_PROLOGUE + '\n' + String(skill.code || '')], { type: 'text/javascript' });
+  const url = URL.createObjectURL(blob);
+  const w = new Worker(url);
+  let settled = false;
+  return new Promise((resolve, reject) => {
+    const finish = (fn, arg) => { if (settled) return; settled = true; clearTimeout(timer); try { w.terminate(); } catch (_) {} URL.revokeObjectURL(url); fn(arg); };
+    const timer = setTimeout(() => finish(reject, new Error('timeout')), 5000);
+    const reply = (id, ok, extra) => w.postMessage(Object.assign({ type: 'bridge:response', id, identity_tag, ok }, extra));
+    w.onmessage = async (e) => {
+      const msg = e.data;
+      if (!msg || msg.identity_tag !== identity_tag) return; // drop forged/stale tags
+      if (msg.type === 'result') { msg.ok ? finish(resolve, msg.result) : finish(reject, new Error(msg.error || 'runtime_error')); return; }
+      if (msg.type === 'bridge:fetch') {
+        let origin; try { origin = new URL(msg.payload.url).origin; } catch (_) { reply(msg.id, false, { error: 'invalid_argument' }); return; }
+        if (!_skNetworkAllowed(skill, origin)) { reply(msg.id, false, { error: 'permission_denied' }); return; }
+        try { const r = await fetch(msg.payload.url, msg.payload.opts || {}); reply(msg.id, true, { result: { status: r.status, ok: r.ok, body: await r.text() } }); }
+        catch (_) { reply(msg.id, false, { error: 'network_error' }); }
+        return;
+      }
+      if (msg.type === 'bridge:vault') {
+        // Vault not yet implemented (increment 8): get -> null, write -> locked.
+        if (msg.payload && msg.payload.op === 'get') reply(msg.id, true, { result: null });
+        else reply(msg.id, false, { error: 'vault_locked' });
+        return;
+      }
+    };
+    w.onerror = (e) => finish(reject, new Error('runtime_error: ' + (e.message || '')));
+    w.postMessage({ type: 'init', identity_tag, bridged: isTool });
+    w.postMessage({ type: 'invoke', id: 1, input });
+  });
+}
 // ─── end Skill runtime (shannon) ──────────────────────────────────────────────────
 
 function runtimeDescribe() {
@@ -4989,6 +5080,7 @@ document.addEventListener('keydown', e => {
       setView: runtimeSetView,   // spec §5.10 — activate/deactivate a render mode
       describe: runtimeDescribe, // rwa-identity/1 — what this container is + can do
       listSkills: runtimeListSkills, // v0.8 §8 — installed skills (provenance:'installed')
+      invokeSkill: runtimeInvokeSkill, // v0.8 §5a — run a skill in an isolated Worker
     };
     // `status` is a getter so each read returns a fresh snapshot of
     // dirty/fsa/storage; an enumerable data prop would let stale references

@@ -63,6 +63,24 @@ export function parsePermission(p) {
   throw new Error(`unknown_permission_tier: ${tier}`);
 }
 
+/** §4/§5a — does a `network:` host pattern admit a request host? The bridge's per-call
+ *  enforcement (mirrored verbatim in the seed). Left-anchored: `*.` = one label, `**.` =
+ *  base + any depth, `*` = catch-all, else exact. Validate the pattern with parsePermission first. */
+export function matchNetworkOrigin(pattern, host) {
+  if (pattern === '*') return true;
+  if (pattern.startsWith('**.')) {
+    const base = pattern.slice(3);
+    return host === base || host.endsWith('.' + base);
+  }
+  if (pattern.startsWith('*.')) {
+    const label = pattern.slice(2);
+    if (!host.endsWith('.' + label)) return false;
+    const prefix = host.slice(0, host.length - label.length - 1);
+    return prefix.length > 0 && !prefix.includes('.'); // exactly one label
+  }
+  return host === pattern;
+}
+
 /** §3.4 install gates. Pure; takes the verification result so it stays synchronous. */
 export function validateInstall(envelope, { signed, verified } = {}) {
   const skill = (envelope && envelope.skill) || {};

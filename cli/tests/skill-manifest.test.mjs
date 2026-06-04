@@ -134,3 +134,27 @@ test('verifyEnvelope reports unsigned envelopes as signed:false verified:false',
   assert.equal(r.signed, false);
   assert.equal(r.verified, false);
 });
+
+// §4/§5a network-origin enforcement (the bridge's per-call check; mirrored in the seed)
+import { matchNetworkOrigin } from '../src/skill-manifest.mjs';
+
+test('matchNetworkOrigin: exact host', () => {
+  assert.equal(matchNetworkOrigin('api.github.com', 'api.github.com'), true);
+  assert.equal(matchNetworkOrigin('api.github.com', 'evil.com'), false);
+  assert.equal(matchNetworkOrigin('api.github.com', 'api.github.com.evil.com'), false);
+});
+test('matchNetworkOrigin: single-label wildcard binds exactly one label', () => {
+  assert.equal(matchNetworkOrigin('*.github.com', 'api.github.com'), true);
+  assert.equal(matchNetworkOrigin('*.github.com', 'a.b.github.com'), false); // two labels
+  assert.equal(matchNetworkOrigin('*.github.com', 'github.com'), false);     // zero labels
+});
+test('matchNetworkOrigin: multi-label wildcard = base + any depth', () => {
+  assert.equal(matchNetworkOrigin('**.github.com', 'github.com'), true);
+  assert.equal(matchNetworkOrigin('**.github.com', 'api.github.com'), true);
+  assert.equal(matchNetworkOrigin('**.github.com', 'a.b.github.com'), true);
+  assert.equal(matchNetworkOrigin('**.github.com', 'githubXcom'), false);
+  assert.equal(matchNetworkOrigin('**.github.com', 'notgithub.com'), false);
+});
+test('matchNetworkOrigin: catch-all', () => {
+  assert.equal(matchNetworkOrigin('*', 'anything.example'), true);
+});
