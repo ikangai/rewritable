@@ -3806,6 +3806,13 @@ let modifyMutex = false;
 const providers = { view: null, 'edit-surface': null, compute: null };
 let activeView = null;
 
+// ─── Skill runtime (shannon): installed-skill registry (v0.8 actions spec §5/§8) ──
+// Map<skillId, {skillId, kind, name, verified, manifest, code}>. Populated at boot from
+// the frozen #rwa-skills zone (readTrustworthySkills, below) and read by
+// runtimeDescribe()/runtimeListSkills(). The agent can never write the zone (it is
+// data-rwa-frozen); only the runtime rewrites it (increment 7, registry-aware commit).
+const installedSkills = new Map();
+
 const RWA_VIEW_RESERVED_IDS = ['rwa-doc-mount', 'rwa-lens', 'rwa-runtime'];
 const RWA_VIEW_RESERVED_MARKERS = ['rwa:frozen:begin', 'rwa:frozen:end', 'data-rwa-frozen'];
 
@@ -3850,7 +3857,7 @@ function validateViewOutput(html, spec) {
 // edit/compute logic; the provider just makes describe() report the affordance
 // LIVE (spec §3.1 — no ui()/logic() execution contract invented in v1).
 function runtimeProvide(kind, spec) {
-  if (kind !== 'view' && kind !== 'edit-surface' && kind !== 'compute') throw new Error('unknown provider kind: ' + kind);
+  if (kind !== 'view' && kind !== 'edit-surface' && kind !== 'compute' && kind !== 'tool') throw new Error('unknown provider kind: ' + kind);
   if (!spec || spec.kind !== kind) throw new Error(kind + " spec.kind must be '" + kind + "'");
   for (const f of ['name', 'label']) {
     if (spec[f] == null) throw new Error(kind + ' spec missing required field: ' + f);
@@ -3943,6 +3950,65 @@ function readTrustworthyDeclaration() {
   return list.filter(a => a && typeof a.kind === 'string' && typeof a.name === 'string');
 }
 
+// ─── Skill runtime (shannon): parse + verify installed skills (v0.8 §3/§8) ────────
+// LIVE mirror of cli/src/skill-manifest.mjs (parseSkillZone + skillId/signingMessage/
+// verifyEnvelope) in async WebCrypto — must compute the SAME canonicalManifest /
+// signingMessage / skillId so seed-live == CLI-static for the same bytes (4-site).
+// Lazy UTF-8 encoder: TextEncoder is a browser/Worker global, but instantiate it only
+// when a skill is actually parsed (a base container never reaches the skill path), so
+// the bootstrap never touches it at module-eval.
+let _skEncCache = null;
+function _skUtf8(s) { return (_skEncCache || (_skEncCache = new TextEncoder())).encode(String(s)); }
+const _skNUL = new Uint8Array([0]);
+function _skConcat() { let n = 0; for (const p of arguments) n += p.length; const o = new Uint8Array(n); let i = 0; for (const p of arguments) { o.set(p, i); i += p.length; } return o; }
+async function _skSha256(bytes) { return new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)); }
+function _skB64url(bytes) { let s = ''; for (const b of bytes) s += String.fromCharCode(b); return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); }
+function _skFromB64(b64) { const bin = atob(b64); const o = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) o[i] = bin.charCodeAt(i); return o; }
+function _skCanonicalManifest(m) { m = m || {}; return JSON.stringify({ author_pubkey: m.author_pubkey ?? null, kind: m.kind ?? null, name: m.name ?? null, permissions: Array.isArray(m.permissions) ? m.permissions : [], version: m.version ?? null }); }
+async function _skSigningMessage(m, code) { return _skSha256(_skConcat(_skUtf8(_skCanonicalManifest(m)), _skNUL, _skUtf8(String(code ?? '')))); }
+async function _skSkillId(name, pubkey) { return _skB64url(await _skSha256(_skConcat(_skUtf8(String(name)), _skNUL, _skUtf8(String(pubkey))))); }
+async function _skVerify(env) {
+  const sig = env && env.signature;
+  if (!sig) return false;
+  const skill = env.skill || {};
+  try {
+    const key = await crypto.subtle.importKey('raw', _skFromB64(skill.author_pubkey), { name: 'Ed25519' }, false, ['verify']);
+    return !!(await crypto.subtle.verify({ name: 'Ed25519' }, key, _skFromB64(sig), await _skSigningMessage(skill, skill.code)));
+  } catch (_) { return false; } // Ed25519 unsupported / bad bytes → verified:false (honest)
+}
+// Locate the inner HTML of the agent-unreachable <div data-rwa-frozen id="rwa-skills">
+// in the DOC TEXT (boot has the doc string before render). Only the frozen zone is
+// trusted; base64 envelopes contain no </div> so a flat scan is safe.
+function _skExtractZone(doc) {
+  const open = /<div\b[^>]*\bid="rwa-skills"[^>]*>/i.exec(String(doc || ''));
+  if (!open || !/\bdata-rwa-frozen\b/i.test(open[0])) return null;
+  const start = open.index + open[0].length;
+  const end = doc.indexOf('</div>', start);
+  return end < 0 ? null : doc.slice(start, end);
+}
+// Parse installed skills from the frozen zone, re-verifying each signature. Soft-fail
+// (a malformed block is skipped; no zone → empty). Returns a Map<skillId, record>.
+async function readTrustworthySkills(doc) {
+  const out = new Map();
+  const zone = _skExtractZone(doc);
+  if (!zone) return out;
+  const blocks = zone.matchAll(/<script\s+type="application\/rwa-skill\+json">([\s\S]*?)<\/script>/g);
+  for (const m of blocks) {
+    let env;
+    try { env = JSON.parse(atob(m[1].trim())); } catch (_) { continue; }
+    const skill = env && env.skill;
+    if (!skill || typeof skill.name !== 'string') continue;
+    const verified = await _skVerify(env);
+    const id = await _skSkillId(skill.name, skill.author_pubkey);
+    out.set(id, { skillId: id, kind: skill.kind, name: skill.name, verified, manifest: skill, code: skill.code });
+  }
+  return out;
+}
+function runtimeListSkills() {
+  return Array.from(installedSkills.values()).map(s => ({ skillId: s.skillId, kind: s.kind, name: s.name, verified: s.verified }));
+}
+// ─── end Skill runtime (shannon) ──────────────────────────────────────────────────
+
 function runtimeDescribe() {
   const doc = rwaIdentityDoc();
   // Same token the static reader counts (tools/self-description.mjs), so the two
@@ -3958,7 +4024,7 @@ function runtimeDescribe() {
   // runtime-verified vs only author-declared.
   const affordances = [];
   const seen = new Set();
-  for (const k of ['view', 'edit-surface', 'compute']) {
+  for (const k of ['view', 'edit-surface', 'compute', 'tool']) {
     const p = providers[k];
     if (p) { affordances.push({ kind: k, name: p.name, label: p.label, provenance: p.__provenance || 'first-party', verified: true }); seen.add(k + '\0' + p.name); }
   }
@@ -3970,6 +4036,16 @@ function runtimeDescribe() {
       affordances.push({ kind: a.kind, name: a.name, label: a.label, provenance: a.provenance || 'first-party' });
       seen.add(key);
     }
+  }
+  // Skill runtime (shannon): union INSTALLED skills (v0.8 §8) — provenance:'installed',
+  // `verified` from the boot-time re-checked Ed25519 signature. Registry/declared win
+  // on a (kind,name) collision (they were added to `seen` first).
+  for (const s of installedSkills.values()) {
+    if (!s || typeof s.name !== 'string') continue;
+    const key = s.kind + '\0' + s.name;
+    if (seen.has(key)) continue;
+    affordances.push({ kind: s.kind, name: s.name, skillId: s.skillId, provenance: 'installed', verified: s.verified || false });
+    seen.add(key);
   }
   return {
     rwa: 'self-description/1',
@@ -4875,6 +4951,15 @@ document.addEventListener('keydown', e => {
       doc = idRes.text;
       await idbPut(RWA.DOC, doc);
     }
+    // Skill runtime (shannon): populate the installed-skill registry from the frozen
+    // #rwa-skills zone (parse + re-verify) BEFORE the runtime is exposed, so describe()
+    // and the ⓘ panel see installed skills on first paint. Soft-fail: a bad/absent zone
+    // leaves the registry empty (a base container has none).
+    try {
+      const skMap = await readTrustworthySkills(doc);
+      installedSkills.clear();
+      skMap.forEach((v, k) => installedSkills.set(k, v));
+    } catch (_) { /* no installed skills */ }
     // Spec §7: expose the public runtime API. Only constructed on the success
     // path (after private-mode detection + openDB() + block-id seeding) so
     // documents never see a half-initialized runtime. Private-mode early-return
@@ -4903,6 +4988,7 @@ document.addEventListener('keydown', e => {
       provide: runtimeProvide,   // spec §5.10 — register a view provider
       setView: runtimeSetView,   // spec §5.10 — activate/deactivate a render mode
       describe: runtimeDescribe, // rwa-identity/1 — what this container is + can do
+      listSkills: runtimeListSkills, // v0.8 §8 — installed skills (provenance:'installed')
     };
     // `status` is a getter so each read returns a fresh snapshot of
     // dirty/fsa/storage; an enumerable data prop would let stale references
