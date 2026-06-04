@@ -205,7 +205,7 @@ function sanitizeMammothUrls(html) {
 // matches reliably. Edge cases (CDATA, malformed nesting) are over-stripped
 // rather than under-stripped — acceptable for an import path.
 const _ACTIVE_TAGS = ['script', 'iframe', 'object', 'embed', 'svg', 'math', 'link', 'meta', 'base'];
-function sanitizeImportedHtml(html) {
+export function sanitizeImportedHtml(html) {
   const warnings = [];
   let s = String(html);
   // 1) Drop active-content tags (open+close blocks, then self-closing/unmatched).
