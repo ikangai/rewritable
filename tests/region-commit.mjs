@@ -231,6 +231,37 @@ const skillsRegion = (inner) => ({
     iErr !== null && /(frozen_zone_violation|frozen_zone_corrupted)/.test(codeOf(iErr)));
   check('(i2) the frozen zone is unchanged by the attempted forge', (await i.window.getDoc()) === iDocBefore);
 
+  // ── (j): INSERT MODE — the FIRST install on a fresh skill-host has no
+  // #rwa-skills div yet. select returns null → the primitive inserts build() at
+  // insertAt(). This is the path shannon's incr-7 hits before any zone exists; it
+  // must create a *frozen* zone (re-assert passes) and change nothing else.
+  const FRESH = '<article>\n<p>fresh skill host</p>\n<div data-rwa-frozen id="other">KEEP-OTHER</div>\n</article>';
+  const j = await boot(FRESH);
+  const jBefore = await j.window.getDoc();
+  check('(j0) fixture sanity: no #rwa-skills zone exists yet', !/id="rwa-skills"/.test(jBefore));
+  const insertSkills = {
+    select: (doc) => doc.includes('id="rwa-skills"') ? null /* would splice; absent here */ : null,
+    insertAt: (doc) => { const at = doc.indexOf('</article>'); return at < 0 ? doc.length : at; },
+    build: () => '<div data-rwa-frozen id="rwa-skills">FIRST-INSTALL</div>\n',
+    frozenId: 'rwa-skills',
+  };
+  await j.window.runtimeRegionCommit({ regions: [insertSkills], actor: 'skill:install', reachability: 'frozen' });
+  await tick(); await tick();
+  const jAfter = await j.window.getDoc();
+  check('(j1) the #rwa-skills zone was INSERTED (FIRST-INSTALL present)',
+    /<div data-rwa-frozen id="rwa-skills">FIRST-INSTALL<\/div>/.test(jAfter));
+  check('(j2) insert is region-only — prose + #other untouched',
+    /fresh skill host/.test(jAfter) && /<div data-rwa-frozen id="other">KEEP-OTHER<\/div>/.test(jAfter));
+  // Second install on the now-existing zone: select finds it → splice (not insert).
+  await j.window.runtimeRegionCommit({
+    regions: [{ select: selectSkills, build: () => '<div data-rwa-frozen id="rwa-skills">SECOND</div>', frozenId: 'rwa-skills' }],
+    actor: 'skill:update', reachability: 'frozen',
+  });
+  await tick();
+  const jUpdated = await j.window.getDoc();
+  check('(j4) a follow-up install SPLICES the existing zone (insert→splice transition works)',
+    /SECOND/.test(jUpdated) && !/FIRST-INSTALL/.test(jUpdated) && !/id="rwa-skills"[\s\S]*id="rwa-skills"/.test(jUpdated));
+
   console.log(`\n${pass} pass, ${fail} fail` + (fail ? '   ← RED until runtimeRegionCommit lands' : '   ← GREEN'));
   process.exit(fail ? 1 : 0);
 })().catch(e => { console.error(e); process.exit(1); });
