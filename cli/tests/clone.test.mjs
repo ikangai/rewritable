@@ -27,3 +27,62 @@ test('cloneFromHtml is a valid rewritable per the edit contract (uuid present)',
   assert.ok(info.uuid && /[0-9a-f-]{36}/.test(info.uuid), 'has a DOC_UUID');
   rmSync(out, { force: true });
 });
+
+// Rule 9: these encode WHY escapeHtml is load-bearing — the cloned title and
+// the provenance URL are attacker-controlled (they come off a fetched page /
+// a user-supplied URL). Without escaping, a `<script>` in the title would
+// survive into the body, or a `"` in the URL would break out of the href
+// attribute. Each assertion fails if the corresponding escapeHtml() is removed.
+
+test('cloneFromHtml escapes HTML metacharacters in the page title', async () => {
+  // A page whose <title>/og:title carries markup + an ampersand. extractArticle
+  // reads the title; cloneFromHtml prepends it as an <h1>. If the title were
+  // not escaped, the raw <script> would land in the document body.
+  const evil = `<!doctype html><html><head>`
+    + `<meta property="og:title" content="Pwned <script>x</script> &amp; co">`
+    + `<title>Pwned <script>x</script> &amp; co</title></head>`
+    + `<body><article><p>Some real body text to extract.</p></article></body></html>`;
+  const out = '/tmp/clone-test3-' + process.pid + '.html';
+  await cloneFromHtml(evil, out, 'https://x.example/post/');
+  const info = await inspectDoc(out);
+  // The title-derived <h1> must NOT contain a raw executable <script> tag.
+  assert.ok(!/<script[\s>]/i.test(info.doc), 'no raw <script> from the title survives');
+  assert.ok(info.doc.includes('&lt;script&gt;'), 'the title <script> is HTML-escaped');
+  assert.ok(info.doc.includes('&amp;'), 'the title ampersand is HTML-escaped');
+  rmSync(out, { force: true });
+});
+
+test('cloneFromHtml escapes a double-quote in the sourceUrl (no attribute breakout)', async () => {
+  const out = '/tmp/clone-test4-' + process.pid + '.html';
+  // A URL containing a raw " — if interpolated unescaped into href="…" it would
+  // close the attribute and let trailing bytes become new attributes/markup.
+  await cloneFromHtml(fixture, out, 'https://x.example/a"b');
+  const info = await inspectDoc(out);
+  assert.ok(info.doc.includes('href="https://x.example/a&quot;b"'),
+    'the " in the URL is escaped to &quot; inside a single href attribute');
+  assert.ok(!info.doc.includes('href="https://x.example/a"b"'),
+    'the raw " does not appear unescaped inside the href value');
+  rmSync(out, { force: true });
+});
+
+test('cloneFromHtml records provenance inside an href attribute', async () => {
+  const out = '/tmp/clone-test5-' + process.pid + '.html';
+  await cloneFromHtml(fixture, out, 'https://www.ikangai.com/post/');
+  const info = await inspectDoc(out);
+  // Tighter than "appears anywhere": the provenance URL must be the value of an
+  // href attribute (a real clickable link), not just stray text.
+  assert.ok(info.doc.includes('href="https://www.ikangai.com/post/"'),
+    'provenance URL is an href attribute value');
+  rmSync(out, { force: true });
+});
+
+test('cloneFromHtml drops the provenance link for a non-http(s) sourceUrl (B1)', async () => {
+  const out = '/tmp/clone-test6-' + process.pid + '.html';
+  // Defence-in-depth: the wired path is SSRF-guarded, but the exported fn must
+  // be safe-by-default — a javascript: URL must never become a live href.
+  await cloneFromHtml(fixture, out, 'javascript:alert(1)');
+  const info = await inspectDoc(out);
+  assert.ok(!info.doc.includes('href="javascript:'),
+    'a javascript: sourceUrl never becomes a live href');
+  rmSync(out, { force: true });
+});

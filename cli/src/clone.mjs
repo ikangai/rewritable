@@ -32,8 +32,18 @@ export async function cloneFromHtml(html, outPath, sourceUrl) {
   // sanitizeImportedHtml returns { html, warnings }; we only need the cleaned body.
   const { html: clean } = sanitizeImportedHtml(content);
 
+  // Defence-in-depth: the wired path (cloneCmd → fetchPage) already validates
+  // the scheme, but this exported fn must be safe-by-default for any caller.
+  // Only http/https URLs become a live provenance <a href>; anything else
+  // (javascript:, data:, file:, …) renders as plain escaped text — no href —
+  // so a hostile scheme can never produce a clickable link in the cloned doc.
+  const safeProvenance = /^https?:\/\//i.test(String(sourceUrl));
+  const provenance = safeProvenance
+    ? `<a href="${escapeHtml(sourceUrl)}">${escapeHtml(sourceUrl)}</a>`
+    : escapeHtml(sourceUrl);
+
   const body = `<article>\n<h1>${escapeHtml(title)}</h1>\n${clean}\n`
-    + `<footer><p><small>Cloned from <a href="${escapeHtml(sourceUrl)}">${escapeHtml(sourceUrl)}</a></small></p></footer>\n</article>`;
+    + `<footer><p><small>Cloned from ${provenance}</small></p></footer>\n</article>`;
 
   const seed = await loadSeed(SEED_CANDIDATES);
   // Order matches the `rwa import` lesson: seed-level substitutions on the
