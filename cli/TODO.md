@@ -74,3 +74,5 @@ The CLI's agent loop in `cli/src/agent-loop.mjs` only retries on `no_tool_call` 
 The browser runtime (`seeds/rewritable.html:3220-3286`) feeds apply errors back to the model as `tool_result` (via `failureToToolResult`) and retries with the corrective context. Bringing this to the CLI would meaningfully improve robustness against models that emit "close-but-not-unique" envelopes — the model can refine its anchor and succeed on retry. Currently those models hard-fail.
 
 Tracked for v2. Affects `cli/src/agent-loop.mjs` and possibly the `runAgentLoop` API (would need an `applyFn` callback parameter).
+
+- `rwa clone` has no `--json` failure surface (other verbs do). Add a `jsonMode` branch to `emitClone` in `bin/rwa.mjs` if/when `rwa clone --json` is introduced.
