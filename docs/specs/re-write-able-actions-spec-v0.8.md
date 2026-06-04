@@ -238,8 +238,14 @@ output is a dialog note, **never an auto-reject**. The defense that *holds* is s
    the vault namespace from the call args, not the tag); it only routes responses. A message whose tag
    doesn't match the live invocation is **dropped**. It is never surfaced in errors or logs.
 5. **Enforcement (main-thread side).** On `fetch`: check `new URL(url).origin` against the manifest's
-   `network:` patterns → match ⇒ perform the real fetch and post back a structured-clone-safe response;
-   no-match ⇒ `permission_denied`. On vault: §6 namespace check + codes.
+   `network:` patterns → match ⇒ perform the real fetch (**`redirect:'error'`, forced after the opts spread**)
+   and post back a structured-clone-safe response; no-match ⇒ `permission_denied`. On vault: §6 namespace
+   check + codes. **Redirect handling is part of the boundary:** the pre-check only validates the *initial*
+   origin, so the bridge sets `redirect:'error'` — fetch rejects on ANY 3xx *without contacting the target*,
+   so a declared (or compromised) origin cannot redirect the request to an undeclared/internal origin and
+   bypass the allowlist (SSRF). A post-hoc `r.url` check would be too late (the redirect request would already
+   have been sent). Browser-proven: a 302 from a declared origin to an undeclared one yields `network_error`,
+   not the redirect target's body.
 6. **Lifecycle.** `Promise.race([result, 5s])`; on expiry `worker.terminate()` and resolve `{error:'timeout'}`.
    On `worker.onerror` ⇒ `{error:'runtime_error', message}`. Always `terminate()` after the single invoke
    (no pool). Input is validated against `input_schema` before spawn (`input_validation_error` on failure);
