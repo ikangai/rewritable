@@ -64,9 +64,20 @@ export async function publishSite(filePath, opts = {}, deps = {}) {
   const name = basename(filePath);
   if (!SAFE_NAME.test(name)) throw new CliError(1, 'invalid_name', { name });
 
-  // 4. Transport — added in a later task. For now, assemble the spec + result.
+  // 4. Transport. execFile with an ARGUMENT ARRAY (never a shell string), and
+  //    `--` so a leading-dash path is not parsed as an scp option. The local
+  //    source is an ABSOLUTE path so scp never mis-reads an embedded ':' as a
+  //    remote host. scp overwrites the destination → republish is idempotent.
   const remoteDir = remotePath.replace(/\/+$/, '');
   const remoteSpec = `${host}:${remoteDir}/${name}`;
+  try {
+    await execFile('scp', ['--', resolve(filePath), remoteSpec]);
+  } catch (e) {
+    if (e && e.code === 'ENOENT') throw new CliError(4, 'scp_not_found', {});
+    throw new CliError(4, 'transport_error', {
+      stderr: (e && e.stderr) || '', code: e && e.code, message: e && e.message,
+    });
+  }
 
   // 5. Result.
   const url = `${urlBase.replace(/\/+$/, '')}/${name}`;

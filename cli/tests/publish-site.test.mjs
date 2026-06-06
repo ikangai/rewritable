@@ -90,3 +90,56 @@ test('shell-injection filename → invalid_name (exit 1), scp never called', asy
   assert.equal(calls.length, 0, 'a dangerous name must never reach the transport');
   fx.cleanup();
 });
+
+test('success: scp argv is an array with -- before paths; stdout shape via return', async () => {
+  const fx = mkFixture('my-flow.html');
+  const { fn, calls } = fakeExec();
+  const r = await publishSite(fx.path, {}, { execFile: fn, env: FULL_ENV });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].cmd, 'scp');
+  // argv: ['--', <abs local path>, 'user@host:/var/www/r/my-flow.html']
+  assert.equal(calls[0].args[0], '--', 'first arg is -- so a leading-dash path is not an scp option');
+  assert.ok(calls[0].args[1].endsWith('/my-flow.html'), 'local source is the file');
+  assert.equal(calls[0].args[2], 'user@host:/var/www/r/my-flow.html', 'remote spec host:dir/name');
+  assert.equal(r.url, 'https://ikangai.com/r/my-flow.html');
+  fx.cleanup();
+});
+
+test('a --host flag overrides RWA_SITE_HOST in the remote spec', async () => {
+  const fx = mkFixture();
+  const { fn, calls } = fakeExec();
+  await publishSite(fx.path, { host: 'flag@host' }, { execFile: fn, env: FULL_ENV });
+  assert.ok(calls[0].args[2].startsWith('flag@host:'), 'flag host wins over env host');
+  fx.cleanup();
+});
+
+test('trailing slash in RWA_SITE_PATH / RWA_SITE_URL is normalized (no //)', async () => {
+  const fx = mkFixture('q1.html');
+  const { fn, calls } = fakeExec();
+  const r = await publishSite(fx.path, {}, { execFile: fn, env: {
+    RWA_SITE_HOST: 'user@host', RWA_SITE_PATH: '/var/www/r/', RWA_SITE_URL: 'https://ikangai.com/r/' } });
+  assert.equal(calls[0].args[2], 'user@host:/var/www/r/q1.html');
+  assert.equal(r.url, 'https://ikangai.com/r/q1.html');
+  fx.cleanup();
+});
+
+test('scp non-zero exit → transport_error (exit 4) carrying scp stderr verbatim', async () => {
+  const fx = mkFixture();
+  const fn = async () => { const e = new Error('cmd failed'); e.code = 255; e.stderr = 'Permission denied (publickey).'; throw e; };
+  await assert.rejects(
+    () => publishSite(fx.path, {}, { execFile: fn, env: FULL_ENV }),
+    (e) => e.exitCode === 4 && e.subcode === 'transport_error'
+      && e.details.stderr === 'Permission denied (publickey).',
+  );
+  fx.cleanup();
+});
+
+test('scp binary missing (ENOENT) → scp_not_found (exit 4)', async () => {
+  const fx = mkFixture();
+  const fn = async () => { const e = new Error('spawn scp ENOENT'); e.code = 'ENOENT'; throw e; };
+  await assert.rejects(
+    () => publishSite(fx.path, {}, { execFile: fn, env: FULL_ENV }),
+    (e) => e.exitCode === 4 && e.subcode === 'scp_not_found',
+  );
+  fx.cleanup();
+});
