@@ -2,6 +2,19 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<!-- 7b: worker-scoped CSP via page-policy inheritance. A blob Worker has no CSP of
+     its own — it inherits THIS document's policy (CSP3 §2.5.5), so this <meta> also
+     governs every skill Worker. `script-src 'unsafe-inline' blob:` runs the inline
+     bootstrap + blob worker code but admits NO remote origin, so a skill's dynamic
+     import()/importScripts()/Function-constructor cannot load or eval remote code —
+     the structural wall that closes F1 (the one Worker network channel §5a's
+     global-removal can't shut, because import() is a syntactic operator, not a
+     `self` property). Deliberately NO connect-src / default-src: the page must reach
+     runtime-configurable agent backends (⌘K) and render inline styles + skins, and
+     the worker has no direct fetch (§5a removes it) so connect-src is moot there;
+     adding either was measured to break ⌘K + skinning. Edit-unreachable (frozen
+     <head>, above INLINE_DOC). Verified in real Chromium at file://. -->
+<meta http-equiv="Content-Security-Policy" content="script-src 'unsafe-inline' blob:; worker-src blob:; object-src 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="rwa-bootstrap" content="0.9">
 <title>re-writeable</title>
@@ -4219,11 +4232,13 @@ function _skCapabilityScan(code) {
   if (/\bimport\s*\(/.test(c)) notes.push('Uses dynamic import() — can load remote code and reach the network outside the permission manifest.');
   return notes;
 }
-// F1 hard guard: dynamic import() is a network/code channel the Worker global-removal CANNOT close
-// (it's a syntactic operator, not a `self` property). Until a worker-scoped CSP (script-src, 7b)
-// is the real wall, REFUSE skill code that uses it — at install AND invoke, for every kind. This is
-// defense-in-depth (evadable via the Function constructor, which the capability scan flags), not the
-// wall, but it blocks the low-friction exfil path that falsifies compute's "zero network" property.
+// F1 guard: dynamic import() is a network/code channel the Worker global-removal CANNOT close
+// (it's a syntactic operator, not a `self` property). The STRUCTURAL wall is now the worker-scoped
+// CSP (7b): the frozen <head> `script-src 'unsafe-inline' blob:` is inherited by every blob Worker
+// (CSP3 §2.5.5), so import()/importScripts()/Function-ctor can't load or eval remote code —
+// verified in Chromium at file://. This reject stays as defense-in-depth: it gives a clean install-
+// time error and a readable failure code rather than relying on a silent CSP block — at install AND
+// invoke, for every kind. (The Function-constructor evasion is also closed by the CSP: no 'unsafe-eval'.)
 function _skCodeForbidden(code) {
   return /\bimport\s*\(/.test(String(code || '')) ? 'dynamic_import_forbidden' : null;
 }
@@ -4395,7 +4410,7 @@ function _skNetworkAllowed(skill, origin) {
 // the FROZEN bootstrap and must round-trip verbatim).
 const SKILL_WORKER_PROLOGUE = `(function(){
   'use strict';
-  var REMOVE = ['importScripts','Worker','SharedWorker','ServiceWorkerContainer','XMLHttpRequest','WebSocket','EventSource','indexedDB','eval','Function','fetch'];
+  var REMOVE = ['importScripts','Worker','SharedWorker','ServiceWorkerContainer','XMLHttpRequest','WebSocket','EventSource','indexedDB','eval','Function','fetch','WebAssembly'];
   for (var i=0;i<REMOVE.length;i++){ try { Object.defineProperty(self, REMOVE[i], { value: undefined, writable: false, configurable: false }); } catch(_e){} }
   var IDENTITY=null, BRIDGED=false, _seq=0, _pending=new Map(), RUNTIME={};
   function _bridge(type, payload){ return new Promise(function(res,rej){ var id=++_seq; _pending.set(id,{res:res,rej:rej}); self.postMessage({ type:type, id:id, identity_tag:IDENTITY, payload:payload }); }); }
@@ -4421,7 +4436,7 @@ const SKILL_WORKER_PROLOGUE = `(function(){
 // §5a — invoke an installed skill in an isolated Worker. compute = bridgeless; tool =
 // bridged fetch/vault with per-call origin/namespace enforcement on THIS (main) thread.
 // Per-invocation identity_tag binds responses; 5s timeout; spawn -> invoke -> terminate.
-// (Vault is a stub until increment 8; CSP backstop is increment 7.)
+// (Vault: increment 8. The worker-scoped CSP that walls remote import() is the frozen-<head> 7b meta.)
 function runtimeInvokeSkill(skillId, input) {
   const skill = installedSkills.get(skillId);
   if (!skill) return Promise.reject(new Error('skill_not_found'));

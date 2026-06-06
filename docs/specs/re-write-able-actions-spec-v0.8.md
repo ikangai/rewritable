@@ -16,12 +16,14 @@ Measured browser facts that ground every decision below (real Chrome, file:// an
 
 - Blob Web Workers **spawn** under `file://` and `http(s)`; a fresh worker has `importScripts`/`fetch`/
   `indexedDB`/`Worker`/`eval` by default, so the runtime must remove them.
-- `<meta http-equiv="Content-Security-Policy">` with `connect-src` **is enforced** under `file://` and
-  `http(s)` — a single file can constrain network reach with no server headers, even offline. Measured
-  further: in Chromium a `connect-src` meta injected by script **enforces even when inserted post-parse /
-  post-load** (both timings blocked a cross-origin fetch). This is more permissive than the HTML spec (which
-  says ignore post-parse meta-CSP), so CSP is treated as a **Chromium-measured backstop, not the primary
-  control** — see §4/§5: the Worker fetch-bridge is the primary, all-browser per-origin enforcement.
+- `<meta http-equiv="Content-Security-Policy">` **is enforced under `file://`** with no server headers, even
+  offline. Measured for 7b (real Chromium): a blob Worker **inherits the page's policy** (CSP3 §2.5.5), so a
+  page `script-src 'unsafe-inline' blob:` (no remote) makes a Worker's `import('https://…')` / `importScripts`
+  / Function-constructor→`import` all reject, while the inline runtime + blob workers + inline styles/skins +
+  the page's own `fetch` keep working. So 7b uses **`script-src`** (the Worker's code-loading channel — §7);
+  it deliberately does **not** use `connect-src` (it cannot enumerate the runtime-configurable agent backends,
+  and the Worker has no direct `fetch` anyway — the Worker fetch-bridge is the primary, all-browser per-origin
+  control for `tool` skills, §4/§5).
 - WebCrypto **Ed25519** sign/verify and **PBKDF2 + AES-GCM** both work with no CDN lib.
 - **OPFS throws under `file://`** — durable skill state lives in the file bytes + IDB, never OPFS.
 
@@ -38,8 +40,9 @@ The deltas from v0.7:
 3. **Permission tiers cut to two** that are cheaply enforceable: `network:` and `vault:`. `bus:`, `fsa:`,
    `idb:`-gating deferred to v0.9.
 4. **Worker pool cut entirely** — spawn → invoke → terminate, no pooling/idle-timeout/pressure/shutdown-ack.
-5. **CSP is boot-derived**, computed from the in-file skill manifests and injected as `<meta>` at boot —
-   replacing v0.7's "regenerate the frozen bootstrap CSP on every install," which would violate Invariant 1.
+5. **CSP is static, not derived** — a fixed `script-src` `<meta>` in the frozen `<head>` (7b) that a blob
+   Worker inherits, walling remote `import()`. It carries no per-skill data, so it never needs regeneration
+   (replacing v0.7's "regenerate the frozen bootstrap CSP on every install," which would violate Invariant 1).
 6. **Forced-Worker demoted from a policy to the universal rule** (all skills are isolated); the manifest
    `execution`/`tested_modes` fields are removed.
 7. **Vault downscoped to PBKDF2-200k + AES-GCM** (no Argon2id/WASM), machine-local.
@@ -159,15 +162,16 @@ weaken permissions under signed code. `canonicalJSON` is stable-key-ordered over
 
 ### 3.4 Signed vs unsigned
 Signatures are optional. **Unsigned ⇒ `verified:false`**, permitted only for `compute` (zero-capability)
-skills, rendered with weaker provenance language, and **an unsigned skill never contributes to the CSP
-`connect-src` union** (it cannot widen the page's network surface for anyone). Capability (`tool`) skills
-MUST be signed. There is no central registry; the key proves only that the bytes came from the key-holder.
+skills, rendered with weaker provenance language. An unsigned skill **can never reach the network**: `compute`
+gets no bridge at all, and `tool` (the only kind with a `fetch` bridge) MUST be signed. There is no central
+registry; the key proves only that the bytes came from the key-holder.
 
 **Install gate (normative).** The runtime MUST reject: an unsigned envelope that declares any permission
 (error `unsigned_with_permissions`); any `compute` envelope with non-empty `permissions`
 (`compute_with_permissions`); a `tool` envelope that is unsigned or fails verification (`unsigned_capability`).
-The boot CSP parser additionally **skips unsigned skills** (defense-in-depth against hand-edited bytes), so an
-unsigned skill can never widen `connect-src` even if its bytes were tampered to declare an origin.
+So even hand-edited bytes that declare an origin on an unsigned skill cannot reach it: a `compute` skill has no
+bridge, and an unsigned `tool` fails the install/boot signature gate before any bridge is installed. (The
+worker-scoped CSP, §7, governs code-loading — `script-src` — not per-skill network origins.)
 
 ### 3.5 Source identity & lookalike
 Per-key state lives in IDB `rwa_sources` (`pubkey → {count, first_seen}`), **rebuilt at boot from the in-file
@@ -183,10 +187,12 @@ Unicode-confusable folding and `name_history` are deferred to v0.9.
   wildcard (`*.github.com` matches exactly one label: `api.github.com`, not `a.b.github.com`), multi-label
   (`**.github.com` matches zero-or-more left labels: `github.com`, `api.github.com`, `api.v2.github.com`; `**`
   may appear only as a left prefix), catch-all (`*`). No left-unanchored wildcards,
-  no path matching, no IP wildcards. **Primary enforcement is the Worker fetch-bridge** per-call origin check
-  (raw `fetch` is removed in the Worker; works in every browser); the boot CSP `connect-src` union is a
-  **defense-in-depth backstop** (measured to enforce in Chromium, may be ignored by non-Chromium per the HTML
-  spec). The injected `connect-src` must be the *sole effective* connect-src policy (CSP policies intersect).
+  no path matching, no IP wildcards. **Enforcement is the Worker fetch-bridge** per-call origin check (raw
+  `fetch` is removed in the Worker, so a skill's only network path is the bridge; works in every browser).
+  v0.8 does **not** add a CSP `connect-src` backstop: it is infeasible (the page's network surface is
+  runtime-configurable — custom agent-backend base-URLs) and redundant (the Worker has no direct `fetch`; its
+  one non-bridge channel, `import()`, is closed by the §7 `script-src` CSP). The bridge is the *sole* network
+  enforcement for `network:` permissions.
 - **`vault:<namespace>`** — exact-match string (lowercase ASCII/digits/`-`/`_`, ≤64, no leading/trailing `-`).
   No wildcards. Enforced by the vault bridge's per-call namespace check.
 
@@ -203,15 +209,16 @@ bootstrap that, **before loading the skill code**, sets these globals to non-wri
 `WebSocket`, `EventSource`, `indexedDB`, `eval`, `Function` (`window`/`document`/`sessionStorage` do not
 exist in a Worker). Then:
 
-- **`compute` (bridgeless):** no `fetch`, no `vault` — the bridge is never installed. **Caveat (known gap):**
-  the global-removal list (§5a.2) cannot neutralize dynamic `import()` — it is a syntactic operator, not a
-  `self` property — so a classic Worker can still reach the network via `import('https://…')`. The runtime
-  therefore **rejects skill code containing `import(`** at install *and* invoke (`dynamic_import_forbidden`,
-  every kind). That reject is a speed-bump, not the wall — it is evadable via the Function-constructor→`import`
-  chain (which the capability scan flags). The structural wall against `import()` is a **worker-scoped CSP that
-  includes `script-src` (not just `connect-src`)**, tracked as increment 7b; until it lands, compute's
-  "zero network" is defense-in-depth, not absolute. "Zero capability is structural" holds for the *bridge*
-  surface (no `fetch`/`vault`), not yet for dynamic code loading.
+- **`compute` (bridgeless):** no `fetch`, no `vault` — the bridge is never installed. The global-removal list
+  (§5a.2) cannot neutralize dynamic `import()` — it is a syntactic operator, not a `self` property — so the
+  **structural** wall is the worker-scoped CSP (§7, 7b — landed): the frozen-`<head>`
+  `script-src 'unsafe-inline' blob:` is inherited by every blob Worker (CSP3 §2.5.5) and admits no remote
+  origin, so `import('https://…')`, `importScripts`, and the Function-constructor→`import` evasion (blocked by
+  the absence of `'unsafe-eval'`) all reject inside the Worker — verified in Chromium at file://. The runtime
+  ALSO **rejects skill code containing `import(`** at install *and* invoke (`dynamic_import_forbidden`, every
+  kind): defense-in-depth that yields a clean install-time error rather than relying on a silent CSP block.
+  With 7b landed, compute's "zero network" is **structural**, not a convention: no `fetch`/`vault` (bridge
+  never installed) AND no remote code loading (CSP). "Zero capability is structural" now holds for both.
 - **`tool` (bridged):** the bootstrap installs proxied `fetch` and `runtime.vault` that tunnel over the
   message channel. Each message carries a per-invocation `identity_tag` (`crypto.randomUUID()` minted at
   spawn, validated on the main thread to bind the message to this live invocation — anti-confusion, not a
@@ -235,9 +242,11 @@ code-execution smell. The defense that *holds* is structural (§5a), not the sca
 ### 5a. Worker spawn & bridge (normative)
 1. **Spawn.** From the persisted code string, build a blob Worker: a runtime bootstrap prologue + the skill
    code. (Classic vs module worker is **security-load-bearing**, not a free impl choice: a classic blob worker
-   supports dynamic `import()`, which the global-removal cannot stop — see the §5 compute caveat. The real fix
-   is a worker-scoped CSP with `script-src`/`default-src`/`worker-src`, verified in Chromium to actually block
-   `import()` of a remote URL; tracked as 7b. Until then `import(` is rejected in skill code as defense-in-depth.)
+   supports dynamic `import()`, which the global-removal cannot stop — see the §5 compute caveat. The fix
+   landed in 7b: a worker-scoped CSP via page-policy inheritance — the frozen-`<head>` `<meta>`
+   `script-src 'unsafe-inline' blob:; worker-src blob:; object-src 'none'` is inherited by the blob Worker
+   (CSP3 §2.5.5), verified in Chromium at file:// to block `import()` of a remote URL. `import(` is also
+   rejected in skill code as defense-in-depth.)
 2. **Global removal, synchronously before the skill code runs.** For each of `importScripts`, `Worker`,
    `SharedWorker`, `ServiceWorkerContainer`, `XMLHttpRequest`, `WebSocket`, `EventSource`, `indexedDB`,
    `eval`, `Function`: `Object.defineProperty(self, name, {value: undefined, writable: false, configurable:
@@ -288,7 +297,7 @@ AES-GCM auth fails throws **`vault_decrypt_failed`**; IDB quota/IO failure throw
 | Artifact | Lives in | Travels with file | Survives IDB eviction |
 |---|---|---|---|
 | Skill `{manifest, code, signature}` | `<div data-rwa-frozen id="rwa-skills">` (frozen zone), written at **install time** (durable in IDB before ⌘S) | **Yes** | Yes |
-| CSP `connect-src` union | recomputed at boot from the frozen zone, injected as `<meta>` in `<head>` | derived | derived |
+| Worker-scoped CSP (`script-src`) | **static** `<meta>` in the frozen `<head>` (7b); no runtime-derived data | **Yes** | Yes |
 | Vault ciphertext | IDB `rwa_vault` | **No (by design)** | No |
 | Vault session key | sessionStorage | No | No |
 | Source records | IDB `rwa_sources`, rebuilt at boot from in-file manifests | rebuilt | rebuilt |
@@ -316,14 +325,27 @@ it) and passes; any *other* writer's drift still fails. This single mechanism se
 `parseSkillZone` (§8) reverses it: base64-decode → `JSON.parse` → re-verify. It trusts **only** blocks inside
 the `data-rwa-frozen #rwa-skills` div (a skill `<script>` placed in the editable doc is ignored — agent cannot forge).
 
-**CSP** is a boot-time property: at boot the runtime parses the frozen zone, unions all *signed* skills'
-`network:` origins, and injects `<meta http-equiv="Content-Security-Policy" content="… connect-src 'self'
-<union> …">` into `<head>` before any skill runs. The injected `<meta>` enforces the *current* session
-(measured, §0); a *byte change* from install/uninstall is only re-read at the **next** boot. Boot resilience:
-a skill block that fails `JSON.parse` or signature re-verify is **skipped** (contributes zero origins, never
-blocks boot); an empty/absent zone ⇒ `connect-src 'self'`; if `<head>` is absent, injection is skipped and
-the Worker bridge remains the all-browser enforcement; the union is recomputed every boot, never cached. No
-live mutation of the base seed bootstrap — the `<meta>` lives in the skill-host head (preserving Invariant 1).
+**CSP** (7b — landed) is a **static** property of the frozen `<head>`, not a boot-injected union. The seed
+ships one `<meta http-equiv="Content-Security-Policy" content="script-src 'unsafe-inline' blob:; worker-src
+blob:; object-src 'none'">` above the bootstrap `<script>` (so it is edit-unreachable — agent/lens cannot
+weaken it, Invariant 1). A blob Worker has **no CSP of its own**; it inherits this document's policy
+(CSP3 §2.5.5), so the policy governs every skill Worker. `script-src` admits no remote origin ⇒ a skill's
+`import('https://…')` / `importScripts` / Function-constructor→`import` all reject inside the Worker;
+`worker-src blob:` permits the blob spawn while forbidding a remote worker URL. **Verified in real Chromium at
+file://** (a skill Worker's `import()` is blocked; the host boots, reaches its agent backends, and renders
+skins unchanged).
+
+This deliberately sets **no `connect-src`** and **no `default-src`**, reversing the earlier "boot-inject a
+union of signed skills' `network:` origins into `connect-src`" sketch, for two measured reasons. (1) A static
+`connect-src` is **infeasible**: agent backend base-URLs are runtime-configurable (custom ollama/lmstudio
+hosts in `sessionStorage`), so no author-time allowlist can be correct, and a `default-src`/`connect-src`
+policy was measured to break ⌘K. (2) It is **redundant**: a skill Worker has no direct `fetch` (§5a removes
+it), so `import()`/`script-src` is its only network channel (now closed), and tool-skill `fetch` is already
+gated per-manifest by the main-thread bridge. The wall lives where the threat is — the Worker's code-loading
+channel — not on the trusted page's network. Because the policy carries no runtime-derived data it needs no
+boot-time injection: it is present from parse, enforced for the host and every Worker it spawns, and travels
+in the file. The base bootstrap bytes are unchanged per container (preserving Invariant 1); the `<meta>` is a
+seed-version bump that all freshly-emitted containers carry.
 
 ---
 
@@ -359,8 +381,12 @@ execution); the install gate rejects them with a clear error.
 
 - **A — perm/code mismatch:** the capability scan is **advisory and incomplete** (evadable, blind to
   `postMessage`) — it informs the human, it is not the wall. What **holds** is *structural*: globals removed in
-  the Worker, the per-call bridge origin/namespace check, the CSP backstop. (Timing/WebRTC/DNS side-channels
-  are out of scope for v0.8.)
+  the Worker, the per-call bridge origin/namespace check, and the worker-scoped `script-src` CSP that walls
+  remote `import()` (§7, 7b). Adjacent code-execution channels are covered: WebAssembly is blocked (CSP has no
+  `'wasm-unsafe-eval'` — browser-measured — and `WebAssembly` is removed in §5a); `import()` URL normalization
+  (`../`) resolves before the CSP origin check, so path tricks don't widen it; `import()` of a self-minted
+  `blob:` runs but inherits the same policy (no remote, no `fetch`) so it is capability-neutral, not an escape.
+  (Timing/WebRTC/DNS side-channels are out of scope for v0.8.)
 - **B — declared perms misused:** outside any runtime's reach; the Attack-B disclosure is the only honest
   defense; the dialog asserts only the boundary, never benignity. Acknowledged, not defended.
 - **C — quiet capability expansion on update:** `skillId` decides update-vs-fresh; the previous manifest is
@@ -382,11 +408,20 @@ Carries v0.7 invariants 10 (install is the trust anchor), 16 (identity anchored 
 (permission patterns left-anchored & typed). Adds:
 
 - **18 — Every skill executes in a Web Worker.** No main-thread skill path exists; compute runs bridgeless,
-  capability skills run with the `fetch`/`vault` bridge as the sole I/O path. **Known gap (see §5 caveat):**
-  the bridge is the sole *bridged* path, but a classic Worker's dynamic `import()` is a parallel network
-  channel the global-removal cannot close; `import(` is hard-rejected as a speed-bump, and the structural
-  closure (worker-scoped `script-src` CSP) is increment 7b. So the dialog's network-boundary claim is true for
-  the bridge surface and for `import(`-free code, not yet absolute against the Function-constructor→`import` chain.
+  capability skills run with the `fetch`/`vault` bridge as the sole I/O path. The one Worker network channel
+  the global-removal cannot close — dynamic `import()` (a syntactic operator, not a `self` property) — is
+  closed **structurally** by the worker-scoped CSP (§7, 7b — landed): the frozen-`<head>` `script-src` is
+  inherited by the blob Worker (CSP3 §2.5.5) and blocks remote `import()` / `importScripts` /
+  Function-constructor→`import` (no `'unsafe-eval'`) and WebAssembly compilation (no `'wasm-unsafe-eval'`;
+  `WebAssembly` is also in the §5a global-removal as defense-in-depth). `import(` is hard-rejected at
+  install/invoke as a further layer. **Scope of the proof:** verified empirically in Chromium at file://
+  (the substrate's target surface); the mechanism is CSP3-standard (worker policy inheritance + `script-src`),
+  so it is *expected* to hold on other engines and under `https://`, but Firefox/Safari at file:// are not yet
+  measured — the claim is "structurally true for all skill code **on the measured Chromium substrate**". The
+  precise boundary is **no remote code loading and no network**: a skill can still run *self-authored* code it
+  constructs (e.g. `import()` of a `blob:` URL it mints — `blob:` is in `script-src`), but that code inherits
+  the identical policy (no remote import, no `fetch`, no WASM, no eval) so it grants **no new capability** — it
+  is not an escape, just dynamic execution of code the skill already possessed.
 - **19a — No one but the runtime may write the frozen skill zone.** The agent/lens can never write it (the
   `data-rwa-frozen` snapshot-equality guard rejects any drift — this exists today).
 - **19b — The runtime is the *active* writer of the zone**, via `runtimeRegionCommit` (`reachability:'frozen'`,
@@ -394,7 +429,7 @@ Carries v0.7 invariants 10 (install is the trust anchor), 16 (identity anchored 
   frozen-bypass, so the wall in 19a still holds). Skill code + manifest + signature are the durable artifact and
   travel with the file; vault ciphertext is machine-local and does not travel.
 - **20 — A signature covers `manifest ‖ code` atomically.** Unsigned skills are `verified:false`, are limited
-  to zero-capability `compute`, and never contribute to the CSP `connect-src` union.
+  to zero-capability `compute`, and (having no bridge) can never reach the network.
 
 The substrate invariants (byte-identical bootstrap for base kinds, per-container IDB, runtime never in IDB
 and never visible to the agent, reserved stores runtime-only, commits carry no undo state) are unchanged.
@@ -421,25 +456,29 @@ v0.8 is proven when, on a real `rwa new --kind skill-host` container, these pass
 
 1. Install `word-count` (compute, unsigned) → lightweight consent → registry → frozen-zone write on ⌘S →
    `rwa doc --json` reports `provenance:'installed', verified:false` (registry + persistence + 4-site).
-2. Install `gh-stars` (signed, `network:api.github.com`) → signature verifies → CSP union → frozen-zone write
-   (signature + CSP + skillId).
+2. Install `gh-stars` (signed, `network:api.github.com`) → signature verifies → frozen-zone write
+   (signature + skillId). (The CSP is static, not per-skill — see step 3.)
 3. Invoke `gh-stars` → Worker spawn → globals removed → bridged fetch: `api.github.com` allowed, `evil.com`
-   denied by **both** CSP and the bridge → terminate (the whole trust model).
+   denied by the **bridge** (per-manifest origin gate) → terminate. Independently, the static worker-scoped CSP
+   blocks the skill's `import('https://…')` code-loading path (the channel the bridge can't see) → terminate
+   (the whole trust model).
 4. Invoke `word-count` in a bridgeless Worker; **assert it cannot read `sessionStorage`/`indexedDB`/
    `document`/`fetch`** (Invariant 18 as a test, not a claim). Also assert a skill whose code uses dynamic
-   `import(` is **refused** (`dynamic_import_forbidden`) at install and invoke — and (once 7b lands) that a
-   worker-scoped CSP makes `import('https://<undeclared>/x')` itself reject inside both worker kinds.
+   `import(` is **refused** (`dynamic_import_forbidden`) at install and invoke — and (7b landed) that the
+   static frozen-`<head>` worker-scoped CSP makes `import('https://<undeclared>/x')` itself reject inside both
+   worker kinds (browser-proven; `tests/csp-boot` pins the policy artifact + its edit-unreachability).
 5. Update `gh-stars` (+`network:tracker.y`) → prose diff + re-affirmation (Shape C).
-6. Uninstall `gh-stars` → ⌘S → manifest gone from bytes → reload → CSP no longer lists `api.github.com`
-   (Invariant 19 + CSP tighten).
+6. Uninstall `gh-stars` → ⌘S → manifest gone from bytes → reload → the bridge no longer grants
+   `api.github.com` (Invariant 19; the static CSP is unchanged — it never enumerated per-skill origins).
 7. Email the file, open on a 2nd machine, re-verify from bytes, invoke → vault `null` + machine-local note
    (portability honesty + escape round-trip).
 
 ---
 
 *v0.8 — the realizability pass. Placement as a `skill-host` kind; every skill in a Worker (bridgeless compute
-/ bridged capability); two permission tiers (`network:`, `vault:`); boot-derived `<meta>` CSP; skillId-keyed
-registry; atomic manifest‖code Ed25519 signatures (unsigned ⇒ compute-only, no CSP contribution); machine-
+/ bridged capability); two permission tiers (`network:`, `vault:`); a **static worker-scoped `script-src`
+`<meta>` CSP** (7b) inherited by skill Workers to wall remote `import()`; skillId-keyed
+registry; atomic manifest‖code Ed25519 signatures (unsigned ⇒ compute-only, no network bridge); machine-
 local PBKDF2/AES-GCM vault with a closed error vocabulary; runtime-as-sole-writer of the `data-rwa-frozen`
 skill zone via a registry-aware commit; installed skills reported through self-description/1 as `tool`/
 `compute` providers across all four sites. Three invariants added (18 all-skills-in-Worker; 19 runtime-sole-

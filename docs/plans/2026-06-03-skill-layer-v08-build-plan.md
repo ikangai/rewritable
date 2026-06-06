@@ -44,10 +44,17 @@ Spec: `docs/specs/re-write-able-actions-spec-v0.8.md`. Built on branch `feat/ski
      the full envelope. Inv 19a/19b upheld by the primitive (scoped bypass + post-commit re-frozen re-assert).
      `tests/skill-persistence` 12/0 + **browser-proven**: install → real page reload → skill still listed +
      verified (IDB round-trip). v0.8 §7 + Inv 19b updated to reference the primitive.
-   - **7b. CSP boot-inject (§7)** — boot: union *signed* skills' `network:` origins → inject `<meta>`
-     connect-src into `<head>` before any skill runs. **Ungated** (no primitive needed). CARE: the union must
-     also include the agent-backend origins (openrouter/ollama/lmstudio/bridge) or it breaks ⌘K — browser-test
-     both (agent fetch still works WITH CSP; a skill's undeclared origin blocked as a 2nd wall behind the bridge).
+   - **7b. [DONE — browser-proven] worker-scoped CSP (§7)** — REVISED from "boot-inject a `connect-src` union"
+     to a **static** frozen-`<head>` `<meta>` `script-src 'unsafe-inline' blob:; worker-src blob:; object-src
+     'none'`. A blob Worker inherits the page policy (CSP3 §2.5.5), so `script-src` (no remote) blocks a skill's
+     `import('https://…')` / `importScripts` / Function-ctor→`import` — the structural F1 wall (also closes the
+     no-`'unsafe-eval'` eval-reconstruction evasion). NO `connect-src` / `default-src`: a static `connect-src`
+     is infeasible (runtime-configurable backend base-URLs; measured to break ⌘K via a `default-src` negative
+     control) AND redundant (the Worker has no direct `fetch`; tool `fetch` is bridge-gated). **SEED EDIT
+     (`<head>`) + refs regen + comment updates.** `tests/csp-boot` 15/0 + **browser-proven** in real Chromium at
+     file:// (skill Worker `import()` blocked on a real generated container; host boots + reaches backends +
+     renders skins unchanged). `import(` reject kept as defense-in-depth. Empirical method: 5 probe variants
+     (baseline / candidate / dynamic-inject / `default-src` negative / exfil) — see the diary entry.
 
 8. **[DONE — `12b297d`, browser-proven] Vault (§6)** — PBKDF2-200k/AES-GCM, IDB `rwa_vault`, namespaces,
    session key in sessionStorage, error vocab (`null`/`vault_locked`/`vault_namespace_denied`/
@@ -70,9 +77,10 @@ Spec: `docs/specs/re-write-able-actions-spec-v0.8.md`. Built on branch `feat/ski
     bridgeless → `{words:N}` ✓ · 5 update gh-stars (+`network:tracker.y`) → same skillId, persisted new perms ✓ ·
     6 uninstall → reload → gone, compute survives ✓ · 7 2nd machine (no session key) → vault **locked**, secret
     **null**, signed skill re-verifies from bytes ✓. Codified as `tests/skill-mvp` 7/0 (jsdom steps 1,2,5,6;
-    steps 3/4/7 are browser-only and browser-proven). **DEFERRED (not MVP-blocking):** the CSP half of §12.2/3/6
-    (increment 7b — defense-in-depth behind the proven bridge wall); the §12.5 prose-diff *dialog* (mechanism
-    proven, Shape-C UI deferred from incr 9).
+    steps 3/4/7 are browser-only and browser-proven). The CSP half of §12.2/3/6 (increment **7b**) is now
+    **DONE** (see incr 7b above — the static worker-scoped `script-src` CSP; structural F1 wall, browser-proven).
+    **DEFERRED (not MVP-blocking):** the §12.5 prose-diff *dialog* (mechanism proven, Shape-C UI deferred from
+    incr 9).
 
 ## Coordination
 - Incrs 1–3 are additive (new files + mirrors) → land on `main` via explicit-path commits anytime.
