@@ -2692,6 +2692,49 @@ if (typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent)) {
   };
   const RWA_SKIN_BLOCK_RE = /<style\b[^>]*\bdata-rwa-skin=["'][^"']*["'][^>]*>[\s\S]*?<\/style>/i;
   const RWA_SKIN_BLOCK_TRAIL_RE = /<style\b[^>]*\bdata-rwa-skin=["'][^"']*["'][^>]*>[\s\S]*?<\/style>\n?/i;
+  // spliceSkinBlock — swap an existing <style data-rwa-skin> block for `theme`, or
+  // prepend it. Splice-based (not String.replace) so theme bytes land verbatim
+  // (a $-sequence in CSS would otherwise be mangled). Shared by the L1 compose
+  // transform in applySkinL1; mirrors applySkin's deterministic L0 swap/insert.
+  function spliceSkinBlock(doc, theme) {
+    const m = doc.match(RWA_SKIN_BLOCK_RE);
+    if (!m) return theme + '\n' + doc;
+    const i = doc.indexOf(m[0]);
+    return doc.slice(0, i) + theme + doc.slice(i + m[0].length);
+  }
+  // RWA_SKIN_RECIPES — per-preset L1 restyle instructions (skinning-v2). SEED-ONLY:
+  // the CLI skin path is theme-only (offline, no agent), so these are NOT mirrored to
+  // cli/src/skins.mjs (only RWA_SKINS name/label/swatch/theme is byte-pinned). Every
+  // recipe is additive-only + 1:1-invertible (wrap + add class, never re-tag/move/
+  // merge) so de-skin is a clean sk-* strip and data-rwa-id is never renumbered.
+  const RWA_SKIN_L1_PREAMBLE =
+`Apply a visual restyle to this document by adding sk-* class hooks and additive wrapper elements. STRICT RULES: only ADD wrapper <div>/<span> elements and ADD class attributes; never delete, move, merge, reorder, re-tag, or rewrite existing content; never change any data-rwa-id; never add <style> or <script>; never touch frozen zones. If the document already contains sk-* wrappers or sk-* classes from a previous skin, first remove those wrappers (keeping their inner content) and strip the sk-* classes, then apply the restyle below. Use apply_edits with surgical (find,replace) pairs.
+
+Restyle:
+`;
+  const RWA_SKIN_RECIPES = {
+    'notion-clean': RWA_SKIN_L1_PREAMBLE +
+`1. If a short subtitle or dek paragraph sits directly under the H1, add class="sk-eyebrow" to it.
+2. Convert any paragraph that begins with "Note:", "Tip:", or "Important:" into a <div class="sk-callout"> wrapping that paragraph.
+3. Leave lists and tables unchanged.`,
+    'linear-dark': RWA_SKIN_L1_PREAMBLE +
+`1. If a short kicker or category line opens the document (above or right after the H1), wrap it as <div class="sk-eyebrow">…</div>.
+2. If you find a contiguous run of 2 to 4 short metric lines (for example "MRR $48k", "Churn 1.2%"), wrap each as <div class="sk-stat"><b>$48k</b><span>MRR</span></div> and group them in one <div class="sk-stat-row">…</div>.
+3. Leave all other structure unchanged.`,
+    'editorial-serif': RWA_SKIN_L1_PREAMBLE +
+`1. A category or section word before the title becomes <div class="sk-kicker">…</div> above the H1.
+2. A byline or dateline under the H1 (for example "By …", a date, "5 min read") gets class="sk-byline".
+3. Wrap the first body paragraph (the lede) as <div class="sk-lede">…</div>.
+4. A standalone single-sentence emphatic paragraph becomes <div class="sk-pull">…</div> (do NOT re-tag it to a blockquote).`,
+    'stripe-docs': RWA_SKIN_L1_PREAMBLE +
+`1. Wrap the leading H1 and its dek paragraph together in <div class="sk-hero">…</div>.
+2. A one-word kicker or category before the H1 becomes <span class="sk-pill">…</span> at the top of the hero.
+3. Leave code blocks, lists, and tables unchanged.`,
+    'terminal-mono': RWA_SKIN_L1_PREAMBLE +
+`1. Wrap the leading H1 (and a following byline or subtitle paragraph) in <div class="sk-hero">…</div>; add class="sk-byline" to that paragraph.
+2. A contiguous run of metric lines (number plus short label, for example "42 commits") becomes a <div class="sk-stat-row"> with each metric as <div class="sk-stat"><span class="sk-stat-num">42</span><span class="sk-stat-label">commits</span></div>.
+3. Append <span class="sk-blink">▋</span> after the final paragraph.`,
+  };
   async function applySkin(name) {
     const skin = RWA_SKINS[name];
     if (!skin) throw new RwaEditError('unknown_skin', null, { name, known: Object.keys(RWA_SKINS) });
@@ -2711,7 +2754,27 @@ if (typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent)) {
     await runtimeApplyEnvelope({ version: 'rwa-edit/1', doc: newDoc, reason: 'skin:reset' }, { surface: 'skin:reset', actor: 'skin:reset' });
     if (typeof showAffordance === 'function') showAffordance('skin removed');
   }
-  window.applySkin = applySkin; window.resetSkin = resetSkin;
+  async function applySkinL1(name) {
+    const skin = RWA_SKINS[name];
+    if (!skin) throw new RwaEditError('unknown_skin', null, { name, known: Object.keys(RWA_SKINS) });
+    const recipe = RWA_SKIN_RECIPES[name];
+    const cfg = resolveBackendConfig();
+    // L1 (content-aware restyle) needs a multi-turn tool-use backend. bridge /
+    // bridge-session are single-shot, so fall back to deterministic theme-only (L0)
+    // with a loud notice rather than silently skipping the restyle.
+    if (!recipe || cfg.kind === 'bridge' || cfg.kind === 'bridge-session') {
+      if ((cfg.kind === 'bridge' || cfg.kind === 'bridge-session') && typeof showAffordance === 'function')
+        showAffordance('skin: theme-only (L1 restyle needs openrouter/ollama/lmstudio)');
+      return applySkin(name);
+    }
+    // compose-then-commit: drive the agent with the preset recipe (no-commit), then
+    // splice this preset's deterministic theme block onto the result and commit ONCE
+    // (one ⌘Z reverts theme + wrappers); the commit self-attributes actor:skin:NAME.
+    await modify(recipe, { surface: 'skin:l1', actor: 'skin:' + name }, {
+      compose: { transform: (agentDoc) => spliceSkinBlock(agentDoc, skin.theme), reason: 'skin:' + name + ' (theme+L1)' },
+    });
+  }
+  window.applySkin = applySkin; window.resetSkin = resetSkin; window.applySkinL1 = applySkinL1;
   // The ✦ gallery: a runtime-chrome panel (frozen bootstrap, never INLINE_DOC).
   // Each swatch is a pure-CSS mini-preview built from the preset's 3-stop swatch
   // (bg / ink / accent) — no images, no fetch. A click dispatches applySkin

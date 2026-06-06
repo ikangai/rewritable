@@ -180,6 +180,40 @@ const undoLen = async (uuid) => ((await readStore(uuid, 'rwa_undo')) || []).leng
     check('T2b: declined still ONE undo frame', (await undoLen(w.uuid)) - uB === 1);
   }
 
+  // ── Task 3: applySkinL1 — real preset theme + stubbed agent wrapper, ONE commit ──
+  {
+    const BODY = '<article>\n<h1>Status</h1>\n<p>STATWIDGET row</p>\n</article>';
+    const w = await boot(BODY);
+    w.window.fetch = stubToolCall({ version: 'rwa-edit/1',
+      edits: [{ find: 'STATWIDGET', replace: '<span class="sk-eyebrow">STATWIDGET</span>' }] });
+    check('T3: applySkinL1 exposed', typeof w.window.applySkinL1 === 'function');
+    const hB = await histLen(w.uuid);
+    await w.window.applySkinL1('linear-dark');
+    await tick(); await tick();
+    const doc = await w.window.getDoc();
+    check('T3: real linear-dark theme block landed', /<style data-rwa-skin="linear-dark">/.test(doc));
+    check('T3: agent sk-* wrapper landed', /class="sk-eyebrow"/.test(doc));
+    check('T3: exactly one skin block', (doc.match(/data-rwa-skin=/g) || []).length === 1);
+    check('T3: ONE commit', (await histLen(w.uuid)) - hB === 1);
+    const hist = await readStore(w.uuid, 'rwa_hist');
+    check('T3: actor skin:linear-dark', hist && hist[0] && hist[0].actor === 'skin:linear-dark');
+    check('T3: unknown skin throws unknown_skin',
+      await w.window.applySkinL1('no-such-skin').then(() => false).catch(e => codeOf(e).includes('unknown_skin')));
+  }
+
+  // ── Task 3b: bridge backend → theme-only L0 fallback (no agent, no wrapper) ──
+  {
+    const BODY = '<article>\n<h1>Status</h1>\n<p>plain body paragraph</p>\n</article>';
+    const w = await boot(BODY, { backend: 'bridge' });
+    const hB = await histLen(w.uuid);
+    await w.window.applySkinL1('linear-dark');
+    await tick(); await tick();
+    const doc = await w.window.getDoc();
+    check('T3b: bridge → theme block still landed (L0)', /<style data-rwa-skin="linear-dark">/.test(doc));
+    check('T3b: bridge → NO agent sk-* wrapper added', !/class="sk-/.test(doc));
+    check('T3b: bridge → ONE commit', (await histLen(w.uuid)) - hB === 1);
+  }
+
   console.log(`\n${pass} / ${pass + fail} passing`);
   process.exit(fail ? 1 : 0);
 })().catch(e => { console.error(e); process.exit(1); });
