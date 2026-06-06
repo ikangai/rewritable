@@ -2828,7 +2828,7 @@ Restyle:
     const cur = active && panel.querySelector('.rwa-skin-sw[data-skin="' + active + '"]');
     if (cur) cur.setAttribute('aria-current', 'true');
     panel.querySelectorAll('.rwa-skin-sw').forEach(function (b) {
-      b.onclick = function () { panel.classList.remove('open'); Promise.resolve(applySkin(b.getAttribute('data-skin'))).catch(function (e) { showAffordance('skin failed: ' + (e && e.code || e)); }); };
+      b.onclick = function () { panel.classList.remove('open'); Promise.resolve(applySkinL1(b.getAttribute('data-skin'))).catch(function (e) { showAffordance('skin failed: ' + (e && e.code || e)); }); };
     });
     const rb = panel.querySelector('[data-skin-reset]');
     if (rb) rb.onclick = function () { panel.classList.remove('open'); Promise.resolve(resetSkin()).catch(function () {}); };
@@ -2850,10 +2850,11 @@ async function submitLens(text) {
     if (skinMatch) {
       // Skin commands are document-global (they swap a top-of-doc <style> block),
       // so they IGNORE the lens anchor — handled before the anchored/modify split.
-      // Bare /skin opens the gallery (or lists presets until the panel ships);
-      // /skin reset clears; /skin NAME applies a preset. Deterministic — no agent
-      // call. An unknown name throws (the keydown catch surfaces it + preserves
-      // the typed text); the input-clear tail below runs only on success.
+      // Bare /skin opens the gallery; /skin reset clears (deterministic); /skin NAME
+      // applies a preset via applySkinL1 — the always-on L1 restyle (deterministic
+      // theme swap + agent sk-* wrappers in ONE commit; bridge/single-shot backends
+      // fall back to theme-only). An unknown name throws (the keydown catch surfaces
+      // it + preserves the typed text); the input-clear tail below runs only on success.
       const arg = skinMatch[1];
       if (!arg) {
         if (typeof openSkinPanel === 'function') openSkinPanel();
@@ -2861,7 +2862,7 @@ async function submitLens(text) {
       } else if (arg === 'reset') {
         await resetSkin();
       } else {
-        await applySkin(arg);
+        await applySkinL1(arg);
       }
     } else if (anchored) {
       await runAnchoredCommand(lensState.anchor, instruction);
@@ -4891,15 +4892,27 @@ async function modify(instr, lensMeta = null, opts = null) {
       setLensProgress('thinking',
         attemptNum === 1 ? 'Thinking…' : `Retrying (attempt ${attemptNum}/${RWA_EDIT.RETRIES})…`);
 
-      const data = await openAiCompatChat(cfg, {
-        model,
-        max_tokens: 32000,
-        messages,
-        tools: TOOL_SCHEMAS,
-        tool_choice: 'auto',
-      });
+      let data;
+      try {
+        data = await openAiCompatChat(cfg, {
+          model,
+          max_tokens: 32000,
+          messages,
+          tools: TOOL_SCHEMAS,
+          tool_choice: 'auto',
+        });
+      } catch (netErr) {
+        // compose mode (skin): an unreachable / erroring backend must not abort the
+        // skin — break to the deterministic theme-only commit below. A skin click
+        // (incl. the ✦ gallery) always lands at least the theme, even offline.
+        if (opts && opts.compose) { lastFailure = netErr; break; }
+        throw netErr;
+      }
       const msg = data.choices?.[0]?.message;
-      if (!msg) throw new Error('empty response');
+      if (!msg) {
+        if (opts && opts.compose) { lastFailure = new RwaEditError('empty_response'); break; }
+        throw new Error('empty response');
+      }
 
       const toolCalls = msg.tool_calls || [];
       if (toolCalls.length === 0) {

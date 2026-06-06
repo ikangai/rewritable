@@ -180,6 +180,21 @@ const undoLen = async (uuid) => ((await readStore(uuid, 'rwa_undo')) || []).leng
     check('T2b: declined still ONE undo frame', (await undoLen(w.uuid)) - uB === 1);
   }
 
+  // ── Task 2c: agent UNREACHABLE (fetch throws) → theme-only, still ONE commit ──
+  //    (a skin must apply even with no backend — and the ✦ gallery relies on it).
+  {
+    const BODY = '<article>\n<h1>Doc</h1>\n<p>plain body</p>\n</article>';
+    const w = await boot(BODY);
+    w.window.fetch = async () => { throw new Error('network down'); };
+    const hB = await histLen(w.uuid), uB = await undoLen(w.uuid);
+    await w.window.applySkinL1('stripe-docs');
+    await tick(); await tick();
+    const doc = await w.window.getDoc();
+    check('T2c: agent unreachable → theme block STILL landed', /<style data-rwa-skin="stripe-docs">/.test(doc));
+    check('T2c: unreachable still exactly ONE commit (theme-only)', (await histLen(w.uuid)) - hB === 1);
+    check('T2c: unreachable still ONE undo frame', (await undoLen(w.uuid)) - uB === 1);
+  }
+
   // ── Task 3: applySkinL1 — real preset theme + stubbed agent wrapper, ONE commit ──
   {
     const BODY = '<article>\n<h1>Status</h1>\n<p>STATWIDGET row</p>\n</article>';
@@ -226,6 +241,36 @@ const undoLen = async (uuid) => ((await readStore(uuid, 'rwa_undo')) || []).leng
     check('T4: recipe + theme regions found, recipe classes present', recipesRegion.length > 0 && themesRegion.length > 0 && recipeClasses.length >= 8);
     const missing = recipeClasses.filter(c => !themeSelectors.has(c));
     check('T4: every recipe sk-* class is styled by a theme (no dead wrappers) — missing=' + JSON.stringify(missing), missing.length === 0);
+  }
+
+  // ── Task 5: ✦ gallery swatch click drives applySkinL1 (L1), not just L0 theme ──
+  {
+    const BODY = '<article>\n<h1>Status</h1>\n<p>STATWIDGET row</p>\n</article>';
+    const w = await boot(BODY);
+    w.window.fetch = stubToolCall({ version: 'rwa-edit/1',
+      edits: [{ find: 'STATWIDGET', replace: '<span class="sk-eyebrow">STATWIDGET</span>' }] });
+    w.window.openSkinPanel();
+    await tick();
+    const sw = w.document.querySelector('.rwa-skin-sw[data-skin="linear-dark"]');
+    check('T5: gallery swatch for linear-dark present', !!sw);
+    if (sw) sw.click();
+    for (let k = 0; k < 60 && !/class="sk-eyebrow"/.test(await w.window.getDoc()); k++) await tick();
+    const doc = await w.window.getDoc();
+    check('T5: gallery click added an sk-* wrapper (→ applySkinL1, not L0)', /class="sk-eyebrow"/.test(doc));
+    check('T5: gallery click also applied the theme block', /<style data-rwa-skin="linear-dark">/.test(doc));
+  }
+
+  // ── Task 5b: /skin NAME lens command drives applySkinL1 ──
+  {
+    const BODY = '<article>\n<h1>Status</h1>\n<p>STATWIDGET row</p>\n</article>';
+    const w = await boot(BODY);
+    w.window.fetch = stubToolCall({ version: 'rwa-edit/1',
+      edits: [{ find: 'STATWIDGET', replace: '<span class="sk-eyebrow">STATWIDGET</span>' }] });
+    await w.window.submitLens('/skin linear-dark');
+    for (let k = 0; k < 60 && !/class="sk-eyebrow"/.test(await w.window.getDoc()); k++) await tick();
+    const doc = await w.window.getDoc();
+    check('T5b: /skin NAME added an sk-* wrapper (→ applySkinL1)', /class="sk-eyebrow"/.test(doc));
+    check('T5b: /skin NAME also applied the theme block', /<style data-rwa-skin="linear-dark">/.test(doc));
   }
 
   console.log(`\n${pass} / ${pass + fail} passing`);
