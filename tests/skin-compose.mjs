@@ -273,6 +273,22 @@ const undoLen = async (uuid) => ((await readStore(uuid, 'rwa_undo')) || []).leng
     check('T5b: /skin NAME also applied the theme block', /<style data-rwa-skin="linear-dark">/.test(doc));
   }
 
+  // ── Review HIGH fix: a GENUINE compose failure (the theme commit itself rejects)
+  //    must PROPAGATE — so /skin preserves the typed text and the gallery .catch
+  //    fires. Graceful degradation is ONLY for agent failure; a doc that cannot be
+  //    skinned at all is a real error, not a silent no-op. Trigger: a bare uncovered
+  //    .rwa-locked block → replaceDocument throws class_lock_uncovered on the doc. ──
+  {
+    const BODY = '<article>\n<h1>Doc</h1>\n<p>ANCHORZ here</p>\n<div class="rwa-locked">locked region</div>\n</article>';
+    const w = await boot(BODY);
+    w.window.fetch = stubToolCall({ version: 'rwa-edit/1',
+      edits: [{ find: 'ANCHORZ', replace: '<span class="sk-eyebrow">ANCHORZ</span>' }] });
+    let rejected = false, code = '';
+    await w.window.applySkinL1('linear-dark').then(() => {}, e => { rejected = true; code = codeOf(e); });
+    check('T-HIGH: genuine compose failure REJECTS (not swallowed) — code=' + code, rejected);
+    check('T-HIGH: failed skin did NOT half-apply (no theme block committed)', !/data-rwa-skin/.test(await w.window.getDoc()));
+  }
+
   console.log(`\n${pass} / ${pass + fail} passing`);
   process.exit(fail ? 1 : 0);
 })().catch(e => { console.error(e); process.exit(1); });

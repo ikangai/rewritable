@@ -2813,8 +2813,12 @@ Restyle:
   window.applySkin = applySkin; window.resetSkin = resetSkin; window.applySkinL1 = applySkinL1;
   // The ✦ gallery: a runtime-chrome panel (frozen bootstrap, never INLINE_DOC).
   // Each swatch is a pure-CSS mini-preview built from the preset's 3-stop swatch
-  // (bg / ink / accent) — no images, no fetch. A click dispatches applySkin
-  // (one deterministic commit); the active card reads the live data-rwa-skin attr.
+  // (bg / ink / accent) — no images, no fetch to build the preview. A click
+  // dispatches applySkinL1 — the always-on L1 restyle: it drives the agent over the
+  // network (when a multi-turn backend is configured) to add sk-* wrappers and lands
+  // theme + wrappers as ONE replace_document commit (one ⌘Z); bridge/single-shot or
+  // an unreachable backend falls back to a deterministic theme-only commit. The
+  // active card reads the live data-rwa-skin attr.
   function rwaSkinSwatch(name) {
     const s = RWA_SKINS[name]; const c = (s && s.swatch) || ['#ffffff', '#111111', '#888888'];
     return '<button class="rwa-skin-sw" data-skin="' + name + '" role="option" title="' + (s.label || name) + '">'
@@ -5036,6 +5040,12 @@ async function modify(instr, lensMeta = null, opts = null) {
     setStatus('err', '✗ ' + e.message);
     setLensProgress('error', e.message);
     console.error(e);
+    // compose mode (skin): a GENUINE failure — the theme commit itself rejected
+    // (e.g. class_lock_uncovered on the composed doc) — must PROPAGATE so the caller
+    // reacts: the ✦ gallery's .catch fires, and /skin preserves the user's typed
+    // text (submitLens clears only on a resolved submit). Agent-edit failure already
+    // degraded to a theme-only commit above and never reaches here. Restores L0 parity.
+    if (opts && opts.compose) throw e;
   } finally {
     modifyMutex = false;
   }
