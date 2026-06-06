@@ -15,7 +15,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -144,7 +144,6 @@ test('scp binary missing (ENOENT) → scp_not_found (exit 4)', async () => {
   fx.cleanup();
 });
 
-import { spawn } from 'node:child_process';
 function runRwa(args, env = {}) {
   return new Promise(res => {
     const c = spawn('node', [RWA_BIN, ...args], { env: { ...process.env, ...env } });
