@@ -4752,7 +4752,7 @@ function friendlyToolName(name) {
   return name || 'tool';
 }
 
-async function modify(instr, lensMeta = null) {
+async function modify(instr, lensMeta = null, opts = null) {
   // Audit R2: every commit through the agent loop is attributed. Lens
   // callers set actor explicitly (getActiveActor() for command paths,
   // 'user:lens' for text paths). Non-lens callers — chiefly runtime.modify
@@ -4818,6 +4818,12 @@ async function modify(instr, lensMeta = null) {
       const toolCalls = msg.tool_calls || [];
       if (toolCalls.length === 0) {
         const text = (msg.content || '(no message)').trim();
+        if (opts && opts.compose) {
+          // compose mode: a decline does NOT abort — fall through to the
+          // theme-only fallback commit below, so the skin still lands (one ⌘Z).
+          lastFailure = new RwaEditError('model_declined', null, { message: text.slice(0, 120) });
+          break;
+        }
         setStatus('err', '✗ model declined');
         setPalSt('err', text.slice(0, 200));
         setLensProgress('error', 'model declined — ' + text.slice(0, 120));
@@ -4843,15 +4849,27 @@ async function modify(instr, lensMeta = null) {
 
       setLensProgress('thinking', `Applying ${friendlyToolName(fnName)}…`);
 
+      // compose mode (skinning-v2): the agent contributes ADDITIVE markup only —
+      // run its apply_edits with {noCommit} so we can splice the deterministic
+      // theme block and commit ONCE after the loop. replace_document is refused
+      // here (it would let the agent rewrite the whole doc, bypassing the
+      // additive / computeShape guard); the retry steers it back to apply_edits.
+      const editOpts = (opts && opts.compose) ? { noCommit: true } : null;
       try {
         if (fnName === 'apply_dsl_plan') {
           const compiled = compileDslPlan(envelope, cur);
-          if (compiled.tool === 'apply_edits') newDoc = await applyEdits(compiled.envelope, cur, lensMeta);
-          else if (compiled.tool === 'replace_document') newDoc = await replaceDocument(compiled.envelope, cur, lensMeta);
+          if (compiled.tool === 'apply_edits') newDoc = await applyEdits(compiled.envelope, cur, lensMeta, editOpts);
+          else if (compiled.tool === 'replace_document') {
+            if (editOpts) throw new RwaEditError('compose_requires_apply_edits');
+            newDoc = await replaceDocument(compiled.envelope, cur, lensMeta);
+          }
           else throw new RwaEditError('unknown_tool', null, { name: compiled.tool });
         }
-        else if (fnName === 'apply_edits') newDoc = await applyEdits(envelope, cur, lensMeta);
-        else if (fnName === 'replace_document') newDoc = await replaceDocument(envelope, cur, lensMeta);
+        else if (fnName === 'apply_edits') newDoc = await applyEdits(envelope, cur, lensMeta, editOpts);
+        else if (fnName === 'replace_document') {
+          if (editOpts) throw new RwaEditError('compose_requires_apply_edits');
+          newDoc = await replaceDocument(envelope, cur, lensMeta);
+        }
         else throw new RwaEditError('unknown_tool', null, { name: fnName });
       } catch (err) {
         if (!(err instanceof RwaEditError)) throw err;
@@ -4861,6 +4879,20 @@ async function modify(instr, lensMeta = null) {
           messages.push({ role: 'tool', tool_call_id: tc.id, content: failureToToolResult(err) });
         }
       }
+    }
+
+    // compose-then-commit (skinning-v2): the agent's edits were validated but NOT
+    // committed (noCommit). Splice the deterministic theme block onto the agent's
+    // output — or onto `cur` if the agent gave nothing (graceful theme-only) — and
+    // commit the composed doc ONCE via replace_document: one rwa_undo frame, one ⌘Z
+    // reverts the whole skin (theme + wrappers). replace_document is shape-exempt, so
+    // the single theme <style> the RUNTIME adds is allowed (the agent could not add a
+    // <style> — computeShape blocked it in the no-commit apply above).
+    if (opts && opts.compose) {
+      const base = (newDoc !== null) ? newDoc : cur;
+      const finalDoc = opts.compose.transform(base, cur);
+      newDoc = await replaceDocument(
+        { version: 'rwa-edit/1', doc: finalDoc, reason: opts.compose.reason }, cur, lensMeta);
     }
 
     if (newDoc !== null) {

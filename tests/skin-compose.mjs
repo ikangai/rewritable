@@ -132,6 +132,54 @@ const undoLen = async (uuid) => ((await readStore(uuid, 'rwa_undo')) || []).leng
     check('T1: default returns committed doc with the edit', typeof committed === 'string' && committed.includes('ANCHOR-GAMMA'));
   }
 
+  // ── Task 2: modify({compose}) — agent no-commit + theme splice = ONE commit ──
+  {
+    const BODY = '<article>\n<h1>Quarterly</h1>\n<p>STATWIDGET line</p>\n<p>closing thoughts</p>\n</article>';
+    const w = await boot(BODY);
+    // Stub the agent: one apply_edits adding an sk-* wrapper to the unique anchor.
+    w.window.fetch = stubToolCall({ version: 'rwa-edit/1',
+      edits: [{ find: 'STATWIDGET', replace: '<span class="sk-test">STATWIDGET</span>' }] });
+    const hB = await histLen(w.uuid), uB = await undoLen(w.uuid);
+    await w.window.modify('TEST RECIPE', { surface: 'skin:l1', actor: 'skin:notion-clean' }, {
+      compose: {
+        transform: (agentDoc) => '<style data-rwa-skin="notion-clean">/* t */</style>\n' + agentDoc,
+        reason: 'skin:notion-clean (theme+L1)',
+      },
+    });
+    await tick(); await tick();
+    const doc = await w.window.getDoc();
+    check('T2: agent L1 wrapper landed (sk-test present)', /class="sk-test"/.test(doc) && /STATWIDGET/.test(doc));
+    check('T2: deterministic theme block landed', /<style data-rwa-skin="notion-clean">/.test(doc));
+    check('T2: exactly ONE rwa_hist entry (one commit)', (await histLen(w.uuid)) - hB === 1);
+    check('T2: exactly ONE rwa_undo frame (one ⌘Z)', (await undoLen(w.uuid)) - uB === 1);
+    const hist = await readStore(w.uuid, 'rwa_hist');
+    check('T2: commit attributed actor:skin:notion-clean', hist && hist[0] && hist[0].actor === 'skin:notion-clean');
+    check('T2: commit kind replace_document', hist && hist[0] && hist[0].kind === 'replace_document');
+    // one-⌘Z reverts BOTH the theme block and the agent wrapper atomically.
+    await w.window.runtime.undo(); await tick();
+    const undone = await w.window.getDoc();
+    check('T2: one undo reverts theme + wrapper together', !/data-rwa-skin/.test(undone) && !/sk-test/.test(undone));
+  }
+
+  // ── Task 2b: graceful degradation — agent declines → theme-only, still ONE commit ──
+  {
+    const BODY = '<article>\n<h1>Doc</h1>\n<p>body text here</p>\n</article>';
+    const w = await boot(BODY);
+    w.window.fetch = stubDecline;
+    const hB = await histLen(w.uuid), uB = await undoLen(w.uuid);
+    await w.window.modify('TEST RECIPE', { surface: 'skin:l1', actor: 'skin:linear-dark' }, {
+      compose: {
+        transform: (agentDoc) => '<style data-rwa-skin="linear-dark">/* t */</style>\n' + agentDoc,
+        reason: 'skin:linear-dark (theme+L1)',
+      },
+    });
+    await tick(); await tick();
+    const doc = await w.window.getDoc();
+    check('T2b: agent declined → theme block STILL landed', /<style data-rwa-skin="linear-dark">/.test(doc));
+    check('T2b: declined still exactly ONE commit (theme-only)', (await histLen(w.uuid)) - hB === 1);
+    check('T2b: declined still ONE undo frame', (await undoLen(w.uuid)) - uB === 1);
+  }
+
   console.log(`\n${pass} / ${pass + fail} passing`);
   process.exit(fail ? 1 : 0);
 })().catch(e => { console.error(e); process.exit(1); });
