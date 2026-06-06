@@ -143,3 +143,29 @@ test('scp binary missing (ENOENT) → scp_not_found (exit 4)', async () => {
   );
   fx.cleanup();
 });
+
+import { spawn } from 'node:child_process';
+function runRwa(args, env = {}) {
+  return new Promise(res => {
+    const c = spawn('node', [RWA_BIN, ...args], { env: { ...process.env, ...env } });
+    let stdout = '', stderr = '';
+    c.stdout.on('data', d => stdout += d); c.stderr.on('data', d => stderr += d);
+    c.stdin.end(); c.on('close', code => res({ code, stdout, stderr }));
+  });
+}
+
+test('bin: publish-site with no file → usage_error (exit 1)', async () => {
+  const r = await runRwa(['publish-site']);
+  assert.equal(r.code, 1);
+  assert.match(r.stderr, /rwa publish-site: usage_error\/missing_file_arg/);
+});
+
+test('bin: publish-site without config → config_error (exit 1), no scp attempted', async () => {
+  const fx = mkFixture();
+  // Strip the RWA_SITE_* env so resolution fails before transport.
+  const r = await runRwa(['publish-site', fx.path],
+    { RWA_SITE_HOST: '', RWA_SITE_PATH: '', RWA_SITE_URL: '' });
+  assert.equal(r.code, 1);
+  assert.match(r.stderr, /rwa publish-site: usage_error\/config_error/);
+  fx.cleanup();
+});
