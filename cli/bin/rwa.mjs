@@ -58,6 +58,7 @@ Usage:
                               DOC_UUID. Target: --url > \$RWA_PUBLISH_URL >
                               https://rewritable.ikangai.com. --json emits
                               {short,url,expiresAt}.
+  rwa publish-site <path>     scp a rewritable to a static site (needs RWA_SITE_* env)
   rwa skin <path> <name>      apply a named style preset to a rewritable in
                               place (deterministic, offline, model-free). Names:
                               notion-clean, linear-dark, editorial-serif,
@@ -643,6 +644,53 @@ function detectProductKind(fileText) {
           '  Note:    the hosted copy gets a fresh DOC_UUID (distinct container)\n',
         );
       }
+      return;
+    }
+
+    // `rwa publish-site <file> [--host h] [--path p] [--url base] [--json]` —
+    // copy a rewritable VERBATIM onto a static site over scp; print the live URL.
+    // Durable counterpart to `rwa publish` (ephemeral share). Online by design.
+    // Config: flags > RWA_SITE_HOST / RWA_SITE_PATH / RWA_SITE_URL. See
+    // src/publish-site.mjs. Exit 4 is labeled `publish_error` (like `publish`).
+    if (verb === 'publish-site') {
+      const jsonMode = rest.includes('--json');
+      const hostFlag = getFlag('--host', rest);
+      const pathFlag = getFlag('--path', rest);
+      const urlFlag = getFlag('--url', rest);
+      // Flag VALUE tokens must not be mistaken for the positional file.
+      const skip = new Set();
+      for (const f of ['--host', '--path', '--url']) {
+        const i = rest.indexOf(f); if (i >= 0) skip.add(i + 1);
+      }
+      const filePath = rest.find((a, i) => !a.startsWith('-') && !skip.has(i));
+      const emitPS = (payload) => {
+        if (jsonMode) { process.stderr.write(JSON.stringify(payload) + '\n'); return; }
+        const parts = [payload.code, payload.subcode].filter(Boolean);
+        let line = 'rwa publish-site: ' + parts.join('/');
+        if (payload.details && Object.keys(payload.details).length) line += ' ' + JSON.stringify(payload.details);
+        process.stderr.write(line + '\n');
+      };
+      if (!filePath) { emitPS({ code: 'usage_error', subcode: 'missing_file_arg' }); process.exitCode = 1; return; }
+      for (const [name, flag] of [['--host', hostFlag], ['--path', pathFlag], ['--url', urlFlag]]) {
+        if (flag.present && (flag.value === undefined || flag.value.startsWith('-'))) {
+          emitPS({ code: 'usage_error', subcode: 'missing_flag_value', details: { flag: name } });
+          process.exitCode = 1; return;
+        }
+      }
+      const { publishSite } = await import('../src/publish-site.mjs');
+      let result;
+      try {
+        result = await publishSite(filePath, { host: hostFlag.value, path: pathFlag.value, url: urlFlag.value });
+      } catch (e) {
+        if (e && typeof e.exitCode === 'number') {
+          const code = e.exitCode === 4 ? 'publish_error' : codeName(e.exitCode);
+          emitPS({ code, subcode: e.subcode, details: e.details });
+          process.exitCode = e.exitCode; return;
+        }
+        throw e;
+      }
+      if (jsonMode) process.stdout.write(JSON.stringify(result) + '\n');
+      else process.stdout.write(`✓ Published to ${result.url}\n`);
       return;
     }
 

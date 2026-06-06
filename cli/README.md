@@ -195,6 +195,28 @@ It POSTs **your edited bytes** (the current `INLINE_DOC`), unlike the browser `/
 
 **Target** resolves `--url <base>` › `$RWA_PUBLISH_URL` › `https://rewritable.ikangai.com` (point it at a self-hosted service or local dev with either). The file is checked locally first — a non-rewritable exits `2` (`not_a_rewritable`) **before any network call**. Remote/network failures exit `4` with an honest reason on stderr (`publish_error/network_error`, `/rate_limited`, `/body_too_large`, `/validation_failed`, …); `--json` emits those as `{code, subcode, details}`. stdout stays clean for the URL/JSON.
 
+### `rwa publish-site <path>`
+
+The **durable** counterpart to `rwa publish`. Where `rwa publish` POSTs to the hosted service for an *anonymous, ephemeral (24h)* share, `rwa publish-site` copies the file **verbatim** onto a static site you control via `scp` and prints the live URL. Same bytes, your own host, no expiry.
+
+```
+RWA_SITE_HOST=user@host RWA_SITE_PATH=/var/www/r RWA_SITE_URL=https://example.com/r \
+  rwa publish-site my-doc.html
+# → ✓ Published to https://example.com/r/my-doc.html
+```
+
+**Config** is flags-over-env — three vars, each overridable by a flag:
+
+| Var | Flag | Meaning |
+|---|---|---|
+| `RWA_SITE_HOST` | `--host` | the scp target, e.g. `user@host` |
+| `RWA_SITE_PATH` | `--path` | the remote directory the file lands in |
+| `RWA_SITE_URL` | `--url` | the public base URL that directory is served at |
+
+It needs the system `scp` binary and **ssh access already configured** on this machine (key/agent) — there is no auth flow inside `rwa`. The **filename is kept 1:1** (the basename of your local file), so the live URL is predictable and a re-publish **overwrites** the previous copy. The file is checked locally first — a non-rewritable exits `2` before any transport.
+
+This command is **network-bearing** (like `rwa clone`), so the offline-first rule does not apply to it.
+
 ### `rwa skin <path> <name>`
 
 Pick a **named look** for a rewritable instead of hand-styling it from the blank lens. A skin is one self-contained `<style data-rwa-skin="NAME">` block — system fonts only, no web fonts or remote assets — that the command splices into the **document body**. So it commits with the document, ships inside the exported `.html`, survives sharing, and one in-browser undo (`⌘Z`) reverts it. Five presets ship today: `notion-clean`, `linear-dark`, `editorial-serif`, `stripe-docs`, `terminal-mono` (clean · dark · editorial · docs · terminal).
