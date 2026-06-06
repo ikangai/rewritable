@@ -2590,6 +2590,8 @@ if (typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent)) {
 #rwa-doc-mount table{font-size:.95em;}
 #rwa-doc-mount th,#rwa-doc-mount td{border-bottom:1px solid var(--nc-line);padding:.55em .8em;}
 #rwa-doc-mount th{background:var(--nc-tint);color:var(--nc-soft);font-weight:600;}
+#rwa-doc-mount .sk-eyebrow{font-size:.8rem;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--nc-accent);margin:0 0 .4em;}
+#rwa-doc-mount .sk-callout{margin:1.4em 0;padding:14px 18px;background:var(--nc-tint);border:1px solid var(--nc-line);border-radius:8px;color:var(--nc-soft);}
 </style>` },
     "linear-dark": { name: "linear-dark", label: "Linear Dark", swatch: ["#08090d","#e9eaee","#7c6cff"], theme: `<style data-rwa-skin="linear-dark">
 #rwa-doc-mount{
@@ -2619,6 +2621,11 @@ if (typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent)) {
 #rwa-doc-mount table{font-size:.92em;}
 #rwa-doc-mount th{background:var(--ld-surf);color:var(--ld-soft);font-weight:600;border-bottom:1px solid var(--ld-line);padding:.55em .8em;}
 #rwa-doc-mount td{border-bottom:1px solid var(--ld-line);padding:.55em .8em;color:var(--ld-soft);}
+#rwa-doc-mount .sk-eyebrow{font-family:'SF Mono',Menlo,monospace;font-size:.72rem;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:var(--ld-accent);margin:0 0 .6em;}
+#rwa-doc-mount .sk-stat-row{display:flex;flex-wrap:wrap;gap:14px;margin:1.6em 0;}
+#rwa-doc-mount .sk-stat{display:flex;flex-direction:column;gap:2px;padding:12px 16px;background:var(--ld-surf);border:1px solid var(--ld-line);border-radius:10px;}
+#rwa-doc-mount .sk-stat b{font-size:1.45rem;font-weight:600;color:#fff;}
+#rwa-doc-mount .sk-stat span{font-family:'SF Mono',Menlo,monospace;font-size:.68rem;letter-spacing:.08em;text-transform:uppercase;color:var(--ld-faint);}
 </style>` },
     "editorial-serif": { name: "editorial-serif", label: "Editorial Serif", swatch: ["#fbfaf7","#1c1a17","#9a1b1b"], theme: `<style data-rwa-skin="editorial-serif">
 #rwa-doc-mount{
@@ -2644,6 +2651,10 @@ if (typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent)) {
 #rwa-doc-mount table{font-size:.98em;}
 #rwa-doc-mount th{font-family:Georgia,serif;font-variant:small-caps;letter-spacing:.04em;color:var(--es-soft);border-bottom:2px solid var(--es-ink);background:transparent;padding:.5em .7em;}
 #rwa-doc-mount td{border-bottom:1px solid var(--es-line);padding:.5em .7em;}
+#rwa-doc-mount .sk-kicker{font-size:.8rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--es-accent);margin:0 0 .5em;}
+#rwa-doc-mount .sk-byline{font-style:italic;color:var(--es-faint);font-size:.95rem;margin:0 0 1.4em;}
+#rwa-doc-mount .sk-lede p::first-letter{float:left;font-size:3.4em;line-height:.82;font-weight:700;padding:.04em .1em 0 0;color:var(--es-ink);}
+#rwa-doc-mount .sk-pull{margin:1.5em 0;font-size:1.45rem;line-height:1.4;font-style:italic;text-align:center;color:var(--es-soft);}
 </style>` },
     "stripe-docs": { name: "stripe-docs", label: "Stripe Docs", swatch: ["#ffffff","#1a1f36","#635bff"], theme: `<style data-rwa-skin="stripe-docs">
 #rwa-doc-mount{
@@ -2669,6 +2680,9 @@ if (typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent)) {
 #rwa-doc-mount table{font-size:.92em;border:1px solid var(--sd-line);border-radius:8px;overflow:hidden;}
 #rwa-doc-mount th{background:var(--sd-tint);color:var(--sd-faint);font-weight:600;text-transform:uppercase;letter-spacing:.04em;font-size:.78rem;border-bottom:1px solid var(--sd-line);padding:.55em .85em;}
 #rwa-doc-mount td{border-bottom:1px solid var(--sd-line);padding:.55em .85em;color:var(--sd-soft);}
+#rwa-doc-mount .sk-hero{margin:0 0 2em;padding:0 0 1.4em;border-bottom:1px solid var(--sd-line);}
+#rwa-doc-mount .sk-hero h1{margin-top:0;}
+#rwa-doc-mount .sk-pill{display:inline-block;font-size:.72rem;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--sd-accent);background:var(--sd-tint);border:1px solid var(--sd-line);border-radius:999px;padding:.25em .7em;margin:0 0 .8em;}
 </style>` },
     "terminal-mono": { name: "terminal-mono", label: "Terminal", swatch: ["#080a08","#9ee69e","#39ff14"], theme: `<style data-rwa-skin="terminal-mono">
 #rwa-doc-mount{
@@ -2701,10 +2715,68 @@ if (typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent)) {
 #rwa-doc-mount table{font-size:.95em;}
 #rwa-doc-mount th,#rwa-doc-mount td{border-bottom:1px solid #2c3b2c;}
 #rwa-doc-mount th{background:#101410;color:#39ff14;text-transform:uppercase;letter-spacing:.08em;font-weight:700;}
+#rwa-doc-mount .sk-hero{margin:0 0 1.6em;padding:.6em 1ch;border:1px solid #2c3b2c;background:#0c0f0c;}
+#rwa-doc-mount .sk-byline{color:#6fae6f;font-size:.85em;}
+#rwa-doc-mount .sk-stat-row{display:flex;flex-wrap:wrap;gap:1ch;margin:1.4em 0;}
+#rwa-doc-mount .sk-stat{display:flex;flex-direction:column;border:1px solid #2c3b2c;padding:.5em 1ch;background:#101410;}
+#rwa-doc-mount .sk-stat-num{font-size:1.4rem;font-weight:700;color:#39ff14;}
+#rwa-doc-mount .sk-stat-label{font-size:.7rem;text-transform:uppercase;letter-spacing:.08em;color:#6fae6f;}
+#rwa-doc-mount .sk-blink{color:#39ff14;animation:sk-blink 1s step-end infinite;}
+@keyframes sk-blink{50%{opacity:0;}}
+@media (prefers-reduced-motion:reduce){#rwa-doc-mount .sk-blink{animation:none;}}
 </style>` },
   };
   const RWA_SKIN_BLOCK_RE = /<style\b[^>]*\bdata-rwa-skin=["'][^"']*["'][^>]*>[\s\S]*?<\/style>/i;
   const RWA_SKIN_BLOCK_TRAIL_RE = /<style\b[^>]*\bdata-rwa-skin=["'][^"']*["'][^>]*>[\s\S]*?<\/style>\n?/i;
+  // spliceSkinBlock — swap an existing <style data-rwa-skin> block for `theme`, or
+  // prepend it. Splice-based (not String.replace) so theme bytes land verbatim
+  // (a $-sequence in CSS would otherwise be mangled). Shared by the L1 compose
+  // transform in applySkinL1; mirrors applySkin's deterministic L0 swap/insert.
+  function spliceSkinBlock(doc, theme) {
+    const m = doc.match(RWA_SKIN_BLOCK_RE);
+    if (!m) return theme + '\n' + doc;
+    const i = doc.indexOf(m[0]);
+    return doc.slice(0, i) + theme + doc.slice(i + m[0].length);
+  }
+  // RWA_SKIN_RECIPES — per-preset L1 restyle instructions (skinning-v2). SEED-ONLY:
+  // the CLI skin path is theme-only (offline, no agent), so these are NOT mirrored to
+  // cli/src/skins.mjs (only RWA_SKINS name/label/swatch/theme is byte-pinned). Every
+  // recipe is additive-only + 1:1-invertible (wrap + add class, never re-tag/move/
+  // merge) so de-skin is a clean sk-* strip and data-rwa-id is never renumbered.
+  // LIMITATION (v2): re-skin de-skinning is best-effort — the preamble instructs the
+  // agent to strip a prior skin's sk-* wrappers first, but a non-compliant model may
+  // leave orphan wrappers (unstyled, though a block-level orphan still imposes layout),
+  // and they accumulate across re-skins. Mitigations: ⌘Z reverts a skin in one step;
+  // /skin reset removes the theme block. A deterministic strip pre-pass is deferred
+  // (needs balanced-tag unwrap — regex is unsafe for nested wrappers like sk-stat-row).
+  const RWA_SKIN_L1_PREAMBLE =
+`Apply a visual restyle to this document by adding sk-* class hooks and additive wrapper elements. STRICT RULES: only ADD wrapper <div>/<span> elements and ADD class attributes; never delete, move, merge, reorder, re-tag, or rewrite existing content; never change any data-rwa-id; never add <style> or <script>; never touch frozen zones. If the document already contains sk-* wrappers or sk-* classes from a previous skin, first remove those wrappers (keeping their inner content) and strip the sk-* classes, then apply the restyle below. Use apply_edits with surgical (find,replace) pairs.
+
+Restyle:
+`;
+  const RWA_SKIN_RECIPES = {
+    'notion-clean': RWA_SKIN_L1_PREAMBLE +
+`1. If a short subtitle or dek paragraph sits directly under the H1, add class="sk-eyebrow" to it.
+2. Convert any paragraph that begins with "Note:", "Tip:", or "Important:" into a <div class="sk-callout"> wrapping that paragraph.
+3. Leave lists and tables unchanged.`,
+    'linear-dark': RWA_SKIN_L1_PREAMBLE +
+`1. If a short kicker or category line opens the document (above or right after the H1), wrap it as <div class="sk-eyebrow">…</div>.
+2. If you find a contiguous run of 2 to 4 short metric lines (for example "MRR $48k", "Churn 1.2%"), wrap each as <div class="sk-stat"><b>$48k</b><span>MRR</span></div> and group them in one <div class="sk-stat-row">…</div>.
+3. Leave all other structure unchanged.`,
+    'editorial-serif': RWA_SKIN_L1_PREAMBLE +
+`1. A category or section word before the title becomes <div class="sk-kicker">…</div> above the H1.
+2. A byline or dateline under the H1 (for example "By …", a date, "5 min read") gets class="sk-byline".
+3. Wrap the first body paragraph (the lede) as <div class="sk-lede">…</div>.
+4. A standalone single-sentence emphatic paragraph becomes <div class="sk-pull">…</div> (do NOT re-tag it to a blockquote).`,
+    'stripe-docs': RWA_SKIN_L1_PREAMBLE +
+`1. Wrap the leading H1 and its dek paragraph together in <div class="sk-hero">…</div>.
+2. A one-word kicker or category before the H1 becomes <span class="sk-pill">…</span> at the top of the hero.
+3. Leave code blocks, lists, and tables unchanged.`,
+    'terminal-mono': RWA_SKIN_L1_PREAMBLE +
+`1. Wrap the leading H1 (and a following byline or subtitle paragraph) in <div class="sk-hero">…</div>; add class="sk-byline" to that paragraph.
+2. A contiguous run of metric lines (number plus short label, for example "42 commits") becomes a <div class="sk-stat-row"> with each metric as <div class="sk-stat"><span class="sk-stat-num">42</span><span class="sk-stat-label">commits</span></div>.
+3. Append <span class="sk-blink">▋</span> after the final paragraph.`,
+  };
   async function applySkin(name) {
     const skin = RWA_SKINS[name];
     if (!skin) throw new RwaEditError('unknown_skin', null, { name, known: Object.keys(RWA_SKINS) });
@@ -2724,11 +2796,35 @@ if (typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent)) {
     await runtimeApplyEnvelope({ version: 'rwa-edit/1', doc: newDoc, reason: 'skin:reset' }, { surface: 'skin:reset', actor: 'skin:reset' });
     if (typeof showAffordance === 'function') showAffordance('skin removed');
   }
-  window.applySkin = applySkin; window.resetSkin = resetSkin;
+  async function applySkinL1(name) {
+    const skin = RWA_SKINS[name];
+    if (!skin) throw new RwaEditError('unknown_skin', null, { name, known: Object.keys(RWA_SKINS) });
+    const recipe = RWA_SKIN_RECIPES[name];
+    const cfg = resolveBackendConfig();
+    // L1 (content-aware restyle) needs a multi-turn tool-use backend. bridge /
+    // bridge-session are single-shot, so fall back to deterministic theme-only (L0)
+    // with a loud notice rather than silently skipping the restyle.
+    if (!recipe || cfg.kind === 'bridge' || cfg.kind === 'bridge-session') {
+      if ((cfg.kind === 'bridge' || cfg.kind === 'bridge-session') && typeof showAffordance === 'function')
+        showAffordance('skin: theme-only (L1 restyle needs openrouter/ollama/lmstudio)');
+      return applySkin(name);
+    }
+    // compose-then-commit: drive the agent with the preset recipe (no-commit), then
+    // splice this preset's deterministic theme block onto the result and commit ONCE
+    // (one ⌘Z reverts theme + wrappers); the commit self-attributes actor:skin:NAME.
+    await modify(recipe, { surface: 'skin:l1', actor: 'skin:' + name }, {
+      compose: { transform: (agentDoc) => spliceSkinBlock(agentDoc, skin.theme), reason: 'skin:' + name + ' (theme+L1)' },
+    });
+  }
+  window.applySkin = applySkin; window.resetSkin = resetSkin; window.applySkinL1 = applySkinL1;
   // The ✦ gallery: a runtime-chrome panel (frozen bootstrap, never INLINE_DOC).
   // Each swatch is a pure-CSS mini-preview built from the preset's 3-stop swatch
-  // (bg / ink / accent) — no images, no fetch. A click dispatches applySkin
-  // (one deterministic commit); the active card reads the live data-rwa-skin attr.
+  // (bg / ink / accent) — no images, no fetch to build the preview. A click
+  // dispatches applySkinL1 — the always-on L1 restyle: it drives the agent over the
+  // network (when a multi-turn backend is configured) to add sk-* wrappers and lands
+  // theme + wrappers as ONE replace_document commit (one ⌘Z); bridge/single-shot or
+  // an unreachable backend falls back to a deterministic theme-only commit. The
+  // active card reads the live data-rwa-skin attr.
   function rwaSkinSwatch(name) {
     const s = RWA_SKINS[name]; const c = (s && s.swatch) || ['#ffffff', '#111111', '#888888'];
     return '<button class="rwa-skin-sw" data-skin="' + name + '" role="option" title="' + (s.label || name) + '">'
@@ -2755,7 +2851,7 @@ if (typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent)) {
     const cur = active && panel.querySelector('.rwa-skin-sw[data-skin="' + active + '"]');
     if (cur) cur.setAttribute('aria-current', 'true');
     panel.querySelectorAll('.rwa-skin-sw').forEach(function (b) {
-      b.onclick = function () { panel.classList.remove('open'); Promise.resolve(applySkin(b.getAttribute('data-skin'))).catch(function (e) { showAffordance('skin failed: ' + (e && e.code || e)); }); };
+      b.onclick = function () { panel.classList.remove('open'); Promise.resolve(applySkinL1(b.getAttribute('data-skin'))).catch(function (e) { showAffordance('skin failed: ' + (e && e.code || e)); }); };
     });
     const rb = panel.querySelector('[data-skin-reset]');
     if (rb) rb.onclick = function () { panel.classList.remove('open'); Promise.resolve(resetSkin()).catch(function () {}); };
@@ -2777,10 +2873,11 @@ async function submitLens(text) {
     if (skinMatch) {
       // Skin commands are document-global (they swap a top-of-doc <style> block),
       // so they IGNORE the lens anchor — handled before the anchored/modify split.
-      // Bare /skin opens the gallery (or lists presets until the panel ships);
-      // /skin reset clears; /skin NAME applies a preset. Deterministic — no agent
-      // call. An unknown name throws (the keydown catch surfaces it + preserves
-      // the typed text); the input-clear tail below runs only on success.
+      // Bare /skin opens the gallery; /skin reset clears (deterministic); /skin NAME
+      // applies a preset via applySkinL1 — the always-on L1 restyle (deterministic
+      // theme swap + agent sk-* wrappers in ONE commit; bridge/single-shot backends
+      // fall back to theme-only). An unknown name throws (the keydown catch surfaces
+      // it + preserves the typed text); the input-clear tail below runs only on success.
       const arg = skinMatch[1];
       if (!arg) {
         if (typeof openSkinPanel === 'function') openSkinPanel();
@@ -2788,7 +2885,7 @@ async function submitLens(text) {
       } else if (arg === 'reset') {
         await resetSkin();
       } else {
-        await applySkin(arg);
+        await applySkinL1(arg);
       }
     } else if (anchored) {
       await runAnchoredCommand(lensState.anchor, instruction);
@@ -3292,8 +3389,10 @@ async function commitCore(envelope, surface, instruction, actor, frozenBypass) {
 // byte-locked — and re-asserts post-build that the region is still data-rwa-frozen
 // (region_not_refrozen), so a builder bug can't ship an agent-writable zone. The
 // bypass is reachable ONLY here; the agent's apply_edits/replace_document never set
-// it. reachability:'edit-reachable' (default; e.g. a skin <style>) is a plain
-// region splice through the normal frozen guard. Spec:
+// it. reachability:'edit-reachable' (default) is a plain region splice through the
+// normal frozen guard. (No live consumer today: skinning-v2 composes its agent edits
+// via modify({compose}) + replaceDocument — see applySkinL1 — NOT this primitive;
+// 'frozen' is used by skill-zone persistence.) Spec:
 // docs/specs/rwa-runtime-region-commit-spec.md.
 async function runtimeRegionCommit({ regions, actor, reachability = 'edit-reachable' } = {}) {
   if (!Array.isArray(regions) || regions.length === 0)
@@ -3583,7 +3682,7 @@ async function commitDoc(currentDoc, newDoc, histRecord) {
 // for older runtimes by treating absence as "no check available."
 const isWellFormed = (s) => typeof s !== 'string' || typeof s.isWellFormed !== 'function' || s.isWellFormed();
 
-async function applyEdits(envelope, currentDocRaw, lensMeta = null) {
+async function applyEdits(envelope, currentDocRaw, lensMeta = null, opts = null) {
   if (envelope?.version !== 'rwa-edit/1') throw new RwaEditError('version_unsupported');
   if (!Array.isArray(envelope.edits) || envelope.edits.length === 0) throw new RwaEditError('malformed_envelope');
   for (let i = 0; i < envelope.edits.length; i++) {
@@ -3654,6 +3753,14 @@ async function applyEdits(envelope, currentDocRaw, lensMeta = null) {
   if (reservedId) throw new RwaEditError('reserved_id_used', null, { id: reservedId });
 
   if (work.length > RWA_EDIT.MAX_DOC) throw new RwaEditError('target_size_exceeded');
+
+  // compose-then-commit (skinning-v2): return the fully-validated, shape-checked
+  // string WITHOUT committing, so the caller can splice a deterministic theme
+  // block onto it and commit the composed doc ONCE (one rwa_undo frame). The
+  // validation above (frozen wall, reserved markers, computeShape — which blocks
+  // any <style>/<script> the agent might inject — parse, size) has already run,
+  // so the returned string is safe to compose with. Default path is unchanged.
+  if (opts && opts.noCommit) return work;
 
   const histRecord = { ts: Date.now(), kind: 'edit_batch', envelope };
   if (lensMeta) {
@@ -4759,7 +4866,7 @@ function friendlyToolName(name) {
   return name || 'tool';
 }
 
-async function modify(instr, lensMeta = null) {
+async function modify(instr, lensMeta = null, opts = null) {
   // Audit R2: every commit through the agent loop is attributed. Lens
   // callers set actor explicitly (getActiveActor() for command paths,
   // 'user:lens' for text paths). Non-lens callers — chiefly runtime.modify
@@ -4812,19 +4919,37 @@ async function modify(instr, lensMeta = null) {
       setLensProgress('thinking',
         attemptNum === 1 ? 'Thinking…' : `Retrying (attempt ${attemptNum}/${RWA_EDIT.RETRIES})…`);
 
-      const data = await openAiCompatChat(cfg, {
-        model,
-        max_tokens: 32000,
-        messages,
-        tools: TOOL_SCHEMAS,
-        tool_choice: 'auto',
-      });
+      let data;
+      try {
+        data = await openAiCompatChat(cfg, {
+          model,
+          max_tokens: 32000,
+          messages,
+          tools: TOOL_SCHEMAS,
+          tool_choice: 'auto',
+        });
+      } catch (netErr) {
+        // compose mode (skin): an unreachable / erroring backend must not abort the
+        // skin — break to the deterministic theme-only commit below. A skin click
+        // (incl. the ✦ gallery) always lands at least the theme, even offline.
+        if (opts && opts.compose) { lastFailure = netErr; break; }
+        throw netErr;
+      }
       const msg = data.choices?.[0]?.message;
-      if (!msg) throw new Error('empty response');
+      if (!msg) {
+        if (opts && opts.compose) { lastFailure = new RwaEditError('empty_response'); break; }
+        throw new Error('empty response');
+      }
 
       const toolCalls = msg.tool_calls || [];
       if (toolCalls.length === 0) {
         const text = (msg.content || '(no message)').trim();
+        if (opts && opts.compose) {
+          // compose mode: a decline does NOT abort — fall through to the
+          // theme-only fallback commit below, so the skin still lands (one ⌘Z).
+          lastFailure = new RwaEditError('model_declined', null, { message: text.slice(0, 120) });
+          break;
+        }
         setStatus('err', '✗ model declined');
         setPalSt('err', text.slice(0, 200));
         setLensProgress('error', 'model declined — ' + text.slice(0, 120));
@@ -4850,15 +4975,27 @@ async function modify(instr, lensMeta = null) {
 
       setLensProgress('thinking', `Applying ${friendlyToolName(fnName)}…`);
 
+      // compose mode (skinning-v2): the agent contributes ADDITIVE markup only —
+      // run its apply_edits with {noCommit} so we can splice the deterministic
+      // theme block and commit ONCE after the loop. replace_document is refused
+      // here (it would let the agent rewrite the whole doc, bypassing the
+      // additive / computeShape guard); the retry steers it back to apply_edits.
+      const editOpts = (opts && opts.compose) ? { noCommit: true } : null;
       try {
         if (fnName === 'apply_dsl_plan') {
           const compiled = compileDslPlan(envelope, cur);
-          if (compiled.tool === 'apply_edits') newDoc = await applyEdits(compiled.envelope, cur, lensMeta);
-          else if (compiled.tool === 'replace_document') newDoc = await replaceDocument(compiled.envelope, cur, lensMeta);
+          if (compiled.tool === 'apply_edits') newDoc = await applyEdits(compiled.envelope, cur, lensMeta, editOpts);
+          else if (compiled.tool === 'replace_document') {
+            if (editOpts) throw new RwaEditError('compose_requires_apply_edits');
+            newDoc = await replaceDocument(compiled.envelope, cur, lensMeta);
+          }
           else throw new RwaEditError('unknown_tool', null, { name: compiled.tool });
         }
-        else if (fnName === 'apply_edits') newDoc = await applyEdits(envelope, cur, lensMeta);
-        else if (fnName === 'replace_document') newDoc = await replaceDocument(envelope, cur, lensMeta);
+        else if (fnName === 'apply_edits') newDoc = await applyEdits(envelope, cur, lensMeta, editOpts);
+        else if (fnName === 'replace_document') {
+          if (editOpts) throw new RwaEditError('compose_requires_apply_edits');
+          newDoc = await replaceDocument(envelope, cur, lensMeta);
+        }
         else throw new RwaEditError('unknown_tool', null, { name: fnName });
       } catch (err) {
         if (!(err instanceof RwaEditError)) throw err;
@@ -4868,6 +5005,20 @@ async function modify(instr, lensMeta = null) {
           messages.push({ role: 'tool', tool_call_id: tc.id, content: failureToToolResult(err) });
         }
       }
+    }
+
+    // compose-then-commit (skinning-v2): the agent's edits were validated but NOT
+    // committed (noCommit). Splice the deterministic theme block onto the agent's
+    // output — or onto `cur` if the agent gave nothing (graceful theme-only) — and
+    // commit the composed doc ONCE via replace_document: one rwa_undo frame, one ⌘Z
+    // reverts the whole skin (theme + wrappers). replace_document is shape-exempt, so
+    // the single theme <style> the RUNTIME adds is allowed (the agent could not add a
+    // <style> — computeShape blocked it in the no-commit apply above).
+    if (opts && opts.compose) {
+      const base = (newDoc !== null) ? newDoc : cur;
+      const finalDoc = opts.compose.transform(base, cur);
+      newDoc = await replaceDocument(
+        { version: 'rwa-edit/1', doc: finalDoc, reason: opts.compose.reason }, cur, lensMeta);
     }
 
     if (newDoc !== null) {
@@ -4897,6 +5048,12 @@ async function modify(instr, lensMeta = null) {
     setStatus('err', '✗ ' + e.message);
     setLensProgress('error', e.message);
     console.error(e);
+    // compose mode (skin): a GENUINE failure — the theme commit itself rejected
+    // (e.g. class_lock_uncovered on the composed doc) — must PROPAGATE so the caller
+    // reacts: the ✦ gallery's .catch fires, and /skin preserves the user's typed
+    // text (submitLens clears only on a resolved submit). Agent-edit failure already
+    // degraded to a theme-only commit above and never reaches here. Restores L0 parity.
+    if (opts && opts.compose) throw e;
   } finally {
     modifyMutex = false;
   }
