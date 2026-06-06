@@ -2743,6 +2743,12 @@ if (typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent)) {
   // cli/src/skins.mjs (only RWA_SKINS name/label/swatch/theme is byte-pinned). Every
   // recipe is additive-only + 1:1-invertible (wrap + add class, never re-tag/move/
   // merge) so de-skin is a clean sk-* strip and data-rwa-id is never renumbered.
+  // LIMITATION (v2): re-skin de-skinning is best-effort — the preamble instructs the
+  // agent to strip a prior skin's sk-* wrappers first, but a non-compliant model may
+  // leave orphan wrappers (unstyled, though a block-level orphan still imposes layout),
+  // and they accumulate across re-skins. Mitigations: ⌘Z reverts a skin in one step;
+  // /skin reset removes the theme block. A deterministic strip pre-pass is deferred
+  // (needs balanced-tag unwrap — regex is unsafe for nested wrappers like sk-stat-row).
   const RWA_SKIN_L1_PREAMBLE =
 `Apply a visual restyle to this document by adding sk-* class hooks and additive wrapper elements. STRICT RULES: only ADD wrapper <div>/<span> elements and ADD class attributes; never delete, move, merge, reorder, re-tag, or rewrite existing content; never change any data-rwa-id; never add <style> or <script>; never touch frozen zones. If the document already contains sk-* wrappers or sk-* classes from a previous skin, first remove those wrappers (keeping their inner content) and strip the sk-* classes, then apply the restyle below. Use apply_edits with surgical (find,replace) pairs.
 
@@ -3383,8 +3389,10 @@ async function commitCore(envelope, surface, instruction, actor, frozenBypass) {
 // byte-locked — and re-asserts post-build that the region is still data-rwa-frozen
 // (region_not_refrozen), so a builder bug can't ship an agent-writable zone. The
 // bypass is reachable ONLY here; the agent's apply_edits/replace_document never set
-// it. reachability:'edit-reachable' (default; e.g. a skin <style>) is a plain
-// region splice through the normal frozen guard. Spec:
+// it. reachability:'edit-reachable' (default) is a plain region splice through the
+// normal frozen guard. (No live consumer today: skinning-v2 composes its agent edits
+// via modify({compose}) + replaceDocument — see applySkinL1 — NOT this primitive;
+// 'frozen' is used by skill-zone persistence.) Spec:
 // docs/specs/rwa-runtime-region-commit-spec.md.
 async function runtimeRegionCommit({ regions, actor, reachability = 'edit-reachable' } = {}) {
   if (!Array.isArray(regions) || regions.length === 0)

@@ -1,6 +1,6 @@
 # Skinning rewritables — a style-library design
 
-**Status:** design-only. No code shipped. Date: 2026-06-03. Author: kepler (synthesized from a 7-agent design fan-out + adversarial critique).
+**Status:** v1 (theme-only) + **v2 (always-on L1 content-aware restyle) BUILT & on main** as of 2026-06-06 — impl plan `docs/plans/2026-06-06-skinning-v2-impl-plan.md`. v2 shipped the **compose-then-commit primitive** (`applyEdits {noCommit}` + `modify(instr,lensMeta,{compose})` → run the agent no-commit, splice the deterministic theme block, commit theme + `sk-*` wrappers as ONE `replace_document`, one ⌘Z), `applySkinL1` + seed-only `RWA_SKIN_RECIPES` for the 5 presets, the `sk-*` theme CSS, and the ✦ gallery + `/skin` wiring; pinned by `tests/skin-compose.mjs` + conformance SKIN-01/02/03. NOTE the implementation chose **Path A** (build the composed doc, commit via `replace_document`) over this doc's placeholder/`edit_batch` sketch, and does NOT use `runtimeRegionCommit`. Deferred: deterministic re-skin de-skin (best-effort today — a non-compliant model can leave orphan `sk-*` wrappers), CLI L1, v3 vision/`/skin like <image>`, the full 12-preset library, and `activeSkin` in self-description. Original design date: 2026-06-03. Author: kepler (7-agent design fan-out + adversarial critique; v2 built + adversarially reviewed 2026-06-06).
 
 ## Problem
 
