@@ -214,6 +214,20 @@ const undoLen = async (uuid) => ((await readStore(uuid, 'rwa_undo')) || []).leng
     check('T3b: bridge → ONE commit', (await histLen(w.uuid)) - hB === 1);
   }
 
+  // ── Task 4: no dead wrappers — every sk-* class a recipe tells the agent to add
+  //    MUST have a CSS rule in the seed RWA_SKINS themes. Static check over seed text. ──
+  {
+    const seed = fs.readFileSync(SEED, 'utf8');
+    const region = (from, to) => { const a = seed.indexOf(from), b = seed.indexOf(to, a); return (a >= 0 && b > a) ? seed.slice(a, b) : ''; };
+    const recipesRegion = region('const RWA_SKIN_RECIPES = {', 'async function applySkin(');
+    const themesRegion = region('const RWA_SKINS = {', 'const RWA_SKIN_BLOCK_RE');
+    const recipeClasses = [...new Set(recipesRegion.match(/sk-[a-z]+(?:-[a-z]+)*/g) || [])];
+    const themeSelectors = new Set([...themesRegion.matchAll(/\.(sk-[a-z]+(?:-[a-z]+)*)/g)].map(m => m[1]));
+    check('T4: recipe + theme regions found, recipe classes present', recipesRegion.length > 0 && themesRegion.length > 0 && recipeClasses.length >= 8);
+    const missing = recipeClasses.filter(c => !themeSelectors.has(c));
+    check('T4: every recipe sk-* class is styled by a theme (no dead wrappers) — missing=' + JSON.stringify(missing), missing.length === 0);
+  }
+
   console.log(`\n${pass} / ${pass + fail} passing`);
   process.exit(fail ? 1 : 0);
 })().catch(e => { console.error(e); process.exit(1); });
