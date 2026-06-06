@@ -3570,7 +3570,7 @@ async function commitDoc(currentDoc, newDoc, histRecord) {
 // for older runtimes by treating absence as "no check available."
 const isWellFormed = (s) => typeof s !== 'string' || typeof s.isWellFormed !== 'function' || s.isWellFormed();
 
-async function applyEdits(envelope, currentDocRaw, lensMeta = null) {
+async function applyEdits(envelope, currentDocRaw, lensMeta = null, opts = null) {
   if (envelope?.version !== 'rwa-edit/1') throw new RwaEditError('version_unsupported');
   if (!Array.isArray(envelope.edits) || envelope.edits.length === 0) throw new RwaEditError('malformed_envelope');
   for (let i = 0; i < envelope.edits.length; i++) {
@@ -3641,6 +3641,14 @@ async function applyEdits(envelope, currentDocRaw, lensMeta = null) {
   if (reservedId) throw new RwaEditError('reserved_id_used', null, { id: reservedId });
 
   if (work.length > RWA_EDIT.MAX_DOC) throw new RwaEditError('target_size_exceeded');
+
+  // compose-then-commit (skinning-v2): return the fully-validated, shape-checked
+  // string WITHOUT committing, so the caller can splice a deterministic theme
+  // block onto it and commit the composed doc ONCE (one rwa_undo frame). The
+  // validation above (frozen wall, reserved markers, computeShape — which blocks
+  // any <style>/<script> the agent might inject — parse, size) has already run,
+  // so the returned string is safe to compose with. Default path is unchanged.
+  if (opts && opts.noCommit) return work;
 
   const histRecord = { ts: Date.now(), kind: 'edit_batch', envelope };
   if (lensMeta) {
