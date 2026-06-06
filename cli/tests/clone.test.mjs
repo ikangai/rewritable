@@ -76,6 +76,34 @@ test('cloneFromHtml records provenance inside an href attribute', async () => {
   rmSync(out, { force: true });
 });
 
+// C1/H1 (final-review): the EXTRACTED ARTICLE BODY is attacker-controlled web
+// HTML, not marked's well-formed double-quoted output. The shared sanitizer
+// must neutralise active URL schemes in EVERY attribute form — single-quoted,
+// unquoted, and non-href URL attributes — or a clickable `javascript:` link
+// survives into the file://-origin container (where it has IDB/OPFS access).
+// Each assertion fails if the step-3 generalisation in sanitizeImportedHtml is
+// reverted to the double-quoted-href/src-only form.
+test('cloneFromHtml neutralises hostile URL attributes inside the article body (C1)', async () => {
+  const evil = `<!doctype html><html><head><title>Real Post</title></head><body>`
+    + `<article>`
+    + `<p>Intro paragraph long enough to be picked by the density fallback so the`
+    + ` whole article block is selected for extraction by the cloner here.</p>`
+    + `<p><a href='javascript:alert(1)'>single-quoted js link</a></p>`
+    + `<p><a href=javascript:alert(2)>unquoted js link</a></p>`
+    + `<p><a href="javascript:alert(3)">double-quoted js link</a></p>`
+    + `<form action='javascript:alert(4)'><button formaction="javascript:alert(5)">go</button></form>`
+    + `<img src='javascript:alert(6)'>`
+    + `<p>More body text to keep the extractor confident this is the article.</p>`
+    + `</article></body></html>`;
+  const out = '/tmp/clone-test7-' + process.pid + '.html';
+  await cloneFromHtml(evil, out, 'https://x.example/post/');
+  const info = await inspectDoc(out);
+  // No javascript: scheme survives in ANY attribute form (single/unquoted/double).
+  assert.ok(!/javascript:/i.test(info.doc),
+    'no javascript: URL survives in any attribute form (single-quoted, unquoted, action/formaction)');
+  rmSync(out, { force: true });
+});
+
 test('cloneFromHtml drops the provenance link for a non-http(s) sourceUrl (B1)', async () => {
   const out = '/tmp/clone-test6-' + process.pid + '.html';
   // Defence-in-depth: the wired path is SSRF-guarded, but the exported fn must

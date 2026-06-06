@@ -76,3 +76,4 @@ The browser runtime (`seeds/rewritable.html:3220-3286`) feeds apply errors back 
 Tracked for v2. Affects `cli/src/agent-loop.mjs` and possibly the `runAgentLoop` API (would need an `applyFn` callback parameter).
 
 - `rwa clone` has no `--json` failure surface (other verbs do). Add a `jsonMode` branch to `emitClone` in `bin/rwa.mjs` if/when `rwa clone --json` is introduced.
+- `clone-extract.mjs` `findClassOpen` (the WordPress Profile 1 container locator) is not quote-aware: a `>` inside an earlier quoted attribute value (e.g. `<div data-x="a>b" class="entry-content">`) defeats the `[^>]*` scan, so the post falls through to the density fallback. `tagEnd`/`balancedInner` are already quote-aware; make the opening-tag locator quote-aware too (find the `<tag …>` with a forward `tagEnd` scan, then test the captured tag text for the `class` token). Low real-world impact (WordPress emits `class` early with simple attrs); flagged by the final-review M1.
