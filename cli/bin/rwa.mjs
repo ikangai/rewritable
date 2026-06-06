@@ -18,6 +18,10 @@ Usage:
                               Default out: ./<name>-YYYY-MM-DD.html.
   rwa import <input> [path]   convert a md/html/txt file into an rwa document
                               (default: <input-basename>.html, in input's dir)
+  rwa clone <url> [path]      clone a public webpage into a rewritable (fetches;
+                              SSRF-guarded). Extracts the main article + title.
+                              Unlike \`import\`, this REQUIRES the network.
+                              (default: ./<url-slug>.html)
   rwa create <task...>        scaffold + agent-fill a new rewritable from a
   rwa draft  <task...>        natural-language task, baked into a self-contained
                               file. Leading word picks a frame (template/kind)
@@ -705,6 +709,45 @@ function detectProductKind(fileText) {
         if (!themeOnly) {
           process.stderr.write('note: applied the deterministic theme only — the always-on content-aware restyle is a later version. Pass --theme-only to silence this note.\n');
         }
+      }
+      return;
+    }
+
+    // `rwa clone <url> [path] [--force]` — fetch a public webpage and write it
+    // as a self-contained rewritable. Unlike every other verb this REQUIRES the
+    // network (it fetches). The fetch layer is SSRF-guarded (src/fetch-page.mjs);
+    // all of its failures plus the destination-exists check surface as a
+    // CloneError carrying a numeric exitCode (2 = file/fetch class) + subcode.
+    // We mirror `emitEdit`'s plain stderr format ("rwa clone: <codeName>/<subcode>
+    // <details?>") so the failure surface is consistent with `rwa edit`.
+    if (verb === 'clone') {
+      const force = rest.includes('--force') || rest.includes('-f');
+      const positionals = rest.filter(a => !a.startsWith('-'));
+      const url = positionals[0];
+      const outPath = positionals[1];
+      const emitClone = (payload) => {
+        const parts = [payload.code, payload.subcode].filter(Boolean);
+        let line = 'rwa clone: ' + parts.join('/');
+        if (payload.details && Object.keys(payload.details).length) {
+          line += ' ' + JSON.stringify(payload.details);
+        }
+        process.stderr.write(line + '\n');
+      };
+      if (!url) {
+        emitClone({ code: 'usage_error', subcode: 'missing_url_arg' });
+        process.exitCode = 1;
+        return;
+      }
+      const { cloneCmd } = await import('../src/clone.mjs');
+      try {
+        await cloneCmd({ url, outPath, force });
+      } catch (e) {
+        if (e && typeof e.exitCode === 'number') {
+          emitClone({ code: codeName(e.exitCode), subcode: e.subcode, details: e.details });
+          process.exitCode = e.exitCode;
+          return;
+        }
+        throw e;
       }
       return;
     }

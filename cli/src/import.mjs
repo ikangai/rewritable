@@ -205,7 +205,7 @@ function sanitizeMammothUrls(html) {
 // matches reliably. Edge cases (CDATA, malformed nesting) are over-stripped
 // rather than under-stripped — acceptable for an import path.
 const _ACTIVE_TAGS = ['script', 'iframe', 'object', 'embed', 'svg', 'math', 'link', 'meta', 'base'];
-function sanitizeImportedHtml(html) {
+export function sanitizeImportedHtml(html) {
   const warnings = [];
   let s = String(html);
   // 1) Drop active-content tags (open+close blocks, then self-closing/unmatched).
@@ -220,20 +220,27 @@ function sanitizeImportedHtml(html) {
   let onCount = 0;
   s = s.replace(/\son[a-z]+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, () => { onCount++; return ''; });
   if (onCount) warnings.push('imported md: stripped ' + onCount + ' event-handler attribute(s)');
-  // 3) Apply scheme allow-list to surviving href/src (reuses _attrIsSafe).
-  let hrefSkipped = 0, srcSkipped = 0;
-  s = s.replace(/(\shref\s*=\s*)"([^"]*)"/gi, (full, prefix, val) => {
-    if (_attrIsSafe('href', val)) return full;
-    hrefSkipped++;
-    return prefix + '"#"';
-  });
-  s = s.replace(/(\ssrc\s*=\s*)"([^"]*)"/gi, (full, prefix, val) => {
-    if (_attrIsSafe('src', val)) return full;
-    srcSkipped++;
-    return prefix + '"#"';
-  });
-  if (hrefSkipped) warnings.push('imported md: neutralised ' + hrefSkipped + ' unsafe href(s)');
-  if (srcSkipped) warnings.push('imported md: neutralised ' + srcSkipped + ' unsafe src(s)');
+  // 3) Apply scheme allow-list to surviving URL-bearing attributes. Marked's
+  //    output is double-quoted href/src only, but rwa clone feeds ARBITRARY web
+  //    HTML here — single-quoted, unquoted, and other URL attributes (action/
+  //    formaction/poster/xlink:href) are all common and must be checked too, or
+  //    a `href='javascript:…'` survives into the file:// container as a live,
+  //    clickable link. Match all three value forms (mirror of the on*= strip)
+  //    and the full reachable URL-attr set. data:image/* stays allowed on src.
+  let urlSkipped = 0;
+  s = s.replace(
+    /(\s)(xlink:href|formaction|href|src|action|poster)(\s*=\s*)("[^"]*"|'[^']*'|[^\s>]+)/gi,
+    (full, ws, name, eq, rawVal) => {
+      const lname = name.toLowerCase();
+      const attr = (lname === 'src' || lname === 'poster') ? 'src' : 'href';
+      const quoted = rawVal[0] === '"' || rawVal[0] === "'";
+      const val = quoted ? rawVal.slice(1, -1) : rawVal;
+      if (_attrIsSafe(attr, val)) return full;
+      urlSkipped++;
+      return ws + name + eq + '"#"';
+    }
+  );
+  if (urlSkipped) warnings.push('imported md: neutralised ' + urlSkipped + ' unsafe URL attribute(s)');
   return { html: s, warnings };
 }
 

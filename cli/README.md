@@ -22,6 +22,8 @@ rwa new my-notes.html       # → ./my-notes.html
 rwa import notes.md         # → ./notes.html
 rwa import page.html out.html
 
+rwa clone https://example.com/post   # → ./post.html (fetches; SSRF-guarded)
+
 rwa edit notes.html "Add a section on testing"      # instruction → agent loop
 echo '{"version":"rwa-edit/1","edits":[...]}' | rwa edit notes.html
 rwa edit notes.html --plan plan.json                # envelope from a file
@@ -68,6 +70,19 @@ Embeds the input file's content as the document's initial state. Supported forma
 - `.txt` — paragraph-split on blank lines, HTML chars escaped
 
 Output defaults to `<input-basename>.html` in the input's directory. Conversion is deterministic and offline — no API key, no network.
+
+### `rwa clone <url> [path]`
+
+Clone a public webpage into a self-contained rewritable: fetch the page, extract its main article and title, and bake the content into a fresh container. First-class for **WordPress / ikangai posts** — a blog post becomes an editable, shareable single-file `.html` you can rewrite with `⌘K`.
+
+```sh
+rwa clone https://www.ikangai.com/some-post/          # → ./some-post.html
+rwa clone https://www.ikangai.com/some-post/ out.html
+```
+
+Unlike `rwa import`, which is **offline**, `rwa clone` **requires the network** (it fetches the URL). The fetch is **SSRF-guarded**: only `http`/`https` schemes, private/loopback/link-local/metadata addresses are blocked (including via DNS rebinding and per-hop redirect re-validation), responses are capped in size and must be HTML. A blocked or failed fetch exits `2` (`file_error`, e.g. `blocked_host`, `bad_scheme`, `not_html`, `http_error`) and writes no file. The destination is checked first — an existing file exits `2` (`exists`) unless you pass `--force`.
+
+Cloning is **content-only** in v1: the extracted article text/markup plus the page title (prepended as an `<h1>`) and a provenance footer linking back to the source. The source page's styles are **not** cloned — the new rewritable renders with the seed's baseline typography (re-style it later with `rwa skin` or `⌘K`).
 
 ### `rwa create <task...>` (alias `rwa draft`)
 
