@@ -5,6 +5,12 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 
+// Hosted-runtime store + capability auth for the /r endpoints (Task 3). Pure
+// CJS helpers (token mint/hash/verify, ingest, readHosted, baseBodyHash); the
+// self-description reader they pair with is the vendored ESM identity.mjs,
+// dynamically imported from the async route handlers below.
+const hosted = require('./lib/hosted.js');
+
 const PORT = Number(process.env.PORT) || 80;
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const SEEDS_DIR = path.join(__dirname, '..', 'seeds');
@@ -134,6 +140,12 @@ function buildStoredZip(entries) {
 // libs that DO load via classic script).
 const PDFJS_MAIN = fs.readFileSync(path.join(PUBLIC_DIR, 'pdf', 'pdf.min.mjs'));
 const PDFJS_WORKER = fs.readFileSync(path.join(PUBLIC_DIR, 'pdf', 'pdf.worker.min.mjs'));
+
+// Hosted live-editable projection shim (Task 6). Read once at startup like the
+// other static assets; templated per request with __RWA_HOSTED_ID__ +
+// __RWA_HOSTED_UUID__ and injected before <script id="rwa-bootstrap"> in GET
+// /r/:id so it parses/runs first (reload-sync + commit sink + Undo + token).
+const HOSTED_SHIM = fs.readFileSync(path.join(PUBLIC_DIR, 'hosted-shim.js'), 'utf8');
 
 // Per-container UUID injection. The seed ships with a placeholder DOC_UUID;
 // every download gets a fresh randomUUID() substituted in. Without this, two
@@ -278,6 +290,37 @@ function checkRateLimit(ip) {
   return { ok: true };
 }
 
+// Per-CAPABILITY-TOKEN sliding-window write limit on /modify. Separate from the
+// per-IP limit above (a single IP may legitimately drive many distinct rwas;
+// this caps writes per rwa-cap). In-memory, same shape as the per-IP limiter.
+// Keyed by the token's capHash — NEVER the raw token — so the limiter map can't
+// leak a credential. Default 60 writes/hour; overridable for tests via
+// RWA_MODIFY_RATE_LIMIT so a test can hit the cap without firing 60 requests.
+const MODIFY_RATE_LIMIT = Number(process.env.RWA_MODIFY_RATE_LIMIT) || 60;
+const modifyRateBuckets = new Map();
+
+// Server-side document size cap. The vendored apply pipeline (cli/src parity)
+// only COMMENTS the MAX_DOC cap (a CLI scope-down), so an authorized token-holder
+// could otherwise grow a hosted doc to the 25MB body cap. We enforce it here so
+// hosted bounds == substrate bounds: the seed's RWA_EDIT.MAX_DOC (1MiB) on the
+// LF-canonical editable body, both on /modify (post-apply) and at ingest. The
+// rejection code matches the seed's RwaEditError('target_size_exceeded').
+// Overridable via RWA_HOSTED_MAX_DOC so a test can trip the cap without a 1MiB
+// request (same pattern as RWA_MODIFY_RATE_LIMIT above).
+const HOSTED_MAX_DOC = Number(process.env.RWA_HOSTED_MAX_DOC) || (1024 * 1024);
+
+function checkModifyRateLimit(capHash) {
+  const now = Date.now();
+  let bucket = modifyRateBuckets.get(capHash);
+  if (!bucket) { bucket = []; modifyRateBuckets.set(capHash, bucket); }
+  while (bucket.length && bucket[0] < now - RATE_WINDOW_MS) bucket.shift();
+  if (bucket.length >= MODIFY_RATE_LIMIT) {
+    return { ok: false, retryAfterSec: Math.ceil((bucket[0] + RATE_WINDOW_MS - now) / 1000) };
+  }
+  bucket.push(now);
+  return { ok: true };
+}
+
 function sweepExpired() {
   let entries;
   try { entries = fs.readdirSync(DATA_DIR); }
@@ -320,8 +363,21 @@ function sweepExpired() {
     while (v.length && v[0] < now - RATE_WINDOW_MS) v.shift();
     if (v.length === 0) rateBuckets.delete(k);
   }
+  for (const [k, v] of modifyRateBuckets) {
+    while (v.length && v[0] < now - RATE_WINDOW_MS) v.shift();
+    if (v.length === 0) modifyRateBuckets.delete(k);
+  }
 
   if (deleted > 0 || kept > 0) console.log(`sweep: deleted ${deleted}, kept ${kept}`);
+
+  // Hosted runtime (/r) 90-day inactivity sweep — disjoint from the /s/ share
+  // files above (it scans ONLY the DATA_DIR/r/ subtree). Same hourly cadence.
+  try {
+    const removedHosted = hosted.sweepHosted(now, { dataDir: DATA_DIR });
+    if (removedHosted.length > 0) console.log(`sweep: hosted removed ${removedHosted.length}`);
+  } catch (err) {
+    console.error('sweep: hosted sweep failed', err && err.message);
+  }
 }
 
 sweepExpired();
@@ -422,6 +478,553 @@ async function handlePublish(req, send) {
   }, JSON.stringify({ short, url: shareUrl, expiresAt: createdAt + EXPIRY_MS }) + '\n');
 }
 
+// ─── Hosted runtime (/r): store + capability auth + read endpoints ─────────
+// A hosted rwa is stored under DATA_DIR/r/<id>/ (disjoint from the /s/ share
+// files). Reads are gated by a per-rwa capability token (Authorization: Bearer
+// <token>); only the token's sha-256 hash is persisted (hosted.js). The /modify
+// WRITE endpoint is Task 4 — not built here. The token is NEVER logged.
+
+const JSON_CT = { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' };
+const sendJson = (send, status, obj) => send(status, JSON_CT, JSON.stringify(obj) + '\n');
+
+// Container-fact extraction regexes. Module scope (not per-request) so they
+// aren't recompiled on every hosted read/write. UUID_RE_LOCAL has a capture
+// group (the apex UUID_RE above is bare) — the two are intentionally distinct.
+const UUID_RE_LOCAL = /const DOC_UUID = '([0-9a-f-]{36})';/;
+const PRODUCT_KIND_RE = /const PRODUCT_KIND = '([^']*)';/;
+
+// Pull the Bearer token out of the Authorization header. Returns null for a
+// missing or malformed header (→ caller responds 401, never 500).
+function bearerToken(req) {
+  const h = req.headers['authorization'];
+  if (!h || typeof h !== 'string') return null;
+  const m = h.match(/^Bearer\s+(\S+)$/);
+  return m ? m[1] : null;
+}
+
+// POST /r — create a hosted rwa from raw .html bytes. Anonymous (creating).
+async function handleHostedCreate(req, send) {
+  let buf;
+  try { buf = await readBody(req, MAX_BODY_BYTES); }
+  catch (err) {
+    if (err && err.code === 'BODY_TOO_LARGE') {
+      return sendJson(send, 413, { error: 'body_too_large', maxBytes: MAX_BODY_BYTES });
+    }
+    return sendJson(send, 400, { error: 'read_failed' });
+  }
+
+  // Reject a container whose editable body already exceeds MAX_DOC, so you can't
+  // seed an oversized doc the cap would then forbid editing. Measured on the
+  // LF-canonical body via the vendored extractInlineDoc (same backtick-walk the
+  // apply path uses). A non-rewritable / extractor failure falls through to
+  // hosted.ingest's own validation (which returns 400 not_a_rewritable).
+  const bytesStr = buf.toString('utf8');
+  try {
+    const { extractInlineDoc } = await import('./lib/seed.mjs');
+    const body = hosted.canonLF(extractInlineDoc(bytesStr));
+    if (body.length > HOSTED_MAX_DOC) {
+      return sendJson(send, 400, { error: 'target_size_exceeded' });
+    }
+  } catch { /* not extractable here → ingest's validation surfaces the real error */ }
+
+  let id, token;
+  try {
+    ({ id, token } = hosted.ingest(bytesStr, { dataDir: DATA_DIR }));
+  } catch (err) {
+    if (err && err.code === 'not_a_rewritable') {
+      return sendJson(send, 400, { error: 'not_a_rewritable' });
+    }
+    console.error('hosted: ingest failed', err && err.message);
+    return sendJson(send, 500, { error: 'storage_failed' });
+  }
+
+  // Projection URL: <base>/r/<id>#k=<token>. The token rides the fragment so it
+  // never reaches the server on a navigation (Task 6 builds the projection page).
+  const scheme = (req.headers['x-forwarded-proto'] || 'http').split(',')[0].trim();
+  const host = req.headers.host || 'localhost';
+  const base = `${scheme}://${host}`;
+  return sendJson(send, 200, { id, token, url: `${base}/r/${id}#k=${token}` });
+}
+
+// Compute the self-description/1 projection over a container's bytes + its
+// already-extracted editable body. Shared by the describe/doc reads AND the
+// /modify response so the post-edit self-description is byte-for-byte the same
+// projection a subsequent /describe would return. The reader is the vendored
+// ESM identity.mjs (+ apply-edits.mjs for frozen zones); dynamic-import from
+// these async handlers (CJS can't static-import ESM). Mirrors cli/src/doc.mjs.
+async function selfDescriptionFor(bytes, doc) {
+  const { resolveSelfDescription } = await import('./lib/identity.mjs');
+  const { findFrozenZones } = await import('./lib/apply-edits.mjs');
+  const uuid = (bytes.match(UUID_RE_LOCAL) || [])[1] || null;
+  const kind = (bytes.match(PRODUCT_KIND_RE) || [])[1] || 'document';
+  const frozenZones = findFrozenZones(doc).map((z) => z.name);
+  return resolveSelfDescription({ fileText: bytes, doc, uuid, kind, frozenZones });
+}
+
+// GET /r/:id/{describe,export,doc} — authenticated reads over the stored bytes.
+async function handleHostedRead(id, action, req, send) {
+  const rec = hosted.readHosted(id, { dataDir: DATA_DIR });
+  // Unknown id → 404. Bad/missing token → 401. Order: a present-but-unauthorized
+  // caller learns nothing about existence beyond the id they already named.
+  if (!rec) return sendJson(send, 404, { error: 'not_found' });
+
+  const token = bearerToken(req);
+  if (!hosted.verifyToken(token, rec.owner.capHash)) {
+    return sendJson(send, 401, { error: 'unauthorized' });
+  }
+
+  // Authorized: touch lastAccess (best-effort, non-fatal).
+  hosted.touchAccess(id, { dataDir: DATA_DIR }, rec.owner);
+
+  if (action === 'export') {
+    // The stored bytes verbatim.
+    return send(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' }, rec.bytes);
+  }
+
+  // describe + doc both need the self-description/1 projection over the bytes.
+  // The editable-body reader is the vendored ESM seed.mjs; dynamic-import from
+  // this async handler (CJS can't static-import ESM). Mirrors cli/src/doc.mjs.
+  const { extractInlineDoc } = await import('./lib/seed.mjs');
+
+  let doc;
+  try { doc = extractInlineDoc(rec.bytes); }
+  catch { return sendJson(send, 500, { error: 'corrupt_container' }); }
+
+  const selfDescription = await selfDescriptionFor(rec.bytes, doc);
+
+  if (action === 'describe') {
+    return sendJson(send, 200, selfDescription);
+  }
+
+  // doc: the LF-canonical editable body + its sha-256 + the self-description.
+  // baseHash is what a Phase-B client feeds the agent + sends as the envelope
+  // baseHash. canonLF so the hash is over exactly the edit-contract bytes.
+  const canonDoc = hosted.canonLF(doc);
+  return sendJson(send, 200, {
+    doc: canonDoc,
+    baseHash: hosted.sha256hex(canonDoc),
+    selfDescription,
+  });
+}
+
+// ─── Per-id write lock ──────────────────────────────────────────────────────
+// /modify (and future /undo) for the SAME id must serialize: applyPlan writes
+// current.html in place, so two concurrent writers could lose an update or
+// interleave. We chain each write behind the prior one's promise per id (the
+// in-process mirror of the seed's modifyMutex). Single-process service, so an
+// in-memory Map is sufficient; a multi-process deploy would need a file lock
+// (not in scope — the deploy is one node process).
+const writeLocks = new Map();
+
+function withWriteLock(id, fn) {
+  const prev = writeLocks.get(id) || Promise.resolve();
+  // The next link runs fn() AFTER prev settles, regardless of prev's outcome
+  // (a prior failure must not wedge the chain). prev is already guarded, so
+  // .catch here is belt-and-suspenders.
+  const next = prev.catch(() => {}).then(fn);
+  // Keep the chain tip current; clear the entry once this link settles and no
+  // newer writer has taken over, so the Map doesn't grow unboundedly.
+  writeLocks.set(id, next);
+  next.catch(() => {}).finally(() => {
+    if (writeLocks.get(id) === next) writeLocks.delete(id);
+  });
+  return next;
+}
+
+// Map an applyPlan CliError to the HTTP status. Envelope/apply failures (exit 3)
+// are 422 (the request is well-formed but its envelope can't apply to the
+// current bytes); a file error (exit 2) on OUR own temp copy is an internal
+// fault → 500. The subcode (e.g. frozen_zone_violation, find_not_found) is the
+// {error} the client sees — same vocabulary as `rwa edit --json`.
+function modifyErrorStatus(err) {
+  if (err && err.exitCode === 3) return 422;
+  return 500;
+}
+
+// POST /r/:id/modify — the authoritative, model-free, audited WRITE endpoint.
+// Applies an rwa-edit/1 envelope to the stored bytes via the vendored applyPlan,
+// under optimistic concurrency (baseHash) + a per-id write lock, and appends a
+// forward audit record. The server NEVER trusts a client-supplied doc — it
+// applies the envelope to ITS OWN current.html; baseHash is only a staleness
+// check, not the bytes to write. Model-free: it only APPLIES (never calls an LLM).
+async function handleHostedModify(id, req, send) {
+  // Auth + existence first (cheap, no lock needed — these don't write).
+  const rec0 = hosted.readHosted(id, { dataDir: DATA_DIR });
+  if (!rec0) return sendJson(send, 404, { error: 'not_found' });
+  const token = bearerToken(req);
+  if (!hosted.verifyToken(token, rec0.owner.capHash)) {
+    return sendJson(send, 401, { error: 'unauthorized' });
+  }
+
+  // Per-token write rate limit — keyed by the verified capHash (never the raw
+  // token), checked BEFORE acquiring the write lock or applying. The N+1th write
+  // for this cap within the window → 429, no lock, no write.
+  const rl = checkModifyRateLimit(rec0.owner.capHash);
+  if (!rl.ok) {
+    return send(429, { ...JSON_CT, 'Retry-After': String(rl.retryAfterSec) },
+      JSON.stringify({ error: 'rate_limited', retryAfterSec: rl.retryAfterSec }) + '\n');
+  }
+
+  // Parse + validate the request body (bad input → 400, no lock, no write).
+  let buf;
+  try { buf = await readBody(req, MAX_BODY_BYTES); }
+  catch (err) {
+    if (err && err.code === 'BODY_TOO_LARGE') {
+      return sendJson(send, 413, { error: 'body_too_large', maxBytes: MAX_BODY_BYTES });
+    }
+    return sendJson(send, 400, { error: 'bad_request' });
+  }
+  let body;
+  try { body = JSON.parse(buf.toString('utf8')); }
+  catch { return sendJson(send, 400, { error: 'bad_request' }); }
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+    return sendJson(send, 400, { error: 'bad_request' });
+  }
+  const { envelope, baseHash } = body;
+  // actor rides verbatim into the durable JSONL audit log, so cap it (fail loud,
+  // not silent-truncate): >128 chars bloats the log, a newline forges a record
+  // boundary. Reject either with 400. Absent/empty → web:anon default.
+  if (body.actor != null && typeof body.actor !== 'string') {
+    return sendJson(send, 400, { error: 'bad_request' });
+  }
+  if (typeof body.actor === 'string' && (body.actor.length > 128 || /[\r\n]/.test(body.actor))) {
+    return sendJson(send, 400, { error: 'bad_request' });
+  }
+  const actor = typeof body.actor === 'string' && body.actor.length > 0 ? body.actor : 'web:anon';
+  if (typeof envelope !== 'object' || envelope === null) {
+    return sendJson(send, 400, { error: 'bad_request' });
+  }
+  if (typeof baseHash !== 'string' || !/^[0-9a-f]{64}$/.test(baseHash)) {
+    return sendJson(send, 400, { error: 'bad_request' });
+  }
+
+  // The apply lifecycle runs UNDER the per-id write lock so concurrent /modify
+  // for the same id serialize (no lost update / no interleave). The lock wraps
+  // the staleness check too — a writer must not read a baseHash that a queued
+  // write is about to invalidate.
+  return withWriteLock(id, async () => {
+    // Re-read under the lock — current.html may have advanced while we queued.
+    const rec = hosted.readHosted(id, { dataDir: DATA_DIR });
+    if (!rec) return sendJson(send, 404, { error: 'not_found' });
+
+    const { applyPlan, CliError } = await import('./lib/edit.mjs');
+    const { compileDslPlan } = await import('./lib/dsl-compiler.mjs');
+    const { extractInlineDoc } = await import('./lib/seed.mjs');
+
+    // Optimistic concurrency: the posted baseHash must match the CURRENT body
+    // hash. Mismatch → 409, NO write. (hosted.baseBodyHash = sha256 of the
+    // LF-canonical editable body — the same value /doc returns as baseHash.)
+    const currentHash = await hosted.baseBodyHash(rec.bytes);
+    if (currentHash !== baseHash) {
+      return sendJson(send, 409, { error: 'stale_base', currentHash });
+    }
+
+    // Apply against a TEMP COPY of current.html (never current.html directly):
+    // applyPlan reads + atomically writes the path it's given, so on failure
+    // current.html is untouched and we just delete the temp.
+    const dir = hosted.idDir(DATA_DIR, id);
+    const tmpPath = path.join(dir, `.modify-${process.pid}-${crypto.randomBytes(6).toString('hex')}.tmp`);
+    try { fs.writeFileSync(tmpPath, rec.bytes); }
+    catch (err) {
+      console.error('hosted: modify temp write failed', err && err.message);
+      return sendJson(send, 500, { error: 'storage_failed' });
+    }
+
+    try {
+      await applyPlan(tmpPath, envelope);
+    } catch (err) {
+      try { fs.unlinkSync(tmpPath); } catch { /* best-effort */ }
+      if (err instanceof CliError) {
+        const status = modifyErrorStatus(err);
+        const payload = { error: err.subcode };
+        // Surface a one-line hint if the apply pipeline attached one (additive).
+        if (err.details && err.details.hint) payload.detail = err.details.hint;
+        return sendJson(send, status, payload);
+      }
+      console.error('hosted: modify apply unexpected error', err && err.message);
+      return sendJson(send, 500, { error: 'internal_error' });
+    }
+
+    // Apply succeeded → the new bytes are at tmpPath. Read back the new editable
+    // body (same extractor + canonLF the edit contract operates on) and its hash.
+    let newBytes, newBody;
+    try {
+      newBytes = fs.readFileSync(tmpPath, 'utf8');
+      newBody = hosted.canonLF(extractInlineDoc(newBytes));
+    } catch (err) {
+      try { fs.unlinkSync(tmpPath); } catch {}
+      console.error('hosted: modify readback failed', err && err.message);
+      return sendJson(send, 500, { error: 'internal_error' });
+    }
+    const resultHash = hosted.sha256hex(newBody);
+
+    // Server-side document size cap (the vendored apply only comments it). If the
+    // edited body would exceed MAX_DOC, reject with the SAME status apply-failures
+    // use (422) and the seed's error code — BEFORE any history/undo/commit — and
+    // delete the temp so current.html is untouched. This makes hosted bounds ==
+    // substrate bounds (the seed enforces the same cap in-page).
+    if (newBody.length > HOSTED_MAX_DOC) {
+      try { fs.unlinkSync(tmpPath); } catch { /* best-effort */ }
+      return sendJson(send, 422, { error: 'target_size_exceeded' });
+    }
+
+    // Forward audit record (the rwa_hist mirror). `kind` is the RESERVED
+    // cross-surface vocabulary (edit_batch / replace_document, CLAUDE.md
+    // "Reserved namespaces") and the DSL spec §5 mandates the audit log records
+    // the COMPILED form, not the wire form — so we derive `kind` from the
+    // compiled tool shape, exactly as the seed/substrate does. A DSL plan whose
+    // sole op is a replace_document escape is ops-shaped on the wire but compiles
+    // to a replace_document envelope (compiled.tool === 'replace_document'); a
+    // raw-shape heuristic would wrongly record it as edit_batch and disagree with
+    // the substrate. We mirror applyPlan's discriminator ('ops' → DSL plan,
+    // 'doc' → raw replace_document, else apply_edits) so the audit kind can never
+    // disagree with what was applied.
+    let isReplace;
+    let replaceReason; // the compiled/raw reason for a replace_document record
+    if ('ops' in envelope) {
+      // DSL plan (rwa-edit-dsl/1). Compile against the SAME body input applyPlan
+      // uses (extractInlineDoc on the current bytes, pre-canonLF) to read the
+      // compiled tool + reason. Recompiling here (applyPlan already compiled this
+      // exact plan against this exact body above) is wasteful but acceptable for
+      // v1 — the alternative, threading the kind back out of the vendored
+      // applyPlan, would mutate a byte-identical mirror, which we must not do. A
+      // compile failure here is impossible: the same compile succeeded above.
+      const compiled = compileDslPlan(envelope, extractInlineDoc(rec.bytes));
+      isReplace = compiled.tool === 'replace_document';
+      if (isReplace) replaceReason = compiled.envelope.reason;
+    } else {
+      // Raw envelope: 'doc' (+reason) → replace_document, else apply_edits.
+      isReplace = 'doc' in envelope && !('edits' in envelope);
+      if (isReplace) replaceReason = envelope.reason;
+    }
+    const record = {
+      ts: Date.now(),
+      actor,
+      kind: isReplace ? 'replace_document' : 'edit_batch',
+      baseHash,
+      resultHash,
+    };
+    // replace_document records carry the (compiled or raw) reason; edit_batch
+    // records carry the forward envelope (the DSL form for a DSL plan, matching
+    // the spec's note that the originating plan MAY be retained as metadata).
+    if (isReplace) record.reason = replaceReason;
+    else record.envelope = envelope;
+
+    // CRASH WINDOW (acceptable for v1): we append the forward audit record
+    // BEFORE renaming the new bytes into place. If the process dies between the
+    // append and the rename, history.jsonl is one record ahead of current.html.
+    // history is forward-only (never used to reconstruct bytes here), and the
+    // next successful write re-establishes consistency; a torn append can't
+    // corrupt current.html. We append-then-rename (not rename-then-append) so
+    // the rename — the durable, user-visible commit — is the LAST step. A torn
+    // FINAL history line is likewise harmless: it's a forward-only artifact never
+    // parsed to rebuild bytes, so historyLen's non-empty-line count just skips
+    // it and the next append starts cleanly on a fresh line.
+    try {
+      hosted.appendHistory(id, { dataDir: DATA_DIR }, record);
+    } catch (err) {
+      try { fs.unlinkSync(tmpPath); } catch {}
+      console.error('hosted: modify history append failed', err && err.message);
+      return sendJson(send, 500, { error: 'storage_failed' });
+    }
+
+    // UNDO PRE-IMAGE: durably push the PRE-edit current.html bytes onto the undo
+    // stack BEFORE the commit rename. This is the crash-safe reversible state —
+    // /undo restores from this pre-image, never by replaying the forward
+    // history.jsonl (which can be one record ahead and can't rebuild
+    // replace_document bytes). Written before the rename, so a crash between the
+    // push and the rename at worst leaves a pre-image for a commit that didn't
+    // land (harmless: the next undo would restore bytes already current). A push
+    // failure aborts the commit (the new bytes would otherwise be un-undoable).
+    try {
+      hosted.pushUndo(id, { dataDir: DATA_DIR }, rec.bytes);
+    } catch (err) {
+      try { fs.unlinkSync(tmpPath); } catch {}
+      console.error('hosted: modify undo-preimage push failed', err && err.message);
+      return sendJson(send, 500, { error: 'storage_failed' });
+    }
+
+    // Atomically move the new bytes into place (rename(2) over current.html).
+    try {
+      fs.renameSync(tmpPath, path.join(dir, 'current.html'));
+    } catch (err) {
+      try { fs.unlinkSync(tmpPath); } catch {}
+      console.error('hosted: modify commit rename failed', err && err.message);
+      return sendJson(send, 500, { error: 'storage_failed' });
+    }
+
+    // Best-effort lastAccess touch + the post-edit self-description (same
+    // projection /describe returns over the NEW bytes).
+    hosted.touchAccess(id, { dataDir: DATA_DIR }, rec.owner);
+    const selfDescription = await selfDescriptionFor(newBytes, newBody);
+    // Consistent pair on BOTH /modify and /undo: histLen is the forward-audit
+    // record count (monotonic; never decreases), undoLen is the remaining
+    // undo-stack depth (a client gates "can I undo again?" on undoLen > 0).
+    const histLen = hosted.historyLen(id, { dataDir: DATA_DIR });
+    const undoLen = hosted.undoLen(id, { dataDir: DATA_DIR });
+
+    return sendJson(send, 200, {
+      doc: newBody,
+      baseHash: resultHash,
+      selfDescription,
+      histLen,
+      undoLen,
+    });
+  });
+}
+
+// POST /r/:id/undo — pop the most-recent pre-image and restore it as current.html.
+// Crash-safe + composable: the reversible state is the per-id undo pre-image stack
+// (written before each /modify rename), NEVER a replay of the forward
+// history.jsonl. history.jsonl is NOT mutated here — it stays an append-only
+// forward audit; the undo stack alone is the reversible state. Runs under the
+// per-id write lock so it serializes with /modify (and another /undo). The
+// response carries the SAME {histLen, undoLen} pair as /modify: `histLen` is the
+// forward-audit record count (monotonic; undo does NOT mutate history.jsonl, so
+// after an undo histLen stays the full forward count — correct and intended), and
+// `undoLen` is the REMAINING undo-stack depth (undoable edits left) — a client
+// gates "can I undo again?" on undoLen > 0 (the next undo 409s at undoLen 0).
+async function handleHostedUndo(id, req, send) {
+  const rec0 = hosted.readHosted(id, { dataDir: DATA_DIR });
+  if (!rec0) return sendJson(send, 404, { error: 'not_found' });
+  const token = bearerToken(req);
+  if (!hosted.verifyToken(token, rec0.owner.capHash)) {
+    return sendJson(send, 401, { error: 'unauthorized' });
+  }
+
+  return withWriteLock(id, async () => {
+    // Re-confirm existence under the lock (a concurrent DELETE may have removed it).
+    const rec = hosted.readHosted(id, { dataDir: DATA_DIR });
+    if (!rec) return sendJson(send, 404, { error: 'not_found' });
+
+    // Pop the most-recent pre-image. Empty stack → 409 nothing_to_undo, NO write.
+    let preImage;
+    try { preImage = hosted.popUndo(id, { dataDir: DATA_DIR }); }
+    catch (err) {
+      console.error('hosted: undo pop failed', err && err.message);
+      return sendJson(send, 500, { error: 'storage_failed' });
+    }
+    if (preImage == null) return sendJson(send, 409, { error: 'nothing_to_undo' });
+
+    // Atomically restore the pre-image as current.html.
+    const dir = hosted.idDir(DATA_DIR, id);
+    try { atomicWriteFile(path.join(dir, 'current.html'), preImage); }
+    catch (err) {
+      console.error('hosted: undo restore write failed', err && err.message);
+      return sendJson(send, 500, { error: 'storage_failed' });
+    }
+
+    // Build the response over the restored bytes (same projection /doc returns).
+    const { extractInlineDoc } = await import('./lib/seed.mjs');
+    let doc;
+    try { doc = hosted.canonLF(extractInlineDoc(preImage)); }
+    catch { return sendJson(send, 500, { error: 'corrupt_container' }); }
+    const baseHash = hosted.sha256hex(doc);
+    const selfDescription = await selfDescriptionFor(preImage, doc);
+
+    hosted.touchAccess(id, { dataDir: DATA_DIR }, rec.owner);
+    // Same pair as /modify: histLen = forward-audit count (unchanged by undo —
+    // history.jsonl is append-only), undoLen = remaining undo-stack depth.
+    const histLen = hosted.historyLen(id, { dataDir: DATA_DIR });
+    const undoLen = hosted.undoLen(id, { dataDir: DATA_DIR }); // remaining undo depth
+
+    return sendJson(send, 200, { doc, baseHash, selfDescription, histLen, undoLen });
+  });
+}
+
+// POST /r/:id/rotate — mint a new capability token, replace owner.json.capHash.
+// The old token now fails verifyToken (401). Under the write lock so it can't
+// race a /modify's owner.json touch.
+async function handleHostedRotate(id, req, send) {
+  const rec0 = hosted.readHosted(id, { dataDir: DATA_DIR });
+  if (!rec0) return sendJson(send, 404, { error: 'not_found' });
+  const token = bearerToken(req);
+  if (!hosted.verifyToken(token, rec0.owner.capHash)) {
+    return sendJson(send, 401, { error: 'unauthorized' });
+  }
+
+  return withWriteLock(id, async () => {
+    const rec = hosted.readHosted(id, { dataDir: DATA_DIR });
+    if (!rec) return sendJson(send, 404, { error: 'not_found' });
+    let out;
+    try { out = hosted.rotateToken(id, { dataDir: DATA_DIR }, rec.owner); }
+    catch (err) {
+      console.error('hosted: rotate failed', err && err.message);
+      return sendJson(send, 500, { error: 'storage_failed' });
+    }
+    // The new token is revealed ONCE here (never logged).
+    return sendJson(send, 200, { token: out.token });
+  });
+}
+
+// DELETE /r/:id — remove the rwa subtree recursively. Under the write lock so it
+// serializes with /modify + /undo (a queued write sees the dir gone → 404).
+async function handleHostedDelete(id, req, send) {
+  const rec0 = hosted.readHosted(id, { dataDir: DATA_DIR });
+  if (!rec0) return sendJson(send, 404, { error: 'not_found' });
+  const token = bearerToken(req);
+  if (!hosted.verifyToken(token, rec0.owner.capHash)) {
+    return sendJson(send, 401, { error: 'unauthorized' });
+  }
+
+  return withWriteLock(id, async () => {
+    try { hosted.deleteHosted(id, { dataDir: DATA_DIR }); }
+    catch (err) {
+      console.error('hosted: delete failed', err && err.message);
+      return sendJson(send, 500, { error: 'storage_failed' });
+    }
+    return sendJson(send, 200, { deleted: true });
+  });
+}
+
+// GET /r/:id — the LIVE EDITABLE web projection. Serve the REAL stored
+// current.html (a full rewritable, the seed's lens/⌘K UI unchanged) with the
+// hosted shim injected IMMEDIATELY BEFORE <script id="rwa-bootstrap"> so it
+// parses/runs FIRST (reload-sync deletes the stale per-container IDB before the
+// bootstrap's openDB; the shim then installs the commit sink + Undo button).
+//
+// No Bearer needed on the GET itself — the capability token rides the #k=
+// fragment (which the server NEVER sees), read client-side by the shim and used
+// as Bearer on the subsequent /modify + /undo. Unknown id → 404. Apex-only (the
+// router only reaches here on the apex host). The served bytes carry the seed's
+// own frozen-<head> CSP (script-src 'unsafe-inline'), which allows the inline
+// shim — we don't add headers that would fight it.
+function handleHostedProjection(id, send) {
+  const rec = hosted.readHosted(id, { dataDir: DATA_DIR });
+  if (!rec) return sendJson(send, 404, { error: 'not_found' });
+
+  const bytes = rec.bytes;
+  // The stored DOC_UUID is a container fact (ingest rotated it). The shim needs
+  // it to deleteDatabase('rwa_<uuid>') for reload-sync. ingest validated DOC_UUID
+  // exists, but be defensive — a missing uuid means we can't safely template.
+  const uuid = (bytes.match(UUID_RE_LOCAL) || [])[1];
+  // Find the bootstrap-script start with the SAME pattern ingest validated
+  // against (BOOTSTRAP_RE = /<script id="rwa-bootstrap"/, no closing '>'), so
+  // anything ingest accepts — including an attributed open tag like
+  // `<script id="rwa-bootstrap" defer>` — can be served. Inject immediately
+  // before the matched `<script` start.
+  const bm = bytes.match(BOOTSTRAP_RE);
+  const at = bm ? bm.index : -1;
+  if (!uuid || at < 0) {
+    console.error('hosted: projection cannot template (uuid/bootstrap missing)', id);
+    return sendJson(send, 500, { error: 'corrupt_container' });
+  }
+
+  const shim = '<script id="rwa-hosted-shim">\n'
+    + HOSTED_SHIM.replaceAll('__RWA_HOSTED_ID__', id).replaceAll('__RWA_HOSTED_UUID__', uuid)
+    + '\n</script>\n';
+  const out = bytes.slice(0, at) + shim + bytes.slice(at);
+
+  hosted.touchAccess(id, { dataDir: DATA_DIR }, rec.owner);
+  // noindex: a hosted projection is reachable by its unguessable id; keep a leaked
+  // id out of search indexes (the editing token still rides the URL fragment).
+  return send(200, {
+    'Content-Type': 'text/html; charset=utf-8',
+    'Cache-Control': 'no-store',
+    'X-Robots-Tag': 'noindex',
+  }, out);
+}
+
 function contentTypeFor(name) {
   if (name.endsWith('.html')) return 'text/html; charset=utf-8';
   if (name.endsWith('.md'))   return 'text/markdown; charset=utf-8';
@@ -459,8 +1062,59 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // POST /r — create a hosted rwa. Apex-only, like /publish (a share host must
+  // not be able to bounce a create off it and have us mint a wrong-origin URL).
+  if (req.method === 'POST' && url === '/r' && !isShareHost) {
+    handleHostedCreate(req, send).catch(err => {
+      console.error('hosted: create unhandled error', err);
+      if (!res.headersSent) {
+        send(500, { 'Content-Type': 'application/json; charset=utf-8' },
+          JSON.stringify({ error: 'internal_error' }) + '\n');
+      }
+    });
+    return;
+  }
+
+  // POST /r/:id/{modify,undo,rotate} — the authoritative hosted WRITE/lifecycle
+  // endpoints. Apex-only (a share host must not be able to bounce a write off
+  // it). Bearer-auth inside each handler; modify/undo run under the per-id write
+  // lock (rotate too, to serialize with a /modify owner.json touch).
+  if (req.method === 'POST' && !isShareHost) {
+    const m = url.match(/^\/r\/([0-9a-z]{8})\/(modify|undo|rotate)$/);
+    if (m) {
+      const action = m[2];
+      const handler = action === 'modify' ? handleHostedModify
+        : action === 'undo' ? handleHostedUndo
+        : handleHostedRotate;
+      handler(m[1], req, send).catch(err => {
+        console.error(`hosted: ${action} unhandled error`, err);
+        if (!res.headersSent) {
+          send(500, { 'Content-Type': 'application/json; charset=utf-8' },
+            JSON.stringify({ error: 'internal_error' }) + '\n');
+        }
+      });
+      return;
+    }
+  }
+
+  // DELETE /r/:id — remove the hosted rwa subtree. Apex-only, Bearer-auth, under
+  // the per-id write lock (serializes with modify/undo).
+  if (req.method === 'DELETE' && !isShareHost) {
+    const m = url.match(/^\/r\/([0-9a-z]{8})$/);
+    if (m) {
+      handleHostedDelete(m[1], req, send).catch(err => {
+        console.error('hosted: delete unhandled error', err);
+        if (!res.headersSent) {
+          send(500, { 'Content-Type': 'application/json; charset=utf-8' },
+            JSON.stringify({ error: 'internal_error' }) + '\n');
+        }
+      });
+      return;
+    }
+  }
+
   if (req.method !== 'GET' && !isHead) {
-    return send(405, { 'Allow': 'GET, HEAD, POST', 'Content-Type': 'text/plain' }, 'method not allowed\n');
+    return send(405, { 'Allow': 'GET, HEAD, POST, DELETE', 'Content-Type': 'text/plain' }, 'method not allowed\n');
   }
 
   // Share host (<short>.rewritable.<tld>): serves *only* its own bytes
@@ -475,6 +1129,41 @@ const server = http.createServer((req, res) => {
       return serveShare(hostShort[1], send);
     }
     return send(404, { 'Content-Type': 'text/plain' }, 'not found\n');
+  }
+
+  // GET /r/:id/{describe,export,doc} — authenticated hosted reads. Apex-only
+  // (the share-host branch above already returned for share origins). /r is a
+  // NEW reserved prefix, disjoint from /s/.
+  {
+    const m = url.match(/^\/r\/([0-9a-z]{8})\/(describe|export|doc)$/);
+    if (m) {
+      handleHostedRead(m[1], m[2], req, send).catch(err => {
+        console.error('hosted: read unhandled error', err);
+        if (!res.headersSent) {
+          send(500, { 'Content-Type': 'application/json; charset=utf-8' },
+            JSON.stringify({ error: 'internal_error' }) + '\n');
+        }
+      });
+      return;
+    }
+  }
+
+  // GET /r/:id — the live editable web projection (current.html + injected shim).
+  // Apex-only (share-host branch returned above). Synchronous: no body read, no
+  // dynamic import — just template the in-memory shim into the stored bytes.
+  {
+    const m = url.match(/^\/r\/([0-9a-z]{8})$/);
+    if (m) {
+      try { return handleHostedProjection(m[1], send); }
+      catch (err) {
+        console.error('hosted: projection unhandled error', err);
+        if (!res.headersSent) {
+          send(500, { 'Content-Type': 'application/json; charset=utf-8' },
+            JSON.stringify({ error: 'internal_error' }) + '\n');
+        }
+        return;
+      }
+    }
   }
 
   if (url === '/health') {

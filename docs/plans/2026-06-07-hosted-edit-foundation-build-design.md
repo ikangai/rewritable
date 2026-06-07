@@ -143,9 +143,15 @@ already does exactly this (`cli/src/edit.mjs` `applyPlan` over `apply-edits.mjs`
   `service/`, so the service must carry its own copy regardless.
 - `server.js` stays CommonJS and loads the ESM via dynamic `import()` (Node supports
   this from CJS) — **no CJS rewrite**, so the bytes stay diffable against `cli/src`.
-- Frozen zones, reserved markers, structural-shape, class-lock, size caps all hold
-  server-side identically. The `baseHash` precondition rejects a stale-base envelope
-  (the server applies against *its* `current.html`, never the client's claimed bytes).
+- Frozen zones, reserved markers, structural-shape, class-lock all hold server-side
+  identically via the vendored validator. The **doc size cap (`MAX_DOC`) is enforced
+  in `server.js`** (`HOSTED_MAX_DOC`, = the seed's `RWA_EDIT.MAX_DOC` = 1 MiB), NOT in
+  the vendored apply — the vendored `apply-edits.mjs` only *comments* the cap (a
+  byte-identical CLI scope-down), so the server gates the LF-canonical editable body
+  on both `/modify` (post-apply, before any commit → `422 target_size_exceeded`) and
+  ingest (`POST /r` → `400 target_size_exceeded`). The `baseHash` precondition rejects
+  a stale-base envelope (the server applies against *its* `current.html`, never the
+  client's claimed bytes).
 
 This is the security spine: the server validates+applies the envelope itself; it
 never trusts a client-computed doc. A malicious client can at most submit an envelope,
@@ -220,3 +226,48 @@ means done-and-verified offline, with a precise hand-off for the deploy gate.
 - Account-linked identity — explicitly out (Option A); the `owner` file is the one
   thing a future accounts upgrade would change.
 - Telegram Phase B / phone (Thread 5) consume this once **deployed**.
+
+## Known limitations (v1)
+
+Documented-and-accepted, not bugs — each is a deliberate scope-down for v1.
+
+- **Undo pre-image stack is unbounded.** Each edit writes one full-doc pre-image
+  snapshot under `data/r/<id>/undo/`; there is no retention cap. Acceptable: edits
+  are human-paced and rate-limited (60/hr/token), the 90-day sweep reclaims abandoned
+  docs, and a snapshot is bytes-cheap vs. the audit value of unbounded undo.
+- **Rate limit consumes a slot on rejected requests too.** A `400/409/422` still
+  burns one of the per-token hourly slots. Deliberate abuse-resistance — a caller
+  spraying malformed/conflicting envelopes can't probe for free.
+- **Append-then-rename + push-before-rename crash window.** `history.jsonl` is
+  appended (and the undo pre-image pushed) before `current.html` is renamed into
+  place, so a crash mid-commit can leave history one record ahead of the live bytes.
+  Forward audit only — history is never used to *rebuild* bytes (undo reads the
+  pre-image stack); current.html is always a complete, valid prior commit.
+- **Hosted bytes are un-blessed of `data-rwa-id`.** The hosted body is served and
+  edited without the boot-time `data-rwa-id` backfill (the 2nd guarded seam suppresses
+  it for baseHash parity), so within-hosted fragment links to mid-doc blocks don't
+  auto-resolve. The exported file self-blesses on first local open — the canonical
+  artifact is unaffected.
+- **Hosted edit applies a CLIENT-driven envelope.** The agent runs in the
+  browser/adapter; the service is model-free — `/modify` deterministically applies the
+  `rwa-edit/1` envelope it is handed and never calls a model itself.
+- **Apex path-keyed projection → cross-doc token exposure (DEPLOY GATE).** v1 serves
+  `GET /r/:id` path-keyed on the **apex origin**, so every hosted projection shares
+  one origin's `sessionStorage` + IndexedDB. Hosted bytes can carry arbitrary
+  interactive `<script>` (anyone can `POST /r`), so a victim who opens a malicious
+  `/r/A` in the same tab session as a legit `/r/B` lets A's script read B's capability
+  token from `sessionStorage["rwa_hosted_token_<id>"]`. **Production deploy MUST serve
+  `/r/:id` per-subdomain** (`<id>.r.rewritable.ikangai.com` or similar — the same
+  origin-isolation pattern `/s/` shares already use, with the matching Traefik
+  `HostRegexp` + wildcard cert) so SOP isolates per-doc storage. Narrow risk (needs
+  same-tab session + opening a hostile hosted doc); interim mitigation is capability
+  token **rotation** (`/rotate`). Stated as a deploy-gate requirement in the design
+  doc's "Security — origin isolation" section. **Do not expose `/r/:id` to untrusted
+  ingest at scale on the apex path-keyed form.**
+- **`describe`/`doc` over a hosted body report `blocks: 0`.** `countBlocks` counts
+  `data-rwa-id` attributes, and the hosted body is served un-blessed of them (the 2nd
+  guarded seam suppresses the boot-time backfill for baseHash parity — see above). So
+  the hosted self-description's `blocks` is `0` until the exported file self-blesses on
+  first local open, after which it reports the real count. Honest projection of the
+  stored bytes; cosmetic (the editing contract operates on the body text, not the
+  block count).

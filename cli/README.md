@@ -32,6 +32,7 @@ rwa doc notes.html                                  # print the editable body
 rwa doc notes.html --json                           # read + edit-contract, one call
 
 rwa publish notes.html                              # → a hosted 24h share URL
+rwa host notes.html --url https://host.example      # → {id, token, url} (round-trip editing)
 
 rwa skin notes.html notion-clean                    # apply a named style preset (offline)
 rwa skin notes.html stripe-docs --l1                # + content-aware restyle (needs a backend)
@@ -217,6 +218,25 @@ RWA_SITE_HOST=user@host RWA_SITE_PATH=/var/www/r RWA_SITE_URL=https://example.co
 It needs the system `scp` binary and **ssh access already configured** on this machine (key/agent) — there is no auth flow inside `rwa`. The **filename is kept 1:1** (the basename of your local file), so the live URL is predictable and a re-publish **overwrites** the previous copy. The file is checked locally first — a non-rewritable exits `2` before any transport.
 
 This command is **network-bearing** (like `rwa clone`), so the offline-first rule does not apply to it.
+
+### `rwa host <path>`
+
+Ingest a local rewritable into a **hosted runtime** and get back the keys to keep editing it there. Where `rwa publish` makes an *anonymous, read-only* snapshot, `rwa host` POSTs the file's bytes to a hosted runtime's `POST /r`, which mints an `id` and a per-rwa **capability token** and returns `{id, token, url}`. The `url` is `<base>/r/<id>#k=<token>` — the token rides the `#k=` fragment (so it never reaches the server on a navigation), which is how you keep editing the hosted copy. It is the round-trip-editing foundation, the network-bearing counterpart of `publish`.
+
+```
+rwa host notes.html --url https://host.example
+# ✓ Hosted!
+#   id:    abc12345
+#   token: cap-tok-…
+#   url:   https://host.example/r/abc12345#k=cap-tok-…
+#   Note:  the url carries your capability token in its #k= fragment — keep it to keep editing.
+
+rwa host notes.html --url https://host.example --json   # {"id":"…","token":"…","url":"…"} on stdout
+```
+
+**Target** resolves `--url <base>` › `$RWA_HOST_URL` (no baked-in default — a hosted runtime is your own service). The file is checked locally first — a non-rewritable exits `2` (`not_a_rewritable`) **before any network call**, and a missing target exits `1` (`config_error`). Transport/HTTP failures exit `4` with an honest reason on stderr (`host_error/network_error`, `/server_error`, `/body_too_large`); `--json` emits those as `{code, subcode, details}`. stdout stays clean for the result. **Only the file bytes are sent** — a rewritable carries no secret (the API key lives in sessionStorage, never in the file).
+
+This command is **network-bearing** (like `rwa clone` / `rwa publish-site`), so the offline-first rule does not apply to it.
 
 ### `rwa skin <path> <name>`
 

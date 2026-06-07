@@ -4168,6 +4168,20 @@ window.injectMissingBlockIds = injectMissingBlockIds; // expose for tests
 // before the transaction (modifyMutex prevents concurrent writes). The
 // transaction itself only writes — three put()s, all atomic.
 async function commitDoc(currentDoc, newDoc, histRecord) {
+  // Hosted projection seam: when a commit sink is installed, the SERVER is the
+  // authoritative apply path. Reconstruct the rwa-edit/1 envelope, hand it to the
+  // sink (which POSTs it and returns the server's canonical new doc), and mirror
+  // that locally so getDoc()/reload stay consistent with the server. NO local
+  // rwa_undo/rwa_hist write — history is server-side in hosted mode. Unset → the
+  // existing transaction below runs byte-identically (additive, guarded).
+  if (typeof window.__rwaCommitSink === 'function') {
+    const envelope = histRecord.kind === 'edit_batch'
+      ? histRecord.envelope
+      : { version: 'rwa-edit/1', doc: newDoc, reason: histRecord.reason };
+    const serverDoc = await window.__rwaCommitSink(envelope, histRecord, currentDoc);
+    await idbPut(RWA.DOC, serverDoc);
+    return serverDoc;
+  }
   // Web-citizen: backfill data-rwa-id on any anchorable block the agent
   // produced without one. Pure-attribute injection outside frozen zones; the
   // shape/balance checks the caller already ran remain valid (no tags added
@@ -6123,10 +6137,17 @@ document.addEventListener('keydown', e => {
     // before first render so URL-fragment links resolve immediately, without
     // waiting for the first agent edit. One-shot per container — subsequent
     // bootstraps see IDs already present and skip the idbPut.
-    const idRes = injectMissingBlockIds(doc);
-    if (idRes.assigned > 0) {
-      doc = idRes.text;
-      await idbPut(RWA.DOC, doc);
+    // Hosted seam: in hosted/sink mode the SERVER is the authoritative store and
+    // serves its un-blessed body verbatim; blessing here would diverge the local
+    // baseHash from the server's baseBodyHash and false-409 every edit. The shim
+    // sets window.__rwaSuppressBlockIds before this IIFE runs. Byte-identical when
+    // unset — the doc self-blesses on the first LOCAL (file://) open after export.
+    if (!window.__rwaSuppressBlockIds) {
+      const idRes = injectMissingBlockIds(doc);
+      if (idRes.assigned > 0) {
+        doc = idRes.text;
+        await idbPut(RWA.DOC, doc);
+      }
     }
     // Skill runtime (shannon): populate the installed-skill registry from the frozen
     // #rwa-skills zone (parse + re-verify) BEFORE the runtime is exposed, so describe()

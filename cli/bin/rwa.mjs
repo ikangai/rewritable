@@ -59,6 +59,12 @@ Usage:
                               https://rewritable.ikangai.com. --json emits
                               {short,url,expiresAt}.
   rwa publish-site <path>     scp a rewritable to a static site (needs RWA_SITE_* env)
+  rwa host <path>             ingest a rewritable into a hosted runtime (POST /r)
+                              and print {id, token, url}. The network-bearing
+                              counterpart of \`publish\` for round-trip hosted
+                              editing — the returned url carries the capability
+                              token in its #k= fragment. Target: --url >
+                              \$RWA_HOST_URL. --json emits {id,token,url}.
   rwa skin <path> <name>      apply a named style preset to a rewritable in
                               place (deterministic, offline, model-free). Names:
                               notion-clean, linear-dark, editorial-serif,
@@ -701,6 +707,70 @@ function detectProductKind(fileText) {
       }
       if (jsonMode) process.stdout.write(JSON.stringify(result) + '\n');
       else process.stdout.write(`✓ Published to ${result.url}\n`);
+      return;
+    }
+
+    // `rwa host <file> [--url <base>] [--json]` — ingest a local rewritable into
+    // a hosted runtime's `POST /r` and print the `{id, token, url}` it mints. The
+    // network-bearing INGEST client (the round-trip-edit foundation), the way
+    // `rwa publish` is the ephemeral-share client. Online by design (offline-first
+    // excludes it, like clone/publish-site). Config: --url > $RWA_HOST_URL. See
+    // src/host.mjs. Exit 4 is labeled `host_error` (like publish's `publish_error`).
+    if (verb === 'host') {
+      const jsonMode = rest.includes('--json');
+      // `--url` takes a value, so its value token must NOT be mistaken for the
+      // positional file. Skip the index right after `--url`.
+      const urlFlag = getFlag('--url', rest);
+      const urlIdx = rest.indexOf('--url');
+      const skip = urlIdx >= 0 ? urlIdx + 1 : -1;
+      const filePath = rest.find((a, i) => !a.startsWith('-') && i !== skip);
+      // Host has its OWN exit-4 label: a transport/HTTP failure is a `host_error`,
+      // not the shared codeName(4)='agent_error'. File (2) and usage (1) errors
+      // reuse codeName — they mean the same across verbs.
+      const emitHost = (payload) => {
+        if (jsonMode) { process.stderr.write(JSON.stringify(payload) + '\n'); return; }
+        const parts = [payload.code, payload.subcode].filter(Boolean);
+        let line = 'rwa host: ' + parts.join('/');
+        if (payload.details && Object.keys(payload.details).length) line += ' ' + JSON.stringify(payload.details);
+        process.stderr.write(line + '\n');
+      };
+      if (!filePath) {
+        emitHost({ code: 'usage_error', subcode: 'missing_file_arg' });
+        process.exitCode = 1;
+        return;
+      }
+      if (urlFlag.present && (urlFlag.value === undefined || urlFlag.value.startsWith('-'))) {
+        emitHost({ code: 'usage_error', subcode: 'missing_flag_value', details: { flag: '--url' } });
+        process.exitCode = 1;
+        return;
+      }
+      const { hostFile } = await import('../src/host.mjs');
+      let result;
+      try {
+        result = await hostFile(filePath, { url: urlFlag.value });
+      } catch (e) {
+        if (e && typeof e.exitCode === 'number') {
+          // config_error is usage-class (exit 1) → render under usage_error, like
+          // publish-site's config_error. Only the exit-4 transport class becomes
+          // `host_error`.
+          const code = e.exitCode === 4 ? 'host_error' : codeName(e.exitCode);
+          emitHost({ code, subcode: e.subcode, details: e.details });
+          process.exitCode = e.exitCode;
+          return;
+        }
+        throw e;
+      }
+      if (jsonMode) {
+        process.stdout.write(JSON.stringify(result) + '\n');
+      } else {
+        process.stdout.write(
+          '✓ Hosted!\n' +
+          `  id:    ${result.id}\n` +
+          `  token: ${result.token}\n` +
+          `  url:   ${result.url}\n` +
+          '  Note:  the url carries your capability token in its #k= fragment — keep it to keep editing.\n',
+        );
+      }
       return;
     }
 

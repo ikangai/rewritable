@@ -48,13 +48,22 @@ mirrored in the CLI. They are the contract; everything else is an adapter.
 Each cell is an *entry point onto the same operation*, not a separate
 feature. Reuse, don't fork.
 
-| Operation | CLI (`cli/`) | In-file seed (`seeds/rewritable.html`) | Service (`service/`) | Skill (`~/.claude/skills/authoring-rewritables`) |
-|---|---|---|---|---|
-| bootstrap | `rwa new` (`src/seed.mjs applySeedSubs`) | n/a (already bootstrapped) | `GET /new` (`new.html`) | `new` |
-| import | `rwa import`, `rwa clone` (`src/import.mjs`, `src/clone.mjs`) | n/a | `GET /import` (`import.html`, browser-side convert) | — (heavy deps not vendored) |
-| modify | `rwa edit` (`src/edit.mjs applyPlan`) | lens ⌘K → `modify()` | n/a (seed lens runs client-side) | `edit` (`--plan`/stdin envelope) |
-| describe | `rwa doc [--json]` (`src/doc.mjs`, `src/identity.mjs`) | `runtime.describe()` | n/a | `doc` |
-| publish/export | `rwa publish` (ephemeral), `rwa publish-site` (durable scp) | ⌘S file export | `POST /publish` (per-origin share) | — |
+| Operation | CLI (`cli/`) | In-file seed (`seeds/rewritable.html`) | Service (`service/`) | Hosted runtime (`service/` `/r/`) | Skill (`~/.claude/skills/authoring-rewritables`) |
+|---|---|---|---|---|---|
+| bootstrap | `rwa new` (`src/seed.mjs applySeedSubs`) | n/a (already bootstrapped) | `GET /new` (`new.html`) | `POST /r` (ingest a body/file) | `new` |
+| import | `rwa import`, `rwa clone` (`src/import.mjs`, `src/clone.mjs`) | n/a | `GET /import` (`import.html`, browser-side convert) | `POST /r` (ingest converted body) | — (heavy deps not vendored) |
+| modify | `rwa edit` (`src/edit.mjs applyPlan`) | lens ⌘K → `modify()` | n/a (seed lens runs client-side) | `POST /r/:id/modify` (`rwa-edit/1`, vendored `lib/edit.mjs applyPlan`) | `edit` (`--plan`/stdin envelope) |
+| describe | `rwa doc [--json]` (`src/doc.mjs`, `src/identity.mjs`) | `runtime.describe()` | n/a | `GET /r/:id/describe` (`self-description/1`) | `doc` |
+| publish/export | `rwa publish` (ephemeral), `rwa publish-site` (durable scp) | ⌘S file export | `POST /publish` (per-origin share) | `GET /r/:id/export` (canonical file bytes) | — |
+
+The **hosted runtime** is the writable-projection surface the remote-edit
+tension below calls for: a single `/r/` HTTP door speaking the same three wire
+strings (`POST /r` ingest, `POST /r/:id/modify` `rwa-edit/1`, `GET /r/:id/describe`
+`self-description/1`, `GET /r/:id/export` canonical bytes; plus `/r/:id` live
+projection, `/undo`, `/rotate`, `DELETE`). It does not reimplement apply —
+`/modify` runs `service/lib/*`, vendored byte-identical from `cli/src`. The
+design and the v1 known-limitations live in
+`docs/plans/2026-06-07-hosted-edit-foundation-{design,build-design,build-plan}.md`.
 
 The contract is already **proven across independent surfaces** (CLI, the
 in-file lens, the skill) all driving the same seed + `rwa-edit/1` +
@@ -115,4 +124,6 @@ contract (`bootstrap / import / modify / describe / publish`), the three
 shared wire strings (`rwa-edit/1`, `rwa-edit-dsl/1`, `self-description/1`),
 the operations×surfaces map, and the hosted-projection resolution of the
 remote-edit tension. Descriptive index over the normative specs; will be
-amended when a new surface or a writable hosted runtime lands.*
+amended when a new surface or a writable hosted runtime lands. The hosted
+runtime (`service/` `/r/`) landed 2026-06-07 — added as a surface column;
+design in `docs/plans/2026-06-07-hosted-edit-foundation-*.md`.*

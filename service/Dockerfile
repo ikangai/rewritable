@@ -6,6 +6,10 @@ WORKDIR /app
 # server.js reads the seed via path.join(__dirname, '..', 'seeds') so the
 # in-image layout mirrors the on-disk layout.
 COPY service/server.js ./service/
+# Vendored CLI apply pipeline + self-description reader. server.js require()s
+# ./lib/hosted.js at startup and the /r routes dynamic-import the vendored ESM
+# modules (identity/seed/apply-edits), so lib/ must ship in the image.
+COPY service/lib/ ./service/lib/
 COPY service/public/ ./service/public/
 COPY seeds/ ./seeds/
 
