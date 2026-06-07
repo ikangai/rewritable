@@ -114,7 +114,14 @@ export function makeTelegramApi(token, {
       throw new TelegramError('file_too_large', { code: 'file_too_large' });
     }
 
-    const buf = await res.arrayBuffer();
+    let buf;
+    try {
+      buf = await res.arrayBuffer();
+    } catch {
+      // A body-read rejection can carry the request URL (with the token) — same
+      // discipline as every other await in this module: re-wrap, never re-throw raw.
+      throw new TelegramError('file download read failed', { code: 'read_failed' });
+    }
     // Belt-and-suspenders: a lying/absent content-length must not let an
     // oversized body slip through after the header check.
     if (buf.byteLength > maxBytes) {

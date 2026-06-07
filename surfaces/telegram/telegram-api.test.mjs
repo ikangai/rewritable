@@ -207,4 +207,26 @@ test('the bot token never appears in a thrown error message or stack', async () 
     assert.ok(!String(err).includes(TOKEN), 'String(err) leaked token (download)');
     assert.ok(!err.message.includes(TOKEN), 'err.message leaked token (download)');
   }
+
+  // 5. downloadFile body-read rejection — res.arrayBuffer() rejects. The raw
+  //    rejection's message carries the token-bearing file URL; it must NOT escape
+  //    as a raw error (the one await that used to be unguarded — review I1).
+  {
+    const leaky = {
+      ok: true,
+      status: 200,
+      headers: new Map(),
+      arrayBuffer: async () => {
+        throw new Error(`boom https://api.telegram.org/file/bot${TOKEN}/big.jpg`);
+      },
+    };
+    const { fetchImpl } = makeFakeFetch([leaky]);
+    const api = makeTelegramApi(TOKEN, { fetchImpl, writeFile: async () => {} });
+    const err = await api.downloadFile('big.jpg', '/tmp/x').then(() => null, (e) => e);
+    assert.ok(err, 'expected throw');
+    assert.ok(err instanceof TelegramError, 'body-read rejection must surface as TelegramError, not a raw error');
+    assert.ok(!String(err).includes(TOKEN), 'String(err) leaked token (download read)');
+    assert.ok(!err.message.includes(TOKEN), 'err.message leaked token (download read)');
+    assert.ok(!String(err.stack || '').includes(TOKEN), 'err.stack leaked token (download read)');
+  }
 });
