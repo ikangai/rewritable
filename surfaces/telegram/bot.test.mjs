@@ -14,7 +14,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { handleUpdate, HELP, replyForResult } from './bot.mjs';
+import { handleUpdate, HELP, replyForResult, MAX_DOC_BYTES } from './bot.mjs';
 import { TelegramError } from './telegram-api.mjs';
 
 // A fake Telegram api that records every call and replays scripted results for
@@ -184,7 +184,8 @@ function docUpdate(document) {
 test('document, allowed type, within size → getFile + downloadFile + import; success', async () => {
   const api = makeFakeApi({ getFile: { file_path: 'documents/x.pdf', file_size: 100 } });
   const { deps, exec } = makeDeps({ api });
-  await handleUpdate(docUpdate({ file_id: 'F1', file_name: 'report.pdf', mime_type: 'application/pdf' }), deps);
+  // file_size within the cap → must not trip the pre-getFile gate.
+  await handleUpdate(docUpdate({ file_id: 'F1', file_name: 'report.pdf', mime_type: 'application/pdf', file_size: 100 }), deps);
   assert.equal(api.calls.getFile.length, 1);
   assert.equal(api.calls.getFile[0].fileId, 'F1');
   assert.equal(api.calls.downloadFile.length, 1);
@@ -207,6 +208,32 @@ test('document too large → downloadFile throws → friendly reply, import NOT 
   assert.equal(api.calls.downloadFile.length, 1);
   assert.equal(exec.calls.rwaImportPublish.length, 0);
   assert.match(api.calls.sendMessage[0].text, /too big|too large/i);
+});
+
+// WHY (SECURITY, M1): the design caps oversized docs BEFORE the getFile round-trip,
+// using the free message.document.file_size. A too-large file_size must short-circuit
+// with the friendly reply and reach NO network/import at all — pins "cap before getFile".
+test('document file_size over cap → too-big reply BEFORE getFile; no getFile/downloadFile/import', async () => {
+  const api = makeFakeApi();
+  const { deps, exec } = makeDeps({ api });
+  await handleUpdate(docUpdate({ file_id: 'F1', file_name: 'big.pdf', mime_type: 'application/pdf', file_size: MAX_DOC_BYTES + 1 }), deps);
+  assert.equal(api.calls.getFile.length, 0);
+  assert.equal(api.calls.downloadFile.length, 0);
+  assert.equal(exec.calls.rwaImportPublish.length, 0);
+  assert.match(api.calls.sendMessage[0].text, /too big|too large/i);
+});
+
+// WHY (ROBUSTNESS, L1): getFile can return a result without a file_path. Passing
+// undefined to downloadFile would GET .../bot<token>/undefined and 404 into a
+// confusing generic error — reply friendly and prove downloadFile was never called.
+test('getFile returns no file_path → "couldn\'t fetch" reply; downloadFile NOT called', async () => {
+  const api = makeFakeApi({ getFile: {} });
+  const { deps, exec } = makeDeps({ api });
+  await handleUpdate(docUpdate({ file_id: 'F1', file_name: 'report.pdf', mime_type: 'application/pdf', file_size: 100 }), deps);
+  assert.equal(api.calls.getFile.length, 1);
+  assert.equal(api.calls.downloadFile.length, 0);
+  assert.equal(exec.calls.rwaImportPublish.length, 0);
+  assert.match(api.calls.sendMessage[0].text, /couldn't fetch/i);
 });
 
 // WHY (SECURITY): a disallowed type must be rejected BEFORE any network — assert

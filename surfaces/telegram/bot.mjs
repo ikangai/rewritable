@@ -164,7 +164,17 @@ export async function handleUpdate(update, deps) {
         await api.sendMessage(chatId, "you're going too fast — please slow down and try again in a bit.");
         return;
       }
+      // Cap BEFORE the getFile round-trip using the free message.document.file_size
+      // (downloadFile keeps its own cap as defense-in-depth for a missing/lying value).
+      if (typeof document.file_size === 'number' && document.file_size > MAX_DOC_BYTES) {
+        await api.sendMessage(chatId, `that file's too big (max ${MAX_DOC_MB} MB).`);
+        return;
+      }
       const file = await api.getFile(document.file_id);
+      if (!file || !file.file_path) {
+        await api.sendMessage(chatId, "couldn't fetch that file, try again.");
+        return;
+      }
       const dest = writeTemp('', '.' + (extOf(document.file_name) || 'bin'));
       try {
         await api.downloadFile(file.file_path, dest, { maxBytes: MAX_DOC_BYTES });
