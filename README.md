@@ -131,6 +131,16 @@ rwa publish notes.html --json   # {"short":"…","url":"…","expiresAt":…} on
 
 Intentionally online (the offline-first guarantee of `new`/`import` doesn't apply to publishing). `--url` overrides the service base for self-hosted deployments.
 
+## Editing at a distance (hosted runtime)
+
+Publishing (above) shares an immutable snapshot. The **hosted runtime** is its writable counterpart: a zero-dep service (`service/`, the `/r/` API) that stores a rewritable's canonical bytes and speaks the operations contract over HTTP, so the file can be edited from a chat, a phone, or the web — without dethroning it. The bytes the server holds *are* a rewritable; `GET /r/:id/export` always hands back the real `.html`, byte-for-byte what `⌘S` would write. Hosting adds a remote door onto *modify*; it does not create a second source of truth.
+
+- `POST /r` ingests a rewritable and returns `{id, token, url}` — a capability URL whose `#k=` fragment is the only key needed to keep editing (no accounts, no signup).
+- `GET /r/:id` serves the real container as a **live editable page**: the same lens and ⌘K, but every commit is applied server-side. The agent still runs in your browser with your own key; the service only ever applies validated `rwa-edit/1` envelopes, so it stays the single deterministic, model-free write path. Every change is a logged commit, so the canonical file is always reconstructable.
+- From the CLI, `rwa host notes.html` ingests a local file into a hosted runtime and prints its capability URL.
+
+This is the foundation under remote-edit surfaces (a Telegram bot, a phone line). Self-host it like the share service — serve `/r/:id` per-subdomain (as `/s/` shares are) so each hosted doc's browser storage is origin-isolated. Design + build notes: [`docs/plans/2026-06-07-hosted-edit-foundation-design.md`](docs/plans/2026-06-07-hosted-edit-foundation-design.md).
+
 ## The specs
 
 - [`re-write-able-spec.md`](re-write-able-spec.md) — the container spec: architecture, storage model, agent contract, embedding, security, platform behavior. Currently v0.10.

@@ -2,6 +2,41 @@
 
 Notable changes to `re-write-able`. The container format is versioned in `re-write-able-spec.md`; the edit protocol in `rwa-edit-spec.md`; the structural-transform DSL in `rwa-edit-dsl-spec.md`. The CLI follows semver in `cli/package.json`.
 
+## 2026-06-07 — hosted-edit foundation: writable hosted runtime (`/r/`)
+
+A writable hosted runtime in `service/` that stores a rewritable's canonical bytes and exposes the operations contract over HTTP, so a rewritable can be edited *from a distance* — a chat, a phone, the web — without dethroning the file. The bytes the server stores ARE a rewritable; `GET /r/:id/export` always returns the real `.html`, byte-for-byte what `⌘S` would write. Hosting adds a remote door onto *modify*; it does not create a second source of truth. This is the foundation under every remote-*edit* surface (Telegram Phase B, the phone spike).
+
+Design + build: [`docs/plans/2026-06-07-hosted-edit-foundation-design.md`](docs/plans/2026-06-07-hosted-edit-foundation-design.md) (architecture + the capability-token auth decision), [`…-build-design.md`](docs/plans/2026-06-07-hosted-edit-foundation-build-design.md) (resolved decisions + the seed seams), [`…-build-plan.md`](docs/plans/2026-06-07-hosted-edit-foundation-build-plan.md) (the 8-task TDD plan). Built subagent-driven with a two-stage (spec + code-quality) review gate per task.
+
+### The HTTP surface (`/r/`, a new reserved prefix disjoint from `/s/`)
+
+- `POST /r` — ingest a rewritable → `{id, token, url}`; mints a per-rwa capability token.
+- `GET /r/:id` — a live editable browser projection: the real container plus a prepended shim that redirects the seed's commit to the server.
+- `POST /r/:id/modify` — apply an `rwa-edit/1` envelope server-side → `{doc, baseHash, selfDescription, histLen, undoLen}`. Optimistic concurrency via `baseHash` (`409 stale_base`); apply failures → `422 {error:<subcode>}` (the same vocabulary as `rwa edit --json`).
+- `GET /r/:id/{describe,doc,export}` — `self-description/1`, the editable body + its `baseHash`, and the canonical bytes. Plus `POST /r/:id/{undo,rotate}` and `DELETE /r/:id`.
+- CLI: `rwa host <file>` ingests a local rewritable into a hosted runtime.
+
+### How the projection works — two guarded seed seams
+
+The seed's commit path is closure-private (the lens calls the internal `modify()`; `RWA` is a closure const), so an injected script can't redirect it. Two small additive seams in `seeds/rewritable.html`, each byte-identical when its `window.*` flag is unset — so every existing file:// / share / CLI container is untouched (pinned by `tests/commit-sink.mjs` and `tests/hosted-bless-parity.mjs`):
+
+- `window.__rwaCommitSink` — at `commitDoc` (the single shared write funnel): when set, the validated `rwa-edit/1` envelope is handed to the sink (which POSTs to the server) instead of the local IDB commit; the server's returned doc is mirrored locally and rendered. The server is the authoritative apply path.
+- `window.__rwaSuppressBlockIds` — at boot: suppresses the boot-time `data-rwa-id` blessing in hosted mode, so the hosted body stays un-blessed and the client's `baseHash` matches the server's. A real-browser end-to-end caught a false-`409` on every hosted edit because the boot blessing wrote random ids into the hashed doc; the second seam is the fix, and it also keeps `data-rwa-id` out of the agent's envelopes.
+
+The agent still runs client-side (the user's own key); the service is model-free and only ever applies validated envelopes — a single audited write path. The apply path itself is the CLI's pipeline, vendored byte-identical into `service/lib/` (cmp-gated by `service/tests/vendored-apply.test.mjs`), since the deploy ships `service/` only.
+
+### Auth, concurrency, lifecycle
+
+Capability-token-only, no accounts: 32-byte tokens, sha-256-hashed at rest, constant-time compared, never logged, delivered via the URL `#k=` fragment. Per-id write lock + `baseHash` precondition (no lost updates). Persist-until-`DELETE` with a 90-day inactivity sweep; per-token rate limit; a server-side `MAX_DOC` cap. Undo is a server-side pre-image stack (`POST /undo`), crash-safe — it never reconstructs bytes from the forward `history.jsonl` audit log.
+
+### Verification
+
+Offline: `service/tests` 61, CLI 351, conformance 86 (incl. `HOST-01` — hosted apply byte-identical to the substrate apply), the two seed-seam tests, the vendored cmp gate, and a real-browser end-to-end (create → edit → undo → reload-sync). A holistic pre-merge review found zero critical issues.
+
+### Not yet deployed — deploy gate
+
+The runtime is built and verified offline but **not deployed**. Going live requires a host, DNS, and a writable `data/` volume — and, as a security requirement, serving `/r/:id` **per-subdomain** (the same pattern `/s/` shares use: a Traefik `HostRegexp` router + the wildcard cert) so each hosted doc's `sessionStorage`/IDB is origin-isolated. The apex path-keyed form has a narrow cross-doc capability-token-exposure risk and must not be exposed to untrusted ingest at scale.
+
 ## 2026-05-25 — Import-flow security release (CLI 0.3.1)
 
 Hardening of the markdown / docx / csv / pdf import path on both surfaces — the `/import` browser endpoint (`service/public/import.html`) and the `rwa import` CLI (`cli/src/import.mjs`, `cli/src/seed.mjs`). Driven end-to-end by autoresearch: a 50-scenario UX stress-test (`scenario/260522-1427-import-stress-ux/`) catalogued 4 critical + 8 high + 24 medium + 14 low findings, a 15-iteration debug pass (`debug/260523-0739-import-html-bugs/`) verified 9 of them with code-level evidence, and this release lands the 7 surgical fixes. The 8th finding (no Content-Security-Policy) is deferred to a spec-level discussion. All fixes apply identically to browser and CLI per CLAUDE.md's four-sites alignment rule.
