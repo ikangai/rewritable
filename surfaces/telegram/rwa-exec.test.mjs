@@ -178,6 +178,99 @@ test('SECURITY rwaCreatePublish: a shell-injection prompt is ONE argv element to
   }
 });
 
+// ── SECURITY: argv flag-smuggling (CLI option injection) ────────────────────
+//
+// An argv array stops SHELL injection but not CLI OPTION injection. The genuine
+// vector is the `/new` prompt: a leading-dash token (e.g. `--base-url`) would be
+// read by `rwa create`'s exact-match flag parser (cli/src/create.mjs
+// parseCreateArgs) as a backend flag and could redirect the agent's backend
+// base-url/api-key — credential-exfil. The `rwa` parsers do NOT honor a `--`
+// terminator (verified: they filter `a.startsWith('-')`, dropping `--` silently),
+// so the fix is boundary rejection: a leading-dash prompt returns
+// `{ok:false, code:'bad_prompt'}` WITHOUT spawning. These tests fail loudly if
+// that wall is removed — a smuggled flag would then reach `rwa create`.
+
+for (const evil of ['--base-url', '--api-key', '--model', '--backend', '--help', '-f']) {
+  test(`SECURITY rwaCreatePublish: a leading-dash prompt ${JSON.stringify(evil)} is rejected as bad_prompt — never spawned`, async () => {
+    const seam = makeTmpSeam();
+    let callCount = 0;
+    const execFile = async () => { callCount++; return { stdout: '', stderr: '' }; };
+
+    const result = await rwaCreatePublish(evil, { execFile, hasBackendKey: true, ...seam });
+
+    // Rejected as DATA, before any subprocess — the smuggled flag can never reach
+    // `rwa create` to be parsed as a backend option.
+    assert.deepEqual(result, { ok: false, code: 'bad_prompt' });
+    assert.equal(callCount, 0, 'a flag-shaped prompt must not spawn rwa create');
+    assert.equal(seam.created.length, 0, 'must not create a temp dir for a rejected prompt');
+  });
+}
+
+test('SECURITY rwaCreatePublish: leading-dash check ignores surrounding whitespace (" --base-url" still rejected)', async () => {
+  const seam = makeTmpSeam();
+  let callCount = 0;
+  const execFile = async () => { callCount++; return { stdout: '', stderr: '' }; };
+
+  const result = await rwaCreatePublish('   --api-key sk-evil', { execFile, hasBackendKey: true, ...seam });
+
+  assert.deepEqual(result, { ok: false, code: 'bad_prompt' });
+  assert.equal(callCount, 0);
+});
+
+test('SECURITY rwaCreatePublish: a MID-prompt dash is SAFE — the whole prompt is one argv element that does not start with `-`', async () => {
+  const seam = makeTmpSeam();
+  const { execFile, calls } = makeFakeExec({
+    create: { stdout: 'wrote out.html', stderr: '' },
+    publish: { stdout: PUBLISH_STDOUT, stderr: '' },
+  });
+  // `--base-url` appears mid-prompt: it is part of ONE argv element that begins
+  // with a letter, so exact-match flag parsing never sees it. This must NOT be
+  // rejected — over-rejecting would block legitimate prompts (Rule 9: the test
+  // pins WHY only the leading-dash case is dangerous).
+  const prompt = 'a doc explaining the --base-url flag and -f shorthand';
+
+  const result = await rwaCreatePublish(prompt, { execFile, hasBackendKey: true, ...seam });
+
+  assert.equal(result.ok, true);
+  const createCall = calls.find((c) => c.args.includes('create'));
+  assert.ok(createCall.args.includes(prompt), 'mid-dash prompt passes through as one argv element');
+});
+
+test('SECURITY rwaCreatePublish: a non-rejected prompt can never land in a flag-consuming position (precedes --out)', async () => {
+  const seam = makeTmpSeam();
+  const { execFile, calls } = makeFakeExec({
+    create: { stdout: 'wrote out.html', stderr: '' },
+    publish: { stdout: PUBLISH_STDOUT, stderr: '' },
+  });
+  const prompt = 'a presentation about Q3';
+
+  await rwaCreatePublish(prompt, { execFile, hasBackendKey: true, ...seam });
+
+  const createCall = calls.find((c) => c.args.includes('create'));
+  const verbIdx = createCall.args.indexOf('create');
+  // Wire shape: [...base, 'create', <prompt>, '--out', <container>]. The prompt is
+  // the verb's positional and is itself never a flag (the bad_prompt wall), so it
+  // cannot consume a following token as a flag value.
+  assert.equal(createCall.args[verbIdx + 1], prompt, 'prompt sits directly after the verb');
+  assert.ok(!createCall.args[verbIdx + 1].startsWith('-'), 'prompt is never a flag');
+});
+
+test('SECURITY rwaImportPublish: a leading-dash filePath is neutralized to `./`-relative (never read as a flag)', async () => {
+  const { deps, calls } = happyWrapDeps();
+  // A path that begins with `-` would be read as a flag by the import positional
+  // filter. Defense-in-depth: prefix `./` so it is unambiguously a path.
+  const dashy = '-rf.md';
+
+  await rwaImportPublish(dashy, deps);
+
+  const importCall = calls[0];
+  assert.ok(
+    importCall.args.includes('./-rf.md'),
+    'dash-leading path must be ./-prefixed; got args=' + JSON.stringify(importCall.args),
+  );
+  assert.ok(!importCall.args.includes(dashy), 'the raw dash-leading path must not be passed verbatim');
+});
+
 // ── agent-fill gate ─────────────────────────────────────────────────────────
 
 test('rwaCreatePublish: no backend key → agent_not_configured and execFile NEVER called', async () => {

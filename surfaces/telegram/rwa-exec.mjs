@@ -15,6 +15,31 @@
 // a prompt — never a command. The argv-array assertions in the test ARE this
 // property; if anyone reintroduces string-concatenation they fail loudly.
 //
+// SECURITY — argv flag-smuggling (the second wall). An argv array stops SHELL
+// injection but NOT *CLI option* injection: a positional that begins with `-` can
+// be read by the downstream `rwa` parser as a FLAG. The `/new` prompt is the live
+// vector — `parseCreateArgs` (cli/src/create.mjs) does `argv.indexOf('--base-url')`
+// (exact-match) and feeds the result straight into the model call's backend, so a
+// prompt of exactly `--base-url` (or `--api-key`/`--model`/`--backend`) would
+// consume the NEXT argv element as its value and redirect the agent backend
+// (credential-exfil). publish-site.mjs uses a `--` terminator for this; we CANNOT:
+// VERIFIED that NEITHER `rwa` parser honors `--` as end-of-options —
+// `parseCreateArgs` filters `a.startsWith('-')` (so `--` is silently dropped, not a
+// terminator) and rwa.mjs's import positional filter does the same. A stray `--`
+// would just vanish, not protect. So we harden at the BOUNDARY instead (CLI-
+// agnostic, certainly correct): reject a leading-dash prompt before spawning, and
+// neutralize a leading-dash filePath to `./`-relative. A mid-token `--flag` is safe
+// — the whole prompt is one argv element that does not start with `-`, and
+// exact-match flag parsing never sees a glued token — so only the leading-dash
+// case needs handling.
+
+// True iff `s` would be read as a CLI flag in a positional slot: its first
+// non-whitespace char is `-`. (A mid-string dash is safe — the whole value is one
+// argv element.) Used to reject prompts and to detect dash-leading file paths.
+function looksLikeFlag(s) {
+  return typeof s === 'string' && s.trim().startsWith('-');
+}
+//
 // Both functions take `deps = { execFile, ... }` and return a RESULT OBJECT —
 // they never throw on a CLI failure, they capture it ({ ok:false, step, code,
 // stderr }) so the caller can turn it into a friendly Telegram reply (Rule 12:
@@ -102,11 +127,16 @@ export async function rwaImportPublish(filePath, deps = {}) {
   const makeTmp = deps.tmpDir || (() => mkdtemp(join(tmpdir(), 'rwa-tg-')));
   const rm = deps.rm || ((dir) => _rm(dir, { recursive: true, force: true }));
 
+  // Defense-in-depth: filePath is a bot-generated temp path today (not attacker-
+  // controlled), but a leading `-` would still be read as a flag by the import
+  // positional filter, so normalize it to a `./`-relative path that can never be.
+  const safeFilePath = looksLikeFlag(filePath) ? `./${filePath}` : filePath;
+
   const dir = await makeTmp();
   try {
     const container = join(dir, `${randomUUID()}.html`);
     try {
-      await execFile(cmd, [...baseArgs, 'import', filePath, container], {});
+      await execFile(cmd, [...baseArgs, 'import', safeFilePath, container], {});
     } catch (err) {
       return failure('import', err);
     }
@@ -135,6 +165,14 @@ export async function rwaCreatePublish(prompt, deps = {}) {
   // The gate FIRST — before any temp dir or subprocess. No key → no spawn.
   if (!deps.hasBackendKey) {
     return { ok: false, code: 'agent_not_configured' };
+  }
+
+  // Flag-smuggling wall: a leading-dash prompt could be parsed by `rwa create` as
+  // a backend flag (--base-url/--api-key/…) and redirect the agent. Reject it as
+  // data WITHOUT spawning (the caller maps `bad_prompt` to a friendly "start with a
+  // word, not a dash"). See the SECURITY note at the top of this file.
+  if (looksLikeFlag(prompt)) {
+    return { ok: false, code: 'bad_prompt' };
   }
 
   const execFile = deps.execFile || defaultExecFile;
