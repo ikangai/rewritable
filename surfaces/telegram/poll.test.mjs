@@ -17,7 +17,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { runPoll } from './bot.mjs';
+import { runPoll, resolveHasBackendKey } from './bot.mjs';
 
 // shouldStop that returns false for the first `n` checks, then true. runPoll
 // checks shouldStop() at the TOP of each iteration, so n=1 means "run exactly
@@ -145,4 +145,28 @@ test('empty batch re-polls without saving, then stops', async () => {
   assert.ok(gu.calls.length >= 2);
   assert.deepEqual(store.saves, []);
   assert.equal(store.value, 3);
+});
+
+// ── resolveHasBackendKey(env) — agent-fill gate matches CLI capability ────────
+// WHY: the gate must mirror the CLI's actual backend resolution. `rwa create`
+// spawns with inherited env and no --backend flag, so it uses
+// RWA_BACKEND||'openrouter'. A keyless backend (ollama/lmstudio) works there
+// with NO api key — gating on an openrouter key would wrongly tell a keyless
+// host "agent-fill isn't configured" (review concern #1). A test that only
+// checked the openrouter case couldn't catch that regression.
+
+test('resolveHasBackendKey: keyless backends are usable with no keys', () => {
+  assert.equal(resolveHasBackendKey({ RWA_BACKEND: 'ollama' }), true);
+  assert.equal(resolveHasBackendKey({ RWA_BACKEND: 'lmstudio' }), true);
+});
+
+test('resolveHasBackendKey: default backend (openrouter) requires a key', () => {
+  // No RWA_BACKEND → defaults to openrouter, which needs a key.
+  assert.equal(resolveHasBackendKey({}), false);
+  assert.equal(resolveHasBackendKey({ RWA_OPENROUTER_KEY: 'k' }), true);
+  assert.equal(resolveHasBackendKey({ OPENROUTER_API_KEY: 'k' }), true);
+});
+
+test('resolveHasBackendKey: explicit openrouter without a key is not usable', () => {
+  assert.equal(resolveHasBackendKey({ RWA_BACKEND: 'openrouter' }), false);
 });

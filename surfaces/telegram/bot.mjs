@@ -309,6 +309,20 @@ function makeRateLimit(max = 5, windowMs = 60_000) {
   };
 }
 
+// agent-fill (rwa create) is usable when the resolved backend is keyless
+// (ollama/lmstudio) OR a key is present for the key-requiring backend
+// (openrouter). Mirrors cli backend resolution (cli/src/create.mjs:217 default +
+// cli/src/backend.mjs resolveApiKey/envBaseUrl: openrouter is the only
+// key-requiring backend, ollama/lmstudio are keyless) so the bot's gate matches
+// the CLI's actual capability (a keyless host shouldn't be told "not configured").
+export function resolveHasBackendKey(env = process.env) {
+  const backend = (env.RWA_BACKEND || 'openrouter').toLowerCase();
+  if (backend === 'ollama' || backend === 'lmstudio') return true;        // keyless
+  if (backend === 'openrouter') return !!(env.RWA_OPENROUTER_KEY || env.OPENROUTER_API_KEY);
+  // unknown backend: require *some* key env to be safe (conservative)
+  return !!(env.RWA_OPENROUTER_KEY || env.OPENROUTER_API_KEY);
+}
+
 export async function main() {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   if (!token) {
@@ -323,16 +337,17 @@ export async function main() {
 
   const api = makeTelegramApi(token);
 
-  // agent-fill is enabled only when a backend key is present. We mirror the same
-  // env the default `openrouter` backend reads (cli/src/backend.mjs
-  // resolveApiKey): RWA_OPENROUTER_KEY, then the conventional OPENROUTER_API_KEY.
-  const hasBackendKey = Boolean(
-    process.env.RWA_OPENROUTER_KEY || process.env.OPENROUTER_API_KEY,
-  );
+  // agent-fill is enabled when the resolved backend is usable: keyless backends
+  // (ollama/lmstudio) always, openrouter only with a key. Mirrors the CLI's own
+  // backend resolution so a keyless host isn't wrongly told "not configured".
+  const hasBackendKey = resolveHasBackendKey();
 
   // Real writeTemp: a unique name under os.tmpdir() (crypto.randomUUID, never
   // Math.random) + the given extension. These are small text files; cleanup is
   // best-effort (OS tmp reaping).
+  // TODO(phase-a): wrap-path input temp files written here are left for
+  // best-effort OS reaping; an explicit unlink-after-handle is a later tidy-up
+  // (rwa-exec already cleans its own output dirs).
   function writeTemp(content, ext) {
     const dest = path.join(os.tmpdir(), `rwa-tg-${crypto.randomUUID()}${ext}`);
     fs.writeFileSync(dest, content, 'utf8');
