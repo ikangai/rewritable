@@ -15,7 +15,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { rwaImportPublish, rwaCreatePublish, rwaEdit, resolveRwaCmd } from './rwa-exec.mjs';
+import { rwaImportPublish, rwaCreatePublish, rwaImportBuild, rwaCreateBuild, rwaEdit, resolveRwaCmd } from './rwa-exec.mjs';
 
 // A fake execFile that records every invocation and replays a scripted result.
 // Each script is keyed by the VERB (args[baseArgs.length] effectively — but since
@@ -527,4 +527,87 @@ test('rwaEdit: edit succeeds but `rwa doc` exits non-zero → captured with step
   assert.deepEqual(result, {
     ok: false, step: 'doc', code: 2, stderr: 'not a rewritable',
   });
+});
+
+// ── rwaImportBuild / rwaCreateBuild (Phase B: build, then READ BYTES, no publish) ──
+// WHY: Phase B reuses the EXACT build step from the publish helpers but the SINK
+// differs — the container bytes go to the foundation, not the ephemeral service.
+// These pins prove the build runs `import`/`create` (NOT `publish`), reads the
+// freshly-built container, and returns its bytes — so the bot can POST them to /r.
+
+test('rwaImportBuild: runs import (not publish), reads the container, returns bytes', async () => {
+  const seam = makeTmpSeam();
+  const reads = [];
+  const { execFile, calls } = makeFakeExec({ import: { stdout: 'wrote out.html', stderr: '' } });
+  const readFile = async (p) => { reads.push(p); return '<html>BUILT</html>'; };
+
+  const result = await rwaImportBuild('/some/note.md', { execFile, readFile, ...seam });
+
+  assert.deepEqual(result, { ok: true, bytes: '<html>BUILT</html>' });
+  // import ran; publish did NOT (the sink is the foundation, not the service).
+  assert.equal(calls.length, 1);
+  assert.ok(calls[0].args.includes('import'));
+  assert.ok(!calls.some((c) => c.args.includes('publish')), 'rwaImportBuild must not publish');
+  // import's output container is exactly what gets read back as bytes.
+  const container = calls[0].args[calls[0].args.indexOf('import') + 2];
+  assert.deepEqual(reads, [container]);
+  // No shell, ever.
+  assert.ok(!calls[0].options || calls[0].options.shell !== true);
+  // temp dir cleaned up.
+  assert.deepEqual(seam.removed, seam.created);
+});
+
+test('rwaImportBuild: a failed import is captured (step:import), bytes never read', async () => {
+  const seam = makeTmpSeam();
+  const reads = [];
+  const { execFile } = makeFakeExec({ import: execFailure(2, 'could not read doc') });
+  const readFile = async (p) => { reads.push(p); return 'x'; };
+
+  const result = await rwaImportBuild('/some/note.md', { execFile, readFile, ...seam });
+
+  assert.deepEqual(result, { ok: false, step: 'import', code: 2, stderr: 'could not read doc' });
+  assert.deepEqual(reads, [], 'must not read a container that never got built');
+  assert.deepEqual(seam.removed, seam.created); // still cleaned up
+});
+
+test('rwaCreateBuild: with key runs create (not publish), reads container, returns bytes', async () => {
+  const seam = makeTmpSeam();
+  const reads = [];
+  const { execFile, calls } = makeFakeExec({ create: { stdout: 'created', stderr: '' } });
+  const readFile = async (p) => { reads.push(p); return '<html>GEN</html>'; };
+
+  const result = await rwaCreateBuild('otters', { execFile, readFile, hasBackendKey: true, ...seam });
+
+  assert.deepEqual(result, { ok: true, bytes: '<html>GEN</html>' });
+  assert.ok(calls[0].args.includes('create'));
+  // the prompt is ONE argv element (the shell-injection wall).
+  assert.ok(calls[0].args.includes('otters'));
+  assert.ok(!calls.some((c) => c.args.includes('publish')), 'rwaCreateBuild must not publish');
+  // --out's path is what gets read back.
+  const out = calls[0].args[calls[0].args.indexOf('--out') + 1];
+  assert.deepEqual(reads, [out]);
+});
+
+test('rwaCreateBuild: NO key → agent_not_configured, NEVER spawns / reads', async () => {
+  const seam = makeTmpSeam();
+  const reads = [];
+  const { execFile, calls } = makeFakeExec({ create: { stdout: 'created', stderr: '' } });
+  const readFile = async (p) => { reads.push(p); return 'x'; };
+
+  const result = await rwaCreateBuild('otters', { execFile, readFile, hasBackendKey: false, ...seam });
+
+  assert.deepEqual(result, { ok: false, code: 'agent_not_configured' });
+  assert.equal(calls.length, 0, 'no spawn without a key');
+  assert.deepEqual(reads, []);
+  assert.deepEqual(seam.created, [], 'no temp dir without a key');
+});
+
+test('rwaCreateBuild: leading-dash prompt → bad_prompt, NEVER spawns (flag-smuggling wall)', async () => {
+  const seam = makeTmpSeam();
+  const { execFile, calls } = makeFakeExec({ create: { stdout: 'created', stderr: '' } });
+
+  const result = await rwaCreateBuild('--base-url evil', { execFile, hasBackendKey: true, ...seam });
+
+  assert.deepEqual(result, { ok: false, code: 'bad_prompt' });
+  assert.equal(calls.length, 0, 'a leading-dash prompt must not reach the agent backend');
 });
