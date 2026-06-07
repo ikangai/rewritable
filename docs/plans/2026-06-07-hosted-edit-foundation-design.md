@@ -113,6 +113,16 @@ It unblocks the actual near-term surfaces with the least infra and security surf
 and the expensive part (the projection + shared apply + history) is auth-agnostic,
 so an account upgrade later touches only the authorization check.
 
+### ✅ DECIDED (2026-06-07, Martin): **Option A — capability token only.**
+No accounts. Each hosted rwa mints an unguessable edit token at creation; holding
+the token is the right to edit. The `owner` binding (`data/<id>/owner`) stores a
+capability hash. We are NOT building account linking now (the projection/commit/
+history machinery stays auth-agnostic, so the door to accounts isn't bricked — but
+no pluggable-owner abstraction is built speculatively, per Rule 2; if accounts ever
+come, the `owner` check is the one thing that changes). **Security obligations that
+follow from this choice:** tokens must be high-entropy + constant-time compared +
+never logged; support rotation + (optional) expiry; rate-limit per capability.
+
 ## Sequencing once the decision lands
 
 1. Foundation build (Thread 4): the three endpoints + store + the chosen owner-check,
