@@ -220,3 +220,28 @@ means done-and-verified offline, with a precise hand-off for the deploy gate.
 - Account-linked identity — explicitly out (Option A); the `owner` file is the one
   thing a future accounts upgrade would change.
 - Telegram Phase B / phone (Thread 5) consume this once **deployed**.
+
+## Known limitations (v1)
+
+Documented-and-accepted, not bugs — each is a deliberate scope-down for v1.
+
+- **Undo pre-image stack is unbounded.** Each edit writes one full-doc pre-image
+  snapshot under `data/r/<id>/undo/`; there is no retention cap. Acceptable: edits
+  are human-paced and rate-limited (60/hr/token), the 90-day sweep reclaims abandoned
+  docs, and a snapshot is bytes-cheap vs. the audit value of unbounded undo.
+- **Rate limit consumes a slot on rejected requests too.** A `400/409/422` still
+  burns one of the per-token hourly slots. Deliberate abuse-resistance — a caller
+  spraying malformed/conflicting envelopes can't probe for free.
+- **Append-then-rename + push-before-rename crash window.** `history.jsonl` is
+  appended (and the undo pre-image pushed) before `current.html` is renamed into
+  place, so a crash mid-commit can leave history one record ahead of the live bytes.
+  Forward audit only — history is never used to *rebuild* bytes (undo reads the
+  pre-image stack); current.html is always a complete, valid prior commit.
+- **Hosted bytes are un-blessed of `data-rwa-id`.** The hosted body is served and
+  edited without the boot-time `data-rwa-id` backfill (the 2nd guarded seam suppresses
+  it for baseHash parity), so within-hosted fragment links to mid-doc blocks don't
+  auto-resolve. The exported file self-blesses on first local open — the canonical
+  artifact is unaffected.
+- **Hosted edit applies a CLIENT-driven envelope.** The agent runs in the
+  browser/adapter; the service is model-free — `/modify` deterministically applies the
+  `rwa-edit/1` envelope it is handed and never calls a model itself.
