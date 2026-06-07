@@ -450,6 +450,32 @@ test('rwaEdit: runs `rwa edit <file> <instruction>` then `rwa doc <file>` and re
   }
 });
 
+test('SECURITY rwaEdit: a leading-dash filePath is neutralized to `./`-relative in BOTH edit and doc argv', async () => {
+  // Defense-in-depth, matching the sibling rwaImportPublish: a dash-leading
+  // filePath would be dropped/misread by `rwa edit`/`rwa doc`'s positional flag
+  // filter (it discards a.startsWith('-')), sliding the instruction into the
+  // file-path slot or smuggling a flag. The `./` prefix makes it positional.
+  const filePath = '-rf.html';
+  const instruction = 'make the intro punchier';
+  const { execFile, calls } = makeFakeExec({
+    edit: { stdout: 'applied 1 edit', stderr: '' },
+    doc: { stdout: DOC_STDOUT, stderr: '' },
+  });
+
+  const result = await rwaEdit(filePath, instruction, { execFile });
+
+  assert.deepEqual(result, { ok: true, doc: DOC_STDOUT });
+  assert.equal(calls.length, 2);
+  const editCall = calls[0];
+  const docCall = calls[1];
+
+  // The neutralized `./`-prefixed path reaches BOTH calls — never the raw dash form.
+  assert.deepEqual(editCall.args, ['edit', './-rf.html', instruction]);
+  assert.deepEqual(docCall.args, ['doc', './-rf.html']);
+  assert.ok(!editCall.args.includes('-rf.html'), 'raw dash-leading path must not reach edit');
+  assert.ok(!docCall.args.includes('-rf.html'), 'raw dash-leading path must not reach doc');
+});
+
 test('SECURITY rwaEdit: a shell-metacharacter instruction (not dash-leading) is ONE argv element, never split', async () => {
   const filePath = '/owned/tmp/c.html';
   const evil = 'make it ; rm -rf ~';

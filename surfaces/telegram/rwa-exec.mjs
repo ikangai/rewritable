@@ -226,9 +226,14 @@ export async function rwaEdit(filePath, instruction, deps = {}) {
   const execFile = deps.execFile || defaultExecFile;
   const { cmd, baseArgs } = (deps.rwaCmd || resolveRwaCmd)(deps.env || process.env);
 
+  // Defense-in-depth: filePath is a caller-owned temp path today (not attacker-
+  // controlled), but a leading `-` would still be read as a flag by the edit/doc
+  // positional filter, so normalize it to a `./`-relative path that can never be.
+  const safeFilePath = looksLikeFlag(filePath) ? `./${filePath}` : filePath;
+
   // 1) Apply the edit in place on the caller-owned temp container.
   try {
-    await execFile(cmd, [...baseArgs, 'edit', filePath, instruction], {});
+    await execFile(cmd, [...baseArgs, 'edit', safeFilePath, instruction], {});
   } catch (err) {
     return failure('edit', err);
   }
@@ -237,7 +242,7 @@ export async function rwaEdit(filePath, instruction, deps = {}) {
   // (± one trailing newline); return stdout as-is — the caller canonicalizes.
   let out;
   try {
-    out = await execFile(cmd, [...baseArgs, 'doc', filePath], {});
+    out = await execFile(cmd, [...baseArgs, 'doc', safeFilePath], {});
   } catch (err) {
     return failure('doc', err);
   }
