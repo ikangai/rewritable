@@ -700,6 +700,132 @@ test('modify with no actor defaults to web:anon in history', async () => {
   }
 });
 
+// ─── history kind mirrors the COMPILED tool shape (review Fix 1) ─────────────
+//
+// WHY this matters (Rule 9): `rwa_hist.kind` is a RESERVED, cross-surface
+// vocabulary — only `edit_batch` / `replace_document` (CLAUDE.md "Reserved
+// namespaces"), and the DSL spec §5 mandates the audit log records the COMPILED
+// form, not the wire form. A raw `apply_dsl_plan` whose sole op is a
+// `replace_document` escape compiles (via compileDslPlan) to a
+// `replace_document` envelope; the substrate/seed records that as
+// kind:'replace_document'. If the hosted log instead keyed off the raw envelope
+// shape (ops-shaped → edit_batch) the hosted audit trail would DISAGREE with the
+// substrate for the identical operation. These cases pin kind to the compiled
+// tool across all four wire shapes.
+
+const DSL_ESCAPE_PLAN = {
+  version: 'rwa-edit-dsl/1',
+  ops: [{
+    op: 'replace_document',
+    doc: '<article><h1>DSL Escaped</h1><p>Wholesale replace via the DSL escape op.</p></article>',
+    reason: 'irregular structural change — escape via DSL replace_document op',
+  }],
+};
+const DSL_EDITS_PLAN = {
+  version: 'rwa-edit-dsl/1',
+  ops: [{ op: 'replace', find: 'Old Title', replace: 'DSL Edit Title' }],
+};
+
+test('history kind: a raw apply_dsl_plan that compiles to a replace_document escape → replace_document', async () => {
+  const srv = await startServer();
+  try {
+    const { id, token, baseHash } = await createAndRead(srv.base, MODIFY_RWA);
+    // The wire envelope is ops-shaped (apply_dsl_plan). The naive raw-shape
+    // heuristic would record edit_batch; the compiled tool is replace_document.
+    const res = await postModify(srv.base, id, token, {
+      envelope: DSL_ESCAPE_PLAN, baseHash, actor: 'web:dsl',
+    });
+    assert.equal(res.status, 200, 'the DSL escape plan applies');
+    const histPath = join(srv.dataDir, 'r', id, 'history.jsonl');
+    const rec = JSON.parse(readFileSync(histPath, 'utf8').trim().split('\n')[0]);
+    assert.equal(rec.kind, 'replace_document',
+      'a DSL escape op records the COMPILED tool (replace_document), not the raw ops shape');
+    assert.equal(rec.reason, DSL_ESCAPE_PLAN.ops[0].reason,
+      'a replace_document record carries the compiled reason');
+  } finally {
+    await srv.stop();
+  }
+});
+
+test('history kind: a raw apply_dsl_plan that compiles to apply_edits → edit_batch', async () => {
+  const srv = await startServer();
+  try {
+    const { id, token, baseHash } = await createAndRead(srv.base, MODIFY_RWA);
+    const res = await postModify(srv.base, id, token, {
+      envelope: DSL_EDITS_PLAN, baseHash, actor: 'web:dsl',
+    });
+    assert.equal(res.status, 200, 'the DSL edit plan applies');
+    const histPath = join(srv.dataDir, 'r', id, 'history.jsonl');
+    const rec = JSON.parse(readFileSync(histPath, 'utf8').trim().split('\n')[0]);
+    assert.equal(rec.kind, 'edit_batch',
+      'a DSL plan that compiles to apply_edits records as edit_batch');
+    assert.ok(rec.envelope, 'the forward envelope is recorded for an edit_batch');
+  } finally {
+    await srv.stop();
+  }
+});
+
+// (raw apply_edits → edit_batch and raw replace_document → replace_document are
+// already pinned by the "two successful edits"/r3 test above.)
+
+// ─── actor length cap (review Fix 2) ────────────────────────────────────────
+//
+// WHY this matters (Rule 12 fail loud): actor is taken verbatim from the request
+// body into the durable audit log. An unbounded / newline-bearing actor would
+// let a client bloat or corrupt the JSONL audit trail (a newline forges a record
+// boundary). Cap at 128 chars and reject newlines with 400 bad_request — no
+// write — rather than silently truncating.
+
+test('modify rejects an over-long actor (>128 chars) with 400, NO write', async () => {
+  const srv = await startServer();
+  try {
+    const { id, token, baseHash } = await createAndRead(srv.base, MODIFY_RWA);
+    const res = await postModify(srv.base, id, token, {
+      envelope: SIMPLE_EDIT, baseHash, actor: 'x'.repeat(129),
+    });
+    assert.equal(res.status, 400, 'an actor longer than 128 chars is rejected');
+    assert.equal((await res.json()).error, 'bad_request');
+    // No write: history was never created, bytes unchanged.
+    assert.ok(!existsSync(join(srv.dataDir, 'r', id, 'history.jsonl')),
+      'a rejected (over-long actor) modify writes no history');
+    const exp = await fetch(`${srv.base}/r/${id}/export`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    assert.ok((await exp.text()).includes('Old Title'), 'over-long-actor modify left bytes unchanged');
+  } finally {
+    await srv.stop();
+  }
+});
+
+test('modify rejects an actor containing a newline with 400', async () => {
+  const srv = await startServer();
+  try {
+    const { id, token, baseHash } = await createAndRead(srv.base, MODIFY_RWA);
+    const res = await postModify(srv.base, id, token, {
+      envelope: SIMPLE_EDIT, baseHash, actor: 'web:evil\nforged record boundary',
+    });
+    assert.equal(res.status, 400, 'a newline in actor is rejected (audit-log integrity)');
+    assert.equal((await res.json()).error, 'bad_request');
+  } finally {
+    await srv.stop();
+  }
+});
+
+test('modify accepts an actor of exactly 128 chars (boundary)', async () => {
+  const srv = await startServer();
+  try {
+    const { id, token, baseHash } = await createAndRead(srv.base, MODIFY_RWA);
+    const actor = 'a'.repeat(128);
+    const res = await postModify(srv.base, id, token, { envelope: SIMPLE_EDIT, baseHash, actor });
+    assert.equal(res.status, 200, 'exactly 128 chars is accepted (the cap is inclusive)');
+    const histPath = join(srv.dataDir, 'r', id, 'history.jsonl');
+    const rec = JSON.parse(readFileSync(histPath, 'utf8').trim().split('\n')[0]);
+    assert.equal(rec.actor, actor, 'a 128-char actor is recorded verbatim');
+  } finally {
+    await srv.stop();
+  }
+});
+
 // ─── 2. HANDLER: regression — /s/ + apex routes still work ──────────────────
 
 test('regression: /health, / (landing), and a /publish round-trip still work', async () => {

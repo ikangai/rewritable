@@ -608,6 +608,15 @@ async function handleHostedModify(id, req, send) {
     return sendJson(send, 400, { error: 'bad_request' });
   }
   const { envelope, baseHash } = body;
+  // actor rides verbatim into the durable JSONL audit log, so cap it (fail loud,
+  // not silent-truncate): >128 chars bloats the log, a newline forges a record
+  // boundary. Reject either with 400. Absent/empty → web:anon default.
+  if (body.actor != null && typeof body.actor !== 'string') {
+    return sendJson(send, 400, { error: 'bad_request' });
+  }
+  if (typeof body.actor === 'string' && (body.actor.length > 128 || /[\r\n]/.test(body.actor))) {
+    return sendJson(send, 400, { error: 'bad_request' });
+  }
   const actor = typeof body.actor === 'string' && body.actor.length > 0 ? body.actor : 'web:anon';
   if (typeof envelope !== 'object' || envelope === null) {
     return sendJson(send, 400, { error: 'bad_request' });
@@ -626,6 +635,7 @@ async function handleHostedModify(id, req, send) {
     if (!rec) return sendJson(send, 404, { error: 'not_found' });
 
     const { applyPlan, CliError } = await import('./lib/edit.mjs');
+    const { compileDslPlan } = await import('./lib/dsl-compiler.mjs');
     const { extractInlineDoc } = await import('./lib/seed.mjs');
 
     // Optimistic concurrency: the posted baseHash must match the CURRENT body
@@ -675,10 +685,35 @@ async function handleHostedModify(id, req, send) {
     }
     const resultHash = hosted.sha256hex(newBody);
 
-    // Forward audit record (the rwa_hist mirror). apply_dsl_plan flattens to its
-    // compiled apply_edits form in applyPlan, so at the wire level the kind is
-    // edit_batch unless the envelope is a wholesale replace_document.
-    const isReplace = 'doc' in envelope && !('edits' in envelope) && !('ops' in envelope);
+    // Forward audit record (the rwa_hist mirror). `kind` is the RESERVED
+    // cross-surface vocabulary (edit_batch / replace_document, CLAUDE.md
+    // "Reserved namespaces") and the DSL spec §5 mandates the audit log records
+    // the COMPILED form, not the wire form — so we derive `kind` from the
+    // compiled tool shape, exactly as the seed/substrate does. A DSL plan whose
+    // sole op is a replace_document escape is ops-shaped on the wire but compiles
+    // to a replace_document envelope (compiled.tool === 'replace_document'); a
+    // raw-shape heuristic would wrongly record it as edit_batch and disagree with
+    // the substrate. We mirror applyPlan's discriminator ('ops' → DSL plan,
+    // 'doc' → raw replace_document, else apply_edits) so the audit kind can never
+    // disagree with what was applied.
+    let isReplace;
+    let replaceReason; // the compiled/raw reason for a replace_document record
+    if ('ops' in envelope) {
+      // DSL plan (rwa-edit-dsl/1). Compile against the SAME body input applyPlan
+      // uses (extractInlineDoc on the current bytes, pre-canonLF) to read the
+      // compiled tool + reason. Recompiling here (applyPlan already compiled this
+      // exact plan against this exact body above) is wasteful but acceptable for
+      // v1 — the alternative, threading the kind back out of the vendored
+      // applyPlan, would mutate a byte-identical mirror, which we must not do. A
+      // compile failure here is impossible: the same compile succeeded above.
+      const compiled = compileDslPlan(envelope, extractInlineDoc(rec.bytes));
+      isReplace = compiled.tool === 'replace_document';
+      if (isReplace) replaceReason = compiled.envelope.reason;
+    } else {
+      // Raw envelope: 'doc' (+reason) → replace_document, else apply_edits.
+      isReplace = 'doc' in envelope && !('edits' in envelope);
+      if (isReplace) replaceReason = envelope.reason;
+    }
     const record = {
       ts: Date.now(),
       actor,
@@ -686,7 +721,10 @@ async function handleHostedModify(id, req, send) {
       baseHash,
       resultHash,
     };
-    if (isReplace) record.reason = envelope.reason;
+    // replace_document records carry the (compiled or raw) reason; edit_batch
+    // records carry the forward envelope (the DSL form for a DSL plan, matching
+    // the spec's note that the originating plan MAY be retained as metadata).
+    if (isReplace) record.reason = replaceReason;
     else record.envelope = envelope;
 
     // CRASH WINDOW (acceptable for v1): we append the forward audit record
@@ -695,7 +733,10 @@ async function handleHostedModify(id, req, send) {
     // history is forward-only (never used to reconstruct bytes here), and the
     // next successful write re-establishes consistency; a torn append can't
     // corrupt current.html. We append-then-rename (not rename-then-append) so
-    // the rename — the durable, user-visible commit — is the LAST step.
+    // the rename — the durable, user-visible commit — is the LAST step. A torn
+    // FINAL history line is likewise harmless: it's a forward-only artifact never
+    // parsed to rebuild bytes, so historyLen's non-empty-line count just skips
+    // it and the next append starts cleanly on a fresh line.
     try {
       hosted.appendHistory(id, { dataDir: DATA_DIR }, record);
     } catch (err) {
