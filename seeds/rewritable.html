@@ -6137,10 +6137,17 @@ document.addEventListener('keydown', e => {
     // before first render so URL-fragment links resolve immediately, without
     // waiting for the first agent edit. One-shot per container — subsequent
     // bootstraps see IDs already present and skip the idbPut.
-    const idRes = injectMissingBlockIds(doc);
-    if (idRes.assigned > 0) {
-      doc = idRes.text;
-      await idbPut(RWA.DOC, doc);
+    // Hosted seam: in hosted/sink mode the SERVER is the authoritative store and
+    // serves its un-blessed body verbatim; blessing here would diverge the local
+    // baseHash from the server's baseBodyHash and false-409 every edit. The shim
+    // sets window.__rwaSuppressBlockIds before this IIFE runs. Byte-identical when
+    // unset — the doc self-blesses on the first LOCAL (file://) open after export.
+    if (!window.__rwaSuppressBlockIds) {
+      const idRes = injectMissingBlockIds(doc);
+      if (idRes.assigned > 0) {
+        doc = idRes.text;
+        await idbPut(RWA.DOC, doc);
+      }
     }
     // Skill runtime (shannon): populate the installed-skill registry from the frozen
     // #rwa-skills zone (parse + re-verify) BEFORE the runtime is exposed, so describe()

@@ -31,16 +31,26 @@
  *      stash it in sessionStorage keyed by id, strip #k= from the visible URL,
  *      and send it as Authorization: Bearer on /modify + /undo.
  *
- * Task-1 note: in hosted/sink mode the seed's client-side data-rwa-id backfill is
- * intentionally bypassed (commitDoc returns early through the sink). The SERVER's
- * vendored apply pipeline owns id-blessing on the stored bytes, so a reader should
- * NOT "fix" a perceived gap here — the bypass is correct.
+ * id-blessing note: in hosted/sink mode the seed's BOOT-time data-rwa-id blessing
+ * is suppressed via window.__rwaSuppressBlockIds (set below, before the bootstrap
+ * IIFE parses). The server is the authoritative store and serves its un-blessed
+ * body verbatim, so suppressing keeps the hosted body un-blessed and the client's
+ * baseHash equal to the server's baseBodyHash — a fresh edit 200s instead of
+ * false-409ing. The commit-path backfill is also inert here (commitDoc returns
+ * early through the sink). The doc self-blesses on the first LOCAL (file://) open
+ * after export, where this flag is unset.
  *
  * Plain browser JS, no build, no deps. Templated per request: __RWA_HOSTED_ID__
  * and __RWA_HOSTED_UUID__ are substituted with this rwa's id + stored DOC_UUID.
  */
 (function () {
   'use strict';
+
+  // Suppress the seed's BOOT-time data-rwa-id blessing BEFORE the bootstrap IIFE
+  // parses (this shim is prepended before <script id="rwa-bootstrap">, so it runs
+  // first). Keeps the hosted body un-blessed → client baseHash === server
+  // baseBodyHash. See the id-blessing note in the header comment.
+  window.__rwaSuppressBlockIds = true;
 
   var RWA_ID = '__RWA_HOSTED_ID__';
   var RWA_UUID = '__RWA_HOSTED_UUID__';
