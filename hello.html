@@ -2738,22 +2738,433 @@ if (typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent)) {
     const i = doc.indexOf(m[0]);
     return doc.slice(0, i) + theme + doc.slice(i + m[0].length);
   }
+  // deskinDoc — deterministically strip a PRIOR skin so a re-skin/reset starts clean,
+  // regardless of model compliance (closes the v2 best-effort de-skin limitation):
+  //   1. remove the <style data-rwa-skin> block; 2. balanced-tag UNWRAP pure sk-*
+  //   div/span wrappers (keep inner — handles nesting like sk-stat-row > sk-stat);
+  //   3. strip sk-* tokens from mixed class attrs. Parser-free, idempotent, byte-exact
+  //   for non-sk content. applySkinL1 runs the agent on deskinDoc(cur); resetSkin
+  //   commits deskinDoc(doc). (Stat-tile recipes split text, so their unwrap joins it —
+  //   a known minor lossiness, far better than orphan-wrapper accumulation.)
+  const SK_TOKEN_RE = /^sk-[a-z][a-z0-9-]*$/;
+  const isSkToken = (tok) => SK_TOKEN_RE.test(tok);
+  function readClassAttr(tagInner) {
+    const m = /(^|\s)class\s*=\s*("([^"]*)"|'([^']*)')/i.exec(tagInner);
+    if (!m) return null;
+    return m[3] !== undefined ? m[3] : m[4];
+  }
+  function classIsPureSk(classValue) {
+    const toks = classValue.trim().split(/\s+/).filter(Boolean);
+    return toks.length > 0 && toks.every(isSkToken);
+  }
+  // quote-aware: a `>` inside a quoted attr value is skipped. Returns index past `>`.
+  function skEndOfTag(s, lt) {
+    let quote = null;
+    for (let i = lt + 1; i < s.length; i++) {
+      const c = s[i];
+      if (quote) { if (c === quote) quote = null; }
+      else if (c === '"' || c === "'") quote = c;
+      else if (c === '>') return i + 1;
+    }
+    return -1;
+  }
+  function skReadTagName(s, start) {
+    let i = start, name = '';
+    while (i < s.length) {
+      const c = s[i];
+      if (/[a-zA-Z0-9]/.test(c) || c === '-' || c === ':') { name += c; i++; } else break;
+    }
+    return name === '' ? null : name;
+  }
+  // balanced same-name close, accounting for nested same-name opens.
+  function skFindMatchingClose(s, openTagEnd, tag) {
+    let depth = 1, i = openTagEnd;
+    const tlc = tag.toLowerCase();
+    while (i < s.length) {
+      const lt = s.indexOf('<', i);
+      if (lt === -1) return null;
+      const after = s[lt + 1];
+      if (after === '/') {
+        const name = skReadTagName(s, lt + 2);
+        const tagEnd = skEndOfTag(s, lt);
+        if (tagEnd === -1) return null;
+        if (name !== null && name.toLowerCase() === tlc) { depth--; if (depth === 0) return { closeStart: lt, closeEnd: tagEnd }; }
+        i = tagEnd;
+      } else if (after === '!') {
+        if (s.startsWith('<!--', lt)) { const ce = s.indexOf('-->', lt + 4); i = ce === -1 ? s.length : ce + 3; }
+        else { const tagEnd = skEndOfTag(s, lt); i = tagEnd === -1 ? s.length : tagEnd; }
+      } else {
+        const name = skReadTagName(s, lt + 1);
+        const tagEnd = skEndOfTag(s, lt);
+        if (tagEnd === -1) return null;
+        if (name !== null && name.toLowerCase() === tlc) depth++;
+        i = tagEnd;
+      }
+    }
+    return null;
+  }
+  function unwrapPureSkWrappers(doc) {
+    let s = doc, i = 0;
+    while (i < s.length) {
+      const lt = s.indexOf('<', i);
+      if (lt === -1) break;
+      const after = s[lt + 1];
+      if (after === '/' || after === '!' || after === '?') {
+        if (s.startsWith('<!--', lt)) { const ce = s.indexOf('-->', lt + 4); i = ce === -1 ? s.length : ce + 3; }
+        else { const te = skEndOfTag(s, lt); i = te === -1 ? s.length : te; }
+        continue;
+      }
+      const name = skReadTagName(s, lt + 1);
+      const tagEnd = skEndOfTag(s, lt);
+      if (name === null || tagEnd === -1) { i = lt + 1; continue; }
+      const lname = name.toLowerCase();
+      if (lname === 'div' || lname === 'span') {
+        const tagInner = s.slice(lt + 1 + name.length, tagEnd - 1);
+        const classValue = readClassAttr(tagInner);
+        if (classValue !== null && classIsPureSk(classValue)) {
+          const match = skFindMatchingClose(s, tagEnd, lname);
+          if (match) {
+            s = s.slice(0, lt) + s.slice(tagEnd, match.closeStart) + s.slice(match.closeEnd);
+            i = lt; // restart at exposed inner (may begin with a nested wrapper)
+            continue;
+          }
+        }
+      }
+      i = tagEnd;
+    }
+    return s;
+  }
+  function stripSkClassTokens(doc) {
+    return doc.replace(/(\s*)class\s*=\s*("([^"]*)"|'([^']*)')/gi, (full, lead, quoted, dq, sq) => {
+      const quoteChar = dq !== undefined ? '"' : "'";
+      const value = dq !== undefined ? dq : sq;
+      const kept = value.split(/\s+/).filter(Boolean).filter((t) => !isSkToken(t));
+      return kept.length === 0 ? '' : lead + 'class=' + quoteChar + kept.join(' ') + quoteChar;
+    });
+  }
+  function deskinDoc(doc) {
+    if (typeof doc !== 'string') return doc;
+    let s = doc.replace(RWA_SKIN_BLOCK_TRAIL_RE, '');
+    s = unwrapPureSkWrappers(s);
+    s = stripSkClassTokens(s);
+    return s;
+  }
+  // ─── skin-synth: prose/image-description → validated tokens → safe theme ───
+  // (skinning-v3 "/skin like <description>"). Pure functions — NO network, NO DOM.
+  // Mirrors /tmp/skin-synth.mjs (built + tested separately, 20 green); the model
+  // output (validateSkinTokens' input) is UNTRUSTED — validation is the whole
+  // point: the synthesized CSS must NEVER break self-containment (no url(/@import/
+  // @font-face/http/web fonts/expression(, no </style>/<script>, no breakout).
+  // Defense in depth: (1) validateSkinTokens whitelists every field, DROPS+defaults
+  // anything that fails; (2) synthesizeSkinTheme builds CSS only from re-stringified
+  // primitives; (3) scrubSafeBody asserts the emitted body carries no unsafe
+  // substring, so even a validation miss can't emit an unsafe block.
+  const SK_HEX_RE = /^#[0-9a-fA-F]{3,8}$/;
+  // substrings that must never appear in a kept value
+  const SK_UNSAFE_SUBSTRINGS = ['url(', '@import', '@font-face', 'expression(', 'http', '//', '\\', ';', '{', '}', '<', '>'];
+  // substrings that must never appear in the FINAL emitted theme block
+  const SK_OUTPUT_FORBIDDEN = ['url(', '@import', '@font-face', 'expression(', 'http', '</style', '<script'];
+  const SK_FONT_INTENTS = new Set(['sans', 'serif', 'mono', 'rounded', 'condensed']);
+  const SK_FONT_STACKS = {
+    sans: "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif",
+    serif: "Georgia,Cambria,'Times New Roman',Times,serif",
+    mono: "'SF Mono',Menlo,Monaco,ui-monospace,monospace",
+    rounded: "ui-rounded,'SF Pro Rounded',system-ui,sans-serif",
+    condensed: "'Arial Narrow',system-ui,sans-serif",
+  };
+  const SK_SHADOW_ENUM = new Set(['none', 'subtle', 'medium', 'strong']);
+  const SK_SHADOW_PRESETS = { none: 'none', subtle: '0 1px 2px rgba(0,0,0,.06)', medium: '0 2px 8px rgba(0,0,0,.12)', strong: '0 6px 24px rgba(0,0,0,.18)' };
+  const SK_DENSITY_ENUM = new Set(['tight', 'normal', 'relaxed']);
+  const SK_DENSITY_PRESETS = {
+    tight: { lh: 1.45, articleMargin: 40, blockGap: 0.7, headGap: 1.2 },
+    normal: { lh: 1.65, articleMargin: 64, blockGap: 1.0, headGap: 1.6 },
+    relaxed: { lh: 1.85, articleMargin: 88, blockGap: 1.25, headGap: 2.0 },
+  };
+  const SK_MOTION_ENUM = new Set(['none', 'subtle', 'full']);
+  const SK_CONFIDENCE_ENUM = new Set(['high', 'medium', 'low']);
+  const SK_DEFAULTS = {
+    ramp: ['#fafafa', '#f4f4f5', '#e4e4e7', '#d4d4d8', '#a1a1aa', '#71717a', '#52525b', '#3f3f46', '#27272a', '#18181b'],
+    semantic: { green: '#16a34a', yellow: '#ca8a04', red: '#dc2626', blue: '#2563eb' },
+    accent: '#2563eb', ink: '#18181b', bg: '#ffffff',
+    fontUi: 'sans', fontMono: 'mono',
+    typeScaleRatio: 1.2, baseSize: 16, radius: 8, shadow: 'subtle',
+    density: 'normal', borderWeight: 1, motion: 'subtle', confidence: 'low',
+  };
+  function skIsSafeHex(v) {
+    if (typeof v !== 'string') return false;
+    if (!SK_HEX_RE.test(v)) return false;
+    const low = v.toLowerCase();
+    for (const bad of SK_UNSAFE_SUBSTRINGS) if (low.includes(bad.toLowerCase())) return false;
+    return true;
+  }
+  function skCoerceNum(v) {
+    if (typeof v === 'number') return Number.isFinite(v) ? v : null;
+    if (typeof v === 'string') {
+      const s = v.trim();
+      if (s === '') return null;
+      const n = Number(s);
+      return Number.isFinite(n) ? n : null;
+    }
+    return null;
+  }
+  function skClampNum(v, lo, hi, fallback) {
+    const n = skCoerceNum(v);
+    if (n === null) return fallback;
+    return Math.min(hi, Math.max(lo, n));
+  }
+  function skPickEnum(v, set, fallback) { return typeof v === 'string' && set.has(v) ? v : fallback; }
+  function skRound(n, p = 3) { return Number(n.toFixed(p)).toString(); }
+  function skParseHex(h) {
+    if (typeof h !== 'string' || !SK_HEX_RE.test(h)) return null;
+    let s = h.slice(1);
+    if (s.length === 3 || s.length === 4) s = s.split('').map((c) => c + c).join('');
+    if (s.length !== 6 && s.length !== 8) return null;
+    const r = parseInt(s.slice(0, 2), 16), g = parseInt(s.slice(2, 4), 16), b = parseInt(s.slice(4, 6), 16);
+    if ([r, g, b].some((n) => Number.isNaN(n))) return null;
+    return [r, g, b];
+  }
+  function skToHex(r, g, b) {
+    const c = (n) => Math.max(0, Math.min(255, n)).toString(16).padStart(2, '0');
+    return '#' + c(r) + c(g) + c(b);
+  }
+  function skSynthRamp(ink, bg) {
+    const dark = skParseHex(ink) || skParseHex(SK_DEFAULTS.ink);
+    const light = skParseHex(bg) || skParseHex(SK_DEFAULTS.bg);
+    const ramp = [];
+    for (let i = 0; i < 10; i++) {
+      const tt = i / 9;
+      ramp.push(skToHex(
+        Math.round(light[0] + (dark[0] - light[0]) * tt),
+        Math.round(light[1] + (dark[1] - light[1]) * tt),
+        Math.round(light[2] + (dark[2] - light[2]) * tt)));
+    }
+    return ramp;
+  }
+  function skCloneDefaults() {
+    return {
+      accent: SK_DEFAULTS.accent, ink: SK_DEFAULTS.ink, bg: SK_DEFAULTS.bg,
+      ramp: SK_DEFAULTS.ramp.slice(), semantic: { ...SK_DEFAULTS.semantic },
+      fontUi: SK_DEFAULTS.fontUi, fontMono: SK_DEFAULTS.fontMono,
+      typeScaleRatio: SK_DEFAULTS.typeScaleRatio, baseSize: SK_DEFAULTS.baseSize,
+      radius: SK_DEFAULTS.radius, borderWeight: SK_DEFAULTS.borderWeight,
+      shadow: SK_DEFAULTS.shadow, density: SK_DEFAULTS.density, motion: SK_DEFAULTS.motion,
+    };
+  }
+  function skTakeHex(v, fallback, field, dropped) {
+    if (v === undefined) return fallback;
+    if (skIsSafeHex(v)) return v;
+    dropped.push(field);
+    return fallback;
+  }
+  function skTakeFontIntent(v, fallback, field, dropped) {
+    if (v === undefined) return fallback;
+    if (typeof v === 'string' && SK_FONT_INTENTS.has(v)) return v;
+    dropped.push(field);
+    return fallback;
+  }
+  function skTakeNum(v, lo, hi, fallback, field, dropped) {
+    if (v === undefined) return fallback;
+    const n = skCoerceNum(v);
+    if (n === null) { dropped.push(field); return fallback; }
+    const clamped = Math.min(hi, Math.max(lo, n));
+    if (clamped !== n) dropped.push(field);
+    return clamped;
+  }
+  function skTakeEnum(v, set, fallback, field, dropped) {
+    if (v === undefined) return fallback;
+    if (typeof v === 'string' && set.has(v)) return v;
+    dropped.push(field);
+    return fallback;
+  }
+  function skValidateRamp(v, ink, bg, dropped) {
+    if (!Array.isArray(v)) { if (v !== undefined) dropped.push('ramp'); return skSynthRamp(ink, bg); }
+    const kept = [];
+    let droppedAny = false;
+    for (const entry of v) { if (skIsSafeHex(entry)) kept.push(entry); else droppedAny = true; }
+    if (droppedAny) dropped.push('ramp');
+    if (kept.length < 5) { if (!droppedAny) dropped.push('ramp'); return skSynthRamp(ink, bg); }
+    return kept;
+  }
+  function skValidateSemantic(v, dropped) {
+    const out = { ...SK_DEFAULTS.semantic };
+    if (v === undefined) return out;
+    if (v == null || typeof v !== 'object' || Array.isArray(v)) { dropped.push('semantic'); return out; }
+    let droppedAny = false;
+    for (const key of ['green', 'yellow', 'red', 'blue']) {
+      if (v[key] === undefined) continue;
+      if (skIsSafeHex(v[key])) out[key] = v[key];
+      else droppedAny = true;
+    }
+    if (droppedAny) dropped.push('semantic');
+    return out;
+  }
+  // sanitizeSkinName — lowercase, [a-z0-9-] only, collapse/trim dashes, fallback
+  // 'custom', cap ~32. Used for data-rwa-skin="…" + the actor string. Idempotent.
+  function sanitizeSkinName(raw) {
+    const s = typeof raw === 'string' ? raw : (raw == null ? '' : String(raw));
+    let out = s.toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/-+/g, '-').replace(/^-+|-+$/g, '');
+    if (out.length > 32) out = out.slice(0, 32).replace(/-+$/g, '');
+    return out.length ? out : 'custom';
+  }
+  // validateSkinTokens — validate+normalize untrusted model token JSON. Returns
+  // {ok, tokens, name, feel, confidence, dropped[]}. Even ok:false yields a usable
+  // defaults set so the caller can still synthesize a neutral theme.
+  function validateSkinTokens(raw) {
+    const dropped = [];
+    if (raw == null || typeof raw !== 'object' || Array.isArray(raw)) {
+      return { ok: false, tokens: skCloneDefaults(), name: 'custom', feel: '', confidence: 'low', dropped: ['<root>'] };
+    }
+    const t = (raw.tokens && typeof raw.tokens === 'object' && !Array.isArray(raw.tokens)) ? raw.tokens : null;
+    if (!t) {
+      return {
+        ok: false, tokens: skCloneDefaults(), name: sanitizeSkinName(raw.name),
+        feel: typeof raw.feel === 'string' ? raw.feel.slice(0, 80) : '',
+        confidence: skPickEnum(raw.confidence, SK_CONFIDENCE_ENUM, 'low'), dropped: ['tokens'],
+      };
+    }
+    const tokens = {};
+    tokens.accent = skTakeHex(t.accent, SK_DEFAULTS.accent, 'accent', dropped);
+    tokens.ink = skTakeHex(t.ink, SK_DEFAULTS.ink, 'ink', dropped);
+    tokens.bg = skTakeHex(t.bg, SK_DEFAULTS.bg, 'bg', dropped);
+    tokens.ramp = skValidateRamp(t.ramp, tokens.ink, tokens.bg, dropped);
+    tokens.semantic = skValidateSemantic(t.semantic, dropped);
+    tokens.fontUi = skTakeFontIntent(t.fontUi, 'sans', 'fontUi', dropped);
+    tokens.fontMono = skTakeFontIntent(t.fontMono, 'mono', 'fontMono', dropped);
+    tokens.typeScaleRatio = skTakeNum(t.typeScaleRatio, 1.05, 1.5, SK_DEFAULTS.typeScaleRatio, 'typeScaleRatio', dropped);
+    tokens.baseSize = skTakeNum(t.baseSize, 13, 20, SK_DEFAULTS.baseSize, 'baseSize', dropped);
+    tokens.radius = skTakeNum(t.radius, 0, 24, SK_DEFAULTS.radius, 'radius', dropped);
+    tokens.borderWeight = skTakeNum(t.borderWeight, 0, 3, SK_DEFAULTS.borderWeight, 'borderWeight', dropped);
+    tokens.shadow = skTakeEnum(t.shadow, SK_SHADOW_ENUM, SK_DEFAULTS.shadow, 'shadow', dropped);
+    tokens.density = skTakeEnum(t.density, SK_DENSITY_ENUM, SK_DEFAULTS.density, 'density', dropped);
+    tokens.motion = skTakeEnum(t.motion, SK_MOTION_ENUM, SK_DEFAULTS.motion, 'motion', dropped);
+    const confidence = skPickEnum(raw.confidence, SK_CONFIDENCE_ENUM, 'low');
+    const name = sanitizeSkinName(raw.name);
+    const feel = typeof raw.feel === 'string' ? raw.feel.slice(0, 80) : '';
+    return { ok: true, tokens, name, feel, confidence, dropped };
+  }
+  // scrubSafeBody — assert the CSS BODY (between <style> open/close) carries no
+  // unsafe substring. Throws on violation: a synthesis bug fails LOUD, never
+  // silently emits unsafe CSS. The <style>/</style> wrapper is added AFTER this.
+  function skScrubSafeBody(body) {
+    const low = body.toLowerCase();
+    const forbidden = SK_OUTPUT_FORBIDDEN.concat(['<style', '</style', '<script']);
+    for (const bad of forbidden) {
+      if (low.includes(bad.toLowerCase())) throw new Error('skin-synth: emitted CSS contains forbidden substring "' + bad + '"');
+    }
+    if (body.includes('!important')) throw new Error('skin-synth: emitted CSS contains !important');
+    return body;
+  }
+  // synthesizeSkinTheme — build the full <style data-rwa-skin="NAME">…</style> block
+  // from validated tokens. All selectors #rwa-doc-mount …, no !important, system
+  // fonts only. Re-validates every field defensively (scrub is the last defense).
+  function synthesizeSkinTheme(tokens, name) {
+    const safeName = sanitizeSkinName(name);
+    const accent = skIsSafeHex(tokens && tokens.accent) ? tokens.accent : SK_DEFAULTS.accent;
+    const ink = skIsSafeHex(tokens && tokens.ink) ? tokens.ink : SK_DEFAULTS.ink;
+    const bg = skIsSafeHex(tokens && tokens.bg) ? tokens.bg : SK_DEFAULTS.bg;
+    const ramp = (tokens && Array.isArray(tokens.ramp) && tokens.ramp.every(skIsSafeHex) && tokens.ramp.length >= 5)
+      ? tokens.ramp : skSynthRamp(ink, bg);
+    const sem = {
+      green: skIsSafeHex(tokens && tokens.semantic && tokens.semantic.green) ? tokens.semantic.green : SK_DEFAULTS.semantic.green,
+      yellow: skIsSafeHex(tokens && tokens.semantic && tokens.semantic.yellow) ? tokens.semantic.yellow : SK_DEFAULTS.semantic.yellow,
+      red: skIsSafeHex(tokens && tokens.semantic && tokens.semantic.red) ? tokens.semantic.red : SK_DEFAULTS.semantic.red,
+      blue: skIsSafeHex(tokens && tokens.semantic && tokens.semantic.blue) ? tokens.semantic.blue : SK_DEFAULTS.semantic.blue,
+    };
+    const fontUi = SK_FONT_STACKS[skPickEnum(tokens && tokens.fontUi, SK_FONT_INTENTS, 'sans')];
+    const fontMono = SK_FONT_STACKS[skPickEnum(tokens && tokens.fontMono, SK_FONT_INTENTS, 'mono')];
+    const ratio = skClampNum(tokens && tokens.typeScaleRatio, 1.05, 1.5, SK_DEFAULTS.typeScaleRatio);
+    const base = skClampNum(tokens && tokens.baseSize, 13, 20, SK_DEFAULTS.baseSize);
+    const radius = skClampNum(tokens && tokens.radius, 0, 24, SK_DEFAULTS.radius);
+    const border = skClampNum(tokens && tokens.borderWeight, 0, 3, SK_DEFAULTS.borderWeight);
+    const shadow = SK_SHADOW_PRESETS[skPickEnum(tokens && tokens.shadow, SK_SHADOW_ENUM, 'subtle')];
+    const density = SK_DENSITY_PRESETS[skPickEnum(tokens && tokens.density, SK_DENSITY_ENUM, 'normal')];
+    const motion = skPickEnum(tokens && tokens.motion, SK_MOTION_ENUM, 'subtle');
+    const inkC = ink;
+    const soft = ramp[6] || ramp[Math.min(6, ramp.length - 1)];
+    const faint = ramp[4] || ramp[Math.min(4, ramp.length - 1)];
+    const line = ramp[2] || ramp[Math.min(2, ramp.length - 1)];
+    const tint = ramp[1] || ramp[0];
+    const sizeRem = (n) => skRound(Math.pow(ratio, n));
+    const h1 = sizeRem(4), h2 = sizeRem(2.6), h3 = sizeRem(1.6), h4 = sizeRem(0.4);
+    const small = skRound(Math.pow(ratio, -1.2));
+    const tiny = skRound(Math.pow(ratio, -2.2));
+    const rad = skRound(radius);
+    const radSm = skRound(Math.max(0, radius - 4));
+    const radPill = '999px';
+    const bw = skRound(border);
+    const blockGap = skRound(density.blockGap);
+    const headGap = skRound(density.headGap);
+    const body = '#rwa-doc-mount{\n'
+      + '  --sk-ink:' + inkC + '; --sk-soft:' + soft + '; --sk-faint:' + faint + ';\n'
+      + '  --sk-line:' + line + '; --sk-bg:' + bg + '; --sk-tint:' + tint + '; --sk-accent:' + accent + ';\n'
+      + '  --sk-green:' + sem.green + '; --sk-yellow:' + sem.yellow + '; --sk-red:' + sem.red + '; --sk-blue:' + sem.blue + ';\n'
+      + '  --sk-radius:' + rad + 'px; --sk-radius-sm:' + radSm + 'px; --sk-border:' + bw + 'px; --sk-shadow:' + shadow + ';\n'
+      + '  background:var(--sk-bg); color:var(--sk-ink);\n'
+      + '  font-family:' + fontUi + ';\n'
+      + '  font-size:' + skRound(base) + 'px; line-height:' + skRound(density.lh) + ';\n'
+      + '}\n'
+      + '#rwa-doc-mount article{max-width:720px;margin:' + density.articleMargin + 'px auto;padding:0 36px;}\n'
+      + '#rwa-doc-mount h1{font-size:' + h1 + 'rem;font-weight:700;letter-spacing:-.02em;line-height:1.12;color:var(--sk-ink);margin:' + headGap + 'em 0 .35em;}\n'
+      + '#rwa-doc-mount h2{font-size:' + h2 + 'rem;font-weight:600;letter-spacing:-.01em;color:var(--sk-ink);margin:' + headGap + 'em 0 .35em;}\n'
+      + '#rwa-doc-mount h3{font-size:' + h3 + 'rem;font-weight:600;color:var(--sk-soft);margin:1.4em 0 .3em;}\n'
+      + '#rwa-doc-mount h4,#rwa-doc-mount h5,#rwa-doc-mount h6{font-size:' + h4 + 'rem;font-weight:600;color:var(--sk-soft);margin:1.2em 0 .25em;}\n'
+      + '#rwa-doc-mount p{margin:0 0 ' + blockGap + 'em;color:var(--sk-ink);}\n'
+      + '#rwa-doc-mount a{color:var(--sk-accent);text-decoration:underline;text-underline-offset:3px;}\n'
+      + '#rwa-doc-mount a:hover{color:var(--sk-soft);text-decoration-thickness:2px;}\n'
+      + '#rwa-doc-mount ul,#rwa-doc-mount ol{margin:0 0 ' + blockGap + 'em;padding-left:1.6em;color:var(--sk-ink);}\n'
+      + '#rwa-doc-mount li{margin:.3em 0;}\n'
+      + '#rwa-doc-mount blockquote{margin:1.3em 0;padding:.3em 0 .3em 1em;border-left:' + Math.max(2, border + 1) + 'px solid var(--sk-accent);color:var(--sk-soft);font-style:normal;}\n'
+      + '#rwa-doc-mount hr{border:0;border-top:' + bw + 'px solid var(--sk-line);margin:2.2em 0;}\n'
+      + '#rwa-doc-mount code{font-family:' + fontMono + ';font-size:.85em;background:var(--sk-tint);color:var(--sk-accent);padding:.12em .4em;border-radius:' + radSm + 'px;}\n'
+      + '#rwa-doc-mount pre{font-family:' + fontMono + ';background:var(--sk-tint);border:' + bw + 'px solid var(--sk-line);border-radius:' + rad + 'px;padding:16px 18px;box-shadow:var(--sk-shadow);color:var(--sk-ink);}\n'
+      + '#rwa-doc-mount pre code{background:transparent;border:0;color:inherit;padding:0;}\n'
+      + '#rwa-doc-mount table{font-size:.93em;border:' + bw + 'px solid var(--sk-line);border-radius:' + radSm + 'px;overflow:hidden;}\n'
+      + '#rwa-doc-mount th{background:var(--sk-tint);color:var(--sk-soft);font-weight:600;border-bottom:' + bw + 'px solid var(--sk-line);padding:.55em .8em;text-align:left;}\n'
+      + '#rwa-doc-mount td{border-bottom:' + bw + 'px solid var(--sk-line);padding:.55em .8em;color:var(--sk-ink);}\n'
+      + '#rwa-doc-mount .sk-eyebrow{font-size:' + small + 'rem;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--sk-accent);margin:0 0 .4em;}\n'
+      + '#rwa-doc-mount .sk-kicker{font-size:' + small + 'rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--sk-accent);margin:0 0 .5em;}\n'
+      + '#rwa-doc-mount .sk-byline{color:var(--sk-faint);font-size:' + small + 'rem;margin:0 0 1.3em;}\n'
+      + '#rwa-doc-mount .sk-lede p::first-letter{float:left;font-size:3.2em;line-height:.82;font-weight:700;padding:.04em .1em 0 0;color:var(--sk-ink);}\n'
+      + '#rwa-doc-mount .sk-pull{margin:1.4em 0;font-size:' + sizeRem(1.4) + 'rem;line-height:1.4;font-style:italic;text-align:center;color:var(--sk-soft);}\n'
+      + '#rwa-doc-mount .sk-callout{margin:1.4em 0;padding:14px 18px;background:var(--sk-tint);border:' + bw + 'px solid var(--sk-line);border-left:3px solid var(--sk-accent);border-radius:' + radSm + 'px;color:var(--sk-soft);box-shadow:var(--sk-shadow);}\n'
+      + '#rwa-doc-mount .sk-hero{margin:0 0 2em;padding:0 0 1.4em;border-bottom:' + bw + 'px solid var(--sk-line);}\n'
+      + '#rwa-doc-mount .sk-hero h1{margin-top:0;}\n'
+      + '#rwa-doc-mount .sk-pill{display:inline-block;font-size:' + tiny + 'rem;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--sk-accent);background:var(--sk-tint);border:' + bw + 'px solid var(--sk-line);border-radius:' + radPill + ';padding:.25em .7em;margin:0 0 .8em;}\n'
+      + '#rwa-doc-mount .sk-stat-row{display:flex;flex-wrap:wrap;gap:14px;margin:1.6em 0;}\n'
+      + '#rwa-doc-mount .sk-stat{display:flex;flex-direction:column;gap:2px;padding:12px 16px;background:var(--sk-tint);border:' + bw + 'px solid var(--sk-line);border-radius:' + rad + 'px;box-shadow:var(--sk-shadow);}\n'
+      + '#rwa-doc-mount .sk-stat-num{font-size:' + sizeRem(1.4) + 'rem;font-weight:700;color:var(--sk-ink);}\n'
+      + '#rwa-doc-mount .sk-stat-label{font-size:' + tiny + 'rem;letter-spacing:.06em;text-transform:uppercase;color:var(--sk-faint);}\n'
+      + '#rwa-doc-mount .sk-blink{color:var(--sk-accent);' + (motion === 'none' ? '' : 'animation:sk-blink 1s step-end infinite;') + '}\n'
+      + '@keyframes sk-blink{50%{opacity:0;}}\n'
+      + '@media (prefers-reduced-motion:reduce){#rwa-doc-mount .sk-blink{animation:none;}}';
+    skScrubSafeBody(body);
+    return '<style data-rwa-skin="' + safeName + '">\n' + body + '\n</style>';
+  }
   // RWA_SKIN_RECIPES — per-preset L1 restyle instructions (skinning-v2). SEED-ONLY:
   // the CLI skin path is theme-only (offline, no agent), so these are NOT mirrored to
   // cli/src/skins.mjs (only RWA_SKINS name/label/swatch/theme is byte-pinned). Every
   // recipe is additive-only + 1:1-invertible (wrap + add class, never re-tag/move/
   // merge) so de-skin is a clean sk-* strip and data-rwa-id is never renumbered.
-  // LIMITATION (v2): re-skin de-skinning is best-effort — the preamble instructs the
-  // agent to strip a prior skin's sk-* wrappers first, but a non-compliant model may
-  // leave orphan wrappers (unstyled, though a block-level orphan still imposes layout),
-  // and they accumulate across re-skins. Mitigations: ⌘Z reverts a skin in one step;
-  // /skin reset removes the theme block. A deterministic strip pre-pass is deferred
-  // (needs balanced-tag unwrap — regex is unsafe for nested wrappers like sk-stat-row).
+  // The preamble still asks the agent to strip a prior skin's sk-* wrappers, but it is
+  // no longer load-bearing: applySkinL1 runs deskinDoc() on the base FIRST, so a re-skin
+  // is deterministically clean regardless of model compliance (no orphan-wrapper
+  // accumulation). The one residual loss: stat-tile recipes split text, so deskinDoc's
+  // unwrap joins it back (e.g. "42 commits" → tiles → "42commits") — minor, documented.
   const RWA_SKIN_L1_PREAMBLE =
 `Apply a visual restyle to this document by adding sk-* class hooks and additive wrapper elements. STRICT RULES: only ADD wrapper <div>/<span> elements and ADD class attributes; never delete, move, merge, reorder, re-tag, or rewrite existing content; never change any data-rwa-id; never add <style> or <script>; never touch frozen zones. If the document already contains sk-* wrappers or sk-* classes from a previous skin, first remove those wrappers (keeping their inner content) and strip the sk-* classes, then apply the restyle below. Use apply_edits with surgical (find,replace) pairs.
 
 Restyle:
 `;
+  // RWA_SKIN_GENERIC_RECIPE — a look-agnostic L1 restyle, reused by /skin like
+  // (synthesized skins have no bespoke preset recipe). Same additive-only / 1:1-
+  // invertible contract as the presets; the synthesized theme styles whichever
+  // sk-* wrappers the agent decides apply.
+  const RWA_SKIN_GENERIC_RECIPE = RWA_SKIN_L1_PREAMBLE +
+`1. If a short kicker, category, or eyebrow line opens the document (above or directly under the H1), wrap it as <div class="sk-eyebrow">…</div>.
+2. Wrap the leading H1 (and an immediately following subtitle or dek paragraph) together in <div class="sk-hero">…</div>.
+3. Convert any paragraph that begins with "Note:", "Tip:", or "Important:" into a <div class="sk-callout"> wrapping that paragraph.
+4. If you find a contiguous run of 2 to 4 short "label: number" or "number label" metric lines, group them in one <div class="sk-stat-row"> with each metric as <div class="sk-stat"><b>N</b><span>label</span></div>.
+5. Leave all other content, lists, code blocks, and tables unchanged.`;
   const RWA_SKIN_RECIPES = {
     'notion-clean': RWA_SKIN_L1_PREAMBLE +
 `1. If a short subtitle or dek paragraph sits directly under the H1, add class="sk-eyebrow" to it.
@@ -2790,9 +3201,8 @@ Restyle:
   }
   async function resetSkin() {
     const doc = await getDoc();
-    const m = doc.match(RWA_SKIN_BLOCK_RE);
-    if (!m) { if (typeof showAffordance === 'function') showAffordance('no skin to reset'); return; }
-    const newDoc = doc.replace(RWA_SKIN_BLOCK_TRAIL_RE, '');
+    const newDoc = deskinDoc(doc);   // removes the theme block AND any sk-* wrappers
+    if (newDoc === doc) { if (typeof showAffordance === 'function') showAffordance('no skin to reset'); return; }
     await runtimeApplyEnvelope({ version: 'rwa-edit/1', doc: newDoc, reason: 'skin:reset' }, { surface: 'skin:reset', actor: 'skin:reset' });
     if (typeof showAffordance === 'function') showAffordance('skin removed');
   }
@@ -2809,14 +3219,121 @@ Restyle:
         showAffordance('skin: theme-only (L1 restyle needs openrouter/ollama/lmstudio)');
       return applySkin(name);
     }
-    // compose-then-commit: drive the agent with the preset recipe (no-commit), then
-    // splice this preset's deterministic theme block onto the result and commit ONCE
-    // (one ⌘Z reverts theme + wrappers); the commit self-attributes actor:skin:NAME.
+    // compose-then-commit: deterministically de-skin any PRIOR skin first (so re-skin
+    // starts clean regardless of model compliance), drive the agent on that clean base
+    // with the preset recipe (no-commit), splice this preset's theme block onto the
+    // result, and commit ONCE against the ORIGINAL doc (one ⌘Z reverts to the prior
+    // skin). The commit self-attributes actor:skin:NAME.
+    const original = canonLF(await getDoc());
+    const cleanBase = deskinDoc(original);
     await modify(recipe, { surface: 'skin:l1', actor: 'skin:' + name }, {
       compose: { transform: (agentDoc) => spliceSkinBlock(agentDoc, skin.theme), reason: 'skin:' + name + ' (theme+L1)' },
+      baseDoc: cleanBase, commitBase: original,
     });
   }
-  window.applySkin = applySkin; window.resetSkin = resetSkin; window.applySkinL1 = applySkinL1;
+  // ─── skin-from-description (skinning-v3 "/skin like <prose>") ───────────────
+  // The system prompt for the token extractor. The model returns ONLY a JSON
+  // object describing the LOOK implied by the description — fonts as INTENT enums
+  // (never families/URLs), colors as hex, numbers in sane ranges. validateSkinTokens
+  // is the security boundary; this prompt is best-effort guidance, not a guarantee.
+  const RWA_SKIN_EXTRACT_SYSTEM =
+`You are a design-token extractor. Given a short description of a desired visual look, return ONLY a single JSON object (no prose, no markdown fences) describing the style it implies. Use this exact shape:
+{"name": string, "feel": string, "confidence": "high"|"medium"|"low", "tokens": {
+  "ramp": [hex,...],            // optional: 5-10 grayscale-ish stops light→dark
+  "semantic": {"green":hex,"yellow":hex,"red":hex,"blue":hex}, // optional
+  "accent": hex, "ink": hex, "bg": hex,                         // #rrggbb colors
+  "fontUi": "sans"|"serif"|"mono"|"rounded"|"condensed",        // INTENT enum ONLY
+  "fontMono": "sans"|"serif"|"mono"|"rounded"|"condensed",      // INTENT enum ONLY
+  "typeScaleRatio": number,     // 1.05-1.5
+  "baseSize": number,           // 13-20 (px)
+  "radius": number,             // 0-24 (px corner radius)
+  "shadow": "none"|"subtle"|"medium"|"strong",
+  "density": "tight"|"normal"|"relaxed",
+  "borderWeight": number,       // 0-3 (px)
+  "motion": "none"|"subtle"|"full"
+}}
+HARD RULES: colors are hex strings only (e.g. "#c0392b"); fonts are ONE of the five intent words — NEVER a font family name, NEVER a URL; numbers are bare numbers in the stated ranges. Do NOT include any CSS, url(), @import, http(s), or markup. "name" is a short slug for the look. "confidence" reflects how clearly the description maps to a concrete style. Output the JSON object and nothing else.`;
+  // Lenient JSON extraction from a model text reply: strip ```json fences, then
+  // locate the first balanced {…} object (quote/escape-aware) and JSON.parse it.
+  function skExtractFirstJsonObject(text) {
+    if (typeof text !== 'string') return null;
+    let s = text.replace(/^\s*```(?:json)?\s*\n?/i, '').replace(/\n?\s*```\s*$/i, '').trim();
+    const start = s.indexOf('{');
+    if (start === -1) return null;
+    let depth = 0, inStr = false, quote = '', esc = false;
+    for (let i = start; i < s.length; i++) {
+      const c = s[i];
+      if (inStr) {
+        if (esc) esc = false;
+        else if (c === '\\') esc = true;
+        else if (c === quote) inStr = false;
+      } else if (c === '"' || c === "'") { inStr = true; quote = c; }
+      else if (c === '{') depth++;
+      else if (c === '}') { depth--; if (depth === 0) { const slice = s.slice(start, i + 1); try { return JSON.parse(slice); } catch { return null; } } }
+    }
+    return null;
+  }
+  // extractSkinTokens — single model call (NO tools): ask the backend to describe
+  // the look implied by `description` as a token JSON, parse it leniently, and run
+  // it through validateSkinTokens. Throws on unreachable backend / no parseable
+  // JSON (a synthesized skin should not silently fall back to the neutral default).
+  // Returns the full {ok,tokens,name,feel,confidence,dropped} validation result.
+  async function extractSkinTokens(description) {
+    const cfg = resolveBackendConfig();
+    if (cfg.requiresKey && !cfg.apiKey) throw new Error('no API key — open ⚙ settings');
+    const model = sessionStorage.getItem(RWA.K_MODEL) || RWA.MODEL;
+    let data;
+    try {
+      data = await openAiCompatChat(cfg, {
+        model,
+        max_tokens: 1200,
+        messages: [
+          { role: 'system', content: RWA_SKIN_EXTRACT_SYSTEM },
+          { role: 'user', content: 'Describe the visual look for: ' + description },
+        ],
+      });
+    } catch (netErr) {
+      throw new Error('skin extraction failed: ' + (netErr && netErr.message || netErr));
+    }
+    const content = (data && data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) || '';
+    const parsed = skExtractFirstJsonObject(content);
+    if (parsed == null) throw new Error('skin extraction returned no JSON');
+    return validateSkinTokens(parsed);
+  }
+  // applySkinLike — orchestrate the prose path: extract validated tokens, synthesize
+  // a safe theme, then drive the SAME compose-then-commit as applySkinL1 but with the
+  // SYNTHESIZED theme + the GENERIC recipe (theme + L1 wrappers land as ONE commit).
+  // Image front-end (drag-drop / image_url) is OUT OF SCOPE — prose only for v1.
+  async function applySkinLike(description) {
+    const desc = (description || '').trim();
+    if (!desc) { if (typeof showAffordance === 'function') showAffordance('usage: /skin like <description of the look>'); return; }
+    const cfg = resolveBackendConfig();
+    // Prose extraction needs an OpenAI-compatible chat backend. bridge / bridge-session
+    // are a separate single-shot transport (and the image path will need vision), so for
+    // v1 they are not supported here — surface a clear notice rather than silently failing.
+    if (cfg.kind === 'bridge' || cfg.kind === 'bridge-session') {
+      if (typeof showAffordance === 'function') showAffordance('skin like needs openrouter/ollama/lmstudio');
+      return;
+    }
+    const v = await extractSkinTokens(desc);
+    if (!v.ok) { if (typeof showAffordance === 'function') showAffordance('skin like: could not read a style from that description'); return; }
+    const theme = synthesizeSkinTheme(v.tokens, v.name);
+    // compose-then-commit against the SYNTHESIZED theme + GENERIC recipe: de-skin any
+    // prior skin first, drive the agent (no-commit), splice the theme, commit ONCE.
+    const original = canonLF(await getDoc());
+    const cleanBase = deskinDoc(original);
+    await modify(RWA_SKIN_GENERIC_RECIPE, { surface: 'skin:like', actor: 'skin:' + v.name }, {
+      compose: { transform: (agentDoc) => spliceSkinBlock(agentDoc, theme), reason: 'skin:' + v.name + ' (like)' },
+      baseDoc: cleanBase, commitBase: original,
+    });
+    if (typeof showAffordance === 'function') {
+      if (v.confidence === 'low') showAffordance('low-confidence skin "' + v.name + '" — ⌘Z to undo');
+      else if (v.dropped && v.dropped.length) showAffordance('skin "' + v.name + '" applied (' + v.dropped.length + ' token(s) adjusted)');
+      else showAffordance('skin "' + v.name + '" applied');
+    }
+  }
+  window.applySkin = applySkin; window.resetSkin = resetSkin; window.applySkinL1 = applySkinL1; window.deskinDoc = deskinDoc;
+  window.validateSkinTokens = validateSkinTokens; window.synthesizeSkinTheme = synthesizeSkinTheme; window.applySkinLike = applySkinLike;
   // The ✦ gallery: a runtime-chrome panel (frozen bootstrap, never INLINE_DOC).
   // Each swatch is a pure-CSS mini-preview built from the preset's 3-stop swatch
   // (bg / ink / accent) — no images, no fetch to build the preview. A click
@@ -2869,8 +3386,19 @@ async function submitLens(text) {
   const anchored = lensState.anchor !== null;
   if (isCommand) {
     const instruction = stripped.slice(1); // drop the leading '/'
-    const skinMatch = /^skin(?:\s+(\S+))?$/.exec(instruction.trim());
-    if (skinMatch) {
+    // /skin like <description> (skinning-v3): everything after "like " is the prose
+    // description. Routed BEFORE the bare/preset skin form below. Checked against the
+    // raw instruction (not .trim()'d) so the description's own whitespace is preserved.
+    const skinLikeMatch = /^skin\s+like\b([\s\S]*)$/.exec(instruction);
+    const skinMatch = skinLikeMatch ? null : /^skin(?:\s+(\S+))?$/.exec(instruction.trim());
+    if (skinLikeMatch) {
+      // Document-global like the other skin forms — ignores the lens anchor. The
+      // synthesized theme + generic L1 wrappers land as ONE commit (one ⌘Z). An empty
+      // description shows a usage hint. bridge/single-shot backends are unsupported
+      // (a clear notice). applySkinLike throws on a genuine failure (extraction or the
+      // theme commit) so the keydown catch surfaces it + preserves the typed text.
+      await applySkinLike(skinLikeMatch[1]);
+    } else if (skinMatch) {
       // Skin commands are document-global (they swap a top-of-doc <style> block),
       // so they IGNORE the lens anchor — handled before the anchored/modify split.
       // Bare /skin opens the gallery; /skin reset clears (deterministic); /skin NAME
@@ -4901,7 +5429,9 @@ async function modify(instr, lensMeta = null, opts = null) {
   setLensProgress('thinking', 'Thinking…');
 
   try {
-    const cur = canonLF(await getDoc());
+    // compose callers (applySkinL1) may pass an explicit baseDoc — the deterministically
+    // de-skinned base the agent should restyle, so a re-skin starts clean. Defaults to getDoc().
+    const cur = canonLF((opts && opts.baseDoc != null) ? opts.baseDoc : await getDoc());
     const frozenZones = extractFrozenZones(cur);
 
     const messages = [
@@ -5017,8 +5547,11 @@ async function modify(instr, lensMeta = null, opts = null) {
     if (opts && opts.compose) {
       const base = (newDoc !== null) ? newDoc : cur;
       const finalDoc = opts.compose.transform(base, cur);
+      // commitBase = the ORIGINAL (pre-deskin) doc, so one ⌘Z reverts to the prior
+      // skin rather than to the deskinned base. Defaults to cur when not overridden.
+      const commitBase = (opts.commitBase != null) ? canonLF(opts.commitBase) : cur;
       newDoc = await replaceDocument(
-        { version: 'rwa-edit/1', doc: finalDoc, reason: opts.compose.reason }, cur, lensMeta);
+        { version: 'rwa-edit/1', doc: finalDoc, reason: opts.compose.reason }, commitBase, lensMeta);
     }
 
     if (newDoc !== null) {
