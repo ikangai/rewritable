@@ -145,6 +145,20 @@ test('/new with only spaces → friendly "give me a topic", no exec', async () =
   assert.match(api.calls.sendMessage[0].text, /topic/i);
 });
 
+// WHY (review I1): /new must NOT match /newsletter — a bare startsWith('/new')
+// matched it, routing to agent-fill with a mangled prompt ("sletter about cats")
+// AND burning a real spawn + rate budget. It must fall through to the plain-text
+// wrap path: written verbatim to a temp .md, then imported (never parsed/spawned).
+test('/newsletter … does NOT agent-fill; falls through to wrap path', async () => {
+  const { deps, api, exec, writeTempCalls } = makeDeps();
+  await handleUpdate(textUpdate('/newsletter about cats'), deps);
+  assert.equal(exec.calls.rwaCreatePublish.length, 0);
+  assert.equal(writeTempCalls.length, 1);
+  assert.equal(writeTempCalls[0].content, '/newsletter about cats');
+  assert.equal(writeTempCalls[0].ext, '.md');
+  assert.equal(exec.calls.rwaImportPublish.length, 1);
+});
+
 // ── plain text → wrap ──────────────────────────────────────────────────────────
 // WHY: a plain message is the no-key wrap path; the text must be written to a
 // temp .md file and THAT path handed to import — proving content becomes a file,

@@ -131,7 +131,7 @@ export async function handleUpdate(update, deps) {
 
     // 2. /new <prompt> — agent-fill. Gated on key (cheap boundary gate) THEN
     //    rate limit, both BEFORE any spawn.
-    if (typeof text === 'string' && (text === '/new' || text.startsWith('/new'))) {
+    if (typeof text === 'string' && (text === '/new' || text.startsWith('/new '))) {
       const prompt = text.slice('/new'.length).trim();
       if (!prompt) {
         await api.sendMessage(chatId, 'give me a topic, e.g. /new a doc about otters');
