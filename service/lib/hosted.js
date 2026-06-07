@@ -261,6 +261,168 @@ function historyLen(id, { dataDir }) {
   return n;
 }
 
+// ─── Undo pre-image stack (the REVERSIBLE state) ────────────────────────────
+// Crash-safe, composable undo is built on a per-id PRE-IMAGE stack — NOT on
+// replaying the forward history.jsonl. The forward log is unusable for restoring
+// bytes: (1) it can be one record ahead of current.html (the documented
+// append-then-rename crash window in server.js's /modify), and (2) a
+// replace_document record stores only `reason`, never the doc, so forward replay
+// can't rebuild bytes. Instead, /modify pushes the PRE-edit current.html bytes
+// onto this stack BEFORE the atomic rename, so the undo state is durable
+// independent of (and ahead of) the commit it reverses.
+//
+// Storage form: DATA_DIR/r/<id>/undo/<seq>.html — one whole-document snapshot
+// per file, where <seq> is a zero-padded monotonically increasing counter. The
+// simplest crash-safe form: each pre-image is a self-contained file, written via
+// tmp+rename (atomic, no torn snapshot), pushed before the modify commit. Undo
+// pops the highest-seq file (the most-recent pre-image), restores it, and deletes
+// it. Composable: repeated pops walk the stack back to the original ingested
+// state. We do NOT mutate history.jsonl on undo — it stays an append-only forward
+// audit; the undo stack alone is the reversible state.
+
+function undoDir(dataDir, id) {
+  return path.join(idDir(dataDir, id), 'undo');
+}
+
+// The undo-stack sequence files, sorted ascending (oldest pre-image first).
+// 8-digit zero-padded names so lexical order == numeric order for the lifetime
+// of any realistic edit history (10^8 edits).
+function undoSeqFiles(dataDir, id) {
+  let names;
+  try { names = fs.readdirSync(undoDir(dataDir, id)); }
+  catch (err) {
+    if (err && err.code === 'ENOENT') return [];
+    throw err;
+  }
+  return names.filter((n) => /^[0-9]{8}\.html$/.test(n)).sort();
+}
+
+/**
+ * Push a pre-image (the PRE-edit current.html bytes) onto the id's undo stack.
+ * Atomic (tmp+rename), so a crash can never leave a torn snapshot. The caller
+ * (/modify) MUST call this BEFORE the atomic rename that commits the new bytes,
+ * so the reversible state is durable independent of the commit.
+ *
+ * @param {string} id
+ * @param {{dataDir:string}} opts
+ * @param {string|Buffer} preImageBytes — the bytes to restore on a later undo
+ */
+function pushUndo(id, { dataDir }, preImageBytes) {
+  const dir = undoDir(dataDir, id);
+  fs.mkdirSync(dir, { recursive: true });
+  const existing = undoSeqFiles(dataDir, id);
+  const lastSeq = existing.length ? parseInt(existing[existing.length - 1], 10) : 0;
+  const seq = String(lastSeq + 1).padStart(8, '0');
+  atomicWriteFile(path.join(dir, `${seq}.html`), preImageBytes);
+}
+
+/**
+ * Pop the most-recent pre-image off the id's undo stack and return its bytes.
+ * Returns null when the stack is empty (the caller maps that to 409
+ * nothing_to_undo). Deletes the popped file AFTER reading it so a crash between
+ * read and unlink at worst leaves a recoverable extra pre-image, never loses one.
+ *
+ * @param {string} id
+ * @param {{dataDir:string}} opts
+ * @returns {string|null} the pre-image bytes (utf8), or null if the stack is empty
+ */
+function popUndo(id, { dataDir }) {
+  const files = undoSeqFiles(dataDir, id);
+  if (files.length === 0) return null;
+  const top = files[files.length - 1];
+  const topPath = path.join(undoDir(dataDir, id), top);
+  const bytes = fs.readFileSync(topPath, 'utf8');
+  fs.unlinkSync(topPath);
+  return bytes;
+}
+
+/**
+ * Depth of the id's undo stack (number of undoable edits remaining). A client
+ * uses this as the `histLen` in the /undo response to know when the next undo
+ * will 409.
+ *
+ * @param {string} id
+ * @param {{dataDir:string}} opts
+ * @returns {number}
+ */
+function undoLen(id, { dataDir }) {
+  return undoSeqFiles(dataDir, id).length;
+}
+
+// ─── rotate: replace the capability token ───────────────────────────────────
+
+/**
+ * Mint a new capability token and atomically replace owner.json.capHash with its
+ * hash. The old token's hash is gone, so the old token now fails verifyToken
+ * (401). Returns the NEW raw token (the only time it's revealed). The caller
+ * holds the per-id write lock so this can't race a /modify's owner.json touch.
+ *
+ * @param {string} id
+ * @param {{dataDir:string}} opts
+ * @param {object} owner — the current owner record (already loaded by the caller)
+ * @returns {{token:string}} the new one-time token
+ */
+function rotateToken(id, { dataDir }, owner) {
+  const token = mintToken();
+  const next = { ...owner, capHash: hashToken(token) };
+  atomicWriteFile(path.join(idDir(dataDir, id), 'owner.json'), JSON.stringify(next));
+  return { token };
+}
+
+// ─── delete: remove the rwa subtree ─────────────────────────────────────────
+
+/**
+ * Remove DATA_DIR/r/<id>/ recursively. Idempotent (a missing dir is a no-op).
+ * The caller holds the per-id write lock so this serializes with /modify + /undo.
+ *
+ * @param {string} id
+ * @param {{dataDir:string}} opts
+ */
+function deleteHosted(id, { dataDir }) {
+  fs.rmSync(idDir(dataDir, id), { recursive: true, force: true });
+}
+
+// ─── 90-day inactivity sweep (the hosted r/ subtree ONLY) ───────────────────
+
+const NINETY_DAYS_MS = 90 * 24 * 60 * 60 * 1000;
+
+/**
+ * Scan DATA_DIR/r/* and remove every hosted rwa whose owner.json.lastAccess is
+ * older than 90 days (or whose owner.json is missing/corrupt — treated as stale).
+ * NEVER touches the /s/ share files (those live directly under DATA_DIR, not in
+ * the r/ subtree this scans). Pure + synchronous + testable: pass a synthetic
+ * `now` to exercise it without waiting. Returns the list of removed ids.
+ *
+ * @param {number} now — the reference time (ms since epoch)
+ * @param {{dataDir:string}} opts
+ * @returns {string[]} the ids removed this sweep
+ */
+function sweepHosted(now, { dataDir }) {
+  const root = hostedRoot(dataDir);
+  let entries;
+  try { entries = fs.readdirSync(root); }
+  catch (err) {
+    if (err && err.code === 'ENOENT') return []; // no r/ subtree yet — nothing to sweep
+    throw err;
+  }
+  const removed = [];
+  for (const id of entries) {
+    if (!ID_RE.test(id)) continue; // skip anything not a hosted id (defensive)
+    let stale = false;
+    try {
+      const owner = JSON.parse(fs.readFileSync(path.join(root, id, 'owner.json'), 'utf8'));
+      if (typeof owner.lastAccess !== 'number' || now - owner.lastAccess > NINETY_DAYS_MS) stale = true;
+    } catch {
+      stale = true; // missing/corrupt owner.json → treat as expired
+    }
+    if (stale) {
+      try { fs.rmSync(path.join(root, id), { recursive: true, force: true }); removed.push(id); }
+      catch { /* best-effort; a failed unlink is retried next sweep */ }
+    }
+  }
+  return removed;
+}
+
 module.exports = {
   // validation
   UUID_RE,
@@ -286,6 +448,16 @@ module.exports = {
   historyPath,
   appendHistory,
   historyLen,
+  // undo pre-image stack
+  undoDir,
+  pushUndo,
+  popUndo,
+  undoLen,
+  // lifecycle
+  rotateToken,
+  deleteHosted,
+  sweepHosted,
+  NINETY_DAYS_MS,
   // error
   HostedError,
 };

@@ -854,3 +854,408 @@ test('regression: /health, / (landing), and a /publish round-trip still work', a
     await srv.stop();
   }
 });
+
+// ─── 3. LIFECYCLE: undo / rotate / delete / 90d sweep / per-token rate limit ──
+//
+// WHY these matter (Rule 9): these four endpoints + the sweep round out the
+// hosted lifecycle. The load-bearing invariants each get their own assertion:
+//   - undo is CRASH-SAFE — it restores from a PRE-IMAGE written before the
+//     /modify rename, NOT by replaying the forward history.jsonl (which can be
+//     one record ahead of current.html and stores only `reason` for a
+//     replace_document, so it can't rebuild bytes). The crash-safety test
+//     truncates the last history line and confirms undo still restores.
+//   - undo is COMPOSABLE down to the original ingested state and 409s when empty.
+//   - rotate invalidates the old token (the cap IS the access control).
+//   - delete removes the subtree; every later op 404s.
+//   - the 90d sweep removes idle hosted dirs but NEVER touches /s/ shares.
+//   - the per-token rate limit caps writes per cap independently of the per-IP
+//     limit, keyed by capHash (never the raw token).
+
+// Helper: do one successful modify (find→replace) and return the new baseHash.
+async function modifyOnce(base, id, token, find, replace, baseHash) {
+  const res = await postModify(base, id, token, {
+    envelope: { version: 'rwa-edit/1', edits: [{ find, replace }] }, baseHash,
+  });
+  assert.equal(res.status, 200, `modify ${find}→${replace} should apply`);
+  return (await res.json()).baseHash;
+}
+
+function postUndo(base, id, token) {
+  return fetch(`${base}/r/${id}/undo`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+test('POST /r/:id/undo restores the pre-edit body (single undo)', async () => {
+  const srv = await startServer();
+  try {
+    const { id, token, doc: doc0, baseHash } = await createAndRead(srv.base, MODIFY_RWA);
+    assert.ok(doc0.includes('Old Title'));
+
+    await modifyOnce(srv.base, id, token, 'Old Title', 'New Title', baseHash);
+
+    // /export confirms the edit landed.
+    let exported = await (await fetch(`${srv.base}/r/${id}/export`, { headers: { Authorization: `Bearer ${token}` } })).text();
+    assert.ok(exported.includes('New Title') && !exported.includes('Old Title'));
+
+    const u = await postUndo(srv.base, id, token);
+    assert.equal(u.status, 200, 'undo of one edit returns 200');
+    const out = await u.json();
+    // Pinned undo shape: {doc, baseHash, selfDescription, histLen}.
+    assert.equal(typeof out.doc, 'string');
+    assert.ok(out.doc.includes('Old Title'), 'undo restored the pre-edit body');
+    assert.ok(!out.doc.includes('New Title'));
+    assert.equal(out.doc, doc0, 'undo restores the exact original body');
+    assert.equal(out.baseHash, sha256hex(out.doc), 'undo baseHash is sha256 of the restored doc');
+    assert.equal(out.baseHash, baseHash, 'restored baseHash equals the original');
+    assert.equal(out.selfDescription.rwa, 'self-description/1');
+    assert.equal(out.histLen, 0, 'after undoing the only edit, undo-stack depth is 0');
+
+    // Persistence: the stored bytes reflect the restore.
+    exported = await (await fetch(`${srv.base}/r/${id}/export`, { headers: { Authorization: `Bearer ${token}` } })).text();
+    assert.ok(exported.includes('Old Title') && !exported.includes('New Title'),
+      'undo persisted the restored bytes');
+  } finally {
+    await srv.stop();
+  }
+});
+
+test('undo is composable: undo N edits walks back to the original ingested state', async () => {
+  const srv = await startServer();
+  try {
+    const { id, token, doc: doc0, baseHash: h0 } = await createAndRead(srv.base, MODIFY_RWA);
+
+    const h1 = await modifyOnce(srv.base, id, token, 'Old Title', 'Title A', h0);
+    const h2 = await modifyOnce(srv.base, id, token, 'Title A', 'Title B', h1);
+    const h3 = await modifyOnce(srv.base, id, token, 'Title B', 'Title C', h2);
+
+    const exported = await (await fetch(`${srv.base}/r/${id}/export`, { headers: { Authorization: `Bearer ${token}` } })).text();
+    assert.ok(exported.includes('Title C'), 'three edits landed');
+
+    // Undo three times: C→B→A→Old.
+    const u3 = await (await postUndo(srv.base, id, token)).json();      // back to Title B
+    assert.ok(u3.doc.includes('Title B'));
+    assert.equal(u3.histLen, 2);
+    const u2 = await (await postUndo(srv.base, id, token)).json();      // back to Title A
+    assert.ok(u2.doc.includes('Title A'));
+    assert.equal(u2.histLen, 1);
+    const u1 = await (await postUndo(srv.base, id, token)).json();      // back to Old Title
+    assert.equal(u1.doc, doc0, 'composing all undos restores the original ingested body');
+    assert.equal(u1.baseHash, h0);
+    assert.equal(u1.histLen, 0);
+
+    // One more undo with an empty stack → 409 nothing_to_undo.
+    const empty = await postUndo(srv.base, id, token);
+    assert.equal(empty.status, 409);
+    assert.equal((await empty.json()).error, 'nothing_to_undo');
+  } finally {
+    await srv.stop();
+  }
+});
+
+test('undo with no prior edits → 409 nothing_to_undo (fresh ingest)', async () => {
+  const srv = await startServer();
+  try {
+    const { id, token } = await createAndRead(srv.base, MODIFY_RWA);
+    const res = await postUndo(srv.base, id, token);
+    assert.equal(res.status, 409);
+    assert.equal((await res.json()).error, 'nothing_to_undo');
+  } finally {
+    await srv.stop();
+  }
+});
+
+test('undo auth: 401 on missing/wrong token, 404 on unknown id', async () => {
+  const srv = await startServer();
+  try {
+    const { id, token, baseHash } = await createAndRead(srv.base, MODIFY_RWA);
+    await modifyOnce(srv.base, id, token, 'Old Title', 'New Title', baseHash);
+
+    const noAuth = await fetch(`${srv.base}/r/${id}/undo`, { method: 'POST' });
+    assert.equal(noAuth.status, 401);
+    const wrong = await fetch(`${srv.base}/r/${id}/undo`, {
+      method: 'POST', headers: { Authorization: `Bearer ${hosted.mintToken()}` },
+    });
+    assert.equal(wrong.status, 401);
+    const unknown = await fetch(`${srv.base}/r/zzzzzzzz/undo`, {
+      method: 'POST', headers: { Authorization: `Bearer ${token}` },
+    });
+    assert.equal(unknown.status, 404);
+
+    // The pre-image is still intact: a valid undo still works after the failures.
+    const ok = await postUndo(srv.base, id, token);
+    assert.equal(ok.status, 200);
+  } finally {
+    await srv.stop();
+  }
+});
+
+test('undo is crash-safe: a truncated last history.jsonl line does NOT break undo', async () => {
+  // The crash-safety guarantee: undo restores from the PRE-IMAGE stack, never by
+  // replaying history.jsonl. We simulate the documented crash window (history one
+  // record ahead / a torn final line) by corrupting the last history line, then
+  // assert undo STILL restores the correct pre-edit bytes.
+  const srv = await startServer();
+  try {
+    const { id, token, doc: doc0, baseHash } = await createAndRead(srv.base, MODIFY_RWA);
+    await modifyOnce(srv.base, id, token, 'Old Title', 'New Title', baseHash);
+
+    // Corrupt the forward log: truncate its last line to half-written garbage.
+    const histPath = join(srv.dataDir, 'r', id, 'history.jsonl');
+    const raw = readFileSync(histPath, 'utf8');
+    writeFileSync(histPath, raw.slice(0, Math.max(1, raw.length - 12)) + '{"ts":12', 'utf8');
+
+    // Undo must STILL work — it reads the pre-image, not the (now corrupt) log.
+    const u = await postUndo(srv.base, id, token);
+    assert.equal(u.status, 200, 'undo works despite a corrupt history.jsonl');
+    const out = await u.json();
+    assert.equal(out.doc, doc0, 'undo restored the original body from the pre-image, not the log');
+  } finally {
+    await srv.stop();
+  }
+});
+
+test('undo crash-safety: pre-image is written BEFORE the modify rename (durable independent of history)', () => {
+  // White-box: a successful modify must leave a pre-image file on disk that is a
+  // byte-copy of the PRIOR current.html — proving the undo state exists
+  // independent of history.jsonl. We drive the pure store directly.
+  const dir = mkdtempSync(join(tmpdir(), 'rwa-undo-preimage-'));
+  try {
+    const { id } = hosted.ingest(MODIFY_RWA, { dataDir: dir });
+    const before = readFileSync(join(dir, 'r', id, 'current.html'), 'utf8');
+
+    // pushUndo must durably persist `before` to the undo stack.
+    hosted.pushUndo(id, { dataDir: dir }, before);
+    assert.equal(hosted.undoLen(id, { dataDir: dir }), 1, 'one pre-image on the stack');
+
+    // popUndo returns the exact prior bytes and decrements the stack.
+    const restored = hosted.popUndo(id, { dataDir: dir });
+    assert.equal(restored, before, 'popUndo returns the exact pre-image bytes');
+    assert.equal(hosted.undoLen(id, { dataDir: dir }), 0, 'stack emptied after pop');
+    // Empty stack → null (the caller maps that to 409 nothing_to_undo).
+    assert.equal(hosted.popUndo(id, { dataDir: dir }), null, 'pop on an empty stack returns null');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// ─── rotate ──────────────────────────────────────────────────────────────────
+
+test('POST /r/:id/rotate mints a new token; the OLD token now 401s', async () => {
+  const srv = await startServer();
+  try {
+    const { id, token: oldToken } = await createAndRead(srv.base, MODIFY_RWA);
+
+    // Old token works before rotation.
+    assert.equal((await fetch(`${srv.base}/r/${id}/describe`, { headers: { Authorization: `Bearer ${oldToken}` } })).status, 200);
+
+    const rot = await fetch(`${srv.base}/r/${id}/rotate`, {
+      method: 'POST', headers: { Authorization: `Bearer ${oldToken}` },
+    });
+    assert.equal(rot.status, 200, 'rotate returns 200 with the new token');
+    const { token: newToken } = await rot.json();
+    assert.equal(typeof newToken, 'string');
+    assert.equal(newToken.length, 43, 'new token is a fresh 43-char cap');
+    assert.notEqual(newToken, oldToken, 'the token actually changed');
+
+    // OLD token → 401 on every op.
+    assert.equal((await fetch(`${srv.base}/r/${id}/describe`, { headers: { Authorization: `Bearer ${oldToken}` } })).status, 401);
+    assert.equal((await fetch(`${srv.base}/r/${id}/export`, { headers: { Authorization: `Bearer ${oldToken}` } })).status, 401);
+    // NEW token → 200.
+    assert.equal((await fetch(`${srv.base}/r/${id}/describe`, { headers: { Authorization: `Bearer ${newToken}` } })).status, 200);
+
+    // owner.json stores only the NEW capHash, never either raw token.
+    const owner = JSON.parse(readFileSync(join(srv.dataDir, 'r', id, 'owner.json'), 'utf8'));
+    assert.equal(owner.capHash, sha256hex(newToken), 'owner.json carries the new capHash');
+    assert.notEqual(owner.capHash, sha256hex(oldToken));
+    assert.ok(!JSON.stringify(owner).includes(newToken), 'owner.json never stores the raw token');
+  } finally {
+    await srv.stop();
+  }
+});
+
+test('rotate auth: 401 on wrong token, 404 on unknown id', async () => {
+  const srv = await startServer();
+  try {
+    const { id, token } = await createAndRead(srv.base, MODIFY_RWA);
+    const wrong = await fetch(`${srv.base}/r/${id}/rotate`, {
+      method: 'POST', headers: { Authorization: `Bearer ${hosted.mintToken()}` },
+    });
+    assert.equal(wrong.status, 401);
+    const unknown = await fetch(`${srv.base}/r/zzzzzzzz/rotate`, {
+      method: 'POST', headers: { Authorization: `Bearer ${token}` },
+    });
+    assert.equal(unknown.status, 404);
+  } finally {
+    await srv.stop();
+  }
+});
+
+// ─── delete ────────────────────────────────────────────────────────────────
+
+test('DELETE /r/:id removes the rwa; every later op 404s', async () => {
+  const srv = await startServer();
+  try {
+    const { id, token } = await createAndRead(srv.base, MODIFY_RWA);
+    assert.ok(existsSync(join(srv.dataDir, 'r', id)), 'the dir exists before delete');
+
+    const del = await fetch(`${srv.base}/r/${id}`, {
+      method: 'DELETE', headers: { Authorization: `Bearer ${token}` },
+    });
+    assert.equal(del.status, 200);
+    assert.equal((await del.json()).deleted, true);
+
+    // The subtree is gone.
+    assert.ok(!existsSync(join(srv.dataDir, 'r', id)), 'the dir was removed recursively');
+
+    // Every later op → 404.
+    assert.equal((await fetch(`${srv.base}/r/${id}/describe`, { headers: { Authorization: `Bearer ${token}` } })).status, 404);
+    assert.equal((await fetch(`${srv.base}/r/${id}/export`, { headers: { Authorization: `Bearer ${token}` } })).status, 404);
+    assert.equal((await fetch(`${srv.base}/r/${id}/doc`, { headers: { Authorization: `Bearer ${token}` } })).status, 404);
+    assert.equal((await postUndo(srv.base, id, token)).status, 404);
+  } finally {
+    await srv.stop();
+  }
+});
+
+test('delete auth: 401 on wrong token, 404 on unknown id; a wrong token does NOT delete', async () => {
+  const srv = await startServer();
+  try {
+    const { id, token } = await createAndRead(srv.base, MODIFY_RWA);
+
+    const wrong = await fetch(`${srv.base}/r/${id}`, {
+      method: 'DELETE', headers: { Authorization: `Bearer ${hosted.mintToken()}` },
+    });
+    assert.equal(wrong.status, 401);
+    assert.ok(existsSync(join(srv.dataDir, 'r', id)), 'a wrong-token delete must NOT remove the dir');
+
+    const unknown = await fetch(`${srv.base}/r/zzzzzzzz`, {
+      method: 'DELETE', headers: { Authorization: `Bearer ${token}` },
+    });
+    assert.equal(unknown.status, 404);
+
+    // The owner can still delete.
+    const ok = await fetch(`${srv.base}/r/${id}`, {
+      method: 'DELETE', headers: { Authorization: `Bearer ${token}` },
+    });
+    assert.equal(ok.status, 200);
+  } finally {
+    await srv.stop();
+  }
+});
+
+// ─── 90-day inactivity sweep (pure function) ────────────────────────────────
+
+test('sweepHosted removes dirs idle > 90 days, keeps fresh ones, NEVER touches /s/', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'rwa-sweep-'));
+  try {
+    const now = Date.now();
+    const DAY = 24 * 60 * 60 * 1000;
+
+    // Two hosted rwas: one stale (idle 100 days), one fresh (idle 1 day).
+    const stale = hosted.ingest(MODIFY_RWA, { dataDir: dir });
+    const fresh = hosted.ingest(MODIFY_RWA, { dataDir: dir });
+    // Backdate lastAccess by rewriting owner.json with synthetic timestamps.
+    const setLastAccess = (id, ms) => {
+      const p = join(dir, 'r', id, 'owner.json');
+      const o = JSON.parse(readFileSync(p, 'utf8'));
+      o.lastAccess = ms;
+      writeFileSync(p, JSON.stringify(o));
+    };
+    setLastAccess(stale.id, now - 100 * DAY);
+    setLastAccess(fresh.id, now - 1 * DAY);
+
+    // A /s/ share file in the SAME DATA_DIR — the sweep must not touch it.
+    const sharePath = join(dir, 'aaaaaaaa.html');
+    const shareMetaPath = join(dir, 'aaaaaaaa.json');
+    writeFileSync(sharePath, '<html>share</html>');
+    writeFileSync(shareMetaPath, JSON.stringify({ createdAt: now }));
+
+    const removed = hosted.sweepHosted(now, { dataDir: dir });
+
+    assert.deepEqual(removed, [stale.id], 'only the stale hosted rwa is removed');
+    assert.ok(!existsSync(join(dir, 'r', stale.id)), 'stale hosted dir gone');
+    assert.ok(existsSync(join(dir, 'r', fresh.id)), 'fresh hosted dir kept');
+    // /s/ share files are UNTOUCHED.
+    assert.ok(existsSync(sharePath), 'sweepHosted never removes /s/ share .html');
+    assert.ok(existsSync(shareMetaPath), 'sweepHosted never removes /s/ share .json');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('sweepHosted tolerates a missing r/ dir and a malformed owner.json', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'rwa-sweep-edge-'));
+  try {
+    const now = Date.now();
+    // No r/ subtree yet → empty result, no throw.
+    assert.deepEqual(hosted.sweepHosted(now, { dataDir: dir }), []);
+
+    // A dir with a corrupt owner.json is treated as stale (removed), not crashed.
+    const bad = hosted.ingest(MODIFY_RWA, { dataDir: dir });
+    writeFileSync(join(dir, 'r', bad.id, 'owner.json'), 'not json {');
+    const removed = hosted.sweepHosted(now, { dataDir: dir });
+    assert.deepEqual(removed, [bad.id], 'a corrupt owner.json dir is swept (treated as expired)');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// ─── per-token rate limit on /modify ────────────────────────────────────────
+
+test('per-token rate limit: the N+1th /modify within the window → 429 rate_limited', async () => {
+  // The limit is keyed by capHash, separate from the per-IP limit. We drive
+  // RWA_MODIFY_RATE_LIMIT (a small N for the test) so we don't fire 60 requests.
+  const dataDir = mkdtempSync(join(tmpdir(), 'rwa-tokenlimit-'));
+  const port = await freePort();
+  const N = 3;
+  const child = spawn('node', [join(SERVICE, 'server.js')], {
+    env: { ...process.env, PORT: String(port), RWA_DATA_DIR: dataDir, RWA_MODIFY_RATE_LIMIT: String(N) },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  await new Promise((resolve, reject) => {
+    let buf = '';
+    const onData = (d) => { buf += d.toString(); if (/listening on :/.test(buf)) { child.stdout.off('data', onData); resolve(); } };
+    child.stdout.on('data', onData);
+    child.on('exit', (code) => reject(new Error('server exited early ' + code + '\n' + buf)));
+    setTimeout(() => reject(new Error('server did not start\n' + buf)), 8000);
+  });
+  const base = `http://127.0.0.1:${port}`;
+  try {
+    const { id, token, baseHash } = await createAndRead(base, MODIFY_RWA);
+
+    // N successful modifies (each chains the next baseHash so they all apply).
+    let h = baseHash, find = 'Old Title';
+    for (let i = 0; i < N; i++) {
+      const replace = `Title ${i}`;
+      h = await modifyOnce(base, id, token, find, replace, h);
+      find = replace;
+    }
+
+    // The N+1th within the window → 429, keyed by the token (capHash), BEFORE
+    // any apply (so the body is untouched).
+    const over = await postModify(base, id, token, {
+      envelope: { version: 'rwa-edit/1', edits: [{ find, replace: 'Title overflow' }] }, baseHash: h,
+    });
+    assert.equal(over.status, 429, 'the N+1th write for this token is rate-limited');
+    assert.equal((await over.json()).error, 'rate_limited');
+
+    // The rejected write did NOT apply: the body still has the Nth title.
+    const exported = await (await fetch(`${base}/r/${id}/export`, { headers: { Authorization: `Bearer ${token}` } })).text();
+    assert.ok(exported.includes(find), 'rate-limited write was rejected before applying');
+    assert.ok(!exported.includes('Title overflow'));
+
+    // A DIFFERENT token (different cap) is NOT rate-limited by the first's bucket.
+    const other = await createAndRead(base, MODIFY_RWA);
+    const r = await postModify(base, other.id, other.token, {
+      envelope: { version: 'rwa-edit/1', edits: [{ find: 'Old Title', replace: 'Other' }] },
+      baseHash: other.baseHash,
+    });
+    assert.equal(r.status, 200, 'a different token has its own bucket (per-cap, not global)');
+  } finally {
+    child.kill('SIGTERM');
+    await new Promise((r) => child.on('exit', r));
+    rmSync(dataDir, { recursive: true, force: true });
+  }
+});

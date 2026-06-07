@@ -284,6 +284,27 @@ function checkRateLimit(ip) {
   return { ok: true };
 }
 
+// Per-CAPABILITY-TOKEN sliding-window write limit on /modify. Separate from the
+// per-IP limit above (a single IP may legitimately drive many distinct rwas;
+// this caps writes per rwa-cap). In-memory, same shape as the per-IP limiter.
+// Keyed by the token's capHash — NEVER the raw token — so the limiter map can't
+// leak a credential. Default 60 writes/hour; overridable for tests via
+// RWA_MODIFY_RATE_LIMIT so a test can hit the cap without firing 60 requests.
+const MODIFY_RATE_LIMIT = Number(process.env.RWA_MODIFY_RATE_LIMIT) || 60;
+const modifyRateBuckets = new Map();
+
+function checkModifyRateLimit(capHash) {
+  const now = Date.now();
+  let bucket = modifyRateBuckets.get(capHash);
+  if (!bucket) { bucket = []; modifyRateBuckets.set(capHash, bucket); }
+  while (bucket.length && bucket[0] < now - RATE_WINDOW_MS) bucket.shift();
+  if (bucket.length >= MODIFY_RATE_LIMIT) {
+    return { ok: false, retryAfterSec: Math.ceil((bucket[0] + RATE_WINDOW_MS - now) / 1000) };
+  }
+  bucket.push(now);
+  return { ok: true };
+}
+
 function sweepExpired() {
   let entries;
   try { entries = fs.readdirSync(DATA_DIR); }
@@ -326,8 +347,21 @@ function sweepExpired() {
     while (v.length && v[0] < now - RATE_WINDOW_MS) v.shift();
     if (v.length === 0) rateBuckets.delete(k);
   }
+  for (const [k, v] of modifyRateBuckets) {
+    while (v.length && v[0] < now - RATE_WINDOW_MS) v.shift();
+    if (v.length === 0) modifyRateBuckets.delete(k);
+  }
 
   if (deleted > 0 || kept > 0) console.log(`sweep: deleted ${deleted}, kept ${kept}`);
+
+  // Hosted runtime (/r) 90-day inactivity sweep — disjoint from the /s/ share
+  // files above (it scans ONLY the DATA_DIR/r/ subtree). Same hourly cadence.
+  try {
+    const removedHosted = hosted.sweepHosted(now, { dataDir: DATA_DIR });
+    if (removedHosted.length > 0) console.log(`sweep: hosted removed ${removedHosted.length}`);
+  } catch (err) {
+    console.error('sweep: hosted sweep failed', err && err.message);
+  }
 }
 
 sweepExpired();
@@ -592,6 +626,15 @@ async function handleHostedModify(id, req, send) {
     return sendJson(send, 401, { error: 'unauthorized' });
   }
 
+  // Per-token write rate limit — keyed by the verified capHash (never the raw
+  // token), checked BEFORE acquiring the write lock or applying. The N+1th write
+  // for this cap within the window → 429, no lock, no write.
+  const rl = checkModifyRateLimit(rec0.owner.capHash);
+  if (!rl.ok) {
+    return send(429, { ...JSON_CT, 'Retry-After': String(rl.retryAfterSec) },
+      JSON.stringify({ error: 'rate_limited', retryAfterSec: rl.retryAfterSec }) + '\n');
+  }
+
   // Parse + validate the request body (bad input → 400, no lock, no write).
   let buf;
   try { buf = await readBody(req, MAX_BODY_BYTES); }
@@ -745,6 +788,22 @@ async function handleHostedModify(id, req, send) {
       return sendJson(send, 500, { error: 'storage_failed' });
     }
 
+    // UNDO PRE-IMAGE: durably push the PRE-edit current.html bytes onto the undo
+    // stack BEFORE the commit rename. This is the crash-safe reversible state —
+    // /undo restores from this pre-image, never by replaying the forward
+    // history.jsonl (which can be one record ahead and can't rebuild
+    // replace_document bytes). Written before the rename, so a crash between the
+    // push and the rename at worst leaves a pre-image for a commit that didn't
+    // land (harmless: the next undo would restore bytes already current). A push
+    // failure aborts the commit (the new bytes would otherwise be un-undoable).
+    try {
+      hosted.pushUndo(id, { dataDir: DATA_DIR }, rec.bytes);
+    } catch (err) {
+      try { fs.unlinkSync(tmpPath); } catch {}
+      console.error('hosted: modify undo-preimage push failed', err && err.message);
+      return sendJson(send, 500, { error: 'storage_failed' });
+    }
+
     // Atomically move the new bytes into place (rename(2) over current.html).
     try {
       fs.renameSync(tmpPath, path.join(dir, 'current.html'));
@@ -766,6 +825,104 @@ async function handleHostedModify(id, req, send) {
       selfDescription,
       histLen,
     });
+  });
+}
+
+// POST /r/:id/undo — pop the most-recent pre-image and restore it as current.html.
+// Crash-safe + composable: the reversible state is the per-id undo pre-image stack
+// (written before each /modify rename), NEVER a replay of the forward
+// history.jsonl. history.jsonl is NOT mutated here — it stays an append-only
+// forward audit; the undo stack alone is the reversible state. Runs under the
+// per-id write lock so it serializes with /modify (and another /undo). `histLen`
+// in the response is the REMAINING undo-stack depth (undoable edits left) — a
+// client uses it to know when the next undo will 409.
+async function handleHostedUndo(id, req, send) {
+  const rec0 = hosted.readHosted(id, { dataDir: DATA_DIR });
+  if (!rec0) return sendJson(send, 404, { error: 'not_found' });
+  const token = bearerToken(req);
+  if (!hosted.verifyToken(token, rec0.owner.capHash)) {
+    return sendJson(send, 401, { error: 'unauthorized' });
+  }
+
+  return withWriteLock(id, async () => {
+    // Re-confirm existence under the lock (a concurrent DELETE may have removed it).
+    const rec = hosted.readHosted(id, { dataDir: DATA_DIR });
+    if (!rec) return sendJson(send, 404, { error: 'not_found' });
+
+    // Pop the most-recent pre-image. Empty stack → 409 nothing_to_undo, NO write.
+    let preImage;
+    try { preImage = hosted.popUndo(id, { dataDir: DATA_DIR }); }
+    catch (err) {
+      console.error('hosted: undo pop failed', err && err.message);
+      return sendJson(send, 500, { error: 'storage_failed' });
+    }
+    if (preImage == null) return sendJson(send, 409, { error: 'nothing_to_undo' });
+
+    // Atomically restore the pre-image as current.html.
+    const dir = hosted.idDir(DATA_DIR, id);
+    try { atomicWriteFile(path.join(dir, 'current.html'), preImage); }
+    catch (err) {
+      console.error('hosted: undo restore write failed', err && err.message);
+      return sendJson(send, 500, { error: 'storage_failed' });
+    }
+
+    // Build the response over the restored bytes (same projection /doc returns).
+    const { extractInlineDoc } = await import('./lib/seed.mjs');
+    let doc;
+    try { doc = hosted.canonLF(extractInlineDoc(preImage)); }
+    catch { return sendJson(send, 500, { error: 'corrupt_container' }); }
+    const baseHash = hosted.sha256hex(doc);
+    const selfDescription = await selfDescriptionFor(preImage, doc);
+
+    hosted.touchAccess(id, { dataDir: DATA_DIR }, rec.owner);
+    const histLen = hosted.undoLen(id, { dataDir: DATA_DIR }); // remaining undo depth
+
+    return sendJson(send, 200, { doc, baseHash, selfDescription, histLen });
+  });
+}
+
+// POST /r/:id/rotate — mint a new capability token, replace owner.json.capHash.
+// The old token now fails verifyToken (401). Under the write lock so it can't
+// race a /modify's owner.json touch.
+async function handleHostedRotate(id, req, send) {
+  const rec0 = hosted.readHosted(id, { dataDir: DATA_DIR });
+  if (!rec0) return sendJson(send, 404, { error: 'not_found' });
+  const token = bearerToken(req);
+  if (!hosted.verifyToken(token, rec0.owner.capHash)) {
+    return sendJson(send, 401, { error: 'unauthorized' });
+  }
+
+  return withWriteLock(id, async () => {
+    const rec = hosted.readHosted(id, { dataDir: DATA_DIR });
+    if (!rec) return sendJson(send, 404, { error: 'not_found' });
+    let out;
+    try { out = hosted.rotateToken(id, { dataDir: DATA_DIR }, rec.owner); }
+    catch (err) {
+      console.error('hosted: rotate failed', err && err.message);
+      return sendJson(send, 500, { error: 'storage_failed' });
+    }
+    // The new token is revealed ONCE here (never logged).
+    return sendJson(send, 200, { token: out.token });
+  });
+}
+
+// DELETE /r/:id — remove the rwa subtree recursively. Under the write lock so it
+// serializes with /modify + /undo (a queued write sees the dir gone → 404).
+async function handleHostedDelete(id, req, send) {
+  const rec0 = hosted.readHosted(id, { dataDir: DATA_DIR });
+  if (!rec0) return sendJson(send, 404, { error: 'not_found' });
+  const token = bearerToken(req);
+  if (!hosted.verifyToken(token, rec0.owner.capHash)) {
+    return sendJson(send, 401, { error: 'unauthorized' });
+  }
+
+  return withWriteLock(id, async () => {
+    try { hosted.deleteHosted(id, { dataDir: DATA_DIR }); }
+    catch (err) {
+      console.error('hosted: delete failed', err && err.message);
+      return sendJson(send, 500, { error: 'storage_failed' });
+    }
+    return sendJson(send, 200, { deleted: true });
   });
 }
 
@@ -819,14 +976,35 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // POST /r/:id/modify — the authoritative hosted WRITE endpoint. Apex-only
-  // (a share host must not be able to bounce a write off it). Bearer-auth +
-  // baseHash optimistic concurrency + per-id write lock inside the handler.
+  // POST /r/:id/{modify,undo,rotate} — the authoritative hosted WRITE/lifecycle
+  // endpoints. Apex-only (a share host must not be able to bounce a write off
+  // it). Bearer-auth inside each handler; modify/undo run under the per-id write
+  // lock (rotate too, to serialize with a /modify owner.json touch).
   if (req.method === 'POST' && !isShareHost) {
-    const m = url.match(/^\/r\/([0-9a-z]{8})\/modify$/);
+    const m = url.match(/^\/r\/([0-9a-z]{8})\/(modify|undo|rotate)$/);
     if (m) {
-      handleHostedModify(m[1], req, send).catch(err => {
-        console.error('hosted: modify unhandled error', err);
+      const action = m[2];
+      const handler = action === 'modify' ? handleHostedModify
+        : action === 'undo' ? handleHostedUndo
+        : handleHostedRotate;
+      handler(m[1], req, send).catch(err => {
+        console.error(`hosted: ${action} unhandled error`, err);
+        if (!res.headersSent) {
+          send(500, { 'Content-Type': 'application/json; charset=utf-8' },
+            JSON.stringify({ error: 'internal_error' }) + '\n');
+        }
+      });
+      return;
+    }
+  }
+
+  // DELETE /r/:id — remove the hosted rwa subtree. Apex-only, Bearer-auth, under
+  // the per-id write lock (serializes with modify/undo).
+  if (req.method === 'DELETE' && !isShareHost) {
+    const m = url.match(/^\/r\/([0-9a-z]{8})$/);
+    if (m) {
+      handleHostedDelete(m[1], req, send).catch(err => {
+        console.error('hosted: delete unhandled error', err);
         if (!res.headersSent) {
           send(500, { 'Content-Type': 'application/json; charset=utf-8' },
             JSON.stringify({ error: 'internal_error' }) + '\n');
@@ -837,7 +1015,7 @@ const server = http.createServer((req, res) => {
   }
 
   if (req.method !== 'GET' && !isHead) {
-    return send(405, { 'Allow': 'GET, HEAD, POST', 'Content-Type': 'text/plain' }, 'method not allowed\n');
+    return send(405, { 'Allow': 'GET, HEAD, POST, DELETE', 'Content-Type': 'text/plain' }, 'method not allowed\n');
   }
 
   // Share host (<short>.rewritable.<tld>): serves *only* its own bytes
