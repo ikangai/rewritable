@@ -21,7 +21,7 @@
 //    (the `finally`), or the host leaks files.
 
 import assert from 'node:assert/strict';
-import { handleTurn } from './phone-bot.mjs';
+import { handleTurn, parseForm } from './phone-bot.mjs';
 import * as twiml from './twiml.mjs';
 import { FoundationError } from '../telegram/foundation-api.mjs';
 
@@ -328,6 +328,40 @@ await test('token NEVER appears in TwiML or log across ask / edit / greeting / e
     const xml = await handleTurn({ SpeechResult: 'edit', From: '+1' }, deps);
     assertNoTokenLeak(xml, calls);
   }
+});
+
+// ── parseForm (the http server's body parser) ────────────────────────────────
+// WHY it matters: Twilio POSTs every turn as application/x-www-form-urlencoded.
+// If `+`→space and percent-decoding are wrong, the spoken instruction (SpeechResult)
+// that drives the whole edit/ask loop is silently corrupted. An empty body must be
+// {} (call-start can arrive bodyless) — that's the no-speech→greeting trigger.
+
+await test("parseForm: '+' → space and percent-escapes are decoded", () => {
+  assert.deepEqual(
+    parseForm('SpeechResult=add+a+title&From=%2B15551234'),
+    { SpeechResult: 'add a title', From: '+15551234' },
+  );
+});
+
+await test('parseForm: empty body → {}', () => {
+  assert.deepEqual(parseForm(''), {});
+  assert.deepEqual(parseForm(undefined), {});
+});
+
+// ── Minor 1: a throwing log sink must NOT re-silence the call ─────────────────
+// mapError logs host-side then returns voice-shaped TwiML. A log sink that throws
+// must be swallowed — the call still gets a <Response>, never silence (Rule 12).
+
+await test('mapError: a throwing log sink still returns gather TwiML (airtight never-silence)', async () => {
+  const { deps } = makeDeps({
+    classifyIntent: () => Promise.resolve('ask'),
+    readDoc: () => Promise.reject(new FoundationError('request_failed', { status: 0 })),
+  });
+  deps.log = () => { throw new Error('log sink exploded'); };
+  const xml = await handleTurn({ SpeechResult: 'hi' }, deps);
+  assert.ok(xml.startsWith('<?xml'), 'a real <Response> is returned, not silence');
+  assert.ok(/sorry/i.test(xml), 'apologizes');
+  assert.ok(xml.includes('<Gather'), 'call continues despite the throwing log');
 });
 
 console.log(`\n${passed} passed`);

@@ -29,7 +29,8 @@
 // Zero npm deps: node built-ins + the two reused local modules. The model and all
 // I/O are injected.
 
-import { FoundationError } from '../telegram/foundation-api.mjs';
+import { pathToFileURL } from 'node:url';
+import { FoundationError, makeFoundationApi } from '../telegram/foundation-api.mjs';
 
 // Goodbye intents — a simple substring check on the lowercased transcript. STT is
 // lossy, so we match on common terminal phrases the caller is likely to say.
@@ -104,6 +105,9 @@ export async function handleTurn(params, deps) {
     }
 
     // 3) Classify the intent (model judgment call — ask is the safe default).
+    // Deliberately classified WITHOUT a pre-read of the doc: a spike latency
+    // trade-off (saves a foundation round-trip per turn). Doc-aware
+    // disambiguation (the second arg) is a known gap — see README limitations.
     const intent = await agent.classifyIntent(speech, undefined);
 
     if (intent === 'edit') {
@@ -209,6 +213,158 @@ function mapError(err, deps, { sayAndGather, sayAndHangup }) {
   if (err instanceof FoundationError && (err.code === 'not_found' || err.code === 'unauthorized')) {
     return sayAndHangup(UNAVAILABLE);
   }
-  deps.log('phone: turn error', err);
+  // Airtight never-silence: a throwing log sink must NOT escape this catch-all
+  // mapper and re-silence the call. Swallow a log throw; still apologize + gather.
+  try { deps.log('phone: turn error', err); } catch {}
   return sayAndGather(APOLOGY);
+}
+
+// ── http server + main() ─────────────────────────────────────────────────────
+//
+// Zero-dep node:http. Twilio hits the configured Voice webhook with an
+// application/x-www-form-urlencoded POST per turn; we parse it, run the pure
+// `handleTurn` core, and respond text/xml. The wiring below is read-reviewed,
+// not unit-tested; the only unit-tested piece is `parseForm` (a pure parser).
+
+// Parse an application/x-www-form-urlencoded body (Twilio's POST shape) into a
+// plain object. `+` is a space; values + keys are percent-decoded. An empty body
+// → {}. Malformed pairs degrade gracefully (a decode failure on a pair is
+// skipped rather than throwing — a phone turn must never 500 on a stray byte).
+export function parseForm(body) {
+  const out = {};
+  const s = typeof body === 'string' ? body : '';
+  if (!s) return out;
+  for (const pair of s.split('&')) {
+    if (!pair) continue;
+    const eq = pair.indexOf('=');
+    const rawKey = eq === -1 ? pair : pair.slice(0, eq);
+    const rawVal = eq === -1 ? '' : pair.slice(eq + 1);
+    try {
+      const key = decodeURIComponent(rawKey.replace(/\+/g, ' '));
+      out[key] = decodeURIComponent(rawVal.replace(/\+/g, ' '));
+    } catch {
+      // A malformed percent-escape — skip this pair rather than fail the turn.
+    }
+  }
+  return out;
+}
+
+// A minimal valid TwiML for the only-if-everything-broke 500 path. handleTurn
+// catches all of its own errors, so reaching this means the server framing itself
+// threw; we still hand Twilio valid TwiML (a generic apology + hangup) and leak
+// no detail.
+const SERVER_ERROR_TWIML =
+  '<?xml version="1.0" encoding="UTF-8"?><Response><Say>Sorry, an error occurred.</Say><Hangup/></Response>';
+
+// Read a request body to a string (utf8), bounded only by node's default. Twilio
+// turn bodies are tiny (a few form fields), so no extra cap here for the spike.
+function readBody(req) {
+  return new Promise((resolve, reject) => {
+    let data = '';
+    req.on('data', (chunk) => { data += chunk; });
+    req.on('end', () => resolve(data));
+    req.on('error', reject);
+  });
+}
+
+/**
+ * Build the node:http request handler. `deps` is the same bundle `handleTurn`
+ * takes; `log` is used for host-side error logging only. Routes POST
+ * /phone/incoming (call start) and POST /phone/turn (every subsequent turn) to
+ * `handleTurn`; everything else 404s.
+ */
+export function makeServerHandler(deps) {
+  const log = deps.log || (() => {});
+  return async function handler(req, res) {
+    try {
+      const url = (req.url || '').split('?')[0];
+      const isTurnRoute = url === '/phone/incoming' || url === '/phone/turn';
+      if (req.method !== 'POST' || !isTurnRoute) {
+        res.writeHead(404, { 'content-type': 'text/plain' });
+        res.end('Not Found');
+        return;
+      }
+      const body = await readBody(req);
+      const params = parseForm(body);
+      const xml = await handleTurn(params, deps);
+      res.writeHead(200, { 'content-type': 'text/xml' });
+      res.end(xml);
+    } catch (err) {
+      // handleTurn catches everything internally; reaching here is a framing
+      // failure (body read, etc.). Hand Twilio valid generic TwiML, leak nothing.
+      try { log('phone: server error', err); } catch {}
+      res.writeHead(500, { 'content-type': 'text/xml' });
+      res.end(SERVER_ERROR_TWIML);
+    }
+  };
+}
+
+/**
+ * Wire the real deps and start listening. Fail loud (stderr + non-zero exit) on
+ * any missing required env: the foundation URL and the pre-bound doc id/token.
+ * The backend key is NOT required here — the agent seam fails loud only WHEN a
+ * model call is actually made (see agent.mjs), so a missing key surfaces on the
+ * first turn rather than at boot.
+ */
+export async function main() {
+  const fs = await import('node:fs');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const crypto = await import('node:crypto');
+  const http = await import('node:http');
+  const { makeAgent } = await import('./agent.mjs');
+  const { rwaEdit } = await import('../telegram/rwa-exec.mjs');
+  const twiml = await import('./twiml.mjs');
+
+  const foundationUrl = process.env.RWA_FOUNDATION_URL;
+  const docId = process.env.PHONE_DOC_ID;
+  const docToken = process.env.PHONE_DOC_TOKEN;
+  const missing = [];
+  if (!foundationUrl) missing.push('RWA_FOUNDATION_URL');
+  if (!docId) missing.push('PHONE_DOC_ID');
+  if (!docToken) missing.push('PHONE_DOC_TOKEN');
+  if (missing.length) {
+    console.error(`error: missing required env: ${missing.join(', ')}. Export them and retry.`);
+    process.exit(1);
+  }
+
+  const log = (...a) => console.error(...a);
+
+  // Real writeTemp: a unique name under os.tmpdir() (crypto.randomUUID, never
+  // Math.random) + the given extension; write the bytes, return the path.
+  function writeTemp(content, ext) {
+    const dest = path.join(os.tmpdir(), `rwa-phone-${crypto.randomUUID()}${ext}`);
+    fs.writeFileSync(dest, content, 'utf8');
+    return dest;
+  }
+  // Best-effort cleanup of the per-edit exported container (mirrors the telegram
+  // bot's unlinkTemp): a failure here must never bubble into the call.
+  const unlinkTemp = (p) => { try { fs.unlinkSync(p); } catch {} };
+
+  const deps = {
+    foundation: makeFoundationApi(foundationUrl),
+    agent: makeAgent({}),                 // default chat resolved from backend env
+    exec: { rwaEdit },                    // reuse the Phase B edit path
+    twiml,
+    env: process.env,                     // reads PHONE_DOC_ID / PHONE_DOC_TOKEN
+    log,
+    writeTemp,
+    unlinkTemp,
+  };
+
+  const port = process.env.PORT || 5060;
+  const server = http.createServer(makeServerHandler(deps));
+  server.listen(port, () => {
+    log(`rwa phone spike listening on :${port} (POST /phone/incoming, /phone/turn)`);
+  });
+  return server;
+}
+
+// Guard: only listen when run directly, never on import (so the test suite that
+// imports parseForm/handleTurn does not start the server). pathToFileURL(argv[1])
+// matches import.meta.url's percent-encoding + triple-slash form (matches the
+// telegram bot's idiom), so the guard still fires on a path containing spaces
+// instead of silently never launching (Rule 12).
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main();
 }
