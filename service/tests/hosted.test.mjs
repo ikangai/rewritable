@@ -22,7 +22,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { mkdtempSync, rmSync, readFileSync, existsSync, readdirSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -328,6 +328,373 @@ test('POST /r with garbage bytes → 400 not_a_rewritable', async () => {
     });
     assert.equal(res.status, 400);
     assert.equal((await res.json()).error, 'not_a_rewritable');
+  } finally {
+    await srv.stop();
+  }
+});
+
+// ─── 2. HANDLER: regression — /s/ + apex routes still work ──────────────────
+
+// ─── 2. HANDLER: POST /r/:id/modify — the authoritative write endpoint ──────
+//
+// WHY these matter (Rule 9): /modify is the SINGLE deterministic, model-free,
+// audited write path for a hosted rwa. The contract a Phase-B client builds
+// against is pinned: optimistic concurrency via baseHash (409 on stale, NO
+// write), the frozen-zone wall holding server-side (4xx, NO write), a per-id
+// write lock that serializes concurrent writes (no lost update), byte-parity
+// with the local seed/CLI apply (one contract, one more door), and a durable
+// forward audit log (history.jsonl). Each is its own assertion.
+
+const { applyPlan } = await import(join(SERVICE, 'lib', 'edit.mjs'));
+const { replaceInlineDoc } = await import(join(SERVICE, 'lib', 'seed.mjs'));
+
+// Create a hosted rwa and return {id, token, doc, baseHash} fetched from /doc.
+async function createAndRead(base, rwa) {
+  const createRes = await fetch(base + '/r', {
+    method: 'POST', headers: { 'Content-Type': 'text/html' }, body: rwa,
+  });
+  assert.equal(createRes.status, 200, 'create returns 200');
+  const { id, token } = await createRes.json();
+  const auth = { headers: { Authorization: `Bearer ${token}` } };
+  const docRes = await fetch(`${base}/r/${id}/doc`, auth);
+  assert.equal(docRes.status, 200);
+  const { doc, baseHash } = await docRes.json();
+  return { id, token, doc, baseHash, auth };
+}
+
+function postModify(base, id, token, payload) {
+  return fetch(`${base}/r/${id}/modify`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify(payload),
+  });
+}
+
+const MODIFY_BODY = '<article><h1>Old Title</h1><p>Some unique body text here.</p></article>';
+const MODIFY_RWA = makeRewritable('33333333-3333-4333-8333-333333333333', MODIFY_BODY);
+const SIMPLE_EDIT = { version: 'rwa-edit/1', edits: [{ find: 'Old Title', replace: 'New Title' }] };
+
+test('POST /r/:id/modify applies an apply_edits envelope; persists; returns the pinned shape', async () => {
+  const srv = await startServer();
+  try {
+    const { id, token, doc, baseHash } = await createAndRead(srv.base, MODIFY_RWA);
+    assert.ok(doc.includes('Old Title'), 'starting body has the anchor');
+
+    const res = await postModify(srv.base, id, token, {
+      envelope: SIMPLE_EDIT, baseHash, actor: 'web:test',
+    });
+    assert.equal(res.status, 200, 'a valid modify returns 200');
+    const out = await res.json();
+
+    // Pinned response shape: {doc, baseHash, selfDescription, histLen}.
+    assert.equal(typeof out.doc, 'string');
+    assert.ok(out.doc.includes('New Title'), 'returned doc reflects the edit');
+    assert.ok(!out.doc.includes('Old Title'), 'old anchor is gone');
+    assert.equal(out.baseHash, sha256hex(out.doc),
+      'returned baseHash must be sha256 of the new doc (so the client can chain)');
+    assert.notEqual(out.baseHash, baseHash, 'the hash advanced');
+    assert.equal(out.selfDescription.rwa, 'self-description/1');
+    assert.equal(out.histLen, 1, 'first commit → histLen 1');
+
+    // Persistence: /export must show the edit in the stored bytes.
+    const exp = await fetch(`${srv.base}/r/${id}/export`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const exported = await exp.text();
+    assert.ok(exported.includes('New Title'), 'stored bytes carry the edit');
+    assert.ok(!exported.includes('Old Title'), 'stored bytes no longer have the old anchor');
+
+    // /doc now reports the new baseHash too (the client could re-read instead of
+    // chaining from the modify response).
+    const docRes = await fetch(`${srv.base}/r/${id}/doc`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const docJson = await docRes.json();
+    assert.equal(docJson.baseHash, out.baseHash, '/doc and /modify agree on the new baseHash');
+  } finally {
+    await srv.stop();
+  }
+});
+
+test('byte-parity: /modify result equals the local seed/CLI apply of the same envelope', async () => {
+  const srv = await startServer();
+  try {
+    const { id, token, baseHash } = await createAndRead(srv.base, MODIFY_RWA);
+
+    // Apply the SAME envelope to a local copy of the SAME starting bytes using
+    // the vendored applyPlan, then compare editable bodies. This is the "one
+    // contract, one more door" guarantee: the hosted door produces identical
+    // bytes to the local file door.
+    const localDir = mkdtempSync(join(tmpdir(), 'rwa-modify-parity-'));
+    try {
+      // The hosted copy rotated DOC_UUID at ingest, but the editable body is
+      // unchanged — so we compare BODIES, not whole files. Start the local copy
+      // from the exact stored bytes so the splice path is identical.
+      const stored = readFileSync(join(srv.dataDir, 'r', id, 'current.html'), 'utf8');
+      const localPath = join(localDir, 'local.html');
+      writeFileSync(localPath, stored, 'utf8');
+      const localRes = await applyPlan(localPath, structuredClone(SIMPLE_EDIT));
+      assert.equal(localRes.exitCode, 0);
+      const localBytes = readFileSync(localPath, 'utf8');
+
+      const res = await postModify(srv.base, id, token, { envelope: SIMPLE_EDIT, baseHash });
+      assert.equal(res.status, 200);
+      const out = await res.json();
+
+      const hostedBytes = readFileSync(join(srv.dataDir, 'r', id, 'current.html'), 'utf8');
+      assert.equal(hostedBytes, localBytes,
+        'hosted /modify produced byte-identical container to the local applyPlan');
+      // And the returned doc body equals the local editable body (LF-canonical).
+      const { extractInlineDoc } = await import(join(SERVICE, 'lib', 'seed.mjs'));
+      const localBody = hosted.canonLF(extractInlineDoc(localBytes));
+      assert.equal(out.doc, localBody, 'returned doc equals the local apply body');
+    } finally {
+      rmSync(localDir, { recursive: true, force: true });
+    }
+  } finally {
+    await srv.stop();
+  }
+});
+
+test('stale baseHash → 409 stale_base, NO write', async () => {
+  const srv = await startServer();
+  try {
+    const { id, token, baseHash } = await createAndRead(srv.base, MODIFY_RWA);
+
+    const res = await postModify(srv.base, id, token, {
+      envelope: SIMPLE_EDIT,
+      baseHash: 'f'.repeat(64), // well-formed but wrong
+    });
+    assert.equal(res.status, 409, 'a stale baseHash is a 409');
+    const out = await res.json();
+    assert.equal(out.error, 'stale_base');
+    assert.equal(out.currentHash, baseHash, '409 reports the actual current hash');
+
+    // No write: /export still shows the original body.
+    const exp = await fetch(`${srv.base}/r/${id}/export`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const exported = await exp.text();
+    assert.ok(exported.includes('Old Title'), 'stale modify left the bytes UNCHANGED');
+    assert.ok(!exported.includes('New Title'));
+
+    // No history record was written.
+    assert.ok(!existsSync(join(srv.dataDir, 'r', id, 'history.jsonl')),
+      'a rejected (stale) modify writes no history');
+  } finally {
+    await srv.stop();
+  }
+});
+
+test('frozen-zone-violating envelope → 4xx frozen_zone_violation, NO write', async () => {
+  const srv = await startServer();
+  try {
+    // A rewritable whose body carries a marker-form frozen zone.
+    const frozenBody =
+      '<article>a<!-- rwa:frozen:begin lock --><h2>locked</h2><!-- rwa:frozen:end lock -->z</article>';
+    const rwa = makeRewritable('44444444-4444-4444-8444-444444444444', frozenBody);
+    const { id, token, baseHash } = await createAndRead(srv.base, rwa);
+
+    // replace_document escape hatch attempting to drift the frozen zone.
+    const envelope = {
+      version: 'rwa-edit/1',
+      doc: '<article>a<!-- rwa:frozen:begin lock --><h2>tampered</h2><!-- rwa:frozen:end lock -->z</article>',
+      reason: 'attempt to drift a frozen zone server-side',
+    };
+    const res = await postModify(srv.base, id, token, { envelope, baseHash });
+    assert.ok(res.status >= 400 && res.status < 500, 'apply failure is a 4xx');
+    assert.equal(res.status, 422, 'envelope/apply failure uses 422');
+    const out = await res.json();
+    assert.equal(out.error, 'frozen_zone_violation',
+      'the frozen wall holds server-side with the right subcode');
+
+    // No write: the frozen content is intact in the stored bytes.
+    const exp = await fetch(`${srv.base}/r/${id}/export`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const exported = await exp.text();
+    assert.ok(exported.includes('<h2>locked</h2>'), 'frozen content unchanged');
+    assert.ok(!exported.includes('<h2>tampered</h2>'));
+    assert.ok(!existsSync(join(srv.dataDir, 'r', id, 'history.jsonl')),
+      'a rejected (frozen) modify writes no history');
+  } finally {
+    await srv.stop();
+  }
+});
+
+test('modify auth + bad-request: 401 / 404 / 400', async () => {
+  const srv = await startServer();
+  try {
+    const { id, token, baseHash } = await createAndRead(srv.base, MODIFY_RWA);
+    const goodBody = JSON.stringify({ envelope: SIMPLE_EDIT, baseHash });
+
+    // Missing token → 401, NO write.
+    const noAuth = await fetch(`${srv.base}/r/${id}/modify`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: goodBody,
+    });
+    assert.equal(noAuth.status, 401);
+    assert.equal((await noAuth.json()).error, 'unauthorized');
+
+    // Wrong token → 401.
+    const wrong = await fetch(`${srv.base}/r/${id}/modify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${hosted.mintToken()}` },
+      body: goodBody,
+    });
+    assert.equal(wrong.status, 401);
+
+    // Unknown id (valid-shaped token) → 404.
+    const unknown = await fetch(`${srv.base}/r/zzzzzzzz/modify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: goodBody,
+    });
+    assert.equal(unknown.status, 404);
+
+    // Missing baseHash → 400 bad_request.
+    const noBase = await postModify(srv.base, id, token, { envelope: SIMPLE_EDIT });
+    assert.equal(noBase.status, 400);
+    assert.equal((await noBase.json()).error, 'bad_request');
+
+    // Garbage (non-JSON) body → 400 bad_request.
+    const garbage = await fetch(`${srv.base}/r/${id}/modify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: 'this is not json {',
+    });
+    assert.equal(garbage.status, 400);
+    assert.equal((await garbage.json()).error, 'bad_request');
+
+    // Missing envelope → 400 bad_request.
+    const noEnv = await postModify(srv.base, id, token, { baseHash });
+    assert.equal(noEnv.status, 400);
+
+    // Through all of that: NO write happened.
+    const exp = await fetch(`${srv.base}/r/${id}/export`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    assert.ok((await exp.text()).includes('Old Title'), 'no failed modify wrote anything');
+  } finally {
+    await srv.stop();
+  }
+});
+
+test('concurrency: two simultaneous /modify for one id serialize — no lost update', async () => {
+  const srv = await startServer();
+  try {
+    const { id, token, baseHash } = await createAndRead(srv.base, MODIFY_RWA);
+
+    // Both fire with the SAME (current) baseHash. The per-id lock serializes
+    // them: the first to acquire applies; the second, now seeing the first's
+    // result as the current state, must EITHER 409 (its base is now stale) or —
+    // if its edit is still anchor-valid against the new state — apply. With a
+    // find/replace whose anchor 'Old Title' is consumed by the first apply, the
+    // second is guaranteed stale → 409. Either way: no corruption, no lost
+    // update; exactly one body change lands.
+    const editA = { version: 'rwa-edit/1', edits: [{ find: 'Old Title', replace: 'Title A' }] };
+    const editB = { version: 'rwa-edit/1', edits: [{ find: 'Old Title', replace: 'Title B' }] };
+
+    const [rA, rB] = await Promise.all([
+      postModify(srv.base, id, token, { envelope: editA, baseHash, actor: 'A' }),
+      postModify(srv.base, id, token, { envelope: editB, baseHash, actor: 'B' }),
+    ]);
+    const statuses = [rA.status, rB.status].sort();
+    assert.deepEqual(statuses, [200, 409],
+      'exactly one applies (200), the other sees stale base (409) — serialized, no lost update');
+
+    // The stored bytes are a clean single application of whichever won — never a
+    // mangled interleave.
+    const exp = await fetch(`${srv.base}/r/${id}/export`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const exported = await exp.text();
+    assert.ok(!exported.includes('Old Title'), 'the old anchor was consumed exactly once');
+    const hasA = exported.includes('Title A');
+    const hasB = exported.includes('Title B');
+    assert.ok(hasA !== hasB, 'exactly one winner is present, not both (no interleave)');
+
+    // History reflects exactly one successful commit.
+    const histPath = join(srv.dataDir, 'r', id, 'history.jsonl');
+    const lines = readFileSync(histPath, 'utf8').trim().split('\n').filter(Boolean);
+    assert.equal(lines.length, 1, 'exactly one history record for one successful apply');
+  } finally {
+    await srv.stop();
+  }
+});
+
+test('history.jsonl: two successful edits → two parseable forward records, actor-attributed', async () => {
+  const srv = await startServer();
+  try {
+    const { id, token, baseHash: h0, doc: doc0 } = await createAndRead(srv.base, MODIFY_RWA);
+
+    // First edit.
+    const r1 = await postModify(srv.base, id, token, {
+      envelope: { version: 'rwa-edit/1', edits: [{ find: 'Old Title', replace: 'Title One' }] },
+      baseHash: h0, actor: 'web:alice',
+    });
+    assert.equal(r1.status, 200);
+    const o1 = await r1.json();
+    assert.equal(o1.histLen, 1);
+
+    // Second edit, chaining off the first's returned baseHash.
+    const r2 = await postModify(srv.base, id, token, {
+      envelope: { version: 'rwa-edit/1', edits: [{ find: 'Title One', replace: 'Title Two' }] },
+      baseHash: o1.baseHash, actor: 'web:bob',
+    });
+    assert.equal(r2.status, 200);
+    const o2 = await r2.json();
+    assert.equal(o2.histLen, 2);
+
+    const histPath = join(srv.dataDir, 'r', id, 'history.jsonl');
+    const lines = readFileSync(histPath, 'utf8').trim().split('\n').filter(Boolean);
+    assert.equal(lines.length, 2, 'two forward records, one per line');
+
+    const recs = lines.map((l) => JSON.parse(l));
+    assert.equal(recs[0].actor, 'web:alice');
+    assert.equal(recs[1].actor, 'web:bob');
+    for (const rec of recs) {
+      assert.equal(typeof rec.ts, 'number');
+      assert.equal(rec.kind, 'edit_batch', 'apply_edits records as edit_batch');
+      assert.match(rec.baseHash, /^[0-9a-f]{64}$/);
+      assert.match(rec.resultHash, /^[0-9a-f]{64}$/);
+      assert.ok(rec.envelope, 'the forward envelope is recorded');
+    }
+    // The chain is consistent: rec[0].baseHash is the original, rec[1].baseHash
+    // is rec[0].resultHash (forward audit chain).
+    assert.equal(recs[0].baseHash, sha256hex(doc0));
+    assert.equal(recs[1].baseHash, recs[0].resultHash, 'forward audit chain links');
+    assert.equal(recs[1].resultHash, o2.baseHash);
+
+    // A replace_document envelope records kind:'replace_document' with reason.
+    const r3 = await postModify(srv.base, id, token, {
+      envelope: {
+        version: 'rwa-edit/1',
+        doc: '<article><h1>Replaced Whole</h1><p>New body.</p></article>',
+        reason: 'wholesale replace test',
+      },
+      baseHash: o2.baseHash, actor: 'web:carol',
+    });
+    assert.equal(r3.status, 200);
+    const o3 = await r3.json();
+    assert.equal(o3.histLen, 3);
+    const recs3 = readFileSync(histPath, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l));
+    assert.equal(recs3[2].kind, 'replace_document');
+    assert.equal(recs3[2].reason, 'wholesale replace test');
+    assert.equal(recs3[2].actor, 'web:carol');
+  } finally {
+    await srv.stop();
+  }
+});
+
+test('modify with no actor defaults to web:anon in history', async () => {
+  const srv = await startServer();
+  try {
+    const { id, token, baseHash } = await createAndRead(srv.base, MODIFY_RWA);
+    const res = await postModify(srv.base, id, token, { envelope: SIMPLE_EDIT, baseHash });
+    assert.equal(res.status, 200);
+    const histPath = join(srv.dataDir, 'r', id, 'history.jsonl');
+    const rec = JSON.parse(readFileSync(histPath, 'utf8').trim().split('\n')[0]);
+    assert.equal(rec.actor, 'web:anon', 'absent actor defaults to web:anon');
   } finally {
     await srv.stop();
   }

@@ -437,6 +437,12 @@ async function handlePublish(req, send) {
 const JSON_CT = { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' };
 const sendJson = (send, status, obj) => send(status, JSON_CT, JSON.stringify(obj) + '\n');
 
+// Container-fact extraction regexes. Module scope (not per-request) so they
+// aren't recompiled on every hosted read/write. UUID_RE_LOCAL has a capture
+// group (the apex UUID_RE above is bare) — the two are intentionally distinct.
+const UUID_RE_LOCAL = /const DOC_UUID = '([0-9a-f-]{36})';/;
+const PRODUCT_KIND_RE = /const PRODUCT_KIND = '([^']*)';/;
+
 // Pull the Bearer token out of the Authorization header. Returns null for a
 // missing or malformed header (→ caller responds 401, never 500).
 function bearerToken(req) {
@@ -476,6 +482,21 @@ async function handleHostedCreate(req, send) {
   return sendJson(send, 200, { id, token, url: `${base}/r/${id}#k=${token}` });
 }
 
+// Compute the self-description/1 projection over a container's bytes + its
+// already-extracted editable body. Shared by the describe/doc reads AND the
+// /modify response so the post-edit self-description is byte-for-byte the same
+// projection a subsequent /describe would return. The reader is the vendored
+// ESM identity.mjs (+ apply-edits.mjs for frozen zones); dynamic-import from
+// these async handlers (CJS can't static-import ESM). Mirrors cli/src/doc.mjs.
+async function selfDescriptionFor(bytes, doc) {
+  const { resolveSelfDescription } = await import('./lib/identity.mjs');
+  const { findFrozenZones } = await import('./lib/apply-edits.mjs');
+  const uuid = (bytes.match(UUID_RE_LOCAL) || [])[1] || null;
+  const kind = (bytes.match(PRODUCT_KIND_RE) || [])[1] || 'document';
+  const frozenZones = findFrozenZones(doc).map((z) => z.name);
+  return resolveSelfDescription({ fileText: bytes, doc, uuid, kind, frozenZones });
+}
+
 // GET /r/:id/{describe,export,doc} — authenticated reads over the stored bytes.
 async function handleHostedRead(id, action, req, send) {
   const rec = hosted.readHosted(id, { dataDir: DATA_DIR });
@@ -497,23 +518,15 @@ async function handleHostedRead(id, action, req, send) {
   }
 
   // describe + doc both need the self-description/1 projection over the bytes.
-  // The reader is the vendored ESM identity.mjs (+ seed.mjs for the editable
-  // body); dynamic-import them from this async handler (CJS can't static-import
-  // ESM). Mirrors cli/src/doc.mjs inspectDoc.
-  const { resolveSelfDescription } = await import('./lib/identity.mjs');
+  // The editable-body reader is the vendored ESM seed.mjs; dynamic-import from
+  // this async handler (CJS can't static-import ESM). Mirrors cli/src/doc.mjs.
   const { extractInlineDoc } = await import('./lib/seed.mjs');
-  const { findFrozenZones } = await import('./lib/apply-edits.mjs');
 
   let doc;
   try { doc = extractInlineDoc(rec.bytes); }
   catch { return sendJson(send, 500, { error: 'corrupt_container' }); }
 
-  const UUID_RE_LOCAL = /const DOC_UUID = '([0-9a-f-]{36})';/;
-  const PRODUCT_KIND_RE = /const PRODUCT_KIND = '([^']*)';/;
-  const uuid = (rec.bytes.match(UUID_RE_LOCAL) || [])[1] || null;
-  const kind = (rec.bytes.match(PRODUCT_KIND_RE) || [])[1] || 'document';
-  const frozenZones = findFrozenZones(doc).map((z) => z.name);
-  const selfDescription = resolveSelfDescription({ fileText: rec.bytes, doc, uuid, kind, frozenZones });
+  const selfDescription = await selfDescriptionFor(rec.bytes, doc);
 
   if (action === 'describe') {
     return sendJson(send, 200, selfDescription);
@@ -527,6 +540,191 @@ async function handleHostedRead(id, action, req, send) {
     doc: canonDoc,
     baseHash: hosted.sha256hex(canonDoc),
     selfDescription,
+  });
+}
+
+// ─── Per-id write lock ──────────────────────────────────────────────────────
+// /modify (and future /undo) for the SAME id must serialize: applyPlan writes
+// current.html in place, so two concurrent writers could lose an update or
+// interleave. We chain each write behind the prior one's promise per id (the
+// in-process mirror of the seed's modifyMutex). Single-process service, so an
+// in-memory Map is sufficient; a multi-process deploy would need a file lock
+// (not in scope — the deploy is one node process).
+const writeLocks = new Map();
+
+function withWriteLock(id, fn) {
+  const prev = writeLocks.get(id) || Promise.resolve();
+  // The next link runs fn() AFTER prev settles, regardless of prev's outcome
+  // (a prior failure must not wedge the chain). prev is already guarded, so
+  // .catch here is belt-and-suspenders.
+  const next = prev.catch(() => {}).then(fn);
+  // Keep the chain tip current; clear the entry once this link settles and no
+  // newer writer has taken over, so the Map doesn't grow unboundedly.
+  writeLocks.set(id, next);
+  next.catch(() => {}).finally(() => {
+    if (writeLocks.get(id) === next) writeLocks.delete(id);
+  });
+  return next;
+}
+
+// Map an applyPlan CliError to the HTTP status. Envelope/apply failures (exit 3)
+// are 422 (the request is well-formed but its envelope can't apply to the
+// current bytes); a file error (exit 2) on OUR own temp copy is an internal
+// fault → 500. The subcode (e.g. frozen_zone_violation, find_not_found) is the
+// {error} the client sees — same vocabulary as `rwa edit --json`.
+function modifyErrorStatus(err) {
+  if (err && err.exitCode === 3) return 422;
+  return 500;
+}
+
+// POST /r/:id/modify — the authoritative, model-free, audited WRITE endpoint.
+// Applies an rwa-edit/1 envelope to the stored bytes via the vendored applyPlan,
+// under optimistic concurrency (baseHash) + a per-id write lock, and appends a
+// forward audit record. The server NEVER trusts a client-supplied doc — it
+// applies the envelope to ITS OWN current.html; baseHash is only a staleness
+// check, not the bytes to write. Model-free: it only APPLIES (never calls an LLM).
+async function handleHostedModify(id, req, send) {
+  // Auth + existence first (cheap, no lock needed — these don't write).
+  const rec0 = hosted.readHosted(id, { dataDir: DATA_DIR });
+  if (!rec0) return sendJson(send, 404, { error: 'not_found' });
+  const token = bearerToken(req);
+  if (!hosted.verifyToken(token, rec0.owner.capHash)) {
+    return sendJson(send, 401, { error: 'unauthorized' });
+  }
+
+  // Parse + validate the request body (bad input → 400, no lock, no write).
+  let buf;
+  try { buf = await readBody(req, MAX_BODY_BYTES); }
+  catch (err) {
+    if (err && err.code === 'BODY_TOO_LARGE') {
+      return sendJson(send, 413, { error: 'body_too_large', maxBytes: MAX_BODY_BYTES });
+    }
+    return sendJson(send, 400, { error: 'bad_request' });
+  }
+  let body;
+  try { body = JSON.parse(buf.toString('utf8')); }
+  catch { return sendJson(send, 400, { error: 'bad_request' }); }
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+    return sendJson(send, 400, { error: 'bad_request' });
+  }
+  const { envelope, baseHash } = body;
+  const actor = typeof body.actor === 'string' && body.actor.length > 0 ? body.actor : 'web:anon';
+  if (typeof envelope !== 'object' || envelope === null) {
+    return sendJson(send, 400, { error: 'bad_request' });
+  }
+  if (typeof baseHash !== 'string' || !/^[0-9a-f]{64}$/.test(baseHash)) {
+    return sendJson(send, 400, { error: 'bad_request' });
+  }
+
+  // The apply lifecycle runs UNDER the per-id write lock so concurrent /modify
+  // for the same id serialize (no lost update / no interleave). The lock wraps
+  // the staleness check too — a writer must not read a baseHash that a queued
+  // write is about to invalidate.
+  return withWriteLock(id, async () => {
+    // Re-read under the lock — current.html may have advanced while we queued.
+    const rec = hosted.readHosted(id, { dataDir: DATA_DIR });
+    if (!rec) return sendJson(send, 404, { error: 'not_found' });
+
+    const { applyPlan, CliError } = await import('./lib/edit.mjs');
+    const { extractInlineDoc } = await import('./lib/seed.mjs');
+
+    // Optimistic concurrency: the posted baseHash must match the CURRENT body
+    // hash. Mismatch → 409, NO write. (hosted.baseBodyHash = sha256 of the
+    // LF-canonical editable body — the same value /doc returns as baseHash.)
+    const currentHash = await hosted.baseBodyHash(rec.bytes);
+    if (currentHash !== baseHash) {
+      return sendJson(send, 409, { error: 'stale_base', currentHash });
+    }
+
+    // Apply against a TEMP COPY of current.html (never current.html directly):
+    // applyPlan reads + atomically writes the path it's given, so on failure
+    // current.html is untouched and we just delete the temp.
+    const dir = hosted.idDir(DATA_DIR, id);
+    const tmpPath = path.join(dir, `.modify-${process.pid}-${crypto.randomBytes(6).toString('hex')}.tmp`);
+    try { fs.writeFileSync(tmpPath, rec.bytes); }
+    catch (err) {
+      console.error('hosted: modify temp write failed', err && err.message);
+      return sendJson(send, 500, { error: 'storage_failed' });
+    }
+
+    try {
+      await applyPlan(tmpPath, envelope);
+    } catch (err) {
+      try { fs.unlinkSync(tmpPath); } catch { /* best-effort */ }
+      if (err instanceof CliError) {
+        const status = modifyErrorStatus(err);
+        const payload = { error: err.subcode };
+        // Surface a one-line hint if the apply pipeline attached one (additive).
+        if (err.details && err.details.hint) payload.detail = err.details.hint;
+        return sendJson(send, status, payload);
+      }
+      console.error('hosted: modify apply unexpected error', err && err.message);
+      return sendJson(send, 500, { error: 'internal_error' });
+    }
+
+    // Apply succeeded → the new bytes are at tmpPath. Read back the new editable
+    // body (same extractor + canonLF the edit contract operates on) and its hash.
+    let newBytes, newBody;
+    try {
+      newBytes = fs.readFileSync(tmpPath, 'utf8');
+      newBody = hosted.canonLF(extractInlineDoc(newBytes));
+    } catch (err) {
+      try { fs.unlinkSync(tmpPath); } catch {}
+      console.error('hosted: modify readback failed', err && err.message);
+      return sendJson(send, 500, { error: 'internal_error' });
+    }
+    const resultHash = hosted.sha256hex(newBody);
+
+    // Forward audit record (the rwa_hist mirror). apply_dsl_plan flattens to its
+    // compiled apply_edits form in applyPlan, so at the wire level the kind is
+    // edit_batch unless the envelope is a wholesale replace_document.
+    const isReplace = 'doc' in envelope && !('edits' in envelope) && !('ops' in envelope);
+    const record = {
+      ts: Date.now(),
+      actor,
+      kind: isReplace ? 'replace_document' : 'edit_batch',
+      baseHash,
+      resultHash,
+    };
+    if (isReplace) record.reason = envelope.reason;
+    else record.envelope = envelope;
+
+    // CRASH WINDOW (acceptable for v1): we append the forward audit record
+    // BEFORE renaming the new bytes into place. If the process dies between the
+    // append and the rename, history.jsonl is one record ahead of current.html.
+    // history is forward-only (never used to reconstruct bytes here), and the
+    // next successful write re-establishes consistency; a torn append can't
+    // corrupt current.html. We append-then-rename (not rename-then-append) so
+    // the rename — the durable, user-visible commit — is the LAST step.
+    try {
+      hosted.appendHistory(id, { dataDir: DATA_DIR }, record);
+    } catch (err) {
+      try { fs.unlinkSync(tmpPath); } catch {}
+      console.error('hosted: modify history append failed', err && err.message);
+      return sendJson(send, 500, { error: 'storage_failed' });
+    }
+
+    // Atomically move the new bytes into place (rename(2) over current.html).
+    try {
+      fs.renameSync(tmpPath, path.join(dir, 'current.html'));
+    } catch (err) {
+      try { fs.unlinkSync(tmpPath); } catch {}
+      console.error('hosted: modify commit rename failed', err && err.message);
+      return sendJson(send, 500, { error: 'storage_failed' });
+    }
+
+    // Best-effort lastAccess touch + the post-edit self-description (same
+    // projection /describe returns over the NEW bytes).
+    hosted.touchAccess(id, { dataDir: DATA_DIR }, rec.owner);
+    const selfDescription = await selfDescriptionFor(newBytes, newBody);
+    const histLen = hosted.historyLen(id, { dataDir: DATA_DIR });
+
+    return sendJson(send, 200, {
+      doc: newBody,
+      baseHash: resultHash,
+      selfDescription,
+      histLen,
+    });
   });
 }
 
@@ -578,6 +776,23 @@ const server = http.createServer((req, res) => {
       }
     });
     return;
+  }
+
+  // POST /r/:id/modify — the authoritative hosted WRITE endpoint. Apex-only
+  // (a share host must not be able to bounce a write off it). Bearer-auth +
+  // baseHash optimistic concurrency + per-id write lock inside the handler.
+  if (req.method === 'POST' && !isShareHost) {
+    const m = url.match(/^\/r\/([0-9a-z]{8})\/modify$/);
+    if (m) {
+      handleHostedModify(m[1], req, send).catch(err => {
+        console.error('hosted: modify unhandled error', err);
+        if (!res.headersSent) {
+          send(500, { 'Content-Type': 'application/json; charset=utf-8' },
+            JSON.stringify({ error: 'internal_error' }) + '\n');
+        }
+      });
+      return;
+    }
   }
 
   if (req.method !== 'GET' && !isHead) {

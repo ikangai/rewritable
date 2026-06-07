@@ -215,6 +215,52 @@ function sha256hex(s) {
   return crypto.createHash('sha256').update(s).digest('hex');
 }
 
+// ─── Forward audit log (history.jsonl) ──────────────────────────────────────
+// The rwa_hist mirror for hosted edits: an append-only JSONL file, one record
+// per successful commit, under DATA_DIR/r/<id>/history.jsonl. This is the
+// FORWARD log only — auditable + actor-attributed. Undo STORAGE (the reverse
+// patch needed for /undo) is Task 5's concern; we never reconstruct prior bytes
+// from this file, so a forward record is enough for v1.
+
+function historyPath(dataDir, id) {
+  return path.join(idDir(dataDir, id), 'history.jsonl');
+}
+
+/**
+ * Append one forward audit record (a single line of JSON) to the id's
+ * history.jsonl. The caller has already committed the new bytes; this is the
+ * audit-trail write. `appendFileSync` is atomic per line for the small payloads
+ * we write (well under PIPE_BUF), so concurrent appends — already serialized by
+ * the per-id write lock in server.js — never interleave.
+ *
+ * @param {string} id
+ * @param {{dataDir:string}} opts
+ * @param {object} record — { ts, actor, kind, envelope|reason, baseHash, resultHash }
+ */
+function appendHistory(id, { dataDir }, record) {
+  fs.appendFileSync(historyPath(dataDir, id), JSON.stringify(record) + '\n');
+}
+
+/**
+ * Number of records in the id's history.jsonl (0 if the file doesn't exist yet).
+ * Counts non-empty lines so a trailing newline isn't miscounted.
+ *
+ * @param {string} id
+ * @param {{dataDir:string}} opts
+ * @returns {number}
+ */
+function historyLen(id, { dataDir }) {
+  let raw;
+  try { raw = fs.readFileSync(historyPath(dataDir, id), 'utf8'); }
+  catch (err) {
+    if (err && err.code === 'ENOENT') return 0;
+    throw err;
+  }
+  let n = 0;
+  for (const line of raw.split('\n')) if (line.length > 0) n++;
+  return n;
+}
+
 module.exports = {
   // validation
   UUID_RE,
@@ -236,6 +282,10 @@ module.exports = {
   baseBodyHash,
   sha256hex,
   canonLF,
+  // forward audit log
+  historyPath,
+  appendHistory,
+  historyLen,
   // error
   HostedError,
 };
