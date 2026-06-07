@@ -53,6 +53,33 @@ const stubDecline = async () => ({
   json: async () => ({ choices: [{ message: { role: 'assistant', content: 'I will not edit this.' } }] }),
 });
 
+// skinning-v3: a chat completion whose message.content is the token JSON the
+// /skin like extractor expects (no tool_calls — a single-shot text reply).
+function stubExtraction(tokenObj, { fence = false } = {}) {
+  let content = JSON.stringify(tokenObj);
+  if (fence) content = '```json\n' + content + '\n```';
+  return async () => ({
+    ok: true,
+    json: async () => ({ choices: [{ message: { role: 'assistant', content } }] }),
+  });
+}
+// A stub that returns the EXTRACTION JSON on the first call (no tool_calls) and
+// the agent's apply_edits tool_call on every subsequent call (the L1 restyle).
+function stubLikeThenEdit(tokenObj, editEnvelope, { fence = false } = {}) {
+  let n = 0;
+  return async () => {
+    n++;
+    if (n === 1) {
+      let content = JSON.stringify(tokenObj);
+      if (fence) content = '```json\n' + content + '\n```';
+      return { ok: true, json: async () => ({ choices: [{ message: { role: 'assistant', content } }] }) };
+    }
+    return { ok: true, json: async () => ({ choices: [{ message: { role: 'assistant', content: '', tool_calls: [
+      { id: 'call_e', type: 'function', function: { name: 'apply_edits', arguments: JSON.stringify(editEnvelope) } },
+    ] } }] }) };
+  };
+}
+
 async function boot(body, { backend } = {}) {
   const ov = kindOverrides('document');
   const uuid = crypto.randomUUID();
@@ -329,6 +356,169 @@ const undoLen = async (uuid) => ((await readStore(uuid, 'rwa_undo')) || []).leng
     const doc = await w.window.getDoc();
     check('D1c: reset removed the theme block', !/data-rwa-skin/.test(doc));
     check('D1c: reset ALSO removed the sk-* wrapper', !/sk-eyebrow/.test(doc));
+  }
+
+  // ── V3-e: validateSkinTokens / synthesizeSkinTheme exposed + unit assertions ──
+  {
+    const w = await boot('<article><h1>x</h1></article>');
+    check('V3e: validateSkinTokens exposed', typeof w.window.validateSkinTokens === 'function');
+    check('V3e: synthesizeSkinTheme exposed', typeof w.window.synthesizeSkinTheme === 'function');
+    check('V3e: applySkinLike exposed', typeof w.window.applySkinLike === 'function');
+    if (typeof w.window.validateSkinTokens === 'function') {
+      const v = w.window.validateSkinTokens({ name: 'Ocean Breeze', confidence: 'high',
+        tokens: { accent: '#0ea5e9', ink: '#0f172a', bg: '#ffffff', fontUi: 'serif', baseSize: 17 } });
+      check('V3e: clean tokens → ok, slug name, kept fields', v.ok && v.name === 'ocean-breeze' && v.tokens.accent === '#0ea5e9' && v.tokens.fontUi === 'serif' && v.tokens.baseSize === 17);
+      // adversarial: an injecting accent is dropped + defaulted
+      const bad = w.window.validateSkinTokens({ name: 'x', tokens: { accent: 'red;}body{x' } });
+      check('V3e: injecting accent dropped + defaulted', bad.dropped.includes('accent') && bad.tokens.accent === '#2563eb');
+      const theme = w.window.synthesizeSkinTheme(v.tokens, v.name);
+      check('V3e: synthesized theme is a scoped, named, single <style> block',
+        theme.startsWith('<style data-rwa-skin="ocean-breeze">') && theme.endsWith('</style>') &&
+        (theme.match(/<\/style>/g) || []).length === 1 && theme.includes('#rwa-doc-mount{') && !theme.includes(':root'));
+      // number clamping (unit)
+      const clamp = w.window.validateSkinTokens({ name: 'c', tokens: { baseSize: 999, radius: -5, typeScaleRatio: 9 } });
+      check('V3e: number clamping (baseSize 999→20, radius -5→0, ratio 9→1.5)',
+        clamp.tokens.baseSize === 20 && clamp.tokens.radius === 0 && clamp.tokens.typeScaleRatio === 1.5);
+    }
+  }
+
+  // ── V3-a: applySkinLike('warm vintage print') → synthesized skin, ONE commit ──
+  {
+    const BODY = '<article>\n<h1>The Quarterly</h1>\n<p>KICKER opening line</p>\n<p>body paragraph two</p>\n</article>';
+    const w = await boot(BODY);
+    // First fetch = extraction JSON; subsequent = agent apply_edits adding an sk-* wrapper.
+    w.window.fetch = stubLikeThenEdit(
+      { name: 'warm-print', feel: 'warm vintage editorial', confidence: 'high', tokens: {
+        accent: '#c0392b', ink: '#1a1a1a', bg: '#fdfaf5', fontUi: 'serif', fontMono: 'mono',
+        typeScaleRatio: 1.25, baseSize: 17, radius: 4, shadow: 'subtle', density: 'normal',
+        borderWeight: 1, motion: 'subtle', ramp: ['#fdfaf5', '#1a1a1a'], semantic: {} } },
+      { version: 'rwa-edit/1', edits: [{ find: 'KICKER', replace: '<span class="sk-eyebrow">KICKER</span>' }] });
+    const hB = await histLen(w.uuid), uB = await undoLen(w.uuid);
+    await w.window.applySkinLike('warm vintage print');
+    for (let k = 0; k < 60 && !/data-rwa-skin/.test(await w.window.getDoc()); k++) await tick();
+    const doc = await w.window.getDoc();
+    check('V3a: synthesized theme block landed (data-rwa-skin="warm-print")', /<style data-rwa-skin="warm-print">/.test(doc));
+    check('V3a: theme carries synthesized accent', /--sk-accent:#c0392b/.test(doc));
+    check('V3a: agent L1 wrapper landed (sk-eyebrow)', /class="sk-eyebrow"/.test(doc));
+    check('V3a: exactly one skin block', (doc.match(/data-rwa-skin=/g) || []).length === 1);
+    check('V3a: exactly ONE rwa_hist entry (one commit)', (await histLen(w.uuid)) - hB === 1);
+    check('V3a: exactly ONE rwa_undo frame (one ⌘Z)', (await undoLen(w.uuid)) - uB === 1);
+    const hist = await readStore(w.uuid, 'rwa_hist');
+    check('V3a: commit attributed actor:skin:warm-print', hist && hist[0] && hist[0].actor === 'skin:warm-print');
+    check('V3a: commit kind replace_document', hist && hist[0] && hist[0].kind === 'replace_document');
+  }
+
+  // ── V3-b: malicious extractor output → dropped/defaulted, skin still applies clean ──
+  {
+    const BODY = '<article>\n<h1>Doc</h1>\n<p>plain body line</p>\n</article>';
+    const w = await boot(BODY);
+    // The "model" tries to inject CSS via accent + a url() and a </style breakout.
+    w.window.fetch = stubExtraction({ name: 'attack', feel: 'evil', confidence: 'high', tokens: {
+      accent: 'red;}body{x', ink: 'url(http://evil)', bg: '@import "x"', fontUi: 'Comic Sans, url(//x)',
+      ramp: ['<script>', 'javascript:alert(1)'], semantic: { green: 'http://evil' } } });
+    await w.window.applySkinLike('a malicious look');
+    for (let k = 0; k < 60 && !/data-rwa-skin/.test(await w.window.getDoc()); k++) await tick();
+    const doc = await w.window.getDoc();
+    // Isolate the synthesized block and assert it is injection-safe.
+    const m = doc.match(/<style data-rwa-skin="[^"]*">[\s\S]*?<\/style>/);
+    const block = m ? m[0] : '';
+    const inner = block.replace(/^<style[^>]*>/, '').replace(/<\/style>$/, '');
+    check('V3b: a skin block was applied despite hostile tokens', !!block && /data-rwa-skin="attack"/.test(block));
+    check('V3b: no url( in synthesized block', !/url\(/i.test(inner));
+    check('V3b: no @import in synthesized block', !/@import/i.test(inner));
+    check('V3b: no http in synthesized block', !/http/i.test(inner));
+    check('V3b: no </style breakout in body', !/<\/style/i.test(inner));
+    check('V3b: no injected body{ rule', !/body\{x/.test(inner));
+    check('V3b: no <script in block', !/<script/i.test(inner));
+    check('V3b: exactly one skin block (no extra breakout style)', (doc.match(/data-rwa-skin=/g) || []).length === 1);
+    check('V3b: hostile accent fell back to safe default', /--sk-accent:#2563eb/.test(inner));
+  }
+
+  // ── V3-c: /skin like <desc> via submitLens reaches applySkinLike (same one-commit) ──
+  {
+    const BODY = '<article>\n<h1>Status</h1>\n<p>KICKER row</p>\n</article>';
+    const w = await boot(BODY);
+    w.window.fetch = stubLikeThenEdit(
+      { name: 'cool-mint', feel: 'cool minimal', confidence: 'high', tokens: { accent: '#10b981', ink: '#062925', bg: '#f0fdf9', fontUi: 'sans' } },
+      { version: 'rwa-edit/1', edits: [{ find: 'KICKER', replace: '<span class="sk-eyebrow">KICKER</span>' }] });
+    const hB = await histLen(w.uuid);
+    await w.window.submitLens('/skin like cool calm minimal mint');
+    for (let k = 0; k < 60 && !/class="sk-eyebrow"/.test(await w.window.getDoc()); k++) await tick();
+    const doc = await w.window.getDoc();
+    check('V3c: /skin like added the synthesized theme', /<style data-rwa-skin="cool-mint">/.test(doc));
+    check('V3c: /skin like added an sk-* wrapper (→ applySkinLike)', /class="sk-eyebrow"/.test(doc));
+    check('V3c: /skin like = exactly ONE commit', (await histLen(w.uuid)) - hB === 1);
+    check('V3c: /skin like cleared the lens input on success', (w.document.getElementById('rwa-lens-input') || {}).value === '');
+  }
+
+  // ── V3-c2: empty description after "like" → usage hint, no commit ──
+  {
+    const w = await boot('<article>\n<h1>X</h1>\n<p>body</p>\n</article>');
+    w.window.fetch = async () => { throw new Error('extractor must not be called'); };
+    const hB = await histLen(w.uuid);
+    await w.window.submitLens('/skin like   ');
+    await tick(); await tick();
+    check('V3c2: empty /skin like made NO commit', (await histLen(w.uuid)) - hB === 0);
+    check('V3c2: empty /skin like did not skin the doc', !/data-rwa-skin/.test(await w.window.getDoc()));
+  }
+
+  // ── V3-d: re-skin from a PRESET to a LIKE skin deterministically de-skins prior wrappers ──
+  {
+    const BODY = '<article>\n<h1>Q</h1>\n<p>ANCHL line</p>\n</article>';
+    const w = await boot(BODY);
+    // Step 1: apply a preset (linear-dark) that lands a sk-eyebrow wrapper.
+    w.window.fetch = stubToolCall({ version: 'rwa-edit/1', edits: [{ find: 'ANCHL', replace: '<span class="sk-eyebrow">ANCHL</span>' }] });
+    await w.window.applySkinL1('linear-dark'); await tick(); await tick();
+    const pre = await w.window.getDoc();
+    check('V3d: preset skin applied (linear-dark theme + sk-eyebrow)', /data-rwa-skin="linear-dark"/.test(pre) && /class="sk-eyebrow"/.test(pre));
+    // Step 2: /skin like — extraction then an agent that adds sk-callout but does NOT
+    // strip the prior sk-eyebrow (non-compliant model). de-skin must remove it anyway.
+    w.window.fetch = stubLikeThenEdit(
+      { name: 'paper', feel: 'soft paper', confidence: 'medium', tokens: { accent: '#7c5cff', ink: '#222', bg: '#fbfbfd', fontUi: 'serif' } },
+      { version: 'rwa-edit/1', edits: [{ find: 'ANCHL', replace: '<div class="sk-callout">ANCHL</div>' }] });
+    await w.window.applySkinLike('soft paper note look');
+    for (let k = 0; k < 60 && !/data-rwa-skin="paper"/.test(await w.window.getDoc()); k++) await tick();
+    const doc = await w.window.getDoc();
+    check('V3d: re-skin to LIKE applied (paper theme + sk-callout)', /data-rwa-skin="paper"/.test(doc) && /class="sk-callout"/.test(doc));
+    check('V3d: prior preset sk-eyebrow wrapper deterministically GONE', !/class="sk-eyebrow"/.test(doc));
+    check('V3d: still exactly one skin block', (doc.match(/data-rwa-skin=/g) || []).length === 1);
+  }
+
+  // ── V3-f: bridge backend → /skin like unsupported (no commit, clear notice path) ──
+  {
+    const w = await boot('<article>\n<h1>X</h1>\n<p>body</p>\n</article>', { backend: 'bridge' });
+    w.window.fetch = async () => { throw new Error('extractor must not be called on bridge'); };
+    const hB = await histLen(w.uuid);
+    await w.window.applySkinLike('warm vintage print');
+    await tick(); await tick();
+    check('V3f: bridge /skin like made NO commit (unsupported, prose v1)', (await histLen(w.uuid)) - hB === 0);
+    check('V3f: bridge /skin like did not skin the doc', !/data-rwa-skin/.test(await w.window.getDoc()));
+  }
+
+  // ── V3-g: fenced ```json extractor reply is parsed leniently ──
+  {
+    const BODY = '<article>\n<h1>X</h1>\n<p>KICKER body</p>\n</article>';
+    const w = await boot(BODY);
+    w.window.fetch = stubLikeThenEdit(
+      { name: 'fenced', feel: 'f', confidence: 'high', tokens: { accent: '#3366ff', ink: '#111', bg: '#fff', fontUi: 'sans' } },
+      { version: 'rwa-edit/1', edits: [{ find: 'KICKER', replace: '<span class="sk-eyebrow">KICKER</span>' }] },
+      { fence: true });
+    await w.window.applySkinLike('a fenced look');
+    for (let k = 0; k < 60 && !/data-rwa-skin/.test(await w.window.getDoc()); k++) await tick();
+    const doc = await w.window.getDoc();
+    check('V3g: fenced ```json reply parsed → theme applied', /<style data-rwa-skin="fenced">/.test(doc) && /--sk-accent:#3366ff/.test(doc));
+  }
+
+  // ── V3-h: extractor returns no JSON → applySkinLike rejects (no half-skin) ──
+  {
+    const w = await boot('<article>\n<h1>X</h1>\n<p>body</p>\n</article>');
+    w.window.fetch = async () => ({ ok: true, json: async () => ({ choices: [{ message: { role: 'assistant', content: 'Sorry, I cannot.' } }] }) });
+    const hB = await histLen(w.uuid);
+    let rejected = false;
+    await w.window.applySkinLike('something').then(() => {}, () => { rejected = true; });
+    await tick(); await tick();
+    check('V3h: no-JSON extractor reply → applySkinLike rejects', rejected);
+    check('V3h: no-JSON reply made NO commit', (await histLen(w.uuid)) - hB === 0);
   }
 
   console.log(`\n${pass} / ${pass + fail} passing`);
