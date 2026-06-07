@@ -34,8 +34,11 @@ test('CLI RWA_SKIN_L1_PREAMBLE is byte-identical to the seed', () => {
   const i = seed.indexOf(tag);
   assert.ok(i >= 0, 'seed must declare RWA_SKIN_L1_PREAMBLE');
   const vStart = i + tag.length;
-  const vEnd = seed.indexOf('`;\n  const RWA_SKIN_RECIPES', vStart);
-  assert.ok(vEnd >= 0, 'seed RWA_SKIN_L1_PREAMBLE must close into RWA_SKIN_RECIPES');
+  // The preamble's OWN closing backtick — robust to whatever const follows it (v3
+  // inserted RWA_SKIN_GENERIC_RECIPE between the preamble and RWA_SKIN_RECIPES). The
+  // preamble text contains no backticks, so the first `;\n after vStart is its close.
+  const vEnd = seed.indexOf('`;\n', vStart);
+  assert.ok(vEnd >= 0, 'seed RWA_SKIN_L1_PREAMBLE must be a closed template literal');
   const seedPreamble = seed.slice(vStart, vEnd);
   assert.equal(
     RWA_SKIN_L1_PREAMBLE, seedPreamble,
