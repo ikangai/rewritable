@@ -81,6 +81,13 @@ references; charts are hand-rolled SVG/Canvas, data is embedded — so "send the
 they have everything" always holds. Unlike `new`/`import`, `create` is online (it
 calls a model), but its *output* never is.
 
+```sh
+# Clone a public webpage into a rewritable (network-bearing sibling of import)
+npx rwa clone https://www.ikangai.com/some-post/   # → ./some-post.html
+```
+
+`rwa clone <url>` is the online counterpart to `rwa import`: it fetches a public webpage, extracts the main article and title, sanitizes the markup, and bakes it into a fresh container — a blog post becomes an editable, shareable single-file `.html`. Content-only in v1 (the source page's styles aren't cloned; re-style with `rwa skin` or `⌘K`). The fetch is **SSRF-guarded** — `http`/`https` only, private/loopback/link-local/metadata addresses blocked (including via DNS rebinding and redirect re-validation), size-capped, HTML-only. Unlike `new`/`import`, it requires the network.
+
 `rwa new -o` and `rwa import -o` open the resulting file in the default browser. The bootstrap lifts three optional URL params into `sessionStorage` on first paint, then scrubs them from the URL so the values don't sit in browser history. The CLI populates these from environment / `./.env`:
 
 - `OPENROUTER_API_KEY` → `?key=…` (lifted into `rwa_apikey`)
@@ -131,6 +138,15 @@ rwa publish notes.html --json   # {"short":"…","url":"…","expiresAt":…} on
 
 Intentionally online (the offline-first guarantee of `new`/`import` doesn't apply to publishing). `--url` overrides the service base for self-hosted deployments.
 
+For a **durable** share that doesn't expire, `rwa publish-site <file>` is the counterpart to `rwa publish`: it scps the file verbatim onto a static site you control and prints the live URL — same bytes, your own host, no 24h sweep.
+
+```sh
+RWA_SITE_HOST=user@host RWA_SITE_PATH=/var/www/r RWA_SITE_URL=https://example.com/r \
+  rwa publish-site my-doc.html        # → ✓ Published to https://example.com/r/my-doc.html
+```
+
+Config is flags-over-env — `RWA_SITE_HOST` / `RWA_SITE_PATH` / `RWA_SITE_URL`, each overridable by `--host` / `--path` / `--url`. Network-bearing, like `rwa clone`.
+
 ## Editing at a distance (hosted runtime)
 
 Publishing (above) shares an immutable snapshot. The **hosted runtime** is its writable counterpart: a zero-dep service (`service/`, the `/r/` API) that stores a rewritable's canonical bytes and speaks the operations contract over HTTP, so the file can be edited from a chat, a phone, or the web — without dethroning it. The bytes the server holds *are* a rewritable; `GET /r/:id/export` always hands back the real `.html`, byte-for-byte what `⌘S` would write. Hosting adds a remote door onto *modify*; it does not create a second source of truth.
@@ -141,12 +157,20 @@ Publishing (above) shares an immutable snapshot. The **hosted runtime** is its w
 
 This is the foundation under remote-edit surfaces (a Telegram bot, a phone line). Self-host it like the share service — serve `/r/:id` per-subdomain (as `/s/` shares are) so each hosted doc's browser storage is origin-isolated. Design + build notes: [`docs/plans/2026-06-07-hosted-edit-foundation-design.md`](docs/plans/2026-06-07-hosted-edit-foundation-design.md).
 
+## Talking to it from a chat or a phone
+
+The messaging and voice surfaces in `surfaces/` are **adapters onto the one contract** — they reimplement no rewritable logic, they shell out to the `rwa` CLI and (for editing) the hosted runtime above. The file stays canonical; each surface is just another door onto *bootstrap / import / modify / describe / publish*.
+
+- **Telegram bot** ([`surfaces/telegram/`](surfaces/telegram/README.md)) — DM it text, a markdown file, or a document and it replies with a published rewritable (Phase A: create-and-publish, ephemeral 24h share, no backend key needed for the wrap path). Set `RWA_FOUNDATION_URL` and Phase B turns on: the bot creates **editable hosted docs** and edits them **in-chat** — a plain message becomes an edit instruction against the chat's active doc, with `/show` and `/export` (the offline escape hatch). Long-poll, no webhook; shells out to the `rwa` CLI over argument arrays.
+- **Phone (voice spike)** ([`surfaces/phone/`](surfaces/phone/README.md)) — call a number and **talk to one bound hosted rewritable**: ask it questions or speak a change and have it edited, over Twilio's `<Gather speech>` / `<Say>`. A **timeboxed spike** (happy-path only). Gated on Twilio creds + a public URL; the webhook is unauthenticated, so bind only a throwaway/demo doc (HMAC request-signing is the production follow-up).
+
 ## The specs
 
 - [`re-write-able-spec.md`](re-write-able-spec.md) — the container spec: architecture, storage model, agent contract, embedding, security, platform behavior. Currently v0.10.
 - [`rwa-edit-spec.md`](rwa-edit-spec.md) — the anchor-based edit protocol the agent uses to modify documents. Currently rwa-edit/1 (v1.4).
 - [`rwa-edit-dsl-spec.md`](rwa-edit-dsl-spec.md) — the structural-transform DSL layered on rwa-edit/1: a small typed vocabulary (`replace`, `insert`, `delete`, `set_attr`) the runtime compiles to anchor-based edits. Currently rwa-edit-dsl/1 (v0.1).
 - [`docs/specs/rwa-lens-spec.md`](docs/specs/rwa-lens-spec.md) — the lens edit model: a single steerable input with default and anchored states, slash-discriminated content vs. instruction, class-declared locks. Currently rwa-lens/1 (v0.9).
+- [`docs/specs/rwa-operations-api.md`](docs/specs/rwa-operations-api.md) — the surface-agnostic operations contract: the five verbs every surface speaks (`bootstrap / import / modify / describe / publish`) and the three shared wire strings (`rwa-edit/1`, `rwa-edit-dsl/1`, `self-description/1`). The routing index that ties CLI, lens, service, hosted runtime, skill, and the messaging/voice adapters to one contract. Currently v0.1 (draft).
 - [`CHANGELOG.md`](CHANGELOG.md) — release notes.
 
 ## Related

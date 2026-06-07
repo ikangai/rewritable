@@ -2,6 +2,33 @@
 
 Notable changes to `re-write-able`. The container format is versioned in `re-write-able-spec.md`; the edit protocol in `rwa-edit-spec.md`; the structural-transform DSL in `rwa-edit-dsl-spec.md`. The CLI follows semver in `cli/package.json`.
 
+## 2026-06-07 — universal surfaces: clone, publish-site, operations-API, Telegram, phone
+
+A cluster of surface adapters landed on the same day as the hosted-edit foundation (below), all of them new *doors* onto the existing rewritable operations rather than new implementations. The keystone is a spec that names the contract; the rest are thin adapters that route to it.
+
+### operations-API contract (`docs/specs/rwa-operations-api.md`, v0.1 draft)
+
+Names the five operations every rewritable surface speaks — `bootstrap / import / modify / describe / publish` — and fixes the three load-bearing wire strings they share (`rwa-edit/1`, `rwa-edit-dsl/1`, `self-description/1`), baked verbatim in `seeds/rewritable.html` and mirrored in the CLI. A routing index, not a re-statement: it maps operations × surfaces (CLI, in-file lens, service, hosted runtime, skill) to the spec that owns each, so adding a surface collapses from "build a product" to "write a thin adapter." This is the keystone that frames clone / publish-site / Telegram / phone — and the hosted runtime below — as adapters onto one contract. North-star framing: [`docs/plans/2026-06-04-north-star-universal-surfaces.md`](docs/plans/2026-06-04-north-star-universal-surfaces.md).
+
+### `rwa clone <url>` — webpage → rewritable
+
+The network-bearing sibling of `rwa import` (`cli/src/clone.mjs`): fetch a public webpage, extract its main article + title (parser-free), run it through the same `sanitizeImportedHtml` the import path uses, and bake the content into a fresh container with a provenance footer. **Content-only in v1** — the source page's styles are not cloned; the doc renders with the seed's baseline typography. The fetch is **SSRF-guarded** (`http`/`https` only; private/loopback/link-local/metadata addresses blocked, including via DNS rebinding and per-hop redirect re-validation; size-capped; HTML-only). A blocked/failed fetch exits `2` (`file_error`: `blocked_host`, `bad_scheme`, `not_html`, `http_error`) and writes no file; an existing destination exits `2` (`exists`) unless `--force`.
+
+### `rwa publish-site <file>` — durable scp publish
+
+The durable counterpart to `rwa publish`'s ephemeral 24h share (`cli/src/publish-site.mjs`): copy a self-contained rewritable **verbatim** onto a static site over scp and print the live URL — same bytes, your own host, no expiry. **Flags-over-env config** (`RWA_SITE_HOST` / `RWA_SITE_PATH` / `RWA_SITE_URL`, each overridable by `--host` / `--path` / `--url`; nothing baked into the package). Transport is `execFile('scp', [argsArray])` (never a shell string; `--` guards leading-dash paths; absolute local source so scp never mis-reads an embedded `:`). Remote name is `basename` + allowlist (`SAFE_NAME`), closing path-traversal and shell-token injection at one gate. The failure surface mirrors `publish.mjs`: `file_error` (exit 2), `config_error`/`invalid_name` (exit 1), transport (exit 4, labeled `publish_error`). Design: [`docs/plans/2026-06-06-ikangai-custom-publish-design.md`](docs/plans/2026-06-06-ikangai-custom-publish-design.md).
+
+### Telegram bot (`surfaces/telegram/`)
+
+A long-poll Telegram bot that is a **thin adapter over the `rwa` CLI** — no webhook, no rewritable logic of its own, all subprocess calls through `execFile(cmd, [argsArray])` (no shell, ever).
+
+- **Phase A — create & publish.** Send text / a markdown file / a document → it wraps the content into a self-contained page and replies with a shareable link (ephemeral 24h). `/new <prompt>` agent-fills via `rwa create` (gated on a model backend). Hardened: flag-smuggling defense (dash-leading prompts rejected, dash-leading paths neutralized), a 20 MB document cap, per-chat rate limit, no secret leakage. Design: [`docs/plans/2026-06-07-telegram-phase-a-design.md`](docs/plans/2026-06-07-telegram-phase-a-design.md).
+- **Phase B — in-chat editing of hosted rewritables**, gated on **`RWA_FOUNDATION_URL`** (unset ⇒ exactly Phase A; the foundation client is never even constructed). One active hosted doc per chat: `/new` creates and binds an editable doc; a plain message becomes an edit instruction against it; `/show` and `/export` (the canonical `.html`, the offline escape hatch). Capability tokens stored `0600`, never logged. Design: [`docs/plans/2026-06-07-telegram-phase-b-design.md`](docs/plans/2026-06-07-telegram-phase-b-design.md). Tests are fully offline (injected Telegram transport + `execFile`).
+
+### Phone voice spike (`surfaces/phone/`)
+
+A **timeboxed spike** — call a number and **talk to one bound hosted rewritable**: ask it questions or speak a change and have it edited, over Twilio voice (`<Gather input="speech">` / `<Say>`). One webhook POST = one turn; `handleTurn` classifies *ask vs edit* (model judgment, `ask` is the read-only default), then either answers from the doc or runs export → `rwa edit` → `modify` against the hosted-edit foundation (409 `stale_base` retries once). A call never ends in silence. Reuses the telegram surface's foundation client + Phase B `rwaEdit`. **Gated on Twilio creds + a public URL.** Known-deliberate cut: the webhook is **unauthenticated and write-capable** — anyone who knows the URL can POST and edit the bound doc, so **bind only a throwaway/demo doc**; HMAC-validating `X-Twilio-Signature` is the production follow-up. Untrusted text is XML-escaped before TwiML; the body cap is 64 KB. Design: [`docs/plans/2026-06-07-phone-spike-design.md`](docs/plans/2026-06-07-phone-spike-design.md). Pure core unit-tested offline; the http server is read-reviewed.
+
 ## 2026-06-07 — hosted-edit foundation: writable hosted runtime (`/r/`)
 
 A writable hosted runtime in `service/` that stores a rewritable's canonical bytes and exposes the operations contract over HTTP, so a rewritable can be edited *from a distance* — a chat, a phone, the web — without dethroning the file. The bytes the server stores ARE a rewritable; `GET /r/:id/export` always returns the real `.html`, byte-for-byte what `⌘S` would write. Hosting adds a remote door onto *modify*; it does not create a second source of truth. This is the foundation under every remote-*edit* surface (Telegram Phase B, the phone spike).
