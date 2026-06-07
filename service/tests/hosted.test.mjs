@@ -194,11 +194,11 @@ function freePort() {
 }
 
 // Start server.js as a child on a concrete ephemeral port with a temp DATA_DIR.
-async function startServer() {
+async function startServer(extraEnv = {}) {
   const dataDir = mkdtempSync(join(tmpdir(), 'rwa-hosted-srv-'));
   const port = await freePort();
   const child = spawn('node', [join(SERVICE, 'server.js')], {
-    env: { ...process.env, PORT: String(port), RWA_DATA_DIR: dataDir },
+    env: { ...process.env, PORT: String(port), RWA_DATA_DIR: dataDir, ...extraEnv },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   await new Promise((resolve, reject) => {
@@ -1328,6 +1328,95 @@ test('per-token rate limit: the N+1th /modify within the window → 429 rate_lim
   }
 });
 
+// ─── Document size cap (MAX_DOC) — enforced server-side ──────────────────────
+//
+// WHY these matter (Rule 9): the vendored apply pipeline only COMMENTS the
+// MAX_DOC cap (a CLI scope-down), so without a server-side gate an authorized
+// token-holder could grow a hosted doc to the 25MB body cap (× unbounded undo
+// pre-images). The build-design claims "size caps hold server-side"; these tests
+// make that TRUE. The cap is enforced on the LF-canonical editable body at the
+// SAME bound the seed uses in-page (RWA_EDIT.MAX_DOC), so hosted == substrate.
+// Both doors are gated: /modify (post-apply, before any commit) and ingest.
+// RWA_HOSTED_MAX_DOC lets the test trip the cap without a 1MiB request (same
+// pattern as the rate-limit test's RWA_MODIFY_RATE_LIMIT).
+
+test('/modify whose result would exceed MAX_DOC → 422 target_size_exceeded, NO write', async () => {
+  // Small cap so a single edit can overshoot it. MODIFY_BODY is ~73 chars; the
+  // cap is set just above it, and the edit grows the body well past the cap.
+  const CAP = 120;
+  const srv = await startServer({ RWA_HOSTED_MAX_DOC: String(CAP) });
+  try {
+    const { id, token, doc, baseHash } = await createAndRead(srv.base, MODIFY_RWA);
+    assert.ok(doc.length <= CAP, 'precondition: the starting body is within the cap');
+
+    const huge = 'X'.repeat(CAP * 2); // pushes the body well over the cap
+    const res = await postModify(srv.base, id, token, {
+      envelope: { version: 'rwa-edit/1', edits: [{ find: 'Old Title', replace: huge }] },
+      baseHash,
+    });
+    assert.equal(res.status, 422, 'an over-cap result is a 422 (same status apply-failures use)');
+    assert.equal((await res.json()).error, 'target_size_exceeded',
+      'the error code matches the seed RwaEditError("target_size_exceeded")');
+
+    // NO write: /export still shows the original body, unchanged.
+    const exported = await (await fetch(`${srv.base}/r/${id}/export`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })).text();
+    assert.ok(exported.includes('Old Title'), 'over-cap modify left the bytes UNCHANGED');
+    assert.ok(!exported.includes(huge), 'the oversized body was never committed');
+
+    // NO history record, NO undo pre-image (the cap rejects BEFORE either).
+    assert.ok(!existsSync(join(srv.dataDir, 'r', id, 'history.jsonl')),
+      'a cap-rejected modify writes no history');
+    const docRes = await fetch(`${srv.base}/r/${id}/doc`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    assert.equal((await docRes.json()).baseHash, baseHash, '/doc baseHash unchanged (no commit)');
+  } finally {
+    await srv.stop();
+  }
+});
+
+test('/modify still applies when the result stays within MAX_DOC (cap is a ceiling, not a block)', async () => {
+  // Same small cap; a short edit that keeps the body within it must still apply —
+  // proving the cap rejects only OVER-cap results, not all writes.
+  const srv = await startServer({ RWA_HOSTED_MAX_DOC: '4000' });
+  try {
+    const { id, token, baseHash } = await createAndRead(srv.base, MODIFY_RWA);
+    const res = await postModify(srv.base, id, token, {
+      envelope: SIMPLE_EDIT, baseHash, actor: 'web:test',
+    });
+    assert.equal(res.status, 200, 'a within-cap edit still applies');
+    assert.ok((await res.json()).doc.includes('New Title'));
+  } finally {
+    await srv.stop();
+  }
+});
+
+test('ingest (POST /r) of a container whose body already exceeds MAX_DOC → 400 target_size_exceeded', async () => {
+  const CAP = 200;
+  const srv = await startServer({ RWA_HOSTED_MAX_DOC: String(CAP) });
+  try {
+    // A valid rewritable whose editable body is over the cap on its own.
+    const bigBody = '<article><h1>Big</h1><p>' + 'Y'.repeat(CAP * 2) + '</p></article>';
+    const oversized = makeRewritable('44444444-4444-4444-8444-444444444444', bigBody);
+    const res = await fetch(srv.base + '/r', {
+      method: 'POST', headers: { 'Content-Type': 'text/html' }, body: oversized,
+    });
+    assert.equal(res.status, 400, 'an oversized ingest is rejected (so the doc is never un-editable)');
+    assert.equal((await res.json()).error, 'target_size_exceeded');
+
+    // A within-cap rewritable still ingests fine (the gate is a ceiling).
+    const ok = await fetch(srv.base + '/r', {
+      method: 'POST', headers: { 'Content-Type': 'text/html' },
+      body: makeRewritable('55555555-5555-4555-8555-555555555555'),
+    });
+    assert.equal(ok.status, 200, 'a within-cap container ingests normally');
+  } finally {
+    await srv.stop();
+  }
+});
+
 // ─── 3. Task 6: GET /r/:id — the LIVE EDITABLE web projection ────────────────
 //
 // WHY these matter (Rule 9): GET /r/:id is the user-facing door. It serves the
@@ -1359,6 +1448,9 @@ test('GET /r/:id serves current.html with the shim injected BEFORE the bootstrap
     const res = await fetch(`${srv.base}/r/${id}`);
     assert.equal(res.status, 200, 'GET /r/:id → 200');
     assert.match(res.headers.get('content-type') || '', /text\/html/);
+    // noindex: a leaked unguessable id must not get crawler-indexed.
+    assert.match(res.headers.get('x-robots-tag') || '', /noindex/,
+      'the hosted projection is served noindex');
     const html = await res.text();
 
     // The shim <script> must appear, and STRICTLY BEFORE the bootstrap so it runs

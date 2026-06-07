@@ -299,6 +299,16 @@ function checkRateLimit(ip) {
 const MODIFY_RATE_LIMIT = Number(process.env.RWA_MODIFY_RATE_LIMIT) || 60;
 const modifyRateBuckets = new Map();
 
+// Server-side document size cap. The vendored apply pipeline (cli/src parity)
+// only COMMENTS the MAX_DOC cap (a CLI scope-down), so an authorized token-holder
+// could otherwise grow a hosted doc to the 25MB body cap. We enforce it here so
+// hosted bounds == substrate bounds: the seed's RWA_EDIT.MAX_DOC (1MiB) on the
+// LF-canonical editable body, both on /modify (post-apply) and at ingest. The
+// rejection code matches the seed's RwaEditError('target_size_exceeded').
+// Overridable via RWA_HOSTED_MAX_DOC so a test can trip the cap without a 1MiB
+// request (same pattern as RWA_MODIFY_RATE_LIMIT above).
+const HOSTED_MAX_DOC = Number(process.env.RWA_HOSTED_MAX_DOC) || (1024 * 1024);
+
 function checkModifyRateLimit(capHash) {
   const now = Date.now();
   let bucket = modifyRateBuckets.get(capHash);
@@ -503,9 +513,23 @@ async function handleHostedCreate(req, send) {
     return sendJson(send, 400, { error: 'read_failed' });
   }
 
+  // Reject a container whose editable body already exceeds MAX_DOC, so you can't
+  // seed an oversized doc the cap would then forbid editing. Measured on the
+  // LF-canonical body via the vendored extractInlineDoc (same backtick-walk the
+  // apply path uses). A non-rewritable / extractor failure falls through to
+  // hosted.ingest's own validation (which returns 400 not_a_rewritable).
+  const bytesStr = buf.toString('utf8');
+  try {
+    const { extractInlineDoc } = await import('./lib/seed.mjs');
+    const body = hosted.canonLF(extractInlineDoc(bytesStr));
+    if (body.length > HOSTED_MAX_DOC) {
+      return sendJson(send, 400, { error: 'target_size_exceeded' });
+    }
+  } catch { /* not extractable here → ingest's validation surfaces the real error */ }
+
   let id, token;
   try {
-    ({ id, token } = hosted.ingest(buf.toString('utf8'), { dataDir: DATA_DIR }));
+    ({ id, token } = hosted.ingest(bytesStr, { dataDir: DATA_DIR }));
   } catch (err) {
     if (err && err.code === 'not_a_rewritable') {
       return sendJson(send, 400, { error: 'not_a_rewritable' });
@@ -733,6 +757,16 @@ async function handleHostedModify(id, req, send) {
       return sendJson(send, 500, { error: 'internal_error' });
     }
     const resultHash = hosted.sha256hex(newBody);
+
+    // Server-side document size cap (the vendored apply only comments it). If the
+    // edited body would exceed MAX_DOC, reject with the SAME status apply-failures
+    // use (422) and the seed's error code — BEFORE any history/undo/commit — and
+    // delete the temp so current.html is untouched. This makes hosted bounds ==
+    // substrate bounds (the seed enforces the same cap in-page).
+    if (newBody.length > HOSTED_MAX_DOC) {
+      try { fs.unlinkSync(tmpPath); } catch { /* best-effort */ }
+      return sendJson(send, 422, { error: 'target_size_exceeded' });
+    }
 
     // Forward audit record (the rwa_hist mirror). `kind` is the RESERVED
     // cross-surface vocabulary (edit_batch / replace_document, CLAUDE.md
@@ -982,7 +1016,13 @@ function handleHostedProjection(id, send) {
   const out = bytes.slice(0, at) + shim + bytes.slice(at);
 
   hosted.touchAccess(id, { dataDir: DATA_DIR }, rec.owner);
-  return send(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' }, out);
+  // noindex: a hosted projection is reachable by its unguessable id; keep a leaked
+  // id out of search indexes (the editing token still rides the URL fragment).
+  return send(200, {
+    'Content-Type': 'text/html; charset=utf-8',
+    'Cache-Control': 'no-store',
+    'X-Robots-Tag': 'noindex',
+  }, out);
 }
 
 function contentTypeFor(name) {

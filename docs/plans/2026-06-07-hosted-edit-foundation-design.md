@@ -123,6 +123,28 @@ come, the `owner` check is the one thing that changes). **Security obligations t
 follow from this choice:** tokens must be high-entropy + constant-time compared +
 never logged; support rotation + (optional) expiry; rate-limit per capability.
 
+### Security — origin isolation (DEPLOY GATE)
+
+**Hosted `/r/:id` MUST be served per-subdomain in production** — same pattern as
+`/s/` shares: `<id>.r.rewritable.ikangai.com` (or similar), with a matching Traefik
+`HostRegexp` route + the existing wildcard cert. This is a **deploy-gate
+requirement**, not optional hardening.
+
+Why: the v1 foundation serves the projection path-keyed on the APEX origin
+(`/r/:id`). All hosted projections then share ONE origin's `sessionStorage` +
+IndexedDB — and hosted bytes can contain arbitrary interactive `<script>` (anyone
+can `POST /r`). So a victim who opens a malicious `/r/A` in the same tab session as
+a legitimate `/r/B` exposes B's capability token (the shim stores it in
+`sessionStorage["rwa_hosted_token_<id>"]`) to A's script. `/s/` shares avoid this
+precisely because each gets its own per-subdomain origin, where the browser's
+same-origin policy isolates per-doc storage.
+
+The risk is narrow (it needs the same tab session AND the victim opening a hostile
+hosted doc), but real. Until the per-subdomain deploy lands, the interim mitigation
+is capability-token **rotation** (`POST /r/:id/rotate`); the durable fix is
+origin isolation. Serve `/r/:id` per-subdomain before exposing it to untrusted
+ingest at scale.
+
 ## Sequencing once the decision lands
 
 1. Foundation build (Thread 4): the three endpoints + store + the chosen owner-check,
