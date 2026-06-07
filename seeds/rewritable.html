@@ -2738,17 +2738,127 @@ if (typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent)) {
     const i = doc.indexOf(m[0]);
     return doc.slice(0, i) + theme + doc.slice(i + m[0].length);
   }
+  // deskinDoc — deterministically strip a PRIOR skin so a re-skin/reset starts clean,
+  // regardless of model compliance (closes the v2 best-effort de-skin limitation):
+  //   1. remove the <style data-rwa-skin> block; 2. balanced-tag UNWRAP pure sk-*
+  //   div/span wrappers (keep inner — handles nesting like sk-stat-row > sk-stat);
+  //   3. strip sk-* tokens from mixed class attrs. Parser-free, idempotent, byte-exact
+  //   for non-sk content. applySkinL1 runs the agent on deskinDoc(cur); resetSkin
+  //   commits deskinDoc(doc). (Stat-tile recipes split text, so their unwrap joins it —
+  //   a known minor lossiness, far better than orphan-wrapper accumulation.)
+  const SK_TOKEN_RE = /^sk-[a-z][a-z0-9-]*$/;
+  const isSkToken = (tok) => SK_TOKEN_RE.test(tok);
+  function readClassAttr(tagInner) {
+    const m = /(^|\s)class\s*=\s*("([^"]*)"|'([^']*)')/i.exec(tagInner);
+    if (!m) return null;
+    return m[3] !== undefined ? m[3] : m[4];
+  }
+  function classIsPureSk(classValue) {
+    const toks = classValue.trim().split(/\s+/).filter(Boolean);
+    return toks.length > 0 && toks.every(isSkToken);
+  }
+  // quote-aware: a `>` inside a quoted attr value is skipped. Returns index past `>`.
+  function skEndOfTag(s, lt) {
+    let quote = null;
+    for (let i = lt + 1; i < s.length; i++) {
+      const c = s[i];
+      if (quote) { if (c === quote) quote = null; }
+      else if (c === '"' || c === "'") quote = c;
+      else if (c === '>') return i + 1;
+    }
+    return -1;
+  }
+  function skReadTagName(s, start) {
+    let i = start, name = '';
+    while (i < s.length) {
+      const c = s[i];
+      if (/[a-zA-Z0-9]/.test(c) || c === '-' || c === ':') { name += c; i++; } else break;
+    }
+    return name === '' ? null : name;
+  }
+  // balanced same-name close, accounting for nested same-name opens.
+  function skFindMatchingClose(s, openTagEnd, tag) {
+    let depth = 1, i = openTagEnd;
+    const tlc = tag.toLowerCase();
+    while (i < s.length) {
+      const lt = s.indexOf('<', i);
+      if (lt === -1) return null;
+      const after = s[lt + 1];
+      if (after === '/') {
+        const name = skReadTagName(s, lt + 2);
+        const tagEnd = skEndOfTag(s, lt);
+        if (tagEnd === -1) return null;
+        if (name !== null && name.toLowerCase() === tlc) { depth--; if (depth === 0) return { closeStart: lt, closeEnd: tagEnd }; }
+        i = tagEnd;
+      } else if (after === '!') {
+        if (s.startsWith('<!--', lt)) { const ce = s.indexOf('-->', lt + 4); i = ce === -1 ? s.length : ce + 3; }
+        else { const tagEnd = skEndOfTag(s, lt); i = tagEnd === -1 ? s.length : tagEnd; }
+      } else {
+        const name = skReadTagName(s, lt + 1);
+        const tagEnd = skEndOfTag(s, lt);
+        if (tagEnd === -1) return null;
+        if (name !== null && name.toLowerCase() === tlc) depth++;
+        i = tagEnd;
+      }
+    }
+    return null;
+  }
+  function unwrapPureSkWrappers(doc) {
+    let s = doc, i = 0;
+    while (i < s.length) {
+      const lt = s.indexOf('<', i);
+      if (lt === -1) break;
+      const after = s[lt + 1];
+      if (after === '/' || after === '!' || after === '?') {
+        if (s.startsWith('<!--', lt)) { const ce = s.indexOf('-->', lt + 4); i = ce === -1 ? s.length : ce + 3; }
+        else { const te = skEndOfTag(s, lt); i = te === -1 ? s.length : te; }
+        continue;
+      }
+      const name = skReadTagName(s, lt + 1);
+      const tagEnd = skEndOfTag(s, lt);
+      if (name === null || tagEnd === -1) { i = lt + 1; continue; }
+      const lname = name.toLowerCase();
+      if (lname === 'div' || lname === 'span') {
+        const tagInner = s.slice(lt + 1 + name.length, tagEnd - 1);
+        const classValue = readClassAttr(tagInner);
+        if (classValue !== null && classIsPureSk(classValue)) {
+          const match = skFindMatchingClose(s, tagEnd, lname);
+          if (match) {
+            s = s.slice(0, lt) + s.slice(tagEnd, match.closeStart) + s.slice(match.closeEnd);
+            i = lt; // restart at exposed inner (may begin with a nested wrapper)
+            continue;
+          }
+        }
+      }
+      i = tagEnd;
+    }
+    return s;
+  }
+  function stripSkClassTokens(doc) {
+    return doc.replace(/(\s*)class\s*=\s*("([^"]*)"|'([^']*)')/gi, (full, lead, quoted, dq, sq) => {
+      const quoteChar = dq !== undefined ? '"' : "'";
+      const value = dq !== undefined ? dq : sq;
+      const kept = value.split(/\s+/).filter(Boolean).filter((t) => !isSkToken(t));
+      return kept.length === 0 ? '' : lead + 'class=' + quoteChar + kept.join(' ') + quoteChar;
+    });
+  }
+  function deskinDoc(doc) {
+    if (typeof doc !== 'string') return doc;
+    let s = doc.replace(RWA_SKIN_BLOCK_TRAIL_RE, '');
+    s = unwrapPureSkWrappers(s);
+    s = stripSkClassTokens(s);
+    return s;
+  }
   // RWA_SKIN_RECIPES — per-preset L1 restyle instructions (skinning-v2). SEED-ONLY:
   // the CLI skin path is theme-only (offline, no agent), so these are NOT mirrored to
   // cli/src/skins.mjs (only RWA_SKINS name/label/swatch/theme is byte-pinned). Every
   // recipe is additive-only + 1:1-invertible (wrap + add class, never re-tag/move/
   // merge) so de-skin is a clean sk-* strip and data-rwa-id is never renumbered.
-  // LIMITATION (v2): re-skin de-skinning is best-effort — the preamble instructs the
-  // agent to strip a prior skin's sk-* wrappers first, but a non-compliant model may
-  // leave orphan wrappers (unstyled, though a block-level orphan still imposes layout),
-  // and they accumulate across re-skins. Mitigations: ⌘Z reverts a skin in one step;
-  // /skin reset removes the theme block. A deterministic strip pre-pass is deferred
-  // (needs balanced-tag unwrap — regex is unsafe for nested wrappers like sk-stat-row).
+  // The preamble still asks the agent to strip a prior skin's sk-* wrappers, but it is
+  // no longer load-bearing: applySkinL1 runs deskinDoc() on the base FIRST, so a re-skin
+  // is deterministically clean regardless of model compliance (no orphan-wrapper
+  // accumulation). The one residual loss: stat-tile recipes split text, so deskinDoc's
+  // unwrap joins it back (e.g. "42 commits" → tiles → "42commits") — minor, documented.
   const RWA_SKIN_L1_PREAMBLE =
 `Apply a visual restyle to this document by adding sk-* class hooks and additive wrapper elements. STRICT RULES: only ADD wrapper <div>/<span> elements and ADD class attributes; never delete, move, merge, reorder, re-tag, or rewrite existing content; never change any data-rwa-id; never add <style> or <script>; never touch frozen zones. If the document already contains sk-* wrappers or sk-* classes from a previous skin, first remove those wrappers (keeping their inner content) and strip the sk-* classes, then apply the restyle below. Use apply_edits with surgical (find,replace) pairs.
 
@@ -2790,9 +2900,8 @@ Restyle:
   }
   async function resetSkin() {
     const doc = await getDoc();
-    const m = doc.match(RWA_SKIN_BLOCK_RE);
-    if (!m) { if (typeof showAffordance === 'function') showAffordance('no skin to reset'); return; }
-    const newDoc = doc.replace(RWA_SKIN_BLOCK_TRAIL_RE, '');
+    const newDoc = deskinDoc(doc);   // removes the theme block AND any sk-* wrappers
+    if (newDoc === doc) { if (typeof showAffordance === 'function') showAffordance('no skin to reset'); return; }
     await runtimeApplyEnvelope({ version: 'rwa-edit/1', doc: newDoc, reason: 'skin:reset' }, { surface: 'skin:reset', actor: 'skin:reset' });
     if (typeof showAffordance === 'function') showAffordance('skin removed');
   }
@@ -2809,14 +2918,19 @@ Restyle:
         showAffordance('skin: theme-only (L1 restyle needs openrouter/ollama/lmstudio)');
       return applySkin(name);
     }
-    // compose-then-commit: drive the agent with the preset recipe (no-commit), then
-    // splice this preset's deterministic theme block onto the result and commit ONCE
-    // (one ⌘Z reverts theme + wrappers); the commit self-attributes actor:skin:NAME.
+    // compose-then-commit: deterministically de-skin any PRIOR skin first (so re-skin
+    // starts clean regardless of model compliance), drive the agent on that clean base
+    // with the preset recipe (no-commit), splice this preset's theme block onto the
+    // result, and commit ONCE against the ORIGINAL doc (one ⌘Z reverts to the prior
+    // skin). The commit self-attributes actor:skin:NAME.
+    const original = canonLF(await getDoc());
+    const cleanBase = deskinDoc(original);
     await modify(recipe, { surface: 'skin:l1', actor: 'skin:' + name }, {
       compose: { transform: (agentDoc) => spliceSkinBlock(agentDoc, skin.theme), reason: 'skin:' + name + ' (theme+L1)' },
+      baseDoc: cleanBase, commitBase: original,
     });
   }
-  window.applySkin = applySkin; window.resetSkin = resetSkin; window.applySkinL1 = applySkinL1;
+  window.applySkin = applySkin; window.resetSkin = resetSkin; window.applySkinL1 = applySkinL1; window.deskinDoc = deskinDoc;
   // The ✦ gallery: a runtime-chrome panel (frozen bootstrap, never INLINE_DOC).
   // Each swatch is a pure-CSS mini-preview built from the preset's 3-stop swatch
   // (bg / ink / accent) — no images, no fetch to build the preview. A click
@@ -4901,7 +5015,9 @@ async function modify(instr, lensMeta = null, opts = null) {
   setLensProgress('thinking', 'Thinking…');
 
   try {
-    const cur = canonLF(await getDoc());
+    // compose callers (applySkinL1) may pass an explicit baseDoc — the deterministically
+    // de-skinned base the agent should restyle, so a re-skin starts clean. Defaults to getDoc().
+    const cur = canonLF((opts && opts.baseDoc != null) ? opts.baseDoc : await getDoc());
     const frozenZones = extractFrozenZones(cur);
 
     const messages = [
@@ -5017,8 +5133,11 @@ async function modify(instr, lensMeta = null, opts = null) {
     if (opts && opts.compose) {
       const base = (newDoc !== null) ? newDoc : cur;
       const finalDoc = opts.compose.transform(base, cur);
+      // commitBase = the ORIGINAL (pre-deskin) doc, so one ⌘Z reverts to the prior
+      // skin rather than to the deskinned base. Defaults to cur when not overridden.
+      const commitBase = (opts.commitBase != null) ? canonLF(opts.commitBase) : cur;
       newDoc = await replaceDocument(
-        { version: 'rwa-edit/1', doc: finalDoc, reason: opts.compose.reason }, cur, lensMeta);
+        { version: 'rwa-edit/1', doc: finalDoc, reason: opts.compose.reason }, commitBase, lensMeta);
     }
 
     if (newDoc !== null) {

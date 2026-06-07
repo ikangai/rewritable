@@ -289,6 +289,48 @@ const undoLen = async (uuid) => ((await readStore(uuid, 'rwa_undo')) || []).leng
     check('T-HIGH: failed skin did NOT half-apply (no theme block committed)', !/data-rwa-skin/.test(await w.window.getDoc()));
   }
 
+  // ── D1: deterministic de-skin — deskinDoc unwraps prior sk-* cruft ──
+  {
+    const w = await boot('<article><h1>x</h1></article>');
+    check('D1: deskinDoc exposed', typeof w.window.deskinDoc === 'function');
+    if (typeof w.window.deskinDoc === 'function') {
+      const dk = w.window.deskinDoc;
+      check('D1: unwraps a pure sk-* wrapper', dk('<div class="sk-hero"><h1>T</h1></div>') === '<h1>T</h1>');
+      check('D1: strips sk-* token from a mixed class', dk('<p class="foo sk-byline">b</p>') === '<p class="foo">b</p>');
+      check('D1: nested unwrap', dk('<div class="sk-stat-row"><div class="sk-stat"><b>9</b></div></div>') === '<b>9</b>');
+      check('D1: removes the theme block', !/data-rwa-skin/.test(dk('<style data-rwa-skin="x">.a{}</style>\n<p>k</p>')));
+      check('D1: non-sk doc passthrough', dk('<div class="content"><p>plain</p></div>') === '<div class="content"><p>plain</p></div>');
+    }
+  }
+
+  // ── D1b: re-skin starts from a deterministically clean base (orphans can't survive) ──
+  {
+    const w = await boot('<article>\n<h1>Q</h1>\n<p>ANCHX line</p>\n</article>');
+    w.window.fetch = stubToolCall({ version: 'rwa-edit/1', edits: [{ find: 'ANCHX', replace: '<span class="sk-eyebrow">ANCHX</span>' }] });
+    await w.window.applySkinL1('linear-dark'); await tick(); await tick();
+    check('D1b: skin A added sk-eyebrow', /class="sk-eyebrow"/.test(await w.window.getDoc()));
+    // skin B: agent adds sk-callout but does NOT strip the prior sk-eyebrow (non-compliant model)
+    w.window.fetch = stubToolCall({ version: 'rwa-edit/1', edits: [{ find: 'ANCHX', replace: '<div class="sk-callout">ANCHX</div>' }] });
+    await w.window.applySkinL1('notion-clean'); await tick(); await tick();
+    const doc = await w.window.getDoc();
+    check('D1b: re-skin to B applied (notion-clean theme + sk-callout)', /data-rwa-skin="notion-clean"/.test(doc) && /class="sk-callout"/.test(doc));
+    check('D1b: prior skin-A sk-eyebrow wrapper deterministically GONE', !/class="sk-eyebrow"/.test(doc));
+    check('D1b: still exactly one skin block', (doc.match(/data-rwa-skin=/g) || []).length === 1);
+  }
+
+  // ── D1c: reset clears the sk-* wrappers too (not just the theme block) ──
+  {
+    const w = await boot('<article>\n<h1>Q</h1>\n<p>ANCHY line</p>\n</article>');
+    w.window.fetch = stubToolCall({ version: 'rwa-edit/1', edits: [{ find: 'ANCHY', replace: '<span class="sk-eyebrow">ANCHY</span>' }] });
+    await w.window.applySkinL1('linear-dark'); await tick(); await tick();
+    const pre = await w.window.getDoc();
+    check('D1c: pre-reset has theme + wrapper', /data-rwa-skin/.test(pre) && /sk-eyebrow/.test(pre));
+    await w.window.resetSkin(); await tick(); await tick();
+    const doc = await w.window.getDoc();
+    check('D1c: reset removed the theme block', !/data-rwa-skin/.test(doc));
+    check('D1c: reset ALSO removed the sk-* wrapper', !/sk-eyebrow/.test(doc));
+  }
+
   console.log(`\n${pass} / ${pass + fail} passing`);
   process.exit(fail ? 1 : 0);
 })().catch(e => { console.error(e); process.exit(1); });
