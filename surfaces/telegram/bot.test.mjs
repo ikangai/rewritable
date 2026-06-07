@@ -795,6 +795,39 @@ test('/export with NO active binding → "no active doc", no exportDoc', async (
   assert.match(api.calls.sendMessage[0].text, /no active doc|send something/i);
 });
 
+// WHY: a /show against a swept (404) doc must route through handleFoundationError
+// like the edit path does — NOT fall to the generic top-level catch. A 404 clears
+// the dead binding so the user can /new instead of looping on a gone id. (Mirrors
+// the EDIT-path 404 assertions.)
+test('/show describe 404 → state.clear(chatId) + friendly "no longer exists"', async () => {
+  const state = makeFakeState({ id: 'doc1', token: TOKEN, url: URL });
+  const foundation = makeFakeFoundation({ describe: new FoundationError('not_found', { status: 404 }) });
+  const { deps, api } = makeDepsB({ state, foundation });
+  await handleUpdate(textUpdateFrom('/show'), deps);
+  assert.deepEqual(state.calls.clear, ['42']);
+  assert.match(api.calls.sendMessage[0].text, /no longer exists|gone/i);
+});
+
+// WHY: same divergence on /export — a 404 on exportDoc must clear the binding,
+// not produce the generic top-level "something went wrong".
+test('/export exportDoc 404 → state.clear(chatId) + friendly "no longer exists"', async () => {
+  const state = makeFakeState({ id: 'doc1', token: TOKEN, url: URL });
+  const foundation = makeFakeFoundation({ exportDoc: new FoundationError('not_found', { status: 404 }) });
+  const { deps, api } = makeDepsB({ state, foundation });
+  await handleUpdate(textUpdateFrom('/export'), deps);
+  assert.deepEqual(state.calls.clear, ['42']);
+  assert.match(api.calls.sendMessage[0].text, /no longer exists|gone/i);
+});
+
+// WHY: 401 on /show is friendly ("edit link expired"), not the generic catch.
+test('/show describe 401 → "edit link expired"-style friendly reply', async () => {
+  const state = makeFakeState({ id: 'doc1', token: TOKEN, url: URL });
+  const foundation = makeFakeFoundation({ describe: new FoundationError('unauthorized', { status: 401 }) });
+  const { deps, api } = makeDepsB({ state, foundation });
+  await handleUpdate(textUpdateFrom('/show'), deps);
+  assert.match(api.calls.sendMessage[0].text, /expired|link/i);
+});
+
 // ── rate-limit on the Phase B work paths ─────────────────────────────────────
 test('Phase B rate-limited create → slow-down, no build / no createDoc', async () => {
   const { deps, api, exec, foundation } = makeDepsB({ rateLimit: () => false });

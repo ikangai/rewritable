@@ -2,9 +2,10 @@
 //
 // `handleUpdate(update, deps)` is PURE DISPATCH over injected deps so it is fully
 // offline-testable: it never touches the network, disk, env, clock, or RNG
-// directly — every effect is a seam in `deps`. The poll loop + `main()` wiring
-// (the real `writeTemp`/`rateLimit`/transport) live in the NEXT task; this file
-// is dispatch + the constants/helpers it needs only.
+// directly — every effect is a seam in `deps`. This is the full bot: dispatch
+// (`handleUpdate` + the Phase A/B dispatchers), the long-poll loop (`runPoll`),
+// and the real-dependency `main()` wiring (the real `writeTemp`/`rateLimit`/
+// transport) — guarded so importing for tests does not start polling.
 //
 // Two honesty disciplines run through this file (Rule 12):
 //   - FRIENDLY user-side, HONEST host-side: a CLI failure shows the user a
@@ -306,7 +307,13 @@ async function dispatchPhaseB(message, chatId, deps) {
       await api.sendMessage(chatId, 'no active doc — send me something to create one.');
       return;
     }
-    const sd = await foundation.describe(binding.id, binding.token);
+    let sd;
+    try {
+      sd = await foundation.describe(binding.id, binding.token);
+    } catch (err) {
+      await handleFoundationError(err, chatId, deps, { stage: 'show' });
+      return;
+    }
     const title = (sd && sd.title) ? sd.title : '(untitled)';
     await api.sendMessage(chatId, `${title}\n${binding.url}`);
     return;
@@ -322,7 +329,13 @@ async function dispatchPhaseB(message, chatId, deps) {
       await api.sendMessage(chatId, 'no active doc — send me something to create one.');
       return;
     }
-    const bytes = await foundation.exportDoc(binding.id, binding.token);
+    let bytes;
+    try {
+      bytes = await foundation.exportDoc(binding.id, binding.token);
+    } catch (err) {
+      await handleFoundationError(err, chatId, deps, { stage: 'export' });
+      return;
+    }
     if (typeof api.sendDocument === 'function') {
       await api.sendDocument(chatId, bytes, 'page.html');
     } else {
