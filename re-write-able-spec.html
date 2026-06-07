@@ -4631,6 +4631,20 @@ window.injectMissingBlockIds = injectMissingBlockIds; // expose for tests
 // before the transaction (modifyMutex prevents concurrent writes). The
 // transaction itself only writes — three put()s, all atomic.
 async function commitDoc(currentDoc, newDoc, histRecord) {
+  // Hosted projection seam: when a commit sink is installed, the SERVER is the
+  // authoritative apply path. Reconstruct the rwa-edit/1 envelope, hand it to the
+  // sink (which POSTs it and returns the server's canonical new doc), and mirror
+  // that locally so getDoc()/reload stay consistent with the server. NO local
+  // rwa_undo/rwa_hist write — history is server-side in hosted mode. Unset → the
+  // existing transaction below runs byte-identically (additive, guarded).
+  if (typeof window.__rwaCommitSink === 'function') {
+    const envelope = histRecord.kind === 'edit_batch'
+      ? histRecord.envelope
+      : { version: 'rwa-edit/1', doc: newDoc, reason: histRecord.reason };
+    const serverDoc = await window.__rwaCommitSink(envelope, histRecord, currentDoc);
+    await idbPut(RWA.DOC, serverDoc);
+    return serverDoc;
+  }
   // Web-citizen: backfill data-rwa-id on any anchorable block the agent
   // produced without one. Pure-attribute injection outside frozen zones; the
   // shape/balance checks the caller already ran remain valid (no tags added
