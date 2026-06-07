@@ -193,3 +193,53 @@ export async function rwaCreatePublish(prompt, deps = {}) {
     await rm(dir);
   }
 }
+
+/**
+ * Edit path: apply an agent edit to a caller-owned temp container IN PLACE, then
+ * read the new LF-canonical body back.
+ *
+ * `rwa edit <filePath> <instruction>` then `rwa doc <filePath>`. Unlike the two
+ * publish paths, rwaEdit makes NO temp dir of its own and NEVER deletes
+ * `filePath` — the caller (the foundation/Phase-B flow) exports the hosted doc to
+ * the temp, owns it, and cleans it up.
+ *
+ * SECURITY — flag-smuggling wall FIRST: the instruction is raw Telegram text, so
+ * a leading-dash instruction (e.g. `--api-key`/`--base-url`) could be read by
+ * `rwa edit`'s flag parser and redirect the agent backend (credential-exfil).
+ * Reject it as DATA before spawning anything. A mid-token dash is safe (the whole
+ * instruction is one argv element that does not start with `-`). See the SECURITY
+ * note at the top of this file.
+ *
+ * @param {string} filePath     caller-owned temp container — passed as ONE argv element, never deleted here.
+ * @param {string} instruction  attacker-controlled — passed as ONE argv element.
+ * @param {{execFile?:Function, rwaCmd?:Function, env?:object}} [deps]
+ * @returns {Promise<{ok:true,doc:string}|{ok:false,code:'bad_instruction'}|{ok:false,step:'edit'|'doc',code:any,stderr:string}>}
+ */
+export async function rwaEdit(filePath, instruction, deps = {}) {
+  // The flag-smuggling wall FIRST — before any subprocess. A leading-dash
+  // instruction is rejected as data (the caller maps `bad_instruction` to a
+  // friendly "start with a word, not a dash").
+  if (looksLikeFlag(instruction)) {
+    return { ok: false, code: 'bad_instruction' };
+  }
+
+  const execFile = deps.execFile || defaultExecFile;
+  const { cmd, baseArgs } = (deps.rwaCmd || resolveRwaCmd)(deps.env || process.env);
+
+  // 1) Apply the edit in place on the caller-owned temp container.
+  try {
+    await execFile(cmd, [...baseArgs, 'edit', filePath, instruction], {});
+  } catch (err) {
+    return failure('edit', err);
+  }
+
+  // 2) Read the new LF-canonical body back. `rwa doc` plain mode prints the body
+  // (± one trailing newline); return stdout as-is — the caller canonicalizes.
+  let out;
+  try {
+    out = await execFile(cmd, [...baseArgs, 'doc', filePath], {});
+  } catch (err) {
+    return failure('doc', err);
+  }
+  return { ok: true, doc: (out && out.stdout) || '' };
+}

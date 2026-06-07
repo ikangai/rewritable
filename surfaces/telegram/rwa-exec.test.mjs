@@ -15,7 +15,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { rwaImportPublish, rwaCreatePublish, resolveRwaCmd } from './rwa-exec.mjs';
+import { rwaImportPublish, rwaCreatePublish, rwaEdit, resolveRwaCmd } from './rwa-exec.mjs';
 
 // A fake execFile that records every invocation and replays a scripted result.
 // Each script is keyed by the VERB (args[baseArgs.length] effectively — but since
@@ -386,4 +386,119 @@ test('publish URL parse: no URL in stdout → ok:false with a parse code (not a 
   assert.equal(result.ok, false);
   assert.equal(result.step, 'publish');
   assert.equal(result.code, 'no_url');
+});
+
+// ── rwaEdit: edit a HOSTED doc on a caller-owned temp container ──────────────
+//
+// Phase B edits a hosted doc by exporting it to a temp container, running
+// `rwa edit` on that temp, then reading the new body back with `rwa doc`. The
+// caller OWNS the temp file (creates + cleans it); rwaEdit operates in place and
+// must never delete it (so no tmpDir/rm seam here — unlike the publish paths).
+//
+// SECURITY — the instruction is raw Telegram text. Same two walls as the prompt:
+// argv-array (no shell, instruction is ONE element so metacharacters are inert)
+// AND leading-dash rejection (a `--api-key`/`--base-url` instruction would be
+// read by `rwa edit`'s flag parser and could redirect the agent backend —
+// credential-exfil). The leading-dash test asserts execFile is NEVER spawned.
+
+const DOC_STDOUT = '# My doc\n\nThe edited body.\n';
+
+test('SECURITY rwaEdit: a leading-dash instruction is rejected as bad_instruction — never spawned', async () => {
+  for (const evil of ['--api-key x', '-f', '--base-url']) {
+    let callCount = 0;
+    const execFile = async () => { callCount++; return { stdout: '', stderr: '' }; };
+
+    const result = await rwaEdit('/owned/tmp/c.html', evil, { execFile });
+
+    // Rejected as DATA, before any subprocess — the smuggled flag can never reach
+    // `rwa edit` to be parsed as a backend option. THIS is the flag-smuggling wall.
+    assert.deepEqual(result, { ok: false, code: 'bad_instruction' },
+      `instruction ${JSON.stringify(evil)} must be rejected`);
+    assert.equal(callCount, 0,
+      `a flag-shaped instruction must not spawn rwa edit (got ${callCount} calls)`);
+  }
+});
+
+test('rwaEdit: runs `rwa edit <file> <instruction>` then `rwa doc <file>` and returns the new body', async () => {
+  const filePath = '/owned/tmp/c.html';
+  const instruction = 'make the intro punchier';
+  const { execFile, calls } = makeFakeExec({
+    edit: { stdout: 'applied 1 edit', stderr: '' },
+    doc: { stdout: DOC_STDOUT, stderr: '' },
+  });
+
+  const result = await rwaEdit(filePath, instruction, { execFile });
+
+  assert.deepEqual(result, { ok: true, doc: DOC_STDOUT });
+
+  // Exactly two calls: edit then doc.
+  assert.equal(calls.length, 2);
+  const editCall = calls[0];
+  const docCall = calls[1];
+
+  // Wire shape: filePath and instruction are SEPARATE single argv elements —
+  // never split, never concatenated. On PATH baseArgs is [], so the full args
+  // array is exactly [verb, filePath, instruction]. If anyone reintroduces
+  // string-building, this exact-deepEqual fails loudly.
+  assert.deepEqual(editCall.args, ['edit', filePath, instruction]);
+  assert.deepEqual(docCall.args, ['doc', filePath]);
+
+  // No shell, on either call.
+  for (const c of calls) {
+    assert.ok(!/(^|\/)(sh|bash|zsh|dash)$/.test(c.cmd), `cmd is a shell: ${c.cmd}`);
+    assert.ok(!(c.options && c.options.shell), 'a call enabled shell:true');
+  }
+});
+
+test('SECURITY rwaEdit: a shell-metacharacter instruction (not dash-leading) is ONE argv element, never split', async () => {
+  const filePath = '/owned/tmp/c.html';
+  const evil = 'make it ; rm -rf ~';
+  const { execFile, calls } = makeFakeExec({
+    edit: { stdout: 'applied', stderr: '' },
+    doc: { stdout: DOC_STDOUT, stderr: '' },
+  });
+
+  const result = await rwaEdit(filePath, evil, { execFile });
+
+  assert.equal(result.ok, true);
+  const editCall = calls.find((c) => c.args.includes('edit'));
+  // The whole instruction is a SINGLE argv element — the `;` and `rm -rf ~` are
+  // inert text, never parsed by a shell. (Mid-token dash is safe: the element
+  // begins with a letter, so flag parsing never sees `-rf`.)
+  assert.ok(
+    editCall.args.includes(evil),
+    `instruction must be one argv element verbatim; got args=${JSON.stringify(editCall.args)}`,
+  );
+  assert.equal(editCall.args.filter((a) => a === evil).length, 1);
+});
+
+test('rwaEdit: non-zero `rwa edit` exit is captured (step:edit) and `rwa doc` is NOT run', async () => {
+  const filePath = '/owned/tmp/c.html';
+  const { execFile, calls } = makeFakeExec({
+    edit: execFailure(4, 'agent gave up after 3 attempts'),
+    doc: { stdout: DOC_STDOUT, stderr: '' },
+  });
+
+  const result = await rwaEdit(filePath, 'do a thing', { execFile });
+
+  assert.deepEqual(result, {
+    ok: false, step: 'edit', code: 4, stderr: 'agent gave up after 3 attempts',
+  });
+  // A failed edit means the body is unchanged garbage-or-original; reading it
+  // back is pointless and could mislead — so `rwa doc` must NOT run.
+  assert.ok(!calls.some((c) => c.args.includes('doc')), 'rwa doc must not run after a failed edit');
+});
+
+test('rwaEdit: edit succeeds but `rwa doc` exits non-zero → captured with step:doc', async () => {
+  const filePath = '/owned/tmp/c.html';
+  const { execFile } = makeFakeExec({
+    edit: { stdout: 'applied 1 edit', stderr: '' },
+    doc: execFailure(2, 'not a rewritable'),
+  });
+
+  const result = await rwaEdit(filePath, 'do a thing', { execFile });
+
+  assert.deepEqual(result, {
+    ok: false, step: 'doc', code: 2, stderr: 'not a rewritable',
+  });
 });
