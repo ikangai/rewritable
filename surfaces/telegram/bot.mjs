@@ -20,6 +20,7 @@
 // a size cap (enforced by `api.downloadFile`). Each gate's negative is pinned by
 // a test that asserts the spawn did NOT happen — not just that the reply differs.
 
+import { pathToFileURL } from 'node:url';
 import { TelegramError, makeTelegramApi } from './telegram-api.mjs';
 import { rwaImportPublish, rwaCreatePublish } from './rwa-exec.mjs';
 
@@ -227,6 +228,12 @@ export { MAX_DOC_BYTES };
  *   3. An empty batch → re-poll (no offset change, no save).
  *   4. `shouldStop()` is checked at the top of each iteration so the loop can be
  *      terminated cleanly (tests; SIGINT/SIGTERM in `main`).
+ *   5. A `getUpdates` REJECTION (network blip / Telegram 5xx) is LOGGED, backed
+ *      off (`sleep(errorBackoffMs)`), and the loop `continue`s — NOTHING was
+ *      handled so the offset is neither advanced nor saved. This mirrors the
+ *      per-update throw-survival above: a transient poll failure must not be
+ *      fatal (unhandled rejection → process death). `sleep`/`errorBackoffMs` are
+ *      seams so tests apply the backoff with no real timers.
  *
  * @param {{
  *   api: { getUpdates: (offset:number|undefined) => Promise<any[]> },
@@ -235,13 +242,29 @@ export { MAX_DOC_BYTES };
  *   handle: (update:object) => Promise<void>,
  *   shouldStop: () => boolean,
  *   log: (...args:any[]) => void,
+ *   sleep?: (ms:number) => Promise<void>,
+ *   errorBackoffMs?: number,
  * }} deps
  */
 export async function runPoll(deps) {
-  const { api, loadOffset, saveOffset, handle, shouldStop, log } = deps;
+  const {
+    api, loadOffset, saveOffset, handle, shouldStop, log,
+    sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
+    errorBackoffMs = 3000,
+  } = deps;
   let offset = loadOffset();
   while (!shouldStop()) {
-    const updates = (await api.getUpdates(offset)) || [];
+    let updates;
+    try {
+      updates = (await api.getUpdates(offset)) || [];
+    } catch (err) {
+      // getUpdates rejection (network blip / Telegram 5xx): log host-side
+      // (TelegramError is already token-redacted), back off, then re-poll. Do
+      // NOT advance/save the offset — nothing was handled.
+      log('runPoll: getUpdates failed', err);
+      await sleep(errorBackoffMs);
+      continue;
+    }
     for (const update of updates) {
       try {
         await handle(update);
@@ -304,7 +327,7 @@ function makeRateLimit(max = 5, windowMs = 60_000) {
       return false;
     }
     arr.push(now);
-    hits.set(chatId, arr);
+    if (arr.length === 0) hits.delete(chatId); else hits.set(chatId, arr);
     return true;
   };
 }
@@ -369,7 +392,9 @@ export async function main() {
   });
 
   // Clean shutdown: a SIGINT/SIGTERM flips the stop flag so runPoll exits after
-  // the current iteration rather than mid-handle.
+  // the current iteration rather than mid-handle. Shutdown lag is bounded by the
+  // long-poll `timeout` (~50s) the in-flight getUpdates is waiting on — not a
+  // hang; the loop ends as soon as that poll returns and shouldStop() is checked.
   let stopping = false;
   const stop = () => { stopping = true; };
   process.on('SIGINT', stop);
@@ -387,7 +412,10 @@ export async function main() {
 }
 
 // Guard: only poll when run directly, never on import (so the test suite that
-// imports runPoll/handleUpdate does not start the bot).
-if (import.meta.url === `file://${process.argv[1]}`) {
+// imports runPoll/handleUpdate does not start the bot). pathToFileURL(argv[1])
+// matches import.meta.url's percent-encoding + triple-slash form, so the guard
+// still fires on a script path containing spaces (e.g. "Application Support")
+// instead of silently never launching (Rule 12).
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main();
 }

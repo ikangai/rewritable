@@ -147,6 +147,46 @@ test('empty batch re-polls without saving, then stops', async () => {
   assert.equal(store.value, 3);
 });
 
+test('a transient getUpdates rejection is survived (logged + backoff + recover)', async () => {
+  // getUpdates REJECTS on the first poll, then returns one batch on the second.
+  // shouldStop flips after the second poll so the loop terminates.
+  let call = 0;
+  const getUpdates = async () => {
+    call++;
+    if (call === 1) throw new Error('network blip');
+    return [{ update_id: 30 }];
+  };
+  const store = makeOffsetStore(undefined);
+  const handled = [];
+  const logged = [];
+  const sleeps = [];
+  await runPoll({
+    api: { getUpdates },
+    loadOffset: store.loadOffset,
+    saveOffset: store.saveOffset,
+    handle: async (u) => { handled.push(u.update_id); },
+    // checks: top of iter-1 (false), iter-2 (false), iter-3 (true → stop).
+    // iter-1 rejects + continues, iter-2 handles the batch, iter-3 stops.
+    shouldStop: stopAfter(2),
+    log: (...args) => logged.push(args),
+    sleep: async (ms) => { sleeps.push(ms); }, // fake: records, no real timer.
+    errorBackoffMs: 1234,
+  });
+  // WHY (poll survival): a single getUpdates rejection must NOT escape runPoll —
+  // an unhandled rejection would kill the process. The loop must resolve, not throw.
+  // (If the throw escaped, the await above would reject and the test would fail.)
+  // WHY (backoff applied once): exactly the one failing poll backs off.
+  assert.deepEqual(sleeps, [1234]);
+  // WHY (honest host-side, Rule 12): the failure is logged, not swallowed.
+  assert.ok(logged.length >= 1);
+  // WHY (recovery, symmetry with per-update throw-survival): the second poll's
+  // update IS handled afterward — a transient poll failure is transient, not fatal.
+  assert.deepEqual(handled, [30]);
+  // WHY (nothing handled on the failed poll): the offset advances only for the
+  // recovered batch (31), never for the rejected poll.
+  assert.deepEqual(store.saves, [31]);
+});
+
 // ── resolveHasBackendKey(env) — agent-fill gate matches CLI capability ────────
 // WHY: the gate must mirror the CLI's actual backend resolution. `rwa create`
 // spawns with inherited env and no --backend flag, so it uses
