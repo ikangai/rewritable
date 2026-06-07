@@ -22,8 +22,9 @@
 
 import { pathToFileURL } from 'node:url';
 import { TelegramError, makeTelegramApi } from './telegram-api.mjs';
-import { rwaImportPublish, rwaCreatePublish } from './rwa-exec.mjs';
-import { FoundationError } from './foundation-api.mjs';
+import { rwaImportPublish, rwaCreatePublish, rwaImportBuild, rwaCreateBuild, rwaEdit } from './rwa-exec.mjs';
+import { FoundationError, makeFoundationApi } from './foundation-api.mjs';
+import { makeStateStore } from './state.mjs';
 
 // Max document size we accept, in bytes (mirrors telegram-api's downloadFile
 // default; passed explicitly so the friendly "max N MB" message stays truthful).
@@ -297,6 +298,8 @@ async function dispatchPhaseB(message, chatId, deps) {
   }
 
   // /show — surface the active doc (url + title via describe). No binding → guide.
+  // Read-only authenticated GET on the user's OWN doc — intentionally NOT
+  // rate-limited (mirrors /start's "not rate-limited" stance; no spawn, no write).
   if (isCommand(text, '/show')) {
     const binding = state.get(chatId);
     if (!binding) {
@@ -310,6 +313,9 @@ async function dispatchPhaseB(message, chatId, deps) {
   }
 
   // /export — send the canonical .html file (the offline escape hatch).
+  // Read-only authenticated GET on the user's OWN doc — intentionally NOT
+  // rate-limited (mirrors /show + /start; no spawn, no write). The transfer is
+  // their own already-created artifact, so it's not an abuse-amplification vector.
   if (isCommand(text, '/export')) {
     const binding = state.get(chatId);
     if (!binding) {
@@ -432,6 +438,12 @@ async function editActiveDoc(message, chatId, binding, deps) {
   }
 
   await api.sendChatAction(chatId, 'typing');
+
+  // The two GETs below (readDoc then exportDoc) are contract-forced, NOT a
+  // collapsible double round-trip: readDoc returns the baseHash but no full
+  // container bytes; exportDoc returns the container bytes but no hash. We need
+  // BOTH — the hash to anchor optimistic concurrency on modify, the bytes to feed
+  // the local agent. Don't merge them into one call (you'd lose one or the other).
 
   // 1. Read the current doc (for the baseHash that anchors optimistic concurrency).
   let read;
@@ -728,9 +740,33 @@ export async function main() {
 
   const { loadOffset, saveOffset } = makeOffsetPersistence(fs, os, path);
 
+  // Phase B activation: set RWA_FOUNDATION_URL to a hosted-edit foundation's base
+  // URL and the bot creates EDITABLE hosted docs + edits them in-chat. Unset → the
+  // foundation/state are never constructed and dispatch stays on the Phase A path
+  // (ephemeral create, no editing). foundationEnabled is the single gate.
+  const foundationUrl = process.env.RWA_FOUNDATION_URL;
+  const foundationEnabled = !!foundationUrl;
+  let foundation, state, unlinkTemp;
+  if (foundationEnabled) {
+    foundation = makeFoundationApi(foundationUrl);
+    // Per-chat binding store (carries the capability token → written 0600 by the
+    // store itself). Default under tmp; override with RWA_TG_STATE_FILE.
+    state = makeStateStore({
+      filePath: process.env.RWA_TG_STATE_FILE || path.join(os.tmpdir(), 'rwa-tg-state.json'),
+    });
+    // Best-effort unlink of the per-edit exported container. Without this the edit
+    // flow leaks one exported .html per edit (Task-4 review M2); editActiveDoc's
+    // finally only unlinks when this is provided.
+    unlinkTemp = (p) => { try { fs.unlinkSync(p); } catch {} };
+  }
+
   const handle = (u) => handleUpdate(u, {
     api,
-    exec: { rwaImportPublish, rwaCreatePublish },
+    exec: { rwaImportPublish, rwaCreatePublish, rwaImportBuild, rwaCreateBuild, rwaEdit },
+    foundation,
+    state,
+    foundationEnabled,
+    unlinkTemp,
     writeTemp,
     hasBackendKey,
     rateLimit,
@@ -746,7 +782,7 @@ export async function main() {
   process.on('SIGINT', stop);
   process.on('SIGTERM', stop);
 
-  log(`rwa telegram bot started (agent-fill: ${hasBackendKey ? 'on' : 'off'})`);
+  log(`rwa telegram bot started (agent-fill: ${hasBackendKey ? 'on' : 'off'}, editing: ${foundationEnabled ? 'on' : 'off'})`);
   await runPoll({
     api,
     loadOffset,

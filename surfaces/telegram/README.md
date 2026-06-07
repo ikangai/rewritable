@@ -124,8 +124,83 @@ bot, then DM it from Telegram:
 3. *(only if a backend is configured)* **`/new a one-page guide to espresso`** → you
    get a share link to a generated page.
 
-## Scope — not in Phase A
+## Phase B — editing hosted rewritables
 
-No **editing** (Phase B — needs the hosted-edit foundation), no **webhook**
-transport, no **photos / vision**, no **durable publish-site** target (shares are the
-ephemeral 24h kind), and no **identity**. Create-only needs none of these.
+Phase B turns the bot from create-only into **create + edit**, by talking to a
+**hosted-edit foundation** (a service that stores rewritables behind capability
+URLs and applies `rwa-edit/1` modify envelopes). It is **opt-in**:
+
+- **Set `RWA_FOUNDATION_URL`** to the foundation's base URL → the bot creates
+  **editable hosted docs** and edits them **in-chat**.
+- **Unset** → exactly the Phase A behavior above (ephemeral create, no editing).
+  The foundation and state store are never even constructed.
+
+### Model — one active doc per chat
+
+A chat is bound to **one** active hosted doc at a time:
+
+- **`/new <prompt>`** (or sending content when there is **no** active doc) creates
+  and binds a fresh editable doc and replies with its link.
+- **a plain message** (with an active doc) is an **edit instruction** — e.g.
+  *"make the title a question"* — applied to the active doc; the bot replies *"✓
+  updated"* with the link.
+- **`/show`** — shows the active doc's link + title.
+- **`/export`** — sends the canonical `.html` file (the offline escape hatch).
+- **`/new` always starts fresh** — even when a doc is already bound, it creates and
+  rebinds rather than editing the old one.
+
+Sending a document or markdown file with no active doc creates a doc from it (same
+as plain text); with an active doc, a plain text message is an edit.
+
+### Env
+
+In addition to the Phase A env (`TELEGRAM_BOT_TOKEN`, and a backend key for
+`/new`/editing — see *Requirements / gates* above):
+
+- **`RWA_FOUNDATION_URL`** — the hosted-edit foundation's base URL. Presence of
+  this is the Phase B activation switch.
+- **`RWA_TG_STATE_FILE`** — path to the per-chat binding store (the JSON file that
+  maps each chat to its active doc + capability token). Defaults to
+  `<os tmpdir>/rwa-tg-state.json`.
+
+Both **creating** and **editing** call the agent (`rwa create` / `rwa edit`), so
+they need a model backend configured — same gate as Phase A `/new`.
+
+### Security
+
+- **The capability URL is the edit credential.** A hosted doc's link embeds its
+  write token (`…#k=<token>`). Anyone with the link can edit the doc — **treat it
+  as a secret**. The bot only ever replies the link to the **owning** chat.
+- **Tokens are stored `0600` and never logged.** The state file is written with
+  mode `0600` (the binding carries the token); the token never appears in a log
+  line or in any reply other than the capability link itself.
+- **Editing/agent-fill need a backend key** (the agent runs adapter-side). With no
+  backend configured, `/new` and edits refuse with a friendly note and spawn
+  nothing.
+
+### Deploy gate (carry forward)
+
+> **When the foundation goes live, `/r/:id` MUST be served per-subdomain in
+> production** (sessionStorage isolation — each hosted rewritable needs its own
+> origin, exactly like the snapshot-publishing `<short>.rewritable.ikangai.com`
+> shares). This is a **browser-projection / deploy concern on the foundation
+> side**. The bot is a **server-side client** and is unaffected — but go-live must
+> not forget it.
+
+### Manual acceptance (needs a live foundation + token)
+
+Set `RWA_FOUNDATION_URL`, `TELEGRAM_BOT_TOKEN`, and a backend key; run the bot;
+then DM it:
+
+1. send **`a one-page guide to otters`** → you get an **edit link** (a hosted,
+   editable doc — not the ephemeral 24h share).
+2. send **`make the title a question`** → *"✓ updated"* with the same link.
+3. **`/show`** → the doc's link + title.
+4. **`/export`** → you receive the canonical `.html` file.
+
+## Scope — not in Phase A / Phase B
+
+No **webhook** transport, no **photos / vision**, no **durable publish-site** target
+for Phase A shares (they stay the ephemeral 24h kind), and no **identity**. Phase A
+is create-only; Phase B adds editing of hosted docs but still no webhook/vision/
+identity.

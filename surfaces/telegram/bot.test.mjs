@@ -430,16 +430,18 @@ function makeDepsB(over = {}) {
   const state = over.state ?? makeFakeState();
   const writeTempCalls = [];
   const logged = [];
+  const unlinkTempCalls = [];
   return {
     deps: {
       api, exec, foundation, state,
       foundationEnabled: over.foundationEnabled ?? true,
       writeTemp: over.writeTemp ?? ((content, ext) => { writeTempCalls.push({ content, ext }); return `/fake-tmp/u${ext}`; }),
+      unlinkTemp: over.unlinkTemp ?? ((p) => { unlinkTempCalls.push(p); }),
       hasBackendKey: over.hasBackendKey ?? true,
       rateLimit: over.rateLimit ?? (() => true),
       log: over.log ?? ((...a) => { logged.push(a); }),
     },
-    api, exec, foundation, state, writeTempCalls, logged,
+    api, exec, foundation, state, writeTempCalls, unlinkTempCalls, logged,
   };
 }
 
@@ -621,6 +623,41 @@ test('EDIT rwaEdit fails (agent gave up) → friendly reply + stderr logged, no 
   assert.ok(logged.some((a) => a.some((x) => String(x).includes('agent-detail-XYZ'))));
 });
 
+// ── M2: the exported temp container is ALWAYS cleaned (success + failure) ─────
+// WHY: editActiveDoc exports the canonical container to a temp .html so the local
+// agent can edit it. If that temp is not unlinked, every edit leaks one exported
+// container on disk (Task-4 review M2). The cleanup lives in a `finally`, so it
+// must run on BOTH the success path AND when the edit fails — pin both, asserting
+// exactly ONE unlink per edit (the same path that was written).
+test('EDIT success → unlinkTemp(tempPath) called exactly once (the exported temp is cleaned)', async () => {
+  const state = makeFakeState({ id: 'doc1', token: TOKEN, url: URL });
+  const { deps, foundation, unlinkTempCalls } = makeDepsB({ state });
+  await handleUpdate(textUpdateFrom('make the title a question'), deps);
+  assert.equal(foundation.calls.modify.length, 1, 'success path actually committed');
+  assert.equal(unlinkTempCalls.length, 1, 'exactly one cleanup');
+  // The cleaned path is the .html temp the canonical container was exported to.
+  assert.equal(unlinkTempCalls[0], '/fake-tmp/u.html');
+});
+
+test('EDIT rwaEdit fails → unlinkTemp(tempPath) STILL called once (finally cleans on failure)', async () => {
+  const state = makeFakeState({ id: 'doc1', token: TOKEN, url: URL });
+  const exec = makeFakeExecB({ edit: { ok: false, step: 'edit', code: 4, stderr: 'boom' } });
+  const { deps, foundation, unlinkTempCalls } = makeDepsB({ state, exec });
+  await handleUpdate(textUpdateFrom('do a thing'), deps);
+  assert.equal(foundation.calls.modify.length, 0, 'edit failed → no commit');
+  assert.equal(unlinkTempCalls.length, 1, 'temp cleaned even when the edit fails');
+  assert.equal(unlinkTempCalls[0], '/fake-tmp/u.html');
+});
+
+test('EDIT rwaEdit throws → unlinkTemp STILL called once (finally cleans on throw)', async () => {
+  const state = makeFakeState({ id: 'doc1', token: TOKEN, url: URL });
+  const exec = makeFakeExecB({ edit: new Error('agent kaboom') });
+  const { deps, unlinkTempCalls } = makeDepsB({ state, exec });
+  await handleUpdate(textUpdateFrom('do a thing'), deps); // must not reject
+  assert.equal(unlinkTempCalls.length, 1, 'temp cleaned even when rwaEdit throws');
+  assert.equal(unlinkTempCalls[0], '/fake-tmp/u.html');
+});
+
 // ── 409 stale_base retry-once ────────────────────────────────────────────────
 // WHY: optimistic concurrency. A 409 means the doc moved under us; we re-read the
 // fresh baseHash and retry modify ONCE. This pins the retry actually re-reads
@@ -774,6 +811,26 @@ test('Phase B rate-limited edit → slow-down, no rwaEdit / no modify', async ()
   assert.equal(exec.calls.rwaEdit.length, 0);
   assert.equal(foundation.calls.modify.length, 0);
   assert.match(api.calls.sendMessage[0].text, /slow down|too many|wait/i);
+});
+
+// ── M4: read-only commands (/show, /export) are intentionally NOT rate-limited ─
+// WHY: /show and /export are read-only authenticated GETs on the user's OWN doc —
+// no spawn, no write, no abuse amplification. They are deliberately exempt from the
+// rate limiter (mirroring /start). This pins that decision: a /show must still work
+// (and must not consume rate budget) even when the limiter is exhausted. If a
+// future change routes /show through the limiter, this test fails loudly.
+test('M4: /show is NOT rate-limited — replies even when the limiter is exhausted', async () => {
+  const state = makeFakeState({ id: 'doc1', token: TOKEN, url: URL });
+  let rateLimitCalls = 0;
+  const foundation = makeFakeFoundation({ describe: { title: 'Otter Facts', kind: 'document' } });
+  const { deps, api } = makeDepsB({
+    state, foundation,
+    rateLimit: () => { rateLimitCalls++; return false; }, // limiter exhausted
+  });
+  await handleUpdate(textUpdateFrom('/show'), deps);
+  assert.equal(rateLimitCalls, 0, '/show must not consume the rate limiter');
+  assert.equal(foundation.calls.describe.length, 1, '/show still ran despite exhaustion');
+  assert.match(api.calls.sendMessage[0].text, /Otter Facts/);
 });
 
 // ── SECURITY: capability token never replied or logged ───────────────────────
