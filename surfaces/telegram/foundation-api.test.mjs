@@ -281,3 +281,25 @@ test('token redaction also holds on a raw rejection from a body-bearing POST (mo
   assert.ok(!String(err).includes(TOKEN), 'String(err) leaked token (modify raw reject)');
   assert.ok(!err.message.includes(TOKEN), 'err.message leaked token (modify raw reject)');
 });
+
+test('exportDoc body-read rejection is re-wrapped and never leaks the token', async () => {
+  // A 200 export whose body read (res.text()) throws — the rejection can carry the
+  // token-bearing request. exportDoc must re-wrap, not surface the raw error. This
+  // is the one re-wrap site the other tests don't exercise (body-read, not fetch).
+  const okButUnreadable = {
+    ok: true,
+    status: 200,
+    headers: new Map([['content-type', 'text/html']]),
+    text: async () => { throw new Error(`stream aborted mid-body Bearer ${TOKEN}`); },
+    json: async () => { throw new Error('not json'); },
+  };
+  const { fetchImpl } = makeFakeFetch([okButUnreadable]);
+  const api = makeFoundationApi(BASE, { fetchImpl });
+
+  const err = await api.exportDoc('abc123', TOKEN).then(() => null, (e) => e);
+  assert.ok(err instanceof FoundationError, 'body-read rejection must surface as FoundationError');
+  assert.equal(err.code, 'read_failed', 'export body-read failure has code read_failed');
+  assert.ok(!String(err).includes(TOKEN), 'String(err) leaked token (export read reject)');
+  assert.ok(!err.message.includes(TOKEN), 'err.message leaked token (export read reject)');
+  assert.ok(!String(err.stack || '').includes(TOKEN), 'err.stack leaked token (export read reject)');
+});
