@@ -63,11 +63,18 @@ Usage:
                               place (deterministic, offline, model-free). Names:
                               notion-clean, linear-dark, editorial-serif,
                               stripe-docs, terminal-mono.
-                              \`rwa skin <path> reset\` removes the skin. The
+                              \`rwa skin <path> reset\` removes the skin (and any
+                              sk-* wrappers a prior --l1 restyle left). The
                               preset's <style data-rwa-skin> block rides inside
                               the document, so it ships in the exported file and
                               one undo (⌘Z in the app) reverts it. --json emits
                               {exitCode,mode,skin}.
+                              --l1 opts into the agent-driven content-aware
+                              restyle: the model adds sk-* class hooks/wrappers,
+                              then theme + wrappers commit together (needs a
+                              backend — see the --backend flags below; a missing
+                              backend exits 4). Agent decline degrades to
+                              theme-only; --json emits {exitCode,mode,skin,degraded}.
 
 Flags:
   --kind <name>  (new only) starter kind: document (default), workflow,
@@ -123,23 +130,26 @@ Flags:
                  (doc) emit the editing-contract object on stdout instead of
                  the raw body; on failure, the \`{code, subcode, details}\`
                  object goes to stderr.
-  --backend <n>  (edit only, instruction path) backend name. One of:
+  --backend <n>  (edit instruction path / skin --l1) backend name. One of:
                  openrouter (default), ollama, lmstudio. Falls back to
                  \$RWA_BACKEND if unset.
-  --model <id>   (edit only, instruction path) model id passed to the
+  --model <id>   (edit instruction path / skin --l1) model id passed to the
                  backend. Falls back to \$RWA_MODEL, then a
                  sensible default for the backend.
-  --base-url <u> (edit only, instruction path) override the OpenAI-
+  --base-url <u> (edit instruction path / skin --l1) override the OpenAI-
                  compatible base URL. Defaults: openrouter →
                  https://openrouter.ai/api/v1, ollama →
                  http://localhost:11434/v1 (or \$RWA_OLLAMA_URL),
                  lmstudio → http://localhost:1234/v1 (or
                  \$RWA_LMSTUDIO_URL).
-  --api-key <k>  (edit only, instruction path) API key for the backend.
+  --api-key <k>  (edit instruction path / skin --l1) API key for the backend.
                  Openrouter: required, falls back to \$RWA_OPENROUTER_KEY
                  then \$OPENROUTER_API_KEY. Other backends ignore this flag.
+  --l1           (skin only) opt into the agent-driven content-aware restyle
+                 (needs a backend; missing backend exits 4). Default skin is
+                 deterministic theme-only.
   --theme-only   (skin only) apply just the preset's deterministic theme block
-                 — the v1 behavior — and silence the "theme-only" note.
+                 — the default behavior — and silence the "theme-only" note.
   --version      print version and exit
   --help, -h     this help
 
@@ -694,18 +704,31 @@ function detectProductKind(fileText) {
       return;
     }
 
-    // `rwa skin <file> <name|reset> [--theme-only] [--json]` — deterministic,
-    // model-free theme swap. Applies a preset's <style data-rwa-skin> block to a
-    // rewritable in place: first skin INSERTS via replace_document (adding a
-    // <style> changes the structural shape), re-skin SWAPS via apply_edits, reset
-    // removes it — all routed through the same applyPlan write path as `rwa edit`
-    // for atomic write + frozen-zone safety + the shared file_error surface. v1
-    // ships theme-only; the always-on content-aware restyle is a later phase
-    // (docs/plans/2026-06-03-skinning-design.md).
+    // `rwa skin <file> <name|reset> [--l1] [--theme-only] [--json]`.
+    //
+    // DEFAULT (no --l1): deterministic, model-free theme swap. Applies a preset's
+    // <style data-rwa-skin> block in place: first skin INSERTS via replace_document
+    // (adding a <style> changes the structural shape), re-skin SWAPS via apply_edits,
+    // reset removes it (deskinDoc — clears wrappers too) — all routed through the
+    // same applyPlan write path as `rwa edit` for atomic write + frozen-zone safety
+    // + the shared file_error surface. Offline, no key.
+    //
+    // --l1 (opt-in): the always-on content-aware restyle. De-skin the doc, drive
+    // the agent over a multi-turn backend with the preset recipe to add additive
+    // sk-* class hooks + wrappers (NO write yet), splice the theme block onto the
+    // agent's output, then commit ONCE (theme + wrappers together). Agent
+    // decline/invalid-edit degrades to a theme-only commit (the skin always
+    // lands); a missing/unreachable backend fails LOUD (exit 4) like `rwa edit`.
+    // Mirrors seeds/rewritable.html applySkinL1 (docs/plans/2026-06-03-skinning-design.md).
     if (verb === 'skin') {
       const jsonMode = rest.includes('--json');
       const themeOnly = rest.includes('--theme-only');
-      const positionals = rest.filter(a => !a.startsWith('-'));
+      const l1 = rest.includes('--l1');
+      // Drop the flags that take a following value from the positional scan so a
+      // `rwa skin doc.html notion-clean --l1 --model foo` doesn't read `foo` as
+      // a positional. Mirrors the edit path's flag-aware positional handling.
+      const SKIN_FLAG_WITH_VALUE = new Set(['--backend', '--model', '--base-url', '--api-key']);
+      const positionals = rest.filter((a, i) => !a.startsWith('-') && !SKIN_FLAG_WITH_VALUE.has(rest[i - 1]));
       const filePath = positionals[0];
       const action = positionals[1];
       const emitSkin = (payload) => {
@@ -721,10 +744,93 @@ function detectProductKind(fileText) {
         }
       };
       if (!filePath || !action) {
-        emitSkin({ code: 'usage_error', subcode: 'missing_args', details: { usage: 'rwa skin <file> <name|reset> [--theme-only]' } });
+        emitSkin({ code: 'usage_error', subcode: 'missing_args', details: { usage: 'rwa skin <file> <name|reset> [--l1] [--theme-only]' } });
         process.exitCode = 1;
         return;
       }
+
+      // ── L1 path: agent-driven restyle. `reset` is deterministic — never L1. ──
+      if (l1 && action !== 'reset') {
+        // Resolve backend config exactly like `rwa edit`'s instruction path so
+        // --l1 inherits the same flags / env / default chain and the same
+        // missing-backend behavior (openrouter with no key → exit 4).
+        const backendFlag  = resolveFlag(getFlag('--backend',  rest), '--backend',  jsonMode);
+        if (!backendFlag.ok)  { process.exitCode = 1; return; }
+        const modelFlag    = resolveFlag(getFlag('--model',    rest), '--model',    jsonMode);
+        if (!modelFlag.ok)    { process.exitCode = 1; return; }
+        const baseUrlFlag  = resolveFlag(getFlag('--base-url', rest), '--base-url', jsonMode);
+        if (!baseUrlFlag.ok)  { process.exitCode = 1; return; }
+        const apiKeyFlag   = resolveFlag(getFlag('--api-key',  rest), '--api-key',  jsonMode);
+        if (!apiKeyFlag.ok)   { process.exitCode = 1; return; }
+
+        const backendName = backendFlag.value || process.env.RWA_BACKEND || 'openrouter';
+        const modelId     = modelFlag.value   || process.env.RWA_MODEL   || 'google/gemini-3.5-flash';
+        const baseUrl     = baseUrlFlag.value || envBaseUrl(backendName);
+        const apiKey      = resolveApiKey(backendName, apiKeyFlag.value);
+
+        if (!['openrouter', 'ollama', 'lmstudio'].includes(backendName)) {
+          emitSkin({ code: 'usage_error', subcode: 'unknown_backend', details: { backend: backendName } });
+          process.exitCode = 1; return;
+        }
+        if (backendName === 'openrouter' && !apiKey) {
+          emitSkin({ code: 'agent_error', subcode: 'no_api_key', details: { backend: 'openrouter' } });
+          process.exitCode = 4; return;
+        }
+
+        // Read the target to pick the right SYSTEM_PROMPTS entry by product kind
+        // (file errors surface as file_error/exit 2, same as skinCmd / edit).
+        const { readFile } = await import('node:fs/promises');
+        let fileText;
+        try {
+          fileText = await readFile(filePath, 'utf8');
+        } catch (e) {
+          if (e && e.code === 'ENOENT') { emitSkin({ code: 'file_error', subcode: 'not_found', details: { path: filePath } }); process.exitCode = 2; return; }
+          emitSkin({ code: 'file_error', subcode: 'read_error', details: { path: filePath, errno: e && e.code, message: e && e.message } });
+          process.exitCode = 2; return;
+        }
+        const productKind = detectProductKind(fileText) || 'document';
+
+        // Load SYSTEM_PROMPTS / TOOL_SCHEMAS from the seed — same in-package-first
+        // lookup `rwa edit` uses.
+        const { loadSeed } = await import('../src/seed.mjs');
+        const { SEED_CANDIDATES: SC } = await import('../src/commands.mjs');
+        const seedText = await loadSeed(SC);
+        const { extractFromSeed } = await import('../src/seed-extract.mjs');
+        const { SYSTEM_PROMPTS, TOOL_SCHEMAS } = extractFromSeed(seedText);
+        const systemPrompt = SYSTEM_PROMPTS[productKind] || SYSTEM_PROMPTS.document;
+
+        const { skinCmdL1 } = await import('../src/skin.mjs');
+        let result;
+        try {
+          result = await skinCmdL1(filePath, action, {
+            systemPrompt,
+            toolSchemas: TOOL_SCHEMAS,
+            backend: { baseUrl, model: modelId, apiKey },
+            onRetry: r => {
+              if (jsonMode) process.stderr.write(JSON.stringify({ phase: 'retry', attempt: r.attempt, reason: r.reason }) + '\n');
+              else process.stderr.write(`rwa skin: attempt ${r.attempt}/3 retrying — ${r.reason}\n`);
+            },
+          });
+        } catch (e) {
+          if (e && typeof e.exitCode === 'number') {
+            if (!jsonMode && e.subcode === 'unknown_skin') process.stderr.write('rwa skin: ' + e.message + '\n');
+            else emitSkin({ code: codeName(e.exitCode), subcode: e.subcode, details: e.details });
+            process.exitCode = e.exitCode;
+            return;
+          }
+          throw e;
+        }
+        if (jsonMode) {
+          process.stdout.write(JSON.stringify(result) + '\n');
+        } else if (result.degraded) {
+          process.stdout.write(`✓ skin "${result.skin}" applied (theme-only)\n`);
+          process.stderr.write('note: the model did not contribute a usable restyle — applied the deterministic theme only.\n');
+        } else {
+          process.stdout.write(`✓ skin "${result.skin}" applied (theme + content-aware restyle)\n`);
+        }
+        return;
+      }
+
       const { skinCmd } = await import('../src/skin.mjs');
       let result;
       try {
@@ -753,9 +859,10 @@ function detectProductKind(fileText) {
         const word = result.mode === 'insert' ? 'applied' : 'changed to';
         process.stdout.write(`✓ skin ${word} "${result.skin}" (theme-only)\n`);
         // Not a silent downgrade (Rule 12): tell the user this is the
-        // deterministic theme only. --theme-only signals "I know" and silences it.
+        // deterministic theme only. --theme-only signals "I know"; --l1 opts
+        // into the content-aware restyle. Either silences the note.
         if (!themeOnly) {
-          process.stderr.write('note: applied the deterministic theme only — the always-on content-aware restyle is a later version. Pass --theme-only to silence this note.\n');
+          process.stderr.write('note: applied the deterministic theme only — pass --l1 for the content-aware restyle, or --theme-only to silence this note.\n');
         }
       }
       return;

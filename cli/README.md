@@ -33,7 +33,8 @@ rwa doc notes.html --json                           # read + edit-contract, one 
 
 rwa publish notes.html                              # → a hosted 24h share URL
 
-rwa skin notes.html notion-clean                    # apply a named style preset
+rwa skin notes.html notion-clean                    # apply a named style preset (offline)
+rwa skin notes.html stripe-docs --l1                # + content-aware restyle (needs a backend)
 rwa skin notes.html reset                           # remove the skin
 ```
 
@@ -224,11 +225,23 @@ Pick a **named look** for a rewritable instead of hand-styling it from the blank
 ```
 rwa skin notes.html notion-clean        # apply (an unknown name lists every preset)
 rwa skin notes.html editorial-serif     # re-skin — replaces the current skin, never stacks
-rwa skin notes.html reset               # remove the skin
+rwa skin notes.html reset               # remove the skin (and any --l1 sk-* wrappers)
 rwa skin notes.html linear-dark --json  # {"exitCode":0,"mode":"insert","skin":"linear-dark"}
 ```
 
-This is **deterministic and offline** — no model, no key. The block is scoped to `#rwa-doc-mount`, so it overrides the seed's baseline typography while leaving the runtime chrome's palette untouched (a dark skin re-tints the document, not the lens). Applying the first skin inserts the block (a `replace_document`); re-skinning swaps it in place (an `apply_edits`); `reset` removes it — each one commit. Routed through the same write path as `rwa edit`, so frozen zones and `data-rwa-id`s are preserved and a non-rewritable target exits `2` (`not_a_rewritable`). `--theme-only` is the explicit name for this deterministic swap; an always-on, content-aware restyle (the model rewrites markup to make the look land) is a planned later phase (`docs/plans/2026-06-03-skinning-design.md`).
+This is **deterministic and offline** — no model, no key. The block is scoped to `#rwa-doc-mount`, so it overrides the seed's baseline typography while leaving the runtime chrome's palette untouched (a dark skin re-tints the document, not the lens). Applying the first skin inserts the block (a `replace_document`); re-skinning swaps it in place (an `apply_edits`); `reset` removes it (plus any `sk-*` wrappers a prior `--l1` restyle left) — each one commit. Routed through the same write path as `rwa edit`, so frozen zones and `data-rwa-id`s are preserved and a non-rewritable target exits `2` (`not_a_rewritable`). `--theme-only` is the explicit name for this deterministic swap.
+
+#### `--l1` — content-aware restyle (opt-in, model-driven)
+
+The theme block tints the document, but some looks only land once the markup carries hook elements (an eyebrow line, a stat row, a hero). `--l1` opts into the **always-on content-aware restyle** the browser runtime ships in its ✦ gallery: the CLI de-skins the doc, drives the model with the preset's recipe to add **additive** `sk-*` class hooks and wrapper `<div>`/`<span>`s (no content is deleted, moved, or re-tagged; `data-rwa-id`s and frozen zones are untouched), then splices the theme block onto the model's output and commits **once** — theme + wrappers land together (one undo in the browser).
+
+```
+rwa skin notes.html stripe-docs --l1                          # uses $RWA_BACKEND / openrouter
+rwa skin notes.html linear-dark --l1 --backend ollama         # local model, no key
+rwa skin notes.html notion-clean --l1 --json                  # {"exitCode":0,"mode":"l1","skin":"notion-clean","degraded":false}
+```
+
+Unlike the rest of `rwa skin`, `--l1` needs a backend — it reuses the **same `--backend` / `--model` / `--base-url` / `--api-key` flags (and env chain)** as `rwa edit`'s instruction path. A re-skin first **deterministically** strips the previous skin's `sk-*` wrappers (so they never accumulate, regardless of what the model does). If the model declines or produces nothing usable, the skin still lands **theme-only** (one write) and a note is printed — `--json` reports `"degraded":true`. A **missing or unreachable backend fails loud** (`exit 4`), the same as `rwa edit` — `--l1` never silently downgrades just because the model couldn't be reached. Without `--l1`, `rwa skin` is byte-for-byte the deterministic, offline theme swap above. (`docs/plans/2026-06-03-skinning-design.md`.)
 
 ### Driving a rewritable from an agent — no embedded LLM, no API key
 

@@ -208,6 +208,52 @@ export const SKINS = Object.freeze({
 
 export const SKIN_NAMES = Object.keys(SKINS);
 
+// RWA_SKIN_L1_PREAMBLE + RECIPES — per-preset L1 (content-aware) restyle
+// instructions, surfaced by `rwa skin <file> NAME --l1`. The opt-in L1 path
+// de-skins the doc, drives the agent with the recipe over a multi-turn backend
+// to add additive sk-* class hooks + wrapper elements, then splices the preset
+// theme block and commits ONCE (mirrors the seed's applySkinL1).
+//
+// MANUAL MIRROR (no cmp gate): these are copied BYTE-IDENTICAL from
+// seeds/rewritable.html (RWA_SKIN_L1_PREAMBLE + RWA_SKIN_RECIPES, ~line 2862).
+// The seed is the canonical site (the browser ✦ gallery's always-on L1 reads
+// it). When the seed changes, re-copy here; the pin test
+// cli/tests/skin-l1-seed-mirror.test.mjs extracts both blocks from the seed and
+// deep-equals them against these, so drift fails the suite loudly.
+//
+// Every recipe is additive-only + 1:1-invertible (wrap + add class, never
+// re-tag/move/merge) so de-skin is a clean sk-* strip and data-rwa-id is never
+// renumbered.
+export const RWA_SKIN_L1_PREAMBLE =
+`Apply a visual restyle to this document by adding sk-* class hooks and additive wrapper elements. STRICT RULES: only ADD wrapper <div>/<span> elements and ADD class attributes; never delete, move, merge, reorder, re-tag, or rewrite existing content; never change any data-rwa-id; never add <style> or <script>; never touch frozen zones. If the document already contains sk-* wrappers or sk-* classes from a previous skin, first remove those wrappers (keeping their inner content) and strip the sk-* classes, then apply the restyle below. Use apply_edits with surgical (find,replace) pairs.
+
+Restyle:
+`;
+
+export const RWA_SKIN_RECIPES = {
+  'notion-clean': RWA_SKIN_L1_PREAMBLE +
+`1. If a short subtitle or dek paragraph sits directly under the H1, add class="sk-eyebrow" to it.
+2. Convert any paragraph that begins with "Note:", "Tip:", or "Important:" into a <div class="sk-callout"> wrapping that paragraph.
+3. Leave lists and tables unchanged.`,
+  'linear-dark': RWA_SKIN_L1_PREAMBLE +
+`1. If a short kicker or category line opens the document (above or right after the H1), wrap it as <div class="sk-eyebrow">…</div>.
+2. If you find a contiguous run of 2 to 4 short metric lines (for example "MRR $48k", "Churn 1.2%"), wrap each as <div class="sk-stat"><b>$48k</b><span>MRR</span></div> and group them in one <div class="sk-stat-row">…</div>.
+3. Leave all other structure unchanged.`,
+  'editorial-serif': RWA_SKIN_L1_PREAMBLE +
+`1. A category or section word before the title becomes <div class="sk-kicker">…</div> above the H1.
+2. A byline or dateline under the H1 (for example "By …", a date, "5 min read") gets class="sk-byline".
+3. Wrap the first body paragraph (the lede) as <div class="sk-lede">…</div>.
+4. A standalone single-sentence emphatic paragraph becomes <div class="sk-pull">…</div> (do NOT re-tag it to a blockquote).`,
+  'stripe-docs': RWA_SKIN_L1_PREAMBLE +
+`1. Wrap the leading H1 and its dek paragraph together in <div class="sk-hero">…</div>.
+2. A one-word kicker or category before the H1 becomes <span class="sk-pill">…</span> at the top of the hero.
+3. Leave code blocks, lists, and tables unchanged.`,
+  'terminal-mono': RWA_SKIN_L1_PREAMBLE +
+`1. Wrap the leading H1 (and a following byline or subtitle paragraph) in <div class="sk-hero">…</div>; add class="sk-byline" to that paragraph.
+2. A contiguous run of metric lines (number plus short label, for example "42 commits") becomes a <div class="sk-stat-row"> with each metric as <div class="sk-stat"><span class="sk-stat-num">42</span><span class="sk-stat-label">commits</span></div>.
+3. Append <span class="sk-blink">▋</span> after the final paragraph.`,
+};
+
 /**
  * Look up a preset by name. Throws an exit-2 error (listing known skins) on an
  * unknown name, mirroring the CLI's `not_found`-class file errors so the bin
