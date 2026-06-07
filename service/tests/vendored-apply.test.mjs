@@ -36,9 +36,16 @@ const RWA_BIN = join(REPO, 'cli', 'bin', 'rwa.mjs');
 //   dsl-compiler.mjs — apply_dsl_plan → apply_edits compile (sibling)
 //   seed.mjs        — extractInlineDoc / replaceInlineDoc splice helpers (sibling)
 //   atomic-write.mjs — temp+fsync+rename file write (sibling)
-// All four siblings + the entry are vendored so the relative imports resolve
-// within service/lib/. Their only further imports are node: builtins (no npm).
-const VENDORED = ['edit', 'apply-edits', 'dsl-compiler', 'seed', 'atomic-write'];
+// PLUS the self-description read closure used by the hosted /r describe + doc
+// endpoints (Task 3):
+//   identity.mjs       — resolveSelfDescription (publish-safe mirror of the oracle)
+//   skill-manifest.mjs — parseSkillZone, leaf import of identity.mjs (node:crypto only)
+// All siblings + the entry are vendored so the relative imports resolve within
+// service/lib/. Their only further imports are node: builtins (no npm).
+const VENDORED = [
+  'edit', 'apply-edits', 'dsl-compiler', 'seed', 'atomic-write',
+  'identity', 'skill-manifest',
+];
 
 // ─── 1. Drift gate: byte-identical to cli/src ──────────────────────────────
 

@@ -5,6 +5,12 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 
+// Hosted-runtime store + capability auth for the /r endpoints (Task 3). Pure
+// CJS helpers (token mint/hash/verify, ingest, readHosted, baseBodyHash); the
+// self-description reader they pair with is the vendored ESM identity.mjs,
+// dynamically imported from the async route handlers below.
+const hosted = require('./lib/hosted.js');
+
 const PORT = Number(process.env.PORT) || 80;
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const SEEDS_DIR = path.join(__dirname, '..', 'seeds');
@@ -422,6 +428,108 @@ async function handlePublish(req, send) {
   }, JSON.stringify({ short, url: shareUrl, expiresAt: createdAt + EXPIRY_MS }) + '\n');
 }
 
+// ─── Hosted runtime (/r): store + capability auth + read endpoints ─────────
+// A hosted rwa is stored under DATA_DIR/r/<id>/ (disjoint from the /s/ share
+// files). Reads are gated by a per-rwa capability token (Authorization: Bearer
+// <token>); only the token's sha-256 hash is persisted (hosted.js). The /modify
+// WRITE endpoint is Task 4 — not built here. The token is NEVER logged.
+
+const JSON_CT = { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' };
+const sendJson = (send, status, obj) => send(status, JSON_CT, JSON.stringify(obj) + '\n');
+
+// Pull the Bearer token out of the Authorization header. Returns null for a
+// missing or malformed header (→ caller responds 401, never 500).
+function bearerToken(req) {
+  const h = req.headers['authorization'];
+  if (!h || typeof h !== 'string') return null;
+  const m = h.match(/^Bearer\s+(\S+)$/);
+  return m ? m[1] : null;
+}
+
+// POST /r — create a hosted rwa from raw .html bytes. Anonymous (creating).
+async function handleHostedCreate(req, send) {
+  let buf;
+  try { buf = await readBody(req, MAX_BODY_BYTES); }
+  catch (err) {
+    if (err && err.code === 'BODY_TOO_LARGE') {
+      return sendJson(send, 413, { error: 'body_too_large', maxBytes: MAX_BODY_BYTES });
+    }
+    return sendJson(send, 400, { error: 'read_failed' });
+  }
+
+  let id, token;
+  try {
+    ({ id, token } = hosted.ingest(buf.toString('utf8'), { dataDir: DATA_DIR }));
+  } catch (err) {
+    if (err && err.code === 'not_a_rewritable') {
+      return sendJson(send, 400, { error: 'not_a_rewritable' });
+    }
+    console.error('hosted: ingest failed', err && err.message);
+    return sendJson(send, 500, { error: 'storage_failed' });
+  }
+
+  // Projection URL: <base>/r/<id>#k=<token>. The token rides the fragment so it
+  // never reaches the server on a navigation (Task 6 builds the projection page).
+  const scheme = (req.headers['x-forwarded-proto'] || 'http').split(',')[0].trim();
+  const host = req.headers.host || 'localhost';
+  const base = `${scheme}://${host}`;
+  return sendJson(send, 200, { id, token, url: `${base}/r/${id}#k=${token}` });
+}
+
+// GET /r/:id/{describe,export,doc} — authenticated reads over the stored bytes.
+async function handleHostedRead(id, action, req, send) {
+  const rec = hosted.readHosted(id, { dataDir: DATA_DIR });
+  // Unknown id → 404. Bad/missing token → 401. Order: a present-but-unauthorized
+  // caller learns nothing about existence beyond the id they already named.
+  if (!rec) return sendJson(send, 404, { error: 'not_found' });
+
+  const token = bearerToken(req);
+  if (!hosted.verifyToken(token, rec.owner.capHash)) {
+    return sendJson(send, 401, { error: 'unauthorized' });
+  }
+
+  // Authorized: touch lastAccess (best-effort, non-fatal).
+  hosted.touchAccess(id, { dataDir: DATA_DIR }, rec.owner);
+
+  if (action === 'export') {
+    // The stored bytes verbatim.
+    return send(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' }, rec.bytes);
+  }
+
+  // describe + doc both need the self-description/1 projection over the bytes.
+  // The reader is the vendored ESM identity.mjs (+ seed.mjs for the editable
+  // body); dynamic-import them from this async handler (CJS can't static-import
+  // ESM). Mirrors cli/src/doc.mjs inspectDoc.
+  const { resolveSelfDescription } = await import('./lib/identity.mjs');
+  const { extractInlineDoc } = await import('./lib/seed.mjs');
+  const { findFrozenZones } = await import('./lib/apply-edits.mjs');
+
+  let doc;
+  try { doc = extractInlineDoc(rec.bytes); }
+  catch { return sendJson(send, 500, { error: 'corrupt_container' }); }
+
+  const UUID_RE_LOCAL = /const DOC_UUID = '([0-9a-f-]{36})';/;
+  const PRODUCT_KIND_RE = /const PRODUCT_KIND = '([^']*)';/;
+  const uuid = (rec.bytes.match(UUID_RE_LOCAL) || [])[1] || null;
+  const kind = (rec.bytes.match(PRODUCT_KIND_RE) || [])[1] || 'document';
+  const frozenZones = findFrozenZones(doc).map((z) => z.name);
+  const selfDescription = resolveSelfDescription({ fileText: rec.bytes, doc, uuid, kind, frozenZones });
+
+  if (action === 'describe') {
+    return sendJson(send, 200, selfDescription);
+  }
+
+  // doc: the LF-canonical editable body + its sha-256 + the self-description.
+  // baseHash is what a Phase-B client feeds the agent + sends as the envelope
+  // baseHash. canonLF so the hash is over exactly the edit-contract bytes.
+  const canonDoc = hosted.canonLF(doc);
+  return sendJson(send, 200, {
+    doc: canonDoc,
+    baseHash: hosted.sha256hex(canonDoc),
+    selfDescription,
+  });
+}
+
 function contentTypeFor(name) {
   if (name.endsWith('.html')) return 'text/html; charset=utf-8';
   if (name.endsWith('.md'))   return 'text/markdown; charset=utf-8';
@@ -459,6 +567,19 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // POST /r — create a hosted rwa. Apex-only, like /publish (a share host must
+  // not be able to bounce a create off it and have us mint a wrong-origin URL).
+  if (req.method === 'POST' && url === '/r' && !isShareHost) {
+    handleHostedCreate(req, send).catch(err => {
+      console.error('hosted: create unhandled error', err);
+      if (!res.headersSent) {
+        send(500, { 'Content-Type': 'application/json; charset=utf-8' },
+          JSON.stringify({ error: 'internal_error' }) + '\n');
+      }
+    });
+    return;
+  }
+
   if (req.method !== 'GET' && !isHead) {
     return send(405, { 'Allow': 'GET, HEAD, POST', 'Content-Type': 'text/plain' }, 'method not allowed\n');
   }
@@ -475,6 +596,23 @@ const server = http.createServer((req, res) => {
       return serveShare(hostShort[1], send);
     }
     return send(404, { 'Content-Type': 'text/plain' }, 'not found\n');
+  }
+
+  // GET /r/:id/{describe,export,doc} — authenticated hosted reads. Apex-only
+  // (the share-host branch above already returned for share origins). /r is a
+  // NEW reserved prefix, disjoint from /s/.
+  {
+    const m = url.match(/^\/r\/([0-9a-z]{8})\/(describe|export|doc)$/);
+    if (m) {
+      handleHostedRead(m[1], m[2], req, send).catch(err => {
+        console.error('hosted: read unhandled error', err);
+        if (!res.headersSent) {
+          send(500, { 'Content-Type': 'application/json; charset=utf-8' },
+            JSON.stringify({ error: 'internal_error' }) + '\n');
+        }
+      });
+      return;
+    }
   }
 
   if (url === '/health') {

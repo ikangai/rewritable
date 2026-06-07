@@ -1,11 +1,13 @@
-# Vendored CLI apply pipeline (`service/lib/`)
+# Vendored CLI apply pipeline + self-description reader (`service/lib/`)
 
 These files are **byte-identical copies** of `cli/src/*.mjs`. They exist because
 the service deploy is a flat `scp` of `service/` only — `cli/` is **not** present
-after deploy — so the future `/modify` endpoint (essentially `rwa edit --plan`
-run server-side) must carry its own copy of the file-edit apply pipeline rather
-than reimplement the rwa-edit/1 validator. Same discipline the CLI itself uses to
-mirror the seed and the dsl-compiler oracle.
+after deploy — so the `/modify` endpoint (essentially `rwa edit --plan` run
+server-side) and the hosted `/r .../describe`+`/doc` read endpoints must carry
+their own copy of the file-edit apply pipeline AND the self-description reader
+rather than reimplement the rwa-edit/1 validator / the `self-description/1`
+computer. Same discipline the CLI itself uses to mirror the seed and the
+dsl-compiler oracle.
 
 ## What the service calls
 
@@ -39,10 +41,16 @@ deps** are pulled in, preserving the service's zero-dep constraint.
 | `dsl-compiler.mjs` | `cli/src/dsl-compiler.mjs` | (via `edit.mjs`) `compileDslPlan` | Compiles `apply_dsl_plan` → `apply_edits` (or the `replace_document` escape op). |
 | `seed.mjs` | `cli/src/seed.mjs` | (via `edit.mjs`) `extractInlineDoc`, `replaceInlineDoc` | INLINE_DOC backtick-walk: extract the editable body, splice the new body back (escapeTL). |
 | `atomic-write.mjs` | `cli/src/atomic-write.mjs` | (via `edit.mjs`) `atomicWrite` | temp + fsync + rename(2) durable write of the rebuilt file. |
+| `identity.mjs` | `cli/src/identity.mjs` | `resolveSelfDescription` (+ `countBlocks`, validators) | Publish-safe mirror of `tools/self-description.mjs`: computes the `self-description/1` object from container bytes for the hosted `describe`/`doc` endpoints (Task 3). |
+| `skill-manifest.mjs` | `cli/src/skill-manifest.mjs` | (via `identity.mjs`) `parseSkillZone` | Leaf import of `identity.mjs` (imports only `node:crypto`): parses the installed-skill frozen zone into `provenance:'installed'` affordances. |
 
 `seed.mjs` also exports `loadSeed`/`applySeedSubs`/`kindOverrides` etc. that the
 apply path does not use; they ride along because the file is copied verbatim (the
 cmp gate forbids trimming). They import only `node:fs/promises`.
+
+`identity.mjs`'s relative-import closure is `apply-edits.mjs` (already vendored
+for the apply path) + `skill-manifest.mjs` (vendored above; a leaf importing only
+`node:crypto`). No npm deps are pulled in — the zero-dep constraint holds.
 
 ## Drift check (cmp gate)
 
@@ -50,7 +58,7 @@ Run from the repo root. Any non-empty output means a vendored file drifted from
 its `cli/src` source and must be re-copied (or the change rolled back):
 
 ```sh
-for f in edit apply-edits dsl-compiler seed atomic-write; do \
+for f in edit apply-edits dsl-compiler seed atomic-write identity skill-manifest; do \
   cmp cli/src/$f.mjs service/lib/$f.mjs; done
 ```
 
