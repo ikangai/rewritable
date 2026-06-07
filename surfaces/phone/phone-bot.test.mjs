@@ -21,7 +21,8 @@
 //    (the `finally`), or the host leaks files.
 
 import assert from 'node:assert/strict';
-import { handleTurn, parseForm } from './phone-bot.mjs';
+import { EventEmitter } from 'node:events';
+import { handleTurn, parseForm, makeServerHandler } from './phone-bot.mjs';
 import * as twiml from './twiml.mjs';
 import { FoundationError } from '../telegram/foundation-api.mjs';
 
@@ -362,6 +363,76 @@ await test('mapError: a throwing log sink still returns gather TwiML (airtight n
   assert.ok(xml.startsWith('<?xml'), 'a real <Response> is returned, not silence');
   assert.ok(/sorry/i.test(xml), 'apologizes');
   assert.ok(xml.includes('<Gather'), 'call continues despite the throwing log');
+});
+
+// ── M1: body-size cap on the OPEN webhook ────────────────────────────────────
+// The webhook is unauthenticated (no X-Twilio-Signature check), so an unbounded
+// readBody is a memory-exhaustion vector for anyone with the URL. WHY this test
+// matters (Rule 9): a body over the 64KB cap must be REJECTED with a 413 BEFORE it
+// reaches handleTurn — it must NOT accumulate unbounded and must NOT mutate the doc.
+// A fake req (EventEmitter) lets us drive readBody without a real socket.
+
+await test('M1: a POST body over the 64KB cap → 413, never reaches handleTurn', async () => {
+  const { deps, calls } = makeDeps();
+  const handler = makeServerHandler(deps);
+
+  const req = new EventEmitter();
+  req.method = 'POST';
+  req.url = '/phone/turn';
+  let destroyed = false;
+  req.destroy = () => { destroyed = true; };
+
+  let status = 0;
+  let ended = '';
+  const res = {
+    writeHead: (code) => { status = code; },
+    end: (body) => { ended = body || ''; },
+  };
+
+  const done = handler(req, res);
+
+  // Emit chunks that together exceed 64KB. The cap should trip mid-stream: the
+  // request is destroyed and we never reach 'end'.
+  const chunk = 'x'.repeat(16 * 1024);
+  req.emit('data', chunk);
+  req.emit('data', chunk);
+  req.emit('data', chunk);
+  req.emit('data', chunk);
+  req.emit('data', chunk); // 80KB total — over the 64KB cap
+
+  await done;
+
+  assert.equal(status, 413, 'oversized body gets a 413');
+  assert.ok(/too large/i.test(ended), 'plain 413 body');
+  assert.ok(destroyed, 'the request is destroyed (stops accumulating)');
+  assert.equal(calls.classify.length, 0, 'never reaches the classify path');
+  assert.equal(calls.modify.length, 0, 'never mutates the bound doc');
+});
+
+await test('M1: a normal small POST body still flows to handleTurn (cap does not over-reject)', async () => {
+  const { deps, calls } = makeDeps();
+  const handler = makeServerHandler(deps);
+
+  const req = new EventEmitter();
+  req.method = 'POST';
+  req.url = '/phone/turn';
+  req.destroy = () => {};
+
+  let status = 0;
+  let ended = '';
+  const res = {
+    writeHead: (code) => { status = code; },
+    end: (body) => { ended = body || ''; },
+  };
+
+  const done = handler(req, res);
+  req.emit('data', 'SpeechResult=what+was+revenue%3F');
+  req.emit('end');
+  await done;
+
+  assert.equal(status, 200, 'small body is processed normally');
+  assert.ok(ended.startsWith('<?xml'), 'returns real TwiML');
+  assert.equal(calls.readDoc.length, 1, 'reached the ask path (handleTurn ran)');
 });
 
 console.log(`\n${passed} passed`);

@@ -94,10 +94,17 @@ at `https://<public-host>/phone/incoming`.
   `PHONE_DOC_TOKEN`, handed only to the foundation client, and is **never spoken** in
   any `<Say>` and **never logged**. The foundation client redacts it from its own
   errors; pinned by a token-absence test that scans every path's output + logs.
-- **One pre-bound doc.** The line talks to exactly one doc (id+token from env). There
-  is **no PIN, no caller auth** — anyone who calls the number can read and edit that
-  doc. This is a **demo line**: bind it to a throwaway/demo doc, never anything
-  sensitive.
+- **The webhook is an UNAUTHENTICATED, write-capable endpoint.** It does **not**
+  validate Twilio's `X-Twilio-Signature` header, so the threat is **not** limited to
+  "anyone who calls the number" — **anyone who knows the public URL can POST to
+  `/phone/turn` with curl and edit the bound doc directly, bypassing the phone
+  entirely.** There is **no PIN and no caller/request auth** of any kind. Bind the line
+  to a **throwaway/demo doc only**, never anything sensitive. The production follow-up
+  is HMAC-validating each request against the Twilio auth token (rejecting any POST
+  whose `X-Twilio-Signature` doesn't match).
+- **One pre-bound doc.** The line talks to exactly one doc (id+token from env), so the
+  blast radius of the open endpoint is that single bound doc — but see above: that doc
+  is editable by anyone with the URL, not just callers.
 - Untrusted text (transcribed speech, doc-derived answers) is XML-escaped before it
   reaches TwiML, so it can't inject TwiML elements.
 
@@ -128,7 +135,15 @@ Deliberate cuts — not bugs, but the edges this spike does not cover:
   as **edit** — the classifier matches the word *edit*, not the intent's polarity.
 - **`answer` sends the full doc.** No truncation / context-window guard — a large doc
   can blow the model's context limit on an ask.
-- **One bound doc; no PIN/auth.** See Security above — a demo line, not multi-tenant.
+- **Unauthenticated, write-capable webhook.** The server does **not** validate Twilio's
+  `X-Twilio-Signature`, so `/phone/turn` is an open write endpoint: anyone who knows the
+  public URL can POST to it and edit the bound doc directly via curl — not just phone
+  callers. There is no PIN or caller auth. **Bind only a throwaway/demo doc.** The
+  production follow-up is HMAC-validating the request against the Twilio auth token. See
+  Security above.
+- **Body cap is 64KB.** `readBody` rejects any request body over 64KB with a 413 (Twilio
+  turn bodies are tiny — a few form fields). This bounds the memory an unauthenticated
+  caller can make the open endpoint allocate per request; it is a ceiling, not auth.
 - **Twilio built-in STT/TTS only.** No custom recognizer, no SSML tuning, no barge-in
   niceties beyond the default `<Gather>`.
 - **Happy-path.** Minimal retry/backoff; no per-call session memory beyond the single

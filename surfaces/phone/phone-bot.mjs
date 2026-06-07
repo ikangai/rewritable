@@ -108,7 +108,7 @@ export async function handleTurn(params, deps) {
     // Deliberately classified WITHOUT a pre-read of the doc: a spike latency
     // trade-off (saves a foundation round-trip per turn). Doc-aware
     // disambiguation (the second arg) is a known gap — see README limitations.
-    const intent = await agent.classifyIntent(speech, undefined);
+    const intent = await agent.classifyIntent(speech, '');
 
     if (intent === 'edit') {
       return await handleEdit(speech, params, deps, { id, token, sayAndGather });
@@ -256,14 +256,36 @@ export function parseForm(body) {
 const SERVER_ERROR_TWIML =
   '<?xml version="1.0" encoding="UTF-8"?><Response><Say>Sorry, an error occurred.</Say><Hangup/></Response>';
 
-// Read a request body to a string (utf8), bounded only by node's default. Twilio
-// turn bodies are tiny (a few form fields), so no extra cap here for the spike.
+// The open webhook is unauthenticated (no X-Twilio-Signature validation — see
+// README Security), so an unbounded body read is a memory-exhaustion vector for
+// anyone with the URL. Cap it: Twilio turn bodies are a handful of tiny form
+// fields, so 64KB is generous. Over the cap → reject (do not keep accumulating).
+const MAX_BODY = 64 * 1024;
+
+// Sentinel returned (never thrown) when the body exceeds MAX_BODY, so the handler
+// can respond 413 without an unhandled rejection. A symbol can't collide with any
+// real (string) body.
+const BODY_TOO_LARGE = Symbol('body_too_large');
+
+// Read a request body to a string (utf8), capped at MAX_BODY. Once the accumulated
+// length exceeds the cap we stop accumulating, destroy the request, and resolve
+// with the BODY_TOO_LARGE sentinel (never-throw — a framing failure must not crash
+// the handler). Twilio turn bodies are tiny, so the cap never trips in practice.
 function readBody(req) {
   return new Promise((resolve, reject) => {
     let data = '';
-    req.on('data', (chunk) => { data += chunk; });
-    req.on('end', () => resolve(data));
-    req.on('error', reject);
+    let aborted = false;
+    req.on('data', (chunk) => {
+      if (aborted) return;
+      data += chunk;
+      if (data.length > MAX_BODY) {
+        aborted = true;
+        try { req.destroy(); } catch {}
+        resolve(BODY_TOO_LARGE);
+      }
+    });
+    req.on('end', () => { if (!aborted) resolve(data); });
+    req.on('error', (e) => { if (!aborted) reject(e); });
   });
 }
 
@@ -285,6 +307,11 @@ export function makeServerHandler(deps) {
         return;
       }
       const body = await readBody(req);
+      if (body === BODY_TOO_LARGE) {
+        res.writeHead(413, { 'content-type': 'text/plain' });
+        res.end('Payload Too Large');
+        return;
+      }
       const params = parseForm(body);
       const xml = await handleTurn(params, deps);
       res.writeHead(200, { 'content-type': 'text/xml' });
