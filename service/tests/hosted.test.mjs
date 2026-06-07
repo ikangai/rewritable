@@ -1369,9 +1369,15 @@ test('GET /r/:id serves current.html with the shim injected BEFORE the bootstrap
     assert.ok(bootIdx >= 0, 'the bootstrap <script> is present (real rewritable served)');
     assert.ok(shimIdx < bootIdx, 'the shim is injected BEFORE the bootstrap');
 
-    // Templated with THIS id.
-    assert.ok(html.includes(`/r/${id}/modify`) || html.includes(id),
-      'the shim carries this rwa id');
+    // Templated with THIS id. The shim builds its API URLs at runtime by
+    // concatenation ('/r/' + RWA_ID + '/modify' | '/undo'), so the load-bearing
+    // substitution in the served bytes is the RWA_ID assignment — every
+    // /r/<id>/modify + /r/<id>/undo call resolves from it. Assert the exact
+    // substituted assignment (not a bare html.includes(id), which is trivially
+    // true: id is an 8-char substring always present). This FAILS if
+    // id-substitution regresses (the __RWA_HOSTED_ID__ placeholder would remain).
+    assert.ok(html.includes(`var RWA_ID = '${id}';`),
+      'the shim is templated with this rwa id (RWA_ID — the source of its /modify + /undo URLs)');
 
     // Templated with the STORED (rotated) DOC_UUID — so deleteDatabase targets the
     // right per-container IDB. Read it back from the stored bytes.
@@ -1393,6 +1399,45 @@ test('GET /r/:id serves current.html with the shim injected BEFORE the bootstrap
     // Unknown id → 404.
     const unknown = await fetch(`${srv.base}/r/zzzzzzzz`);
     assert.equal(unknown.status, 404, 'unknown id → 404');
+  } finally {
+    await srv.stop();
+  }
+});
+
+// WHY (Rule 9): ingest's gate (BOOTSTRAP_RE = /<script id="rwa-bootstrap"/, no
+// closing '>') ACCEPTS a bootstrap tag carrying attributes (e.g. `defer`), but
+// the projection must SERVE everything ingest accepts. A literal-string splice on
+// '<script id="rwa-bootstrap">' would miss the attributed form → 500. This pins
+// the two gates to agree on "has a bootstrap": a container that passes ingest
+// must render a 200 projection with the shim injected before that tag.
+test('GET /r/:id serves a container whose bootstrap tag carries an attribute (no 500) — projection splice agrees with the ingest gate', async () => {
+  const srv = await startServer();
+  try {
+    // Same shape as makeRewritable but the bootstrap open tag carries `defer`.
+    // This passes ingest (BOOTSTRAP_RE has no closing '>') yet a literal
+    // indexOf('<script id="rwa-bootstrap">') splice would return -1 → 500.
+    const attributed = makeRewritable('55555555-5555-4555-8555-555555555555')
+      .replace('<script id="rwa-bootstrap">', '<script id="rwa-bootstrap" defer>');
+    assert.ok(attributed.includes('<script id="rwa-bootstrap" defer>'),
+      'fixture actually carries the attributed bootstrap tag');
+
+    const createRes = await fetch(srv.base + '/r', {
+      method: 'POST', headers: { 'Content-Type': 'text/html' }, body: attributed,
+    });
+    assert.equal(createRes.status, 200, 'attributed bootstrap passes ingest → 200');
+    const { id } = await createRes.json();
+
+    const res = await fetch(`${srv.base}/r/${id}`);
+    assert.equal(res.status, 200, 'GET /r/:id → 200 for an attributed bootstrap (not 500)');
+    const html = await res.text();
+
+    // The shim is injected, and STRICTLY BEFORE the (attributed) bootstrap tag.
+    const shimIdx = html.indexOf('id="rwa-hosted-shim"');
+    const bootIdx = html.indexOf('<script id="rwa-bootstrap" defer>');
+    assert.ok(shimIdx >= 0, 'the shim <script> is present');
+    assert.ok(bootIdx >= 0, 'the attributed bootstrap tag is preserved in the output');
+    assert.ok(shimIdx < bootIdx, 'the shim is injected BEFORE the attributed bootstrap');
+    assert.ok(!html.includes('__RWA_HOSTED_ID__'), 'no id placeholder leaks');
   } finally {
     await srv.stop();
   }

@@ -113,7 +113,9 @@
         '-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;z-index:2147483646;' +
         'box-shadow:0 4px 16px rgba(0,0,0,.25);max-width:80vw;';
       n.textContent = msg;
-      document.body.appendChild(n);
+      // body may be null on a very early commit (before <body> parses) — fall
+      // back to documentElement so the user-facing toast is never silently lost.
+      (document.body || document.documentElement).appendChild(n);
       setTimeout(function () { try { n.remove(); } catch (_e) {} }, 4000);
     } catch (_e) {}
   }

@@ -964,8 +964,13 @@ function handleHostedProjection(id, send) {
   // it to deleteDatabase('rwa_<uuid>') for reload-sync. ingest validated DOC_UUID
   // exists, but be defensive — a missing uuid means we can't safely template.
   const uuid = (bytes.match(UUID_RE_LOCAL) || [])[1];
-  const marker = '<script id="rwa-bootstrap">';
-  const at = bytes.indexOf(marker);
+  // Find the bootstrap-script start with the SAME pattern ingest validated
+  // against (BOOTSTRAP_RE = /<script id="rwa-bootstrap"/, no closing '>'), so
+  // anything ingest accepts — including an attributed open tag like
+  // `<script id="rwa-bootstrap" defer>` — can be served. Inject immediately
+  // before the matched `<script` start.
+  const bm = bytes.match(BOOTSTRAP_RE);
+  const at = bm ? bm.index : -1;
   if (!uuid || at < 0) {
     console.error('hosted: projection cannot template (uuid/bootstrap missing)', id);
     return sendJson(send, 500, { error: 'corrupt_container' });
