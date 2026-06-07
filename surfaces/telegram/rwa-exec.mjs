@@ -49,7 +49,7 @@ import { execFile as _execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { mkdtemp, rm as _rm } from 'node:fs/promises';
+import { mkdtemp, rm as _rm, readFile as _readFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 
 const defaultExecFile = promisify(_execFile);
@@ -192,4 +192,139 @@ export async function rwaCreatePublish(prompt, deps = {}) {
   } finally {
     await rm(dir);
   }
+}
+
+// ── BUILD-only paths (Telegram Phase B) ──────────────────────────────────────
+// Phase A's *Publish helpers BUILD a container then publish it to the ephemeral
+// service (the SINK). Phase B reuses the identical BUILD step but the SINK differs:
+// the bytes go to the foundation (`POST /r`, editable hosted doc) instead. So the
+// build is shared and only the final step changes — these two helpers run the same
+// `rwa import`/`rwa create` build into a fresh temp dir, then READ THE BYTES BACK
+// (instead of `rwa publish`), removing the temp dir in `finally` like the siblings.
+// They return `{ ok:true, bytes }` or the same failure-object shape as the publish
+// helpers (so the caller's friendly-reply mapping is identical). `readFile` is a
+// seam (default node:fs/promises) so the bot's create path is fully offline-testable.
+
+/**
+ * Build a container from a local file (wrap path) and return its raw bytes.
+ * `rwa import <filePath> <tmpOut>` then read `<tmpOut>`. No publish.
+ *
+ * @param {string} filePath  attacker-controlled — passed as ONE argv element.
+ * @param {{execFile?:Function, rwaCmd?:Function, env?:object, tmpDir?:Function, rm?:Function, readFile?:Function}} [deps]
+ * @returns {Promise<{ok:true,bytes:string}|{ok:false,step:'import',code:any,stderr:string}>}
+ */
+export async function rwaImportBuild(filePath, deps = {}) {
+  const execFile = deps.execFile || defaultExecFile;
+  const { cmd, baseArgs } = (deps.rwaCmd || resolveRwaCmd)(deps.env || process.env);
+  const makeTmp = deps.tmpDir || (() => mkdtemp(join(tmpdir(), 'rwa-tg-')));
+  const rm = deps.rm || ((dir) => _rm(dir, { recursive: true, force: true }));
+  const readFile = deps.readFile || ((p) => _readFile(p, 'utf8'));
+
+  // Same leading-dash neutralization as rwaImportPublish (defense-in-depth).
+  const safeFilePath = looksLikeFlag(filePath) ? `./${filePath}` : filePath;
+
+  const dir = await makeTmp();
+  try {
+    const container = join(dir, `${randomUUID()}.html`);
+    try {
+      await execFile(cmd, [...baseArgs, 'import', safeFilePath, container], {});
+    } catch (err) {
+      return failure('import', err);
+    }
+    return { ok: true, bytes: await readFile(container) };
+  } finally {
+    await rm(dir);
+  }
+}
+
+/**
+ * Build a container from a prompt (agent-fill) and return its raw bytes.
+ * GATED on a backend key + leading-dash prompt rejection (mirrors rwaCreatePublish);
+ * neither gate spawns. `rwa create "<prompt>" --out <tmpOut>` then read `<tmpOut>`.
+ *
+ * @param {string} prompt  attacker-controlled — passed as ONE argv element.
+ * @param {{execFile?:Function, hasBackendKey?:boolean, rwaCmd?:Function, env?:object, tmpDir?:Function, rm?:Function, readFile?:Function}} deps
+ * @returns {Promise<{ok:true,bytes:string}|{ok:false,code?:string,step?:'create',stderr?:string}>}
+ */
+export async function rwaCreateBuild(prompt, deps = {}) {
+  if (!deps.hasBackendKey) {
+    return { ok: false, code: 'agent_not_configured' };
+  }
+  if (looksLikeFlag(prompt)) {
+    return { ok: false, code: 'bad_prompt' };
+  }
+
+  const execFile = deps.execFile || defaultExecFile;
+  const { cmd, baseArgs } = (deps.rwaCmd || resolveRwaCmd)(deps.env || process.env);
+  const makeTmp = deps.tmpDir || (() => mkdtemp(join(tmpdir(), 'rwa-tg-')));
+  const rm = deps.rm || ((dir) => _rm(dir, { recursive: true, force: true }));
+  const readFile = deps.readFile || ((p) => _readFile(p, 'utf8'));
+
+  const dir = await makeTmp();
+  try {
+    const container = join(dir, `${randomUUID()}.html`);
+    try {
+      await execFile(cmd, [...baseArgs, 'create', prompt, '--out', container], {});
+    } catch (err) {
+      return failure('create', err);
+    }
+    return { ok: true, bytes: await readFile(container) };
+  } finally {
+    await rm(dir);
+  }
+}
+
+/**
+ * Edit path: apply an agent edit to a caller-owned temp container IN PLACE, then
+ * read the new LF-canonical body back.
+ *
+ * `rwa edit <filePath> <instruction>` then `rwa doc <filePath>`. Unlike the two
+ * publish paths, rwaEdit makes NO temp dir of its own and NEVER deletes
+ * `filePath` — the caller (the foundation/Phase-B flow) exports the hosted doc to
+ * the temp, owns it, and cleans it up.
+ *
+ * SECURITY — flag-smuggling wall FIRST: the instruction is raw Telegram text, so
+ * a leading-dash instruction (e.g. `--api-key`/`--base-url`) could be read by
+ * `rwa edit`'s flag parser and redirect the agent backend (credential-exfil).
+ * Reject it as DATA before spawning anything. A mid-token dash is safe (the whole
+ * instruction is one argv element that does not start with `-`). See the SECURITY
+ * note at the top of this file.
+ *
+ * @param {string} filePath     caller-owned temp container — passed as ONE argv element, never deleted here.
+ * @param {string} instruction  attacker-controlled — passed as ONE argv element.
+ * @param {{execFile?:Function, rwaCmd?:Function, env?:object}} [deps]
+ * @returns {Promise<{ok:true,doc:string}|{ok:false,code:'bad_instruction'}|{ok:false,step:'edit'|'doc',code:any,stderr:string}>}
+ */
+export async function rwaEdit(filePath, instruction, deps = {}) {
+  // The flag-smuggling wall FIRST — before any subprocess. A leading-dash
+  // instruction is rejected as data (the caller maps `bad_instruction` to a
+  // friendly "start with a word, not a dash").
+  if (looksLikeFlag(instruction)) {
+    return { ok: false, code: 'bad_instruction' };
+  }
+
+  const execFile = deps.execFile || defaultExecFile;
+  const { cmd, baseArgs } = (deps.rwaCmd || resolveRwaCmd)(deps.env || process.env);
+
+  // Defense-in-depth: filePath is a caller-owned temp path today (not attacker-
+  // controlled), but a leading `-` would still be read as a flag by the edit/doc
+  // positional filter, so normalize it to a `./`-relative path that can never be.
+  const safeFilePath = looksLikeFlag(filePath) ? `./${filePath}` : filePath;
+
+  // 1) Apply the edit in place on the caller-owned temp container.
+  try {
+    await execFile(cmd, [...baseArgs, 'edit', safeFilePath, instruction], {});
+  } catch (err) {
+    return failure('edit', err);
+  }
+
+  // 2) Read the new LF-canonical body back. `rwa doc` plain mode prints the body
+  // (± one trailing newline); return stdout as-is — the caller canonicalizes.
+  let out;
+  try {
+    out = await execFile(cmd, [...baseArgs, 'doc', safeFilePath], {});
+  } catch (err) {
+    return failure('doc', err);
+  }
+  return { ok: true, doc: (out && out.stdout) || '' };
 }

@@ -15,7 +15,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { rwaImportPublish, rwaCreatePublish, resolveRwaCmd } from './rwa-exec.mjs';
+import { rwaImportPublish, rwaCreatePublish, rwaImportBuild, rwaCreateBuild, rwaEdit, resolveRwaCmd } from './rwa-exec.mjs';
 
 // A fake execFile that records every invocation and replays a scripted result.
 // Each script is keyed by the VERB (args[baseArgs.length] effectively — but since
@@ -386,4 +386,228 @@ test('publish URL parse: no URL in stdout → ok:false with a parse code (not a 
   assert.equal(result.ok, false);
   assert.equal(result.step, 'publish');
   assert.equal(result.code, 'no_url');
+});
+
+// ── rwaEdit: edit a HOSTED doc on a caller-owned temp container ──────────────
+//
+// Phase B edits a hosted doc by exporting it to a temp container, running
+// `rwa edit` on that temp, then reading the new body back with `rwa doc`. The
+// caller OWNS the temp file (creates + cleans it); rwaEdit operates in place and
+// must never delete it (so no tmpDir/rm seam here — unlike the publish paths).
+//
+// SECURITY — the instruction is raw Telegram text. Same two walls as the prompt:
+// argv-array (no shell, instruction is ONE element so metacharacters are inert)
+// AND leading-dash rejection (a `--api-key`/`--base-url` instruction would be
+// read by `rwa edit`'s flag parser and could redirect the agent backend —
+// credential-exfil). The leading-dash test asserts execFile is NEVER spawned.
+
+const DOC_STDOUT = '# My doc\n\nThe edited body.\n';
+
+test('SECURITY rwaEdit: a leading-dash instruction is rejected as bad_instruction — never spawned', async () => {
+  for (const evil of ['--api-key x', '-f', '--base-url']) {
+    let callCount = 0;
+    const execFile = async () => { callCount++; return { stdout: '', stderr: '' }; };
+
+    const result = await rwaEdit('/owned/tmp/c.html', evil, { execFile });
+
+    // Rejected as DATA, before any subprocess — the smuggled flag can never reach
+    // `rwa edit` to be parsed as a backend option. THIS is the flag-smuggling wall.
+    assert.deepEqual(result, { ok: false, code: 'bad_instruction' },
+      `instruction ${JSON.stringify(evil)} must be rejected`);
+    assert.equal(callCount, 0,
+      `a flag-shaped instruction must not spawn rwa edit (got ${callCount} calls)`);
+  }
+});
+
+test('rwaEdit: runs `rwa edit <file> <instruction>` then `rwa doc <file>` and returns the new body', async () => {
+  const filePath = '/owned/tmp/c.html';
+  const instruction = 'make the intro punchier';
+  const { execFile, calls } = makeFakeExec({
+    edit: { stdout: 'applied 1 edit', stderr: '' },
+    doc: { stdout: DOC_STDOUT, stderr: '' },
+  });
+
+  const result = await rwaEdit(filePath, instruction, { execFile });
+
+  assert.deepEqual(result, { ok: true, doc: DOC_STDOUT });
+
+  // Exactly two calls: edit then doc.
+  assert.equal(calls.length, 2);
+  const editCall = calls[0];
+  const docCall = calls[1];
+
+  // Wire shape: filePath and instruction are SEPARATE single argv elements —
+  // never split, never concatenated. On PATH baseArgs is [], so the full args
+  // array is exactly [verb, filePath, instruction]. If anyone reintroduces
+  // string-building, this exact-deepEqual fails loudly.
+  assert.deepEqual(editCall.args, ['edit', filePath, instruction]);
+  assert.deepEqual(docCall.args, ['doc', filePath]);
+
+  // No shell, on either call.
+  for (const c of calls) {
+    assert.ok(!/(^|\/)(sh|bash|zsh|dash)$/.test(c.cmd), `cmd is a shell: ${c.cmd}`);
+    assert.ok(!(c.options && c.options.shell), 'a call enabled shell:true');
+  }
+});
+
+test('SECURITY rwaEdit: a leading-dash filePath is neutralized to `./`-relative in BOTH edit and doc argv', async () => {
+  // Defense-in-depth, matching the sibling rwaImportPublish: a dash-leading
+  // filePath would be dropped/misread by `rwa edit`/`rwa doc`'s positional flag
+  // filter (it discards a.startsWith('-')), sliding the instruction into the
+  // file-path slot or smuggling a flag. The `./` prefix makes it positional.
+  const filePath = '-rf.html';
+  const instruction = 'make the intro punchier';
+  const { execFile, calls } = makeFakeExec({
+    edit: { stdout: 'applied 1 edit', stderr: '' },
+    doc: { stdout: DOC_STDOUT, stderr: '' },
+  });
+
+  const result = await rwaEdit(filePath, instruction, { execFile });
+
+  assert.deepEqual(result, { ok: true, doc: DOC_STDOUT });
+  assert.equal(calls.length, 2);
+  const editCall = calls[0];
+  const docCall = calls[1];
+
+  // The neutralized `./`-prefixed path reaches BOTH calls — never the raw dash form.
+  assert.deepEqual(editCall.args, ['edit', './-rf.html', instruction]);
+  assert.deepEqual(docCall.args, ['doc', './-rf.html']);
+  assert.ok(!editCall.args.includes('-rf.html'), 'raw dash-leading path must not reach edit');
+  assert.ok(!docCall.args.includes('-rf.html'), 'raw dash-leading path must not reach doc');
+});
+
+test('SECURITY rwaEdit: a shell-metacharacter instruction (not dash-leading) is ONE argv element, never split', async () => {
+  const filePath = '/owned/tmp/c.html';
+  const evil = 'make it ; rm -rf ~';
+  const { execFile, calls } = makeFakeExec({
+    edit: { stdout: 'applied', stderr: '' },
+    doc: { stdout: DOC_STDOUT, stderr: '' },
+  });
+
+  const result = await rwaEdit(filePath, evil, { execFile });
+
+  assert.equal(result.ok, true);
+  const editCall = calls.find((c) => c.args.includes('edit'));
+  // The whole instruction is a SINGLE argv element — the `;` and `rm -rf ~` are
+  // inert text, never parsed by a shell. (Mid-token dash is safe: the element
+  // begins with a letter, so flag parsing never sees `-rf`.)
+  assert.ok(
+    editCall.args.includes(evil),
+    `instruction must be one argv element verbatim; got args=${JSON.stringify(editCall.args)}`,
+  );
+  assert.equal(editCall.args.filter((a) => a === evil).length, 1);
+});
+
+test('rwaEdit: non-zero `rwa edit` exit is captured (step:edit) and `rwa doc` is NOT run', async () => {
+  const filePath = '/owned/tmp/c.html';
+  const { execFile, calls } = makeFakeExec({
+    edit: execFailure(4, 'agent gave up after 3 attempts'),
+    doc: { stdout: DOC_STDOUT, stderr: '' },
+  });
+
+  const result = await rwaEdit(filePath, 'do a thing', { execFile });
+
+  assert.deepEqual(result, {
+    ok: false, step: 'edit', code: 4, stderr: 'agent gave up after 3 attempts',
+  });
+  // A failed edit means the body is unchanged garbage-or-original; reading it
+  // back is pointless and could mislead — so `rwa doc` must NOT run.
+  assert.ok(!calls.some((c) => c.args.includes('doc')), 'rwa doc must not run after a failed edit');
+});
+
+test('rwaEdit: edit succeeds but `rwa doc` exits non-zero → captured with step:doc', async () => {
+  const filePath = '/owned/tmp/c.html';
+  const { execFile } = makeFakeExec({
+    edit: { stdout: 'applied 1 edit', stderr: '' },
+    doc: execFailure(2, 'not a rewritable'),
+  });
+
+  const result = await rwaEdit(filePath, 'do a thing', { execFile });
+
+  assert.deepEqual(result, {
+    ok: false, step: 'doc', code: 2, stderr: 'not a rewritable',
+  });
+});
+
+// ── rwaImportBuild / rwaCreateBuild (Phase B: build, then READ BYTES, no publish) ──
+// WHY: Phase B reuses the EXACT build step from the publish helpers but the SINK
+// differs — the container bytes go to the foundation, not the ephemeral service.
+// These pins prove the build runs `import`/`create` (NOT `publish`), reads the
+// freshly-built container, and returns its bytes — so the bot can POST them to /r.
+
+test('rwaImportBuild: runs import (not publish), reads the container, returns bytes', async () => {
+  const seam = makeTmpSeam();
+  const reads = [];
+  const { execFile, calls } = makeFakeExec({ import: { stdout: 'wrote out.html', stderr: '' } });
+  const readFile = async (p) => { reads.push(p); return '<html>BUILT</html>'; };
+
+  const result = await rwaImportBuild('/some/note.md', { execFile, readFile, ...seam });
+
+  assert.deepEqual(result, { ok: true, bytes: '<html>BUILT</html>' });
+  // import ran; publish did NOT (the sink is the foundation, not the service).
+  assert.equal(calls.length, 1);
+  assert.ok(calls[0].args.includes('import'));
+  assert.ok(!calls.some((c) => c.args.includes('publish')), 'rwaImportBuild must not publish');
+  // import's output container is exactly what gets read back as bytes.
+  const container = calls[0].args[calls[0].args.indexOf('import') + 2];
+  assert.deepEqual(reads, [container]);
+  // No shell, ever.
+  assert.ok(!calls[0].options || calls[0].options.shell !== true);
+  // temp dir cleaned up.
+  assert.deepEqual(seam.removed, seam.created);
+});
+
+test('rwaImportBuild: a failed import is captured (step:import), bytes never read', async () => {
+  const seam = makeTmpSeam();
+  const reads = [];
+  const { execFile } = makeFakeExec({ import: execFailure(2, 'could not read doc') });
+  const readFile = async (p) => { reads.push(p); return 'x'; };
+
+  const result = await rwaImportBuild('/some/note.md', { execFile, readFile, ...seam });
+
+  assert.deepEqual(result, { ok: false, step: 'import', code: 2, stderr: 'could not read doc' });
+  assert.deepEqual(reads, [], 'must not read a container that never got built');
+  assert.deepEqual(seam.removed, seam.created); // still cleaned up
+});
+
+test('rwaCreateBuild: with key runs create (not publish), reads container, returns bytes', async () => {
+  const seam = makeTmpSeam();
+  const reads = [];
+  const { execFile, calls } = makeFakeExec({ create: { stdout: 'created', stderr: '' } });
+  const readFile = async (p) => { reads.push(p); return '<html>GEN</html>'; };
+
+  const result = await rwaCreateBuild('otters', { execFile, readFile, hasBackendKey: true, ...seam });
+
+  assert.deepEqual(result, { ok: true, bytes: '<html>GEN</html>' });
+  assert.ok(calls[0].args.includes('create'));
+  // the prompt is ONE argv element (the shell-injection wall).
+  assert.ok(calls[0].args.includes('otters'));
+  assert.ok(!calls.some((c) => c.args.includes('publish')), 'rwaCreateBuild must not publish');
+  // --out's path is what gets read back.
+  const out = calls[0].args[calls[0].args.indexOf('--out') + 1];
+  assert.deepEqual(reads, [out]);
+});
+
+test('rwaCreateBuild: NO key → agent_not_configured, NEVER spawns / reads', async () => {
+  const seam = makeTmpSeam();
+  const reads = [];
+  const { execFile, calls } = makeFakeExec({ create: { stdout: 'created', stderr: '' } });
+  const readFile = async (p) => { reads.push(p); return 'x'; };
+
+  const result = await rwaCreateBuild('otters', { execFile, readFile, hasBackendKey: false, ...seam });
+
+  assert.deepEqual(result, { ok: false, code: 'agent_not_configured' });
+  assert.equal(calls.length, 0, 'no spawn without a key');
+  assert.deepEqual(reads, []);
+  assert.deepEqual(seam.created, [], 'no temp dir without a key');
+});
+
+test('rwaCreateBuild: leading-dash prompt → bad_prompt, NEVER spawns (flag-smuggling wall)', async () => {
+  const seam = makeTmpSeam();
+  const { execFile, calls } = makeFakeExec({ create: { stdout: 'created', stderr: '' } });
+
+  const result = await rwaCreateBuild('--base-url evil', { execFile, hasBackendKey: true, ...seam });
+
+  assert.deepEqual(result, { ok: false, code: 'bad_prompt' });
+  assert.equal(calls.length, 0, 'a leading-dash prompt must not reach the agent backend');
 });
