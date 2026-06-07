@@ -23,6 +23,7 @@
 import { pathToFileURL } from 'node:url';
 import { TelegramError, makeTelegramApi } from './telegram-api.mjs';
 import { rwaImportPublish, rwaCreatePublish } from './rwa-exec.mjs';
+import { FoundationError } from './foundation-api.mjs';
 
 // Max document size we accept, in bytes (mirrors telegram-api's downloadFile
 // default; passed explicitly so the friendly "max N MB" message stays truthful).
@@ -49,6 +50,21 @@ export const HELP = [
   '• /new <topic> — I generate a page from a prompt (if agent-fill is enabled).',
   '',
   'Each share is a link that expires in 24h.',
+].join('\n');
+
+// Phase-B help. When editing is enabled a chat keeps ONE active page and plain
+// messages become edits to it. /show and /export surface the active page. Replied
+// by /start when `foundationEnabled` is true (the same `/start` front door).
+export const HELP_PHASE_B = [
+  'Hi! I turn what you send me into an editable web page.',
+  '',
+  '• Send me text, a markdown file, or a document — I create a page and give you a link.',
+  '• /new <topic> — generate a page from a prompt (needs a backend configured).',
+  '• Once you have a page, just send me changes (e.g. "make the title bigger") and I edit it.',
+  '• /new always starts a fresh page.',
+  '• /show — show your current page; /export — get the .html file.',
+  '',
+  'The link is your private edit link — keep it to yourself.',
 ].join('\n');
 
 // Map an rwa-exec result object to user-facing text (+ optional host-only
@@ -100,13 +116,36 @@ async function sendResult(api, chatId, result, log) {
   await api.sendMessage(chatId, text);
 }
 
+// Shared rate-limit "slow down" reply — one string so Phase A and Phase B agree.
+const SLOW_DOWN = "you're going too fast — please slow down and try again in a bit.";
+
+// Match a slash command (`/cmd` or `/cmd <args>`) WITHOUT matching a longer word
+// (e.g. /new must not match /newsletter). The trailing-space requirement is the
+// word boundary (review I1 in Phase A); `text === cmd` covers the bare command.
+function isCommand(text, cmd) {
+  return typeof text === 'string' && (text === cmd || text.startsWith(cmd + ' '));
+}
+
 /**
  * Dispatch one Telegram update. Pure over injected deps; never throws.
  *
- * @param {object} update  a Telegram Update (we read `message.{chat.id,text,document}`).
+ * Two modes, gated by `deps.foundationEnabled`:
+ *   - FALSE → Phase A (`dispatchPhaseA`): create-and-publish to the ephemeral
+ *     service, exactly as before. The foundation + state are NEVER touched.
+ *   - TRUE  → Phase B (`dispatchPhaseB`): each chat binds to ONE editable hosted
+ *     rewritable; create-y messages build+`createDoc`, plain messages edit.
+ *
+ * The message-validity check and the loop-survival try/catch live here so BOTH
+ * dispatchers get the same "never rethrow" guarantee (the poll loop must survive
+ * one bad message).
+ *
+ * @param {object} update  a Telegram Update (we read `message.{chat.id,from.id,text,document}`).
  * @param {{
- *   api: { sendMessage:Function, sendChatAction:Function, getFile:Function, downloadFile:Function },
- *   exec: { rwaImportPublish:Function, rwaCreatePublish:Function },
+ *   api: { sendMessage:Function, sendChatAction:Function, getFile:Function, downloadFile:Function, sendDocument?:Function },
+ *   exec: { rwaImportPublish:Function, rwaCreatePublish:Function, rwaImportBuild:Function, rwaCreateBuild:Function, rwaEdit:Function },
+ *   foundation?: { createDoc:Function, readDoc:Function, exportDoc:Function, describe:Function, modify:Function },
+ *   state?: { get:Function, set:Function, clear:Function },
+ *   foundationEnabled?: boolean,
  *   writeTemp: (content:string, ext:string) => string,
  *   hasBackendKey: boolean,
  *   rateLimit: (chatId:any) => boolean,
@@ -114,7 +153,7 @@ async function sendResult(api, chatId, result, log) {
  * }} deps
  */
 export async function handleUpdate(update, deps) {
-  const { api, exec, writeTemp, hasBackendKey, rateLimit, log } = deps;
+  const { api, log } = deps;
   const message = update && update.message;
   if (!message || !message.chat || message.chat.id == null) {
     // No chat to reply to — log and bail (can't message a faceless update).
@@ -122,88 +161,13 @@ export async function handleUpdate(update, deps) {
     return;
   }
   const chatId = message.chat.id;
-  const text = message.text;
 
   try {
-    // 1. /start — always answers help; not rate-limited, no work spawned.
-    if (typeof text === 'string' && (text === '/start' || text.startsWith('/start '))) {
-      await api.sendMessage(chatId, HELP);
-      return;
+    if (deps.foundationEnabled) {
+      await dispatchPhaseB(message, chatId, deps);
+    } else {
+      await dispatchPhaseA(message, chatId, deps);
     }
-
-    // 2. /new <prompt> — agent-fill. Gated on key (cheap boundary gate) THEN
-    //    rate limit, both BEFORE any spawn.
-    if (typeof text === 'string' && (text === '/new' || text.startsWith('/new '))) {
-      const prompt = text.slice('/new'.length).trim();
-      if (!prompt) {
-        await api.sendMessage(chatId, 'give me a topic, e.g. /new a doc about otters');
-        return;
-      }
-      if (!hasBackendKey) {
-        await api.sendMessage(chatId, "agent-fill isn't configured on this bot.");
-        return;
-      }
-      if (!rateLimit(chatId)) {
-        await api.sendMessage(chatId, "you're going too fast — please slow down and try again in a bit.");
-        return;
-      }
-      await api.sendChatAction(chatId, 'typing');
-      const result = await exec.rwaCreatePublish(prompt, { hasBackendKey });
-      await sendResult(api, chatId, result, log);
-      return;
-    }
-
-    // 3. document — download (allowlist + size cap) then wrap. Rate-limited.
-    if (message.document) {
-      const document = message.document;
-      if (!isAllowedDocument(document)) {
-        await api.sendMessage(chatId, "I can't read that file type. Send a pdf, docx, csv, txt, md, or html.");
-        return;
-      }
-      if (!rateLimit(chatId)) {
-        await api.sendMessage(chatId, "you're going too fast — please slow down and try again in a bit.");
-        return;
-      }
-      // Cap BEFORE the getFile round-trip using the free message.document.file_size
-      // (downloadFile keeps its own cap as defense-in-depth for a missing/lying value).
-      if (typeof document.file_size === 'number' && document.file_size > MAX_DOC_BYTES) {
-        await api.sendMessage(chatId, `that file's too big (max ${MAX_DOC_MB} MB).`);
-        return;
-      }
-      const file = await api.getFile(document.file_id);
-      if (!file || !file.file_path) {
-        await api.sendMessage(chatId, "couldn't fetch that file, try again.");
-        return;
-      }
-      const dest = writeTemp('', '.' + (extOf(document.file_name) || 'bin'));
-      try {
-        await api.downloadFile(file.file_path, dest, { maxBytes: MAX_DOC_BYTES });
-      } catch (err) {
-        if (err instanceof TelegramError && err.code === 'file_too_large') {
-          await api.sendMessage(chatId, `that file's too big (max ${MAX_DOC_MB} MB).`);
-          return;
-        }
-        throw err; // other download failures → generic catch below.
-      }
-      const result = await exec.rwaImportPublish(dest, {});
-      await sendResult(api, chatId, result, log);
-      return;
-    }
-
-    // 4. plain text — wrap. Rate-limited.
-    if (typeof text === 'string' && text.length > 0) {
-      if (!rateLimit(chatId)) {
-        await api.sendMessage(chatId, "you're going too fast — please slow down and try again in a bit.");
-        return;
-      }
-      const path = writeTemp(text, '.md');
-      const result = await exec.rwaImportPublish(path, {});
-      await sendResult(api, chatId, result, log);
-      return;
-    }
-
-    // 5. anything else — fallback.
-    await api.sendMessage(chatId, 'send me text, a markdown file, or /new <prompt>.');
   } catch (err) {
     // Loop-survival contract: never let a thrown error escape. Log host-side,
     // answer the user generically. (Best-effort: if the reply itself throws,
@@ -215,6 +179,378 @@ export async function handleUpdate(update, deps) {
       log('handleUpdate: failed to send error reply', replyErr);
     }
   }
+}
+
+// ── Phase A dispatch (foundationEnabled === false) ───────────────────────────
+// Byte-intact create-and-publish-ephemeral path. Touches ONLY api/exec/writeTemp/
+// rateLimit/hasBackendKey/log — never the foundation or the state store (the
+// no-regression guarantee, pinned by the gate-off tests).
+async function dispatchPhaseA(message, chatId, deps) {
+  const { api, exec, writeTemp, hasBackendKey, rateLimit, log } = deps;
+  const text = message.text;
+
+  // 1. /start — always answers help; not rate-limited, no work spawned.
+  if (isCommand(text, '/start')) {
+    await api.sendMessage(chatId, HELP);
+    return;
+  }
+
+  // 2. /new <prompt> — agent-fill. Gated on key (cheap boundary gate) THEN
+  //    rate limit, both BEFORE any spawn.
+  if (isCommand(text, '/new')) {
+    const prompt = text.slice('/new'.length).trim();
+    if (!prompt) {
+      await api.sendMessage(chatId, 'give me a topic, e.g. /new a doc about otters');
+      return;
+    }
+    if (!hasBackendKey) {
+      await api.sendMessage(chatId, "agent-fill isn't configured on this bot.");
+      return;
+    }
+    if (!rateLimit(chatId)) {
+      await api.sendMessage(chatId, SLOW_DOWN);
+      return;
+    }
+    await api.sendChatAction(chatId, 'typing');
+    const result = await exec.rwaCreatePublish(prompt, { hasBackendKey });
+    await sendResult(api, chatId, result, log);
+    return;
+  }
+
+  // 3. document — download (allowlist + size cap) then wrap. Rate-limited.
+  if (message.document) {
+    const document = message.document;
+    if (!isAllowedDocument(document)) {
+      await api.sendMessage(chatId, "I can't read that file type. Send a pdf, docx, csv, txt, md, or html.");
+      return;
+    }
+    if (!rateLimit(chatId)) {
+      await api.sendMessage(chatId, SLOW_DOWN);
+      return;
+    }
+    const dest = await downloadDocumentToTemp(message.document, chatId, deps);
+    if (dest == null) return; // a friendly reply was already sent.
+    const result = await exec.rwaImportPublish(dest, {});
+    await sendResult(api, chatId, result, log);
+    return;
+  }
+
+  // 4. plain text — wrap. Rate-limited.
+  if (typeof text === 'string' && text.length > 0) {
+    if (!rateLimit(chatId)) {
+      await api.sendMessage(chatId, SLOW_DOWN);
+      return;
+    }
+    const path = writeTemp(text, '.md');
+    const result = await exec.rwaImportPublish(path, {});
+    await sendResult(api, chatId, result, log);
+    return;
+  }
+
+  // 5. anything else — fallback.
+  await api.sendMessage(chatId, 'send me text, a markdown file, or /new <prompt>.');
+}
+
+// Download an allowed Telegram document into a fresh temp file and return its
+// path, or null after sending the user a friendly reply (too-big / fetch-failed).
+// Shared by Phase A (wrap) and Phase B (build) so the size cap + missing-path
+// guards stay in one place. Caps BEFORE the getFile round-trip using the free
+// message.document.file_size (downloadFile keeps its own cap as defense-in-depth).
+async function downloadDocumentToTemp(document, chatId, deps) {
+  const { api, writeTemp } = deps;
+  if (typeof document.file_size === 'number' && document.file_size > MAX_DOC_BYTES) {
+    await api.sendMessage(chatId, `that file's too big (max ${MAX_DOC_MB} MB).`);
+    return null;
+  }
+  const file = await api.getFile(document.file_id);
+  if (!file || !file.file_path) {
+    await api.sendMessage(chatId, "couldn't fetch that file, try again.");
+    return null;
+  }
+  const dest = writeTemp('', '.' + (extOf(document.file_name) || 'bin'));
+  try {
+    await api.downloadFile(file.file_path, dest, { maxBytes: MAX_DOC_BYTES });
+  } catch (err) {
+    if (err instanceof TelegramError && err.code === 'file_too_large') {
+      await api.sendMessage(chatId, `that file's too big (max ${MAX_DOC_MB} MB).`);
+      return null;
+    }
+    throw err; // other download failures → generic catch in handleUpdate.
+  }
+  return dest;
+}
+
+// ── Phase B dispatch (foundationEnabled === true) ────────────────────────────
+// Each chat binds to ONE editable hosted rewritable. /new (or a create-y message
+// with no binding) BUILDS a container locally then POSTs the BYTES to the
+// foundation; a plain message against an active binding is an EDIT. The capability
+// token in the binding is a SECRET — only the url is ever replied (and only to the
+// owning chat), never logged.
+async function dispatchPhaseB(message, chatId, deps) {
+  const { api, foundation, state, hasBackendKey, rateLimit } = deps;
+  const text = message.text;
+
+  // /start — always answers Phase-B help; not rate-limited, no work spawned.
+  if (isCommand(text, '/start')) {
+    await api.sendMessage(chatId, HELP_PHASE_B);
+    return;
+  }
+
+  // /show — surface the active doc (url + title via describe). No binding → guide.
+  if (isCommand(text, '/show')) {
+    const binding = state.get(chatId);
+    if (!binding) {
+      await api.sendMessage(chatId, 'no active doc — send me something to create one.');
+      return;
+    }
+    const sd = await foundation.describe(binding.id, binding.token);
+    const title = (sd && sd.title) ? sd.title : '(untitled)';
+    await api.sendMessage(chatId, `${title}\n${binding.url}`);
+    return;
+  }
+
+  // /export — send the canonical .html file (the offline escape hatch).
+  if (isCommand(text, '/export')) {
+    const binding = state.get(chatId);
+    if (!binding) {
+      await api.sendMessage(chatId, 'no active doc — send me something to create one.');
+      return;
+    }
+    const bytes = await foundation.exportDoc(binding.id, binding.token);
+    if (typeof api.sendDocument === 'function') {
+      await api.sendDocument(chatId, bytes, 'page.html');
+    } else {
+      // No document transport — fall back to the url (still the user's artifact).
+      await api.sendMessage(chatId, `here's your page:\n${binding.url}`);
+    }
+    return;
+  }
+
+  // /new ALWAYS creates+rebinds fresh — even if a binding exists. Otherwise, an
+  // existing binding makes a plain message an EDIT and a fresh chat a CREATE.
+  const isNew = isCommand(text, '/new');
+  const binding = isNew ? null : state.get(chatId);
+
+  if (!isNew && binding) {
+    await editActiveDoc(message, chatId, binding, deps);
+    return;
+  }
+
+  // CREATE path. Rate-limit the work BEFORE any spawn.
+  if (isNew) {
+    const prompt = text.slice('/new'.length).trim();
+    if (!prompt) {
+      await api.sendMessage(chatId, 'give me a topic, e.g. /new a doc about otters');
+      return;
+    }
+    if (!hasBackendKey) {
+      await api.sendMessage(chatId, 'agent-fill needs a backend configured on this bot.');
+      return;
+    }
+    if (!rateLimit(chatId)) {
+      await api.sendMessage(chatId, SLOW_DOWN);
+      return;
+    }
+    await api.sendChatAction(chatId, 'typing');
+    const built = await deps.exec.rwaCreateBuild(prompt, { hasBackendKey });
+    await createFromBuild(built, chatId, deps);
+    return;
+  }
+
+  // Create from a document (download → import-build → createDoc).
+  if (message.document) {
+    const document = message.document;
+    if (!isAllowedDocument(document)) {
+      await api.sendMessage(chatId, "I can't read that file type. Send a pdf, docx, csv, txt, md, or html.");
+      return;
+    }
+    if (!rateLimit(chatId)) {
+      await api.sendMessage(chatId, SLOW_DOWN);
+      return;
+    }
+    const dest = await downloadDocumentToTemp(document, chatId, deps);
+    if (dest == null) return;
+    const built = await deps.exec.rwaImportBuild(dest, {});
+    await createFromBuild(built, chatId, deps);
+    return;
+  }
+
+  // Create from plain text (temp .md → import-build → createDoc).
+  if (typeof text === 'string' && text.length > 0) {
+    if (!rateLimit(chatId)) {
+      await api.sendMessage(chatId, SLOW_DOWN);
+      return;
+    }
+    const path = deps.writeTemp(text, '.md');
+    const built = await deps.exec.rwaImportBuild(path, {});
+    await createFromBuild(built, chatId, deps);
+    return;
+  }
+
+  // Anything else — fallback guidance.
+  await api.sendMessage(chatId, 'send me text, a markdown file, a document, or /new <prompt>.');
+}
+
+// Given a build result (`{ok:true,bytes}` or a failure object), POST the bytes to
+// the foundation, bind the chat to the returned {id,token,url}, and reply the url.
+// A build failure becomes the same friendly reply Phase A uses (replyForResult).
+async function createFromBuild(built, chatId, deps) {
+  const { api, foundation, state, log } = deps;
+  if (!built || !built.ok) {
+    await sendResult(api, chatId, built, log); // friendly per-step line; stderr host-only.
+    return;
+  }
+  const created = await foundation.createDoc(built.bytes);
+  // Persist the binding (carries the capability token — never logged/replied bare).
+  state.set(chatId, { id: created.id, token: created.token, url: created.url });
+  await api.sendMessage(
+    chatId,
+    `here's your page — you can keep editing it, just send me changes:\n${created.url}`,
+  );
+}
+
+// EDIT an active hosted doc: readDoc(baseHash) → exportDoc(temp) → rwaEdit →
+// modify(replace_document). The instruction is attacker-controlled (rwaEdit rejects
+// a leading dash pre-spawn); the agent needs a backend key. Optimistic concurrency:
+// a 409 stale_base re-reads the fresh baseHash and retries modify ONCE.
+async function editActiveDoc(message, chatId, binding, deps) {
+  const { api, exec, foundation, hasBackendKey, rateLimit, writeTemp, log } = deps;
+  const text = message.text;
+
+  // Only a non-empty plain message is an edit instruction.
+  if (typeof text !== 'string' || text.length === 0) {
+    await api.sendMessage(chatId, 'send me a change to make (e.g. "make the title bigger"), or /new to start over.');
+    return;
+  }
+  if (!hasBackendKey) {
+    await api.sendMessage(chatId, 'editing needs a backend configured on this bot.');
+    return;
+  }
+  if (!rateLimit(chatId)) {
+    await api.sendMessage(chatId, SLOW_DOWN);
+    return;
+  }
+
+  await api.sendChatAction(chatId, 'typing');
+
+  // 1. Read the current doc (for the baseHash that anchors optimistic concurrency).
+  let read;
+  try {
+    read = await foundation.readDoc(binding.id, binding.token);
+  } catch (err) {
+    await handleFoundationError(err, chatId, deps, { stage: 'read' });
+    return;
+  }
+
+  // 2. Export the canonical container to a temp .html the local agent can edit.
+  let tempPath;
+  try {
+    const bytes = await foundation.exportDoc(binding.id, binding.token);
+    tempPath = writeTemp(bytes, '.html');
+  } catch (err) {
+    await handleFoundationError(err, chatId, deps, { stage: 'export' });
+    return;
+  }
+
+  try {
+    // 3. Apply the edit locally via the rwa CLI (leading-dash-guarded inside rwaEdit).
+    const edited = await exec.rwaEdit(tempPath, text, {});
+    if (!edited || !edited.ok) {
+      if (edited && edited.code === 'bad_instruction') {
+        await api.sendMessage(chatId, "please don't start an edit with a dash — try rewording it.");
+      } else {
+        if (edited && edited.stderr) log('rwa-exec stderr:', edited.stderr);
+        await api.sendMessage(chatId, "sorry, I couldn't apply that edit — try rewording it.");
+      }
+      return;
+    }
+
+    // 4. Commit the whole new body via replace_document, with 409 retry-once.
+    await modifyWithRetry(binding, read.baseHash, text, edited.doc, message, chatId, deps);
+  } finally {
+    // 5. Clean the exported temp container (writeTemp is a real file in main()).
+    if (deps.unlinkTemp) {
+      try { await deps.unlinkTemp(tempPath); } catch (e) { log('editActiveDoc: temp cleanup failed', e); }
+    }
+  }
+}
+
+// Build the rwa-edit/1 replace_document envelope + actor, POST /modify, and on a
+// 409 stale_base re-read the fresh baseHash and retry exactly ONCE.
+async function modifyWithRetry(binding, baseHash, instruction, newBody, message, chatId, deps) {
+  const { api, foundation } = deps;
+  const actor = 'telegram:' + ((message.from && message.from.id) ?? 'unknown');
+  const buildPayload = (hash) => ({
+    envelope: { version: 'rwa-edit/1', doc: newBody, reason: instruction },
+    baseHash: hash,
+    actor,
+  });
+
+  try {
+    await foundation.modify(binding.id, binding.token, buildPayload(baseHash));
+    await api.sendMessage(chatId, `✓ updated — ${binding.url}`);
+    return;
+  } catch (err) {
+    if (!(err instanceof FoundationError) || err.code !== 'stale_base') {
+      await handleFoundationError(err, chatId, deps, { stage: 'modify' });
+      return;
+    }
+    // 409: the doc moved under us. Re-read the fresh baseHash and retry ONCE.
+  }
+
+  let fresh;
+  try {
+    fresh = await foundation.readDoc(binding.id, binding.token);
+  } catch (err) {
+    await handleFoundationError(err, chatId, deps, { stage: 'read' });
+    return;
+  }
+  try {
+    await foundation.modify(binding.id, binding.token, buildPayload(fresh.baseHash));
+    await api.sendMessage(chatId, `✓ updated — ${binding.url}`);
+  } catch (err) {
+    if (err instanceof FoundationError && err.code === 'stale_base') {
+      await api.sendMessage(chatId, 'the doc changed underneath me — try again.');
+      return;
+    }
+    await handleFoundationError(err, chatId, deps, { stage: 'modify' });
+  }
+}
+
+// Map a FoundationError (by `.code`) to a friendly reply. The raw `detail` and the
+// error object go to `log` (host-only) — NEVER to the user (it can be verbose /
+// internal). A 404 clears the now-dead chat binding so the next message creates
+// fresh. The capability token is never in `log` here (we never log the binding).
+async function handleFoundationError(err, chatId, deps, { stage } = {}) {
+  const { api, state, log } = deps;
+  const code = err instanceof FoundationError ? err.code : undefined;
+
+  if (code === 'unauthorized') {
+    await api.sendMessage(chatId, "this doc's edit link expired — start over with /new.");
+    return;
+  }
+  if (code === 'not_found') {
+    state.clear(chatId);
+    await api.sendMessage(chatId, 'that doc no longer exists — send me something to create a new one.');
+    return;
+  }
+  // A 422 subcode (frozen_zone_violation / find_not_found / …): friendly + log detail.
+  if (err instanceof FoundationError && err.status === 422) {
+    log('foundation modify rejected:', code, err.detail);
+    await api.sendMessage(chatId, friendly422(code));
+    return;
+  }
+  // bad_request / request_failed / non-JSON / anything else → generic + log.
+  log('foundation error', stage, code, err instanceof FoundationError ? err.detail : err);
+  await api.sendMessage(chatId, "couldn't reach the doc service — try again.");
+}
+
+// Per-subcode friendly text for a 422. Unknown subcodes get a safe generic line.
+function friendly422(code) {
+  if (code === 'frozen_zone_violation') return "that change touches a locked part of the page — I couldn't make it.";
+  if (code === 'find_not_found') return "I couldn't find what to change — try describing it differently.";
+  if (code === 'find_not_unique') return 'that matched more than one place — be more specific.';
+  return "I couldn't apply that edit — try rewording it.";
 }
 
 // Re-export so the wiring + tests can reference the same cap handleUpdate uses
