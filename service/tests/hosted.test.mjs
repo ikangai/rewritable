@@ -386,7 +386,7 @@ test('POST /r/:id/modify applies an apply_edits envelope; persists; returns the 
     assert.equal(res.status, 200, 'a valid modify returns 200');
     const out = await res.json();
 
-    // Pinned response shape: {doc, baseHash, selfDescription, histLen}.
+    // Pinned response shape: {doc, baseHash, selfDescription, histLen, undoLen}.
     assert.equal(typeof out.doc, 'string');
     assert.ok(out.doc.includes('New Title'), 'returned doc reflects the edit');
     assert.ok(!out.doc.includes('Old Title'), 'old anchor is gone');
@@ -394,7 +394,8 @@ test('POST /r/:id/modify applies an apply_edits envelope; persists; returns the 
       'returned baseHash must be sha256 of the new doc (so the client can chain)');
     assert.notEqual(out.baseHash, baseHash, 'the hash advanced');
     assert.equal(out.selfDescription.rwa, 'self-description/1');
-    assert.equal(out.histLen, 1, 'first commit → histLen 1');
+    assert.equal(out.histLen, 1, 'first commit → histLen 1 (forward-audit count)');
+    assert.equal(out.undoLen, 1, 'first commit → undoLen 1 (undo-stack depth)');
 
     // Persistence: /export must show the edit in the stored bytes.
     const exp = await fetch(`${srv.base}/r/${id}/export`, {
@@ -902,7 +903,7 @@ test('POST /r/:id/undo restores the pre-edit body (single undo)', async () => {
     const u = await postUndo(srv.base, id, token);
     assert.equal(u.status, 200, 'undo of one edit returns 200');
     const out = await u.json();
-    // Pinned undo shape: {doc, baseHash, selfDescription, histLen}.
+    // Pinned undo shape: {doc, baseHash, selfDescription, histLen, undoLen}.
     assert.equal(typeof out.doc, 'string');
     assert.ok(out.doc.includes('Old Title'), 'undo restored the pre-edit body');
     assert.ok(!out.doc.includes('New Title'));
@@ -910,7 +911,11 @@ test('POST /r/:id/undo restores the pre-edit body (single undo)', async () => {
     assert.equal(out.baseHash, sha256hex(out.doc), 'undo baseHash is sha256 of the restored doc');
     assert.equal(out.baseHash, baseHash, 'restored baseHash equals the original');
     assert.equal(out.selfDescription.rwa, 'self-description/1');
-    assert.equal(out.histLen, 0, 'after undoing the only edit, undo-stack depth is 0');
+    // histLen is the forward-audit count — undo does NOT mutate history.jsonl, so
+    // after undoing the only edit it stays 1 (the one forward record), while the
+    // undo-stack depth drops to 0.
+    assert.equal(out.histLen, 1, 'undo leaves the forward-audit count at 1 (history.jsonl unchanged)');
+    assert.equal(out.undoLen, 0, 'after undoing the only edit, undo-stack depth is 0');
 
     // Persistence: the stored bytes reflect the restore.
     exported = await (await fetch(`${srv.base}/r/${id}/export`, { headers: { Authorization: `Bearer ${token}` } })).text();
@@ -933,22 +938,84 @@ test('undo is composable: undo N edits walks back to the original ingested state
     const exported = await (await fetch(`${srv.base}/r/${id}/export`, { headers: { Authorization: `Bearer ${token}` } })).text();
     assert.ok(exported.includes('Title C'), 'three edits landed');
 
-    // Undo three times: C→B→A→Old.
+    // Undo three times: C→B→A→Old. The forward-audit count (histLen) stays at 3
+    // throughout — undo never mutates history.jsonl — while the undo-stack depth
+    // (undoLen) walks 2→1→0.
     const u3 = await (await postUndo(srv.base, id, token)).json();      // back to Title B
     assert.ok(u3.doc.includes('Title B'));
-    assert.equal(u3.histLen, 2);
+    assert.equal(u3.histLen, 3, 'forward-audit count unchanged by undo');
+    assert.equal(u3.undoLen, 2);
     const u2 = await (await postUndo(srv.base, id, token)).json();      // back to Title A
     assert.ok(u2.doc.includes('Title A'));
-    assert.equal(u2.histLen, 1);
+    assert.equal(u2.histLen, 3, 'forward-audit count unchanged by undo');
+    assert.equal(u2.undoLen, 1);
     const u1 = await (await postUndo(srv.base, id, token)).json();      // back to Old Title
     assert.equal(u1.doc, doc0, 'composing all undos restores the original ingested body');
     assert.equal(u1.baseHash, h0);
-    assert.equal(u1.histLen, 0);
+    assert.equal(u1.histLen, 3, 'forward-audit count unchanged by undo');
+    assert.equal(u1.undoLen, 0);
 
     // One more undo with an empty stack → 409 nothing_to_undo.
     const empty = await postUndo(srv.base, id, token);
     assert.equal(empty.status, 409);
     assert.equal((await empty.json()).error, 'nothing_to_undo');
+  } finally {
+    await srv.stop();
+  }
+});
+
+// WHY this matters (Rule 9): histLen (forward-audit count) and undoLen (undo-stack
+// depth) DIVERGE the moment any undo happens — undo restores a pre-image but never
+// rewinds the append-only forward audit. Before the fix both fields were called
+// `histLen` but meant different things across /modify (forward count) and /undo
+// (stack depth), so a client couldn't read one field consistently. This test
+// proves the two are now independent + correct on BOTH endpoints: modify×2 → undo
+// → modify yields histLen===3 (three forward commits) and undoLen===2 (two
+// undoable pre-images on the stack). If a future change re-conflated them, this
+// fails.
+test('histLen vs undoLen diverge correctly: modify×2 → undo → modify ⇒ histLen=3, undoLen=2', async () => {
+  const srv = await startServer();
+  try {
+    const { id, token, baseHash: h0 } = await createAndRead(srv.base, MODIFY_RWA);
+
+    // modify #1 — forward count 1, undo depth 1.
+    const r1 = await postModify(srv.base, id, token, {
+      envelope: { version: 'rwa-edit/1', edits: [{ find: 'Old Title', replace: 'Title A' }] },
+      baseHash: h0,
+    });
+    const o1 = await r1.json();
+    assert.equal(o1.histLen, 1);
+    assert.equal(o1.undoLen, 1);
+
+    // modify #2 — forward count 2, undo depth 2.
+    const r2 = await postModify(srv.base, id, token, {
+      envelope: { version: 'rwa-edit/1', edits: [{ find: 'Title A', replace: 'Title B' }] },
+      baseHash: o1.baseHash,
+    });
+    const o2 = await r2.json();
+    assert.equal(o2.histLen, 2);
+    assert.equal(o2.undoLen, 2);
+
+    // undo ×1 — forward count UNCHANGED at 2 (history.jsonl is append-only),
+    // undo depth drops to 1. The two fields have now diverged.
+    const ur = await postUndo(srv.base, id, token);
+    const uo = await ur.json();
+    assert.equal(uo.histLen, 2, '/undo reports the forward-audit count, NOT the undo depth');
+    assert.equal(uo.undoLen, 1, '/undo reports the remaining undo depth');
+    assert.notEqual(uo.histLen, uo.undoLen, 'the two fields are independent post-undo');
+    assert.ok(uo.doc.includes('Title A'), 'undo restored the prior body');
+
+    // modify #3 (chaining off the undo-restored baseHash) — forward count 3,
+    // undo depth back to 2. The headline divergence assertion.
+    const r3 = await postModify(srv.base, id, token, {
+      envelope: { version: 'rwa-edit/1', edits: [{ find: 'Title A', replace: 'Title C' }] },
+      baseHash: uo.baseHash,
+    });
+    const o3 = await r3.json();
+    assert.equal(o3.histLen, 3, 'three forward commits recorded (2 + the post-undo one)');
+    assert.equal(o3.undoLen, 2, 'two undoable pre-images on the stack (depth 1 + the new push)');
+    assert.notEqual(o3.histLen, o3.undoLen,
+      'histLen and undoLen are now unambiguous + independent across /modify and /undo');
   } finally {
     await srv.stop();
   }

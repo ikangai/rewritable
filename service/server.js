@@ -817,13 +817,18 @@ async function handleHostedModify(id, req, send) {
     // projection /describe returns over the NEW bytes).
     hosted.touchAccess(id, { dataDir: DATA_DIR }, rec.owner);
     const selfDescription = await selfDescriptionFor(newBytes, newBody);
+    // Consistent pair on BOTH /modify and /undo: histLen is the forward-audit
+    // record count (monotonic; never decreases), undoLen is the remaining
+    // undo-stack depth (a client gates "can I undo again?" on undoLen > 0).
     const histLen = hosted.historyLen(id, { dataDir: DATA_DIR });
+    const undoLen = hosted.undoLen(id, { dataDir: DATA_DIR });
 
     return sendJson(send, 200, {
       doc: newBody,
       baseHash: resultHash,
       selfDescription,
       histLen,
+      undoLen,
     });
   });
 }
@@ -833,9 +838,12 @@ async function handleHostedModify(id, req, send) {
 // (written before each /modify rename), NEVER a replay of the forward
 // history.jsonl. history.jsonl is NOT mutated here — it stays an append-only
 // forward audit; the undo stack alone is the reversible state. Runs under the
-// per-id write lock so it serializes with /modify (and another /undo). `histLen`
-// in the response is the REMAINING undo-stack depth (undoable edits left) — a
-// client uses it to know when the next undo will 409.
+// per-id write lock so it serializes with /modify (and another /undo). The
+// response carries the SAME {histLen, undoLen} pair as /modify: `histLen` is the
+// forward-audit record count (monotonic; undo does NOT mutate history.jsonl, so
+// after an undo histLen stays the full forward count — correct and intended), and
+// `undoLen` is the REMAINING undo-stack depth (undoable edits left) — a client
+// gates "can I undo again?" on undoLen > 0 (the next undo 409s at undoLen 0).
 async function handleHostedUndo(id, req, send) {
   const rec0 = hosted.readHosted(id, { dataDir: DATA_DIR });
   if (!rec0) return sendJson(send, 404, { error: 'not_found' });
@@ -875,9 +883,12 @@ async function handleHostedUndo(id, req, send) {
     const selfDescription = await selfDescriptionFor(preImage, doc);
 
     hosted.touchAccess(id, { dataDir: DATA_DIR }, rec.owner);
-    const histLen = hosted.undoLen(id, { dataDir: DATA_DIR }); // remaining undo depth
+    // Same pair as /modify: histLen = forward-audit count (unchanged by undo —
+    // history.jsonl is append-only), undoLen = remaining undo-stack depth.
+    const histLen = hosted.historyLen(id, { dataDir: DATA_DIR });
+    const undoLen = hosted.undoLen(id, { dataDir: DATA_DIR }); // remaining undo depth
 
-    return sendJson(send, 200, { doc, baseHash, selfDescription, histLen });
+    return sendJson(send, 200, { doc, baseHash, selfDescription, histLen, undoLen });
   });
 }
 

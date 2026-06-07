@@ -337,9 +337,10 @@ function popUndo(id, { dataDir }) {
 }
 
 /**
- * Depth of the id's undo stack (number of undoable edits remaining). A client
- * uses this as the `histLen` in the /undo response to know when the next undo
- * will 409.
+ * Depth of the id's undo stack (number of undoable edits remaining). Surfaced as
+ * `undoLen` in BOTH the /modify and /undo responses — a client gates "can I undo
+ * again?" on undoLen > 0 (the next undo 409s once it reaches 0). Distinct from
+ * `historyLen` (the monotonic forward-audit count, surfaced as `histLen`).
  *
  * @param {string} id
  * @param {{dataDir:string}} opts
