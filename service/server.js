@@ -141,6 +141,12 @@ function buildStoredZip(entries) {
 const PDFJS_MAIN = fs.readFileSync(path.join(PUBLIC_DIR, 'pdf', 'pdf.min.mjs'));
 const PDFJS_WORKER = fs.readFileSync(path.join(PUBLIC_DIR, 'pdf', 'pdf.worker.min.mjs'));
 
+// Hosted live-editable projection shim (Task 6). Read once at startup like the
+// other static assets; templated per request with __RWA_HOSTED_ID__ +
+// __RWA_HOSTED_UUID__ and injected before <script id="rwa-bootstrap"> in GET
+// /r/:id so it parses/runs first (reload-sync + commit sink + Undo + token).
+const HOSTED_SHIM = fs.readFileSync(path.join(PUBLIC_DIR, 'hosted-shim.js'), 'utf8');
+
 // Per-container UUID injection. The seed ships with a placeholder DOC_UUID;
 // every download gets a fresh randomUUID() substituted in. Without this, two
 // downloads on the same machine would share state under file:// (the v0.7
@@ -937,6 +943,43 @@ async function handleHostedDelete(id, req, send) {
   });
 }
 
+// GET /r/:id — the LIVE EDITABLE web projection. Serve the REAL stored
+// current.html (a full rewritable, the seed's lens/⌘K UI unchanged) with the
+// hosted shim injected IMMEDIATELY BEFORE <script id="rwa-bootstrap"> so it
+// parses/runs FIRST (reload-sync deletes the stale per-container IDB before the
+// bootstrap's openDB; the shim then installs the commit sink + Undo button).
+//
+// No Bearer needed on the GET itself — the capability token rides the #k=
+// fragment (which the server NEVER sees), read client-side by the shim and used
+// as Bearer on the subsequent /modify + /undo. Unknown id → 404. Apex-only (the
+// router only reaches here on the apex host). The served bytes carry the seed's
+// own frozen-<head> CSP (script-src 'unsafe-inline'), which allows the inline
+// shim — we don't add headers that would fight it.
+function handleHostedProjection(id, send) {
+  const rec = hosted.readHosted(id, { dataDir: DATA_DIR });
+  if (!rec) return sendJson(send, 404, { error: 'not_found' });
+
+  const bytes = rec.bytes;
+  // The stored DOC_UUID is a container fact (ingest rotated it). The shim needs
+  // it to deleteDatabase('rwa_<uuid>') for reload-sync. ingest validated DOC_UUID
+  // exists, but be defensive — a missing uuid means we can't safely template.
+  const uuid = (bytes.match(UUID_RE_LOCAL) || [])[1];
+  const marker = '<script id="rwa-bootstrap">';
+  const at = bytes.indexOf(marker);
+  if (!uuid || at < 0) {
+    console.error('hosted: projection cannot template (uuid/bootstrap missing)', id);
+    return sendJson(send, 500, { error: 'corrupt_container' });
+  }
+
+  const shim = '<script id="rwa-hosted-shim">\n'
+    + HOSTED_SHIM.replaceAll('__RWA_HOSTED_ID__', id).replaceAll('__RWA_HOSTED_UUID__', uuid)
+    + '\n</script>\n';
+  const out = bytes.slice(0, at) + shim + bytes.slice(at);
+
+  hosted.touchAccess(id, { dataDir: DATA_DIR }, rec.owner);
+  return send(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' }, out);
+}
+
 function contentTypeFor(name) {
   if (name.endsWith('.html')) return 'text/html; charset=utf-8';
   if (name.endsWith('.md'))   return 'text/markdown; charset=utf-8';
@@ -1057,6 +1100,24 @@ const server = http.createServer((req, res) => {
         }
       });
       return;
+    }
+  }
+
+  // GET /r/:id — the live editable web projection (current.html + injected shim).
+  // Apex-only (share-host branch returned above). Synchronous: no body read, no
+  // dynamic import — just template the in-memory shim into the stored bytes.
+  {
+    const m = url.match(/^\/r\/([0-9a-z]{8})$/);
+    if (m) {
+      try { return handleHostedProjection(m[1], send); }
+      catch (err) {
+        console.error('hosted: projection unhandled error', err);
+        if (!res.headersSent) {
+          send(500, { 'Content-Type': 'application/json; charset=utf-8' },
+            JSON.stringify({ error: 'internal_error' }) + '\n');
+        }
+        return;
+      }
     }
   }
 

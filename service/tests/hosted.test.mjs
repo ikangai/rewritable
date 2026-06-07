@@ -29,6 +29,7 @@ import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:net';
+import http from 'node:http';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SERVICE = join(__dirname, '..');
@@ -1325,4 +1326,463 @@ test('per-token rate limit: the N+1th /modify within the window → 429 rate_lim
     await new Promise((r) => child.on('exit', r));
     rmSync(dataDir, { recursive: true, force: true });
   }
+});
+
+// ─── 3. Task 6: GET /r/:id — the LIVE EDITABLE web projection ────────────────
+//
+// WHY these matter (Rule 9): GET /r/:id is the user-facing door. It serves the
+// REAL stored current.html (full seed lens/⌘K UI, unchanged) with ONE injected
+// shim that redirects the seed's commit to the authoritative server via the
+// Task-1 seam (window.__rwaCommitSink). Three invariants are load-bearing:
+//   (A) The shim parses BEFORE the bootstrap. If the bootstrap's IIFE ran first
+//       it would openDB the stale per-container IDB before the shim could delete
+//       it (reload-sync), and getDoc() prefers rwa_doc over INLINE_DOC — a
+//       returning visitor would see STALE content shadowing the served-latest.
+//   (B) The token never reaches the server. It rides the #k= URL fragment (not
+//       sent on navigation); the shim reads it client-side and authenticates the
+//       subsequent /modify + /undo. A token in a query string would land in logs.
+//   (C) The sink FAILS LOUD on a malformed server reply. commitDoc mirrors the
+//       sink's return via idbPut(RWA.DOC, serverDoc); a non-string/empty doc must
+//       throw at the boundary, never silently corrupt the local mirror.
+
+test('GET /r/:id serves current.html with the shim injected BEFORE the bootstrap, templated with id+uuid; unknown id → 404', async () => {
+  const srv = await startServer();
+  try {
+    // Create with a known input UUID; the server rotates it on ingest, so the
+    // shim must be templated with the STORED (rotated) uuid, not the input one.
+    const createRes = await fetch(srv.base + '/r', {
+      method: 'POST', headers: { 'Content-Type': 'text/html' }, body: RWA,
+    });
+    const { id } = await createRes.json();
+
+    // The served projection — no Bearer needed (token rides #k=, server never sees it).
+    const res = await fetch(`${srv.base}/r/${id}`);
+    assert.equal(res.status, 200, 'GET /r/:id → 200');
+    assert.match(res.headers.get('content-type') || '', /text\/html/);
+    const html = await res.text();
+
+    // The shim <script> must appear, and STRICTLY BEFORE the bootstrap so it runs
+    // first (reload-sync deletes the stale IDB before openDB).
+    const shimIdx = html.indexOf('id="rwa-hosted-shim"');
+    const bootIdx = html.indexOf('<script id="rwa-bootstrap">');
+    assert.ok(shimIdx >= 0, 'the shim <script id="rwa-hosted-shim"> is present');
+    assert.ok(bootIdx >= 0, 'the bootstrap <script> is present (real rewritable served)');
+    assert.ok(shimIdx < bootIdx, 'the shim is injected BEFORE the bootstrap');
+
+    // Templated with THIS id.
+    assert.ok(html.includes(`/r/${id}/modify`) || html.includes(id),
+      'the shim carries this rwa id');
+
+    // Templated with the STORED (rotated) DOC_UUID — so deleteDatabase targets the
+    // right per-container IDB. Read it back from the stored bytes.
+    const onDisk = readFileSync(join(srv.dataDir, 'r', id, 'current.html'), 'utf8');
+    const storedUuid = (onDisk.match(/const DOC_UUID = '([0-9a-f-]{36})';/) || [])[1];
+    assert.ok(storedUuid, 'stored bytes carry a DOC_UUID');
+    assert.notEqual(storedUuid, '22222222-2222-4222-8222-222222222222', 'uuid was rotated on ingest');
+    assert.ok(html.includes(storedUuid),
+      'the shim is templated with the STORED (rotated) DOC_UUID for reload-sync deleteDatabase');
+
+    // The placeholders must be fully substituted — no template tokens leak.
+    assert.ok(!html.includes('__RWA_HOSTED_ID__'), 'no id placeholder leaks');
+    assert.ok(!html.includes('__RWA_HOSTED_UUID__'), 'no uuid placeholder leaks');
+
+    // The served bytes are the REAL current.html (the shim is additive, the
+    // bootstrap + INLINE_DOC are intact).
+    assert.ok(html.includes('Hosted Test Doc'), 'served body is the real rewritable content');
+
+    // Unknown id → 404.
+    const unknown = await fetch(`${srv.base}/r/zzzzzzzz`);
+    assert.equal(unknown.status, 404, 'unknown id → 404');
+  } finally {
+    await srv.stop();
+  }
+});
+
+test('GET /r/:id is apex-only — a share host does not serve the projection', async () => {
+  // Drive the server with a share-host Host header. The share-host branch returns
+  // 404 for everything but its own bytes + robots.txt; /r/:id must NOT leak there.
+  // node's fetch (undici) silently DROPS a custom Host header (it's forbidden), so
+  // we issue a raw http.request to control the Host the server matches SHORT_HOST_RE on.
+  const srv = await startServer();
+  try {
+    const createRes = await fetch(srv.base + '/r', {
+      method: 'POST', headers: { 'Content-Type': 'text/html' }, body: RWA,
+    });
+    const { id } = await createRes.json();
+    const u = new URL(srv.base);
+    const status = await new Promise((resolve, reject) => {
+      const r = http.request({
+        hostname: u.hostname, port: u.port, path: `/r/${id}`, method: 'GET',
+        headers: { Host: 'abcd1234.rewritable.ikangai.com' },
+      }, (resp) => { resp.resume(); resolve(resp.statusCode); });
+      r.on('error', reject);
+      r.end();
+    });
+    assert.equal(status, 404, 'a share host does not serve /r/:id (only its own bytes + robots)');
+  } finally {
+    await srv.stop();
+  }
+});
+
+// ─── 3b. Shim PURE LOGIC + reload-sync (jsdom + fake-indexeddb) ──────────────
+//
+// The shim is plain browser JS. Its pure logic (token parse/strip, sink request
+// build, response interpretation, Undo, undoLen gating) is exposed for tests via
+// window.__rwaHostedShimTestApi — ONLY when window.__RWA_SHIM_TEST__ is set, so a
+// production page never exposes the internals (same convention as the seed's
+// `window.injectMissingBlockIds = …; // expose for tests`). We run the templated
+// shim inside jsdom and drive that test API.
+//
+// fake-indexeddb + jsdom live in benchmark/node_modules (the seed harness in
+// tests/ resolves them the same way); resolve via a benchmark-scoped require.
+
+const benchRequire = createRequire(join(SERVICE, '..', 'benchmark', 'package.json'));
+const { JSDOM } = benchRequire('jsdom');
+const fakeIdb = benchRequire('fake-indexeddb');
+
+const SHIM_PATH = join(SERVICE, 'public', 'hosted-shim.js');
+const SHIM_UUID = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+const SHIM_ID = 'abcd1234';
+
+// Build the templated shim source exactly as the server would (id + uuid subs).
+function templatedShim() {
+  const raw = readFileSync(SHIM_PATH, 'utf8');
+  return raw
+    .replaceAll('__RWA_HOSTED_ID__', SHIM_ID)
+    .replaceAll('__RWA_HOSTED_UUID__', SHIM_UUID);
+}
+
+// Boot a jsdom window with the templated shim run as a real <script>. fetch +
+// location are injected so the pure logic is observable. The shim must set
+// window.__rwaCommitSink and (test mode) window.__rwaHostedShimTestApi.
+function bootShim({ hash = '', fetchImpl, reloadSpy, replaceStateSpy } = {}) {
+  const dom = new JSDOM(
+    `<!doctype html><html><body><div id="rwa-runtime"></div></body></html>`,
+    {
+      url: `https://rwa.example/r/${SHIM_ID}${hash}`,
+      runScripts: 'outside-only',
+      pretendToBeVisual: true,
+    }
+  );
+  const { window } = dom;
+  window.indexedDB = fakeIdb.indexedDB;
+  window.IDBKeyRange = fakeIdb.IDBKeyRange;
+  // jsdom (outside-only) lacks TextEncoder + crypto.subtle, which a real browser
+  // provides globally. The shim's sha256hex needs both — inject node's globals so
+  // the pure logic runs exactly as it would in a browser. window.crypto is a
+  // read-only getter in jsdom, so override via defineProperty.
+  if (!window.TextEncoder) window.TextEncoder = globalThis.TextEncoder;
+  if (!window.crypto || !window.crypto.subtle) {
+    Object.defineProperty(window, 'crypto', { value: globalThis.crypto, configurable: true });
+  }
+  // jsdom (outside-only) has no Response constructor; node's global one is a fine
+  // stand-in for the fetch responses the fetchImpl mocks return.
+  if (!window.Response) window.Response = globalThis.Response;
+  window.__RWA_SHIM_TEST__ = true;
+  if (fetchImpl) window.fetch = fetchImpl;
+  // jsdom's location.reload is non-configurable, so the shim honors a test-only,
+  // gated reload override (window.__rwaHostedReload) when __RWA_SHIM_TEST__ is set.
+  if (reloadSpy) window.__rwaHostedReload = reloadSpy;
+  if (replaceStateSpy) window.history.replaceState = replaceStateSpy;
+  // Run the shim as the page would (it is the prepended <script>).
+  window.eval(templatedShim());
+  return window;
+}
+
+test('shim: token parsed from #k=, stored in sessionStorage keyed by id, stripped from the URL', () => {
+  const calls = [];
+  const win = bootShim({
+    hash: '#k=secret-token-xyz',
+    replaceStateSpy: (...a) => calls.push(a),
+  });
+  const api = win.__rwaHostedShimTestApi;
+  assert.ok(api, 'test API is exposed under window.__RWA_SHIM_TEST__');
+  assert.equal(api.getToken(), 'secret-token-xyz', 'token read from #k= fragment');
+  assert.equal(win.sessionStorage.getItem('rwa_hosted_token_' + SHIM_ID), 'secret-token-xyz',
+    'token stored in sessionStorage keyed by id');
+  assert.ok(calls.length >= 1, 'history.replaceState called to strip #k=');
+  // The replaceState URL must not carry the token fragment.
+  const lastUrl = String(calls[calls.length - 1][2] || '');
+  assert.ok(!lastUrl.includes('k=secret-token-xyz'), 'stripped URL no longer carries the token');
+});
+
+test('shim: a returning visitor with the token in sessionStorage (no #k=) still authenticates', () => {
+  const dom = new JSDOM(`<!doctype html><html><body></body></html>`, {
+    url: `https://rwa.example/r/${SHIM_ID}`, runScripts: 'outside-only',
+  });
+  const { window } = dom;
+  window.indexedDB = fakeIdb.indexedDB;
+  window.IDBKeyRange = fakeIdb.IDBKeyRange;
+  window.__RWA_SHIM_TEST__ = true;
+  window.sessionStorage.setItem('rwa_hosted_token_' + SHIM_ID, 'persisted-token');
+  window.eval(templatedShim());
+  assert.equal(window.__rwaHostedShimTestApi.getToken(), 'persisted-token',
+    'falls back to the sessionStorage token when no #k= present');
+});
+
+test('shim: deleteDatabase("rwa_"+uuid) is invoked on load (reload-sync) BEFORE any open', () => {
+  const deletes = [];
+  const realDelete = fakeIdb.indexedDB.deleteDatabase.bind(fakeIdb.indexedDB);
+  const dom = new JSDOM(`<!doctype html><html><body></body></html>`, {
+    url: `https://rwa.example/r/${SHIM_ID}#k=t`, runScripts: 'outside-only',
+  });
+  const { window } = dom;
+  // Wrap deleteDatabase to record the name the shim targets.
+  window.indexedDB = Object.create(fakeIdb.indexedDB);
+  window.indexedDB.deleteDatabase = (name) => { deletes.push(name); return realDelete(name); };
+  window.indexedDB.open = fakeIdb.indexedDB.open.bind(fakeIdb.indexedDB);
+  window.IDBKeyRange = fakeIdb.IDBKeyRange;
+  window.__RWA_SHIM_TEST__ = true;
+  window.history.replaceState = () => {};
+  window.eval(templatedShim());
+  assert.deepEqual(deletes, ['rwa_' + SHIM_UUID],
+    'the shim deletes exactly the per-container IDB for THIS uuid on load');
+});
+
+test('shim sink: builds POST /r/<id>/modify {envelope, baseHash} with Bearer; baseHash = sha256(canonLF(baseDoc))', async () => {
+  const captured = [];
+  const win = bootShim({
+    hash: '#k=tok',
+    fetchImpl: async (url, opts) => {
+      captured.push({ url, opts });
+      return new win.Response(JSON.stringify({ doc: 'SERVER-DOC', undoLen: 1, histLen: 1 }), {
+        status: 200, headers: { 'Content-Type': 'application/json' },
+      });
+    },
+    replaceStateSpy: () => {},
+  });
+  const sink = win.__rwaCommitSink;
+  assert.equal(typeof sink, 'function', 'the seam hook is installed');
+
+  const envelope = { version: 'rwa-edit/1', edits: [{ find: 'a', replace: 'b' }] };
+  // baseDoc with CRLF to prove canonLF runs before hashing.
+  const baseDoc = 'line1\r\nline2\r\n';
+  const out = await sink(envelope, { kind: 'edit_batch' }, baseDoc);
+  assert.equal(out, 'SERVER-DOC', 'sink returns the server doc on 200');
+
+  assert.equal(captured.length, 1);
+  const { url, opts } = captured[0];
+  assert.match(String(url), new RegExp(`/r/${SHIM_ID}/modify$`), 'POSTs to /r/<id>/modify');
+  assert.equal(opts.method, 'POST');
+  assert.equal(opts.headers.Authorization, 'Bearer tok', 'Bearer token on the write');
+  const body = JSON.parse(opts.body);
+  assert.deepEqual(body.envelope, envelope, 'envelope forwarded verbatim');
+  // baseHash must equal sha256 of the LF-canonical base body (server's baseBodyHash).
+  const expected = sha256hex('line1\nline2\n');
+  assert.equal(body.baseHash, expected, 'baseHash = sha256(canonLF(baseDoc)) — matches server baseBodyHash');
+});
+
+test('shim sink: FAIL LOUD on a malformed 200 (non-string or empty doc throws — never corrupts the mirror)', async () => {
+  for (const bad of [{ doc: 123 }, { doc: '' }, { notdoc: 'x' }, {}]) {
+    let win;
+    win = bootShim({
+      hash: '#k=t',
+      fetchImpl: async () => new win.Response(JSON.stringify(bad), {
+        status: 200, headers: { 'Content-Type': 'application/json' },
+      }),
+      replaceStateSpy: () => {},
+    });
+    await assert.rejects(
+      () => win.__rwaCommitSink({ version: 'rwa-edit/1', edits: [] }, { kind: 'edit_batch' }, 'd'),
+      /doc/i,
+      `malformed 200 (${JSON.stringify(bad)}) must throw`
+    );
+  }
+});
+
+test('shim sink: 409 stale_base → reload + throw', async () => {
+  let reloaded = 0;
+  const win = bootShim({
+    hash: '#k=t',
+    fetchImpl: async () => new win.Response(JSON.stringify({ error: 'stale_base' }), {
+      status: 409, headers: { 'Content-Type': 'application/json' },
+    }),
+    replaceStateSpy: () => {},
+    reloadSpy: () => { reloaded++; },
+  });
+  await assert.rejects(
+    () => win.__rwaCommitSink({ version: 'rwa-edit/1', edits: [] }, { kind: 'edit_batch' }, 'd'),
+    /stale|changed|409/i,
+    '409 must throw so the seed does not advance local state'
+  );
+  assert.equal(reloaded, 1, '409 triggers a reload to re-fetch authoritative bytes');
+});
+
+test('shim sink: 401 invalid token → surface + throw (no reload)', async () => {
+  let reloaded = 0;
+  const win = bootShim({
+    hash: '#k=t',
+    fetchImpl: async () => new win.Response(JSON.stringify({ error: 'unauthorized' }), {
+      status: 401, headers: { 'Content-Type': 'application/json' },
+    }),
+    replaceStateSpy: () => {},
+    reloadSpy: () => { reloaded++; },
+  });
+  await assert.rejects(
+    () => win.__rwaCommitSink({ version: 'rwa-edit/1', edits: [] }, { kind: 'edit_batch' }, 'd'),
+    /token|401|unauthor/i,
+    '401 must throw'
+  );
+  assert.equal(reloaded, 0, '401 does not reload (the bytes are fine, the token is not)');
+});
+
+test('shim sink: 422 rwa-edit failure subcode → surface the subcode + throw', async () => {
+  let thrown;
+  const win = bootShim({
+    hash: '#k=t',
+    fetchImpl: async () => new win.Response(JSON.stringify({ error: 'find_not_found', detail: 'no anchor' }), {
+      status: 422, headers: { 'Content-Type': 'application/json' },
+    }),
+    replaceStateSpy: () => {},
+  });
+  try { await win.__rwaCommitSink({ version: 'rwa-edit/1', edits: [] }, { kind: 'edit_batch' }, 'd'); }
+  catch (e) { thrown = e; }
+  assert.ok(thrown, '422 throws');
+  assert.match(String(thrown.message), /find_not_found/, 'the rwa-edit subcode is surfaced to the user');
+});
+
+test('shim sink: 5xx / network → surface "server error" + throw', async () => {
+  const win = bootShim({
+    hash: '#k=t',
+    fetchImpl: async () => new win.Response(JSON.stringify({ error: 'internal_error' }), {
+      status: 500, headers: { 'Content-Type': 'application/json' },
+    }),
+    replaceStateSpy: () => {},
+  });
+  await assert.rejects(
+    () => win.__rwaCommitSink({ version: 'rwa-edit/1', edits: [] }, { kind: 'edit_batch' }, 'd'),
+    /server/i, '5xx throws a server-error'
+  );
+  // Network failure (fetch rejects) → also throws.
+  const win2 = bootShim({
+    hash: '#k=t', fetchImpl: async () => { throw new Error('network down'); }, replaceStateSpy: () => {},
+  });
+  await assert.rejects(
+    () => win2.__rwaCommitSink({ version: 'rwa-edit/1', edits: [] }, { kind: 'edit_batch' }, 'd'),
+    /server|network/i, 'a network failure throws'
+  );
+});
+
+test('shim Undo: POST /r/<id>/undo with Bearer; 200 → reload; undoLen===0 disables the button', async () => {
+  const captured = [];
+  let reloaded = 0;
+  const win = bootShim({
+    hash: '#k=tok',
+    fetchImpl: async (url, opts) => {
+      captured.push({ url, opts });
+      return new win.Response(JSON.stringify({ undoLen: 0, histLen: 1 }), {
+        status: 200, headers: { 'Content-Type': 'application/json' },
+      });
+    },
+    replaceStateSpy: () => {},
+    reloadSpy: () => { reloaded++; },
+  });
+  const api = win.__rwaHostedShimTestApi;
+  assert.equal(typeof api.doUndo, 'function', 'undo action exposed');
+
+  await api.doUndo();
+  assert.equal(captured.length, 1);
+  assert.match(String(captured[0].url), new RegExp(`/r/${SHIM_ID}/undo$`), 'POSTs to /undo');
+  assert.equal(captured[0].opts.method, 'POST');
+  assert.equal(captured[0].opts.headers.Authorization, 'Bearer tok', 'Bearer on undo');
+  assert.equal(reloaded, 1, '200 undo reloads (server reverted current.html)');
+
+  // The shim must render a real Undo button and reflect undoLen state.
+  const btn = win.document.getElementById('rwa-hosted-undo');
+  assert.ok(btn, 'a server-Undo button is injected into the page');
+  // After an undo that returns undoLen 0, the button is disabled.
+  assert.equal(api.getUndoLen(), 0, 'undoLen tracked from the /undo response');
+  assert.ok(btn.disabled, 'Undo button disabled when undoLen === 0');
+});
+
+test('shim Undo: 409 nothing_to_undo → button disabled, no reload', async () => {
+  let reloaded = 0;
+  const win = bootShim({
+    hash: '#k=t',
+    fetchImpl: async () => new win.Response(JSON.stringify({ error: 'nothing_to_undo' }), {
+      status: 409, headers: { 'Content-Type': 'application/json' },
+    }),
+    replaceStateSpy: () => {},
+    reloadSpy: () => { reloaded++; },
+  });
+  const api = win.__rwaHostedShimTestApi;
+  await api.doUndo();
+  assert.equal(reloaded, 0, 'nothing_to_undo does not reload');
+  const btn = win.document.getElementById('rwa-hosted-undo');
+  assert.ok(btn.disabled, 'Undo disabled after nothing_to_undo');
+});
+
+test('shim Undo: on load (undoLen unknown) the button is OPTIMISTICALLY enabled — self-corrects on 409', () => {
+  // No GET returns the undo depth, so on load undoLen is unknown (null). The button
+  // starts enabled (a click will 409→disable if the stack is empty); it must NOT be
+  // falsely disabled when there may be prior server-side history to undo.
+  const win = bootShim({ hash: '#k=t', fetchImpl: async () => { throw new Error('unused'); }, replaceStateSpy: () => {} });
+  const api = win.__rwaHostedShimTestApi;
+  assert.equal(api.getUndoLen(), null, 'undoLen is unknown on load (no GET reports it)');
+  const btn = win.document.getElementById('rwa-hosted-undo');
+  assert.equal(btn.disabled, false, 'Undo optimistically enabled when undoLen is unknown');
+  // Once the server reports a count, the button strictly reflects it.
+  api.setUndoLen(0);
+  assert.ok(btn.disabled, 'disabled once undoLen is known to be 0');
+  api.setUndoLen(2);
+  assert.equal(btn.disabled, false, 'enabled when undoLen > 0');
+});
+
+// ─── 3c. RELOAD-SYNC integration: a STALE rwa_doc must NOT shadow the served body
+//
+// The load-bearing correctness point. The seed's getDoc() prefers IDB rwa_doc
+// over INLINE_DOC. The server serves the LATEST current.html as INLINE_DOC on
+// every GET. So a stale rwa_doc in rwa_<uuid> would shadow the served-latest and
+// show old content. The shim's deleteDatabase('rwa_'+uuid) at the very top must
+// clear it BEFORE the bootstrap's openDB seeds fresh from INLINE_DOC. We prove
+// the IDB ordering directly with fake-indexeddb: write a stale rwa_doc, run the
+// shim's delete, then assert a subsequent open sees an EMPTY db (no rwa_doc).
+
+test('reload-sync: a stale rwa_doc is cleared by the shim delete before a fresh open (fake-indexeddb ordering)', async () => {
+  const dbName = 'rwa_' + SHIM_UUID;
+  // Seed a STALE rwa_doc into the per-container IDB (as a returning browser would have).
+  await new Promise((resolve, reject) => {
+    const req = fakeIdb.indexedDB.open(dbName, 1);
+    req.onupgradeneeded = () => req.result.createObjectStore('rwa_doc');
+    req.onsuccess = () => {
+      const db = req.result;
+      const tx = db.transaction('rwa_doc', 'readwrite');
+      tx.objectStore('rwa_doc').put('<article>STALE LOCAL CONTENT</article>', 'self');
+      tx.oncomplete = () => { db.close(); resolve(); };
+      tx.onerror = () => reject(tx.error);
+    };
+    req.onerror = () => reject(req.error);
+  });
+
+  // Run the shim (it calls deleteDatabase(dbName) at the top), then await the
+  // delete request the shim issued via the test API.
+  const dom = new JSDOM(`<!doctype html><html><body></body></html>`, {
+    url: `https://rwa.example/r/${SHIM_ID}#k=t`, runScripts: 'outside-only',
+  });
+  const { window } = dom;
+  window.indexedDB = fakeIdb.indexedDB;
+  window.IDBKeyRange = fakeIdb.IDBKeyRange;
+  window.__RWA_SHIM_TEST__ = true;
+  window.history.replaceState = () => {};
+  window.eval(templatedShim());
+  // The shim exposes its delete request promise so a test can await ordering.
+  await window.__rwaHostedShimTestApi.deletePromise;
+
+  // Now open the db as the bootstrap would. The store must be gone (fresh db) OR
+  // present-but-empty — either way, NO stale rwa_doc value survives to shadow
+  // INLINE_DOC. fake-indexeddb serializes the delete before this open.
+  const after = await new Promise((resolve, reject) => {
+    const req = fakeIdb.indexedDB.open(dbName);
+    req.onsuccess = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains('rwa_doc')) { db.close(); return resolve(null); }
+      const tx = db.transaction('rwa_doc', 'readonly');
+      const g = tx.objectStore('rwa_doc').get('self');
+      g.onsuccess = () => { const v = g.result; db.close(); resolve(v == null ? null : v); };
+      g.onerror = () => { db.close(); reject(g.error); };
+    };
+    req.onerror = () => reject(req.error);
+  });
+  assert.equal(after, null,
+    'the stale rwa_doc did NOT survive the shim delete — the bootstrap will seed from the served INLINE_DOC');
 });
