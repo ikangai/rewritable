@@ -33,9 +33,11 @@ const BINDING_B = { id: 'def456', token: 'fnd_live_secret-B', url: 'https://f.te
 function makeFakeFs({ seed = {}, failWrite = false } = {}) {
   const files = { ...seed };
   const writes = [];
+  const chmods = [];
   return {
     files,
     writes,
+    chmods,
     readFileSync(path) {
       if (!(path in files)) {
         const err = new Error(`ENOENT: no such file '${path}'`);
@@ -48,6 +50,9 @@ function makeFakeFs({ seed = {}, failWrite = false } = {}) {
       if (failWrite) throw new Error('EACCES: write blocked');
       files[path] = data;
       writes.push({ path, data, options });
+    },
+    chmodSync(path, mode) {
+      chmods.push({ path, mode });
     },
   };
 }
@@ -136,6 +141,17 @@ test('every persist call passes { mode: 0o600 } — token-bearing file is not wo
     assert.ok(w.options && w.options.mode === 0o600,
       `every write must carry mode 0o600; got ${JSON.stringify(w.options)}`);
   }
+
+  // writeFileSync's mode is CREATE-only on POSIX; an existing/out-of-band file
+  // keeps its old perms. So every persist must ALSO chmod 0600 — that closes
+  // the create-only gap and makes the invariant hold on every write, not just
+  // the first. One chmod(filePath, 0o600) per mutation (set + set + clear).
+  assert.equal(fs.chmods.length, fs.writes.length,
+    'every write must be paired with a chmod');
+  for (const c of fs.chmods) {
+    assert.deepEqual(c, { path: PATH, mode: 0o600 },
+      `every chmod must be (filePath, 0o600); got ${JSON.stringify(c)}`);
+  }
 });
 
 // --- fail-soft load (load-bearing) -----------------------------------------
@@ -158,6 +174,23 @@ test('constructing over a corrupt file → empty store, no throw, and a set stil
   assert.deepEqual(store.get('100'), BINDING_A, 'set works after a corrupt load');
   const persisted = JSON.parse(fs.writes[fs.writes.length - 1].data);
   assert.deepEqual(persisted['100'], BINDING_A, 'corrupt file is overwritten with valid data');
+});
+
+test('constructing over a file that parses to a non-object → empty store, no throw, set still works', () => {
+  // JSON can legitimately parse to a non-object (null, an array, a primitive).
+  // `new Map(Object.entries(null))` throws; the load() guard
+  // (!parsed || typeof !== 'object' || Array.isArray) catches all of these and
+  // returns an empty map. This pins that guard, which would otherwise be untested.
+  for (const raw of ['null', '[]', '42', '"a string"']) {
+    const fs = makeFakeFs({ seed: { [PATH]: raw } });
+    let store;
+    assert.doesNotThrow(() => { store = makeStateStore({ filePath: PATH, fs }); },
+      `non-object JSON ${raw} must load fail-soft`);
+    assert.equal(store.get('100'), undefined, `${raw} loads as empty`);
+
+    store.set('100', BINDING_A);
+    assert.deepEqual(store.get('100'), BINDING_A, `set works after loading ${raw}`);
+  }
 });
 
 // --- persistence shape -----------------------------------------------------

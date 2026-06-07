@@ -53,6 +53,10 @@ export function makeStateStore({ filePath, fs = nodeFs } = {}) {
   function persist() {
     const obj = Object.fromEntries(map);
     fs.writeFileSync(filePath, JSON.stringify(obj), { mode: 0o600 });
+    // writeFileSync's mode applies only at CREATE on POSIX; an existing or
+    // out-of-band-created file keeps its old perms. chmod every write so the
+    // token-bearing file is always 0600 (the security invariant this store owns).
+    fs.chmodSync(filePath, 0o600);
   }
 
   function get(chatId) {
