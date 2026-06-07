@@ -20,7 +20,8 @@
 // a size cap (enforced by `api.downloadFile`). Each gate's negative is pinned by
 // a test that asserts the spawn did NOT happen — not just that the reply differs.
 
-import { TelegramError } from './telegram-api.mjs';
+import { TelegramError, makeTelegramApi } from './telegram-api.mjs';
+import { rwaImportPublish, rwaCreatePublish } from './rwa-exec.mjs';
 
 // Max document size we accept, in bytes (mirrors telegram-api's downloadFile
 // default; passed explicitly so the friendly "max N MB" message stays truthful).
@@ -203,4 +204,175 @@ export async function handleUpdate(update, deps) {
       log('handleUpdate: failed to send error reply', replyErr);
     }
   }
+}
+
+// Re-export so the wiring + tests can reference the same cap handleUpdate uses
+// (one source of truth for the document size limit).
+export { MAX_DOC_BYTES };
+
+/**
+ * The long-poll loop. Pure-ish over injected deps so it is fully offline-
+ * testable: every effect (network, persistence, dispatch, clock/stop signal,
+ * logging) is a seam in `deps`.
+ *
+ * Offset semantics (mirrors the design's "Data flow, lifecycle"):
+ *   1. Seed `offset` ONCE from `loadOffset()` at start — the resume point.
+ *   2. Each iteration: `getUpdates(offset)` returns a batch; for each update IN
+ *      ORDER, `handle(update)` inside try/catch. A thrown handler is LOGGED and
+ *      does NOT stop the loop (loop survival — one bad message can't kill the
+ *      bot). AFTER handling-or-error, advance `offset = update_id + 1` and
+ *      `saveOffset(offset)`. Persisting past a thrown update is deliberate: a
+ *      transient failure must not cause that update to be reprocessed forever
+ *      (Telegram drops <= offset-1 on the next getUpdates).
+ *   3. An empty batch → re-poll (no offset change, no save).
+ *   4. `shouldStop()` is checked at the top of each iteration so the loop can be
+ *      terminated cleanly (tests; SIGINT/SIGTERM in `main`).
+ *
+ * @param {{
+ *   api: { getUpdates: (offset:number|undefined) => Promise<any[]> },
+ *   loadOffset: () => number|undefined,
+ *   saveOffset: (n:number) => void,
+ *   handle: (update:object) => Promise<void>,
+ *   shouldStop: () => boolean,
+ *   log: (...args:any[]) => void,
+ * }} deps
+ */
+export async function runPoll(deps) {
+  const { api, loadOffset, saveOffset, handle, shouldStop, log } = deps;
+  let offset = loadOffset();
+  while (!shouldStop()) {
+    const updates = (await api.getUpdates(offset)) || [];
+    for (const update of updates) {
+      try {
+        await handle(update);
+      } catch (err) {
+        // Loop survival: log host-side, never rethrow — the loop continues and
+        // the offset still advances past this update below.
+        log('runPoll: handler threw', err);
+      }
+      // Advance + persist AFTER handling-or-error so a transient failure is not
+      // reprocessed forever. update_id+1 is the next-poll resume point.
+      if (update && typeof update.update_id === 'number') {
+        offset = update.update_id + 1;
+        saveOffset(offset);
+      }
+    }
+    // Empty batch falls through to re-poll with the same offset (no save).
+  }
+}
+
+// ── main(): real-dependency wiring ───────────────────────────────────────────
+// NOT unit-tested (it touches env, the network, disk, and process signals); it
+// is GUARDED below so importing this module for tests does not start polling.
+
+// Read the persisted offset from a small file (best-effort). Default undefined
+// so the first getUpdates resumes from Telegram's own backlog. Path is
+// configurable via RWA_TG_OFFSET_FILE, else os.tmpdir()/rwa-tg-offset.
+function makeOffsetPersistence(fs, os, path) {
+  const file = process.env.RWA_TG_OFFSET_FILE
+    || path.join(os.tmpdir(), 'rwa-tg-offset');
+  return {
+    loadOffset() {
+      try {
+        const n = parseInt(fs.readFileSync(file, 'utf8').trim(), 10);
+        return Number.isFinite(n) ? n : undefined;
+      } catch {
+        return undefined; // no file yet / unreadable → start fresh.
+      }
+    },
+    saveOffset(n) {
+      try {
+        fs.writeFileSync(file, String(n), 'utf8');
+      } catch (err) {
+        // Persistence is best-effort; a failure to save only risks re-delivery
+        // of already-handled updates on the next restart, not data loss.
+        console.error('offset save failed', err);
+      }
+    },
+  };
+}
+
+// A simple in-memory sliding-window rate limiter: at most `max` calls per
+// `windowMs` per chat. No deps, no RNG. Returns true if the call is allowed.
+function makeRateLimit(max = 5, windowMs = 60_000) {
+  const hits = new Map(); // chatId -> number[] (timestamps)
+  return function rateLimit(chatId) {
+    const now = Date.now();
+    const arr = (hits.get(chatId) || []).filter((t) => now - t < windowMs);
+    if (arr.length >= max) {
+      hits.set(chatId, arr);
+      return false;
+    }
+    arr.push(now);
+    hits.set(chatId, arr);
+    return true;
+  };
+}
+
+export async function main() {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  if (!token) {
+    console.error('error: TELEGRAM_BOT_TOKEN is not set. Export it and retry.');
+    process.exit(1);
+  }
+
+  const fs = await import('node:fs');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const crypto = await import('node:crypto');
+
+  const api = makeTelegramApi(token);
+
+  // agent-fill is enabled only when a backend key is present. We mirror the same
+  // env the default `openrouter` backend reads (cli/src/backend.mjs
+  // resolveApiKey): RWA_OPENROUTER_KEY, then the conventional OPENROUTER_API_KEY.
+  const hasBackendKey = Boolean(
+    process.env.RWA_OPENROUTER_KEY || process.env.OPENROUTER_API_KEY,
+  );
+
+  // Real writeTemp: a unique name under os.tmpdir() (crypto.randomUUID, never
+  // Math.random) + the given extension. These are small text files; cleanup is
+  // best-effort (OS tmp reaping).
+  function writeTemp(content, ext) {
+    const dest = path.join(os.tmpdir(), `rwa-tg-${crypto.randomUUID()}${ext}`);
+    fs.writeFileSync(dest, content, 'utf8');
+    return dest;
+  }
+
+  const rateLimit = makeRateLimit();
+  const log = (...args) => console.error(...args);
+
+  const { loadOffset, saveOffset } = makeOffsetPersistence(fs, os, path);
+
+  const handle = (u) => handleUpdate(u, {
+    api,
+    exec: { rwaImportPublish, rwaCreatePublish },
+    writeTemp,
+    hasBackendKey,
+    rateLimit,
+    log,
+  });
+
+  // Clean shutdown: a SIGINT/SIGTERM flips the stop flag so runPoll exits after
+  // the current iteration rather than mid-handle.
+  let stopping = false;
+  const stop = () => { stopping = true; };
+  process.on('SIGINT', stop);
+  process.on('SIGTERM', stop);
+
+  log(`rwa telegram bot started (agent-fill: ${hasBackendKey ? 'on' : 'off'})`);
+  await runPoll({
+    api,
+    loadOffset,
+    saveOffset,
+    handle,
+    shouldStop: () => stopping,
+    log,
+  });
+}
+
+// Guard: only poll when run directly, never on import (so the test suite that
+// imports runPoll/handleUpdate does not start the bot).
+if (import.meta.url === `file://${process.argv[1]}`) {
+  main();
 }
