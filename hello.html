@@ -2600,12 +2600,15 @@ window.serializeLeafSafe = serializeLeafSafe;
 
 function enterInlineEdit(el, entry) {
   if (inlineEdit) exitInlineEdit();
-  inlineEdit = { el, entry };
+  inlineEdit = { el, entry, original: '' };
   el.setAttribute('contenteditable', 'true');
   el.addEventListener('keydown', handleInlineKeydown);
   el.addEventListener('blur', handleInlineBlur);
   el.addEventListener('paste', handleInlinePaste);
   try { el.focus(); } catch (_) {}
+  // Baseline serialization for the no-op guard (so an accidental double-click +
+  // click-away commits nothing — no undo frame, no history record, no dirty).
+  inlineEdit.original = serializeLeafSafe(el);
 }
 function exitInlineEdit() {
   if (!inlineEdit) return;
@@ -2685,10 +2688,11 @@ function handleInlineBlur(e) {
 // rethrows so callers (and tests) see it — never a silent partial commit.
 async function commitInlineEdit() {
   if (!inlineEdit) return;
-  const { el, entry } = inlineEdit;
+  const { el, entry, original } = inlineEdit;
   const newText = serializeLeafSafe(el);
-  const a = resolveAnchorFind(entry);
   exitInlineEdit(); // clear state + listeners before the await/re-render
+  if (newText === original) return; // no change → commit nothing (no undo frame burned)
+  const a = resolveAnchorFind(entry);
   if (!a) {
     renderDoc(currentDocCache);
     if (typeof setStatus === 'function') setStatus('err', '✗ could not anchor edit');
@@ -2699,7 +2703,11 @@ async function commitInlineEdit() {
   const tagName = openMatch ? openMatch[0].match(/^<([a-zA-Z][a-zA-Z0-9]*)/)[1] : el.tagName.toLowerCase();
   const openTag = openMatch ? openMatch[0] : ('<' + tagName + '>');
   const closeTag = '</' + tagName + '>';
-  const replace = newText.trim() === ''
+  // Empty = delete. Real browsers leave a lone <br> in an emptied contenteditable
+  // block, so a <br>/whitespace-only result counts as empty (else "empty deletes"
+  // would silently commit <p><br></p> instead of removing the block).
+  const isEmpty = newText.replace(/<br\s*\/?>/gi, '').trim() === '';
+  const replace = isEmpty
     ? a.replacePrefix + a.replaceSuffix
     : a.replacePrefix + openTag + newText + closeTag + a.replaceSuffix;
   try {
@@ -2729,6 +2737,9 @@ function handleMountDblClick(e) {
   if (el.closest('[data-rwa-frozen]') || el.closest('.rwa-locked')) return;
   const ord = anchorableOrdinal(mount, el);
   const entry = (ord >= 0 && sourceMap) ? sourceMap[ord] : null;
+  // A nested anchorable (an inner <li>, or a <p> inside a <td>) is not recorded
+  // by the outer-wins descent, so ord is -1 and we no-op — consistent with the
+  // lens's anchoring model, which can't target sub-blocks either.
   if (!entry) return;
   if (isWithinLockedRange(entry.start, entry.end)) return; // marker-form frozen backstop
   enterInlineEdit(el, entry);

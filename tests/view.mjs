@@ -96,6 +96,17 @@ async function waitFor(pred, ms = 2000) {
   check('toggle label flips to Prose', toggle.textContent === 'Prose');
   check('slide counter reads 1 / 3', (document.getElementById('rwa-view-count') || {}).textContent === '1 / 3');
 
+  // rwa inline-edit: the double-click-to-edit handler is NOT registered under an
+  // active view (renderDoc gates it on !activeView, like click-to-anchor). A
+  // double-click while presenting must not make a block contenteditable.
+  {
+    const block = mount.querySelector('.rwa-slide h1, .rwa-slide h2, .rwa-slide p, .rwa-slide li');
+    check('a slide block exists to probe inline-edit inertness', !!block);
+    if (block) block.dispatchEvent(new window.MouseEvent('dblclick', { bubbles: true }));
+    check('inline edit inert under active view (block not contenteditable)',
+      !block || block.getAttribute('contenteditable') !== 'true');
+  }
+
   // Invariant 8: stored doc never carries slide wrappers, even while presenting.
   const stored = await window.getDoc();
   check('Invariant 8 — stored rwa_doc has NO slide wrappers while presenting', !/rwa-slide/.test(stored));

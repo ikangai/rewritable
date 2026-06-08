@@ -143,14 +143,22 @@ Written red→green; each test encodes **why** (Rule 9):
 - **soup flattened** — commit a `<div>`/`<br>` edit, re-render, assert sourceMap stays in
   sync (no desync warning, ordinals still map correctly).
 - soft-break `<br>` survives a commit.
-- **empty → delete**; **delete-last-of-type → `structural_shape_changed` surfaced, not
-  silent**.
-- frozen block (attribute + marker form) not made editable.
-- commit **rejects** while `modifyMutex` is held.
-- inert under active view.
+- **empty → delete** (incl. the real-browser case where an emptied block holds a lone
+  `<br>`); **delete-last-of-type → `structural_shape_changed` surfaced, not silent**.
+- **no-change edit commits nothing** (no undo frame / history record burned).
+- frozen block (`data-rwa-frozen` attribute form) not made editable; container/non-leaf not
+  editable; `<td>` editable.
+- attributed to `user:edit-surface`; Enter commits / Esc reverts / blur commits /
+  Shift+Enter does not commit.
 
-Likely a `INLINE-EDIT-0x` conformance family in `benchmark/` to pin cross-surface behaviour
-(follow-up).
+Covered elsewhere (not duplicated in `tests/inline-edit.mjs`):
+- **inert under active view** — `tests/view.mjs` (the only harness with a registered view);
+  the `dblclick` handler is gated on `!activeView` in `renderDoc`, next to click-to-anchor.
+- **concurrency** — inherited from `runtimeApplyEnvelope`/`commitCore` (serializes vs
+  non-agent, rejects `concurrent_modify` vs an agent loop): `tests/r5-concurrent-commit.mjs`
+  + `tests/write-path.mjs`.
+
+Possible follow-up: an `INLINE-EDIT-0x` conformance family in `benchmark/`.
 
 ## Implementation steps (ordered)
 

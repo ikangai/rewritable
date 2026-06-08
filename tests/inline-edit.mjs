@@ -66,6 +66,14 @@ async function readHistTop() {
     r.onsuccess = () => res((r.result || [])[0]);
   });
 }
+async function readUndoLen() {
+  const db = await window.openDB();
+  return new Promise(res => {
+    const r = db.transaction('rwa_undo').objectStore('rwa_undo').get('self');
+    r.onsuccess = () => res((r.result || []).length);
+    r.onerror = () => res(0);
+  });
+}
 
 // ─────────────────────────────────────────────────────────────────────
 // Group S — serializeLeafSafe: the controlled serializer that turns an
@@ -272,6 +280,60 @@ console.log('\n== E12: Shift+Enter does not commit (inserts a break) ==');
   const doc = await window.getDoc();
   check('no commit fired (doc unchanged)', doc.includes('Stay'));
 }
+
+console.log('\n== E13: a block emptied to a lone <br> is deleted (real-browser empty) ==');
+{
+  // Real browsers leave a bogus <br> when a contenteditable block is emptied
+  // (Backspace), so serializeLeafSafe yields '<br>' — which is NOT ''.trim().
+  // The empty check must treat <br>/whitespace-only as empty, else "empty
+  // deletes" silently commits <p><br></p> instead of removing the block.
+  await window.__setDocForTest('<p data-rwa-id="b1empty">Gone</p>\n<p data-rwa-id="b2keep">Stay</p>');
+  const el = $id('b1empty');
+  dbl(el);
+  el.innerHTML = '<br>';
+  await window.commitInlineEdit();
+  await settle();
+  const doc = await window.getDoc();
+  check('emptied-to-<br> block is deleted', !doc.includes('b1empty') && !doc.includes('Gone'));
+  check('no <p><br></p> committed', !/<p[^>]*><br><\/p>/.test(doc));
+  check('sibling intact', doc.includes('b2keep'));
+}
+
+console.log('\n== E14: a no-change edit commits nothing (no undo frame burned) ==');
+{
+  // The lens-spec note promises "an edit that blurs with no change commits
+  // nothing." commitDoc has no no-op guard, so without one an accidental
+  // double-click + click-away burns a ⌘Z frame + a history record + dirty flag.
+  await window.__setDocForTest('<p data-rwa-id="p1nochg">Unchanged</p>');
+  const undoBefore = await readUndoLen();
+  const el = $id('p1nochg');
+  dbl(el); // enter edit, change nothing
+  await window.commitInlineEdit();
+  await settle();
+  const undoAfter = await readUndoLen();
+  check('no-op edit added no undo frame', undoAfter === undoBefore);
+  check('block intact after no-op', (await window.getDoc()).includes('Unchanged'));
+}
+
+console.log('\n== E15: <td> cell is editable end-to-end (coverage) ==');
+{
+  await window.__setDocForTest('<table data-rwa-id="tbl1aaa"><tr><td data-rwa-id="td1aaaaa">Cell</td></tr></table>');
+  const el = $id('td1aaaaa');
+  dbl(el);
+  check('td became editable', el.getAttribute('contenteditable') === 'true');
+  el.textContent = 'Edited cell';
+  await window.commitInlineEdit();
+  await settle();
+  const doc = await window.getDoc();
+  check('td text edited', doc.includes('Edited cell'));
+  check('td id preserved', doc.includes('data-rwa-id="td1aaaaa"'));
+}
+
+// NOTE: inert-under-active-view is tested in tests/view.mjs (which builds a real
+// presentation-kind container with a registered view — this document-kind
+// harness has none). Concurrency (serialize vs non-agent, reject vs agent loop)
+// is inherited from runtimeApplyEnvelope/commitCore and covered by
+// tests/r5-concurrent-commit.mjs + tests/write-path.mjs; not re-tested here.
 
 // ─────────────────────────────────────────────────────────────────────
 console.log(`\n${pass} pass, ${fail} fail`);
