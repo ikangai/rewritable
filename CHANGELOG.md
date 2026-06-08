@@ -2,6 +2,16 @@
 
 Notable changes to `re-write-able`. The container format is versioned in `re-write-able-spec.md`; the edit protocol in `rwa-edit-spec.md`; the structural-transform DSL in `rwa-edit-dsl-spec.md`. The CLI follows semver in `cli/package.json`.
 
+## 2026-06-08 — inline manual edit: edit a block by hand, no model
+
+Double-click any leaf text block — `p`, `h1`–`h6`, `blockquote`, `li`, `td` — and edit its text directly in the page: `Enter` commits, `Shift+Enter` inserts a line break, `Esc` reverts, blurring commits, emptying the block deletes it. **No model call, no API key** — the offline counterpart to the lens. Single-click still anchors the lens, unchanged; the two coexist on the same blocks by click count.
+
+It is a new direct-manipulation **edit-surface** (history actor `user:edit-surface`), not a lens mode: it rides the existing non-agent commit path (`runtimeApplyEnvelope` → `commitCore`, the R5 write path), so a hand-edit is one `⌘Z` frame and passes through the same frozen-zone, structural-shape and reserved-marker guards as every other edit. No new apply/validator/commit machinery — the whole feature lives in how the replacement is synthesized.
+
+That synthesis (`serializeLeafSafe` + a verbatim re-emit of the block's original opening tag, in `seeds/rewritable.html`) closes two corruption modes a naive `contenteditable` hits: dropping the block's `data-rwa-id` (which would silently break every `#id` fragment link to it) and letting browser-left `<div>`/`<br>` soup reach storage (which reparses on the next render and desyncs the anchor map, so later clicks target the wrong block). A no-op edit commits nothing; a delete that would change the document's structural shape is surfaced, not silently dropped. Frozen zones (`data-rwa-frozen` + marker form) and `.rwa-locked` subtrees are not editable; the handler is inert under an active view. `figcaption` is deliberately out of v1 (it is not independently anchorable — it lives inside `<figure>`).
+
+Pinned by `tests/inline-edit.mjs` (40/40) + an inertness check in `tests/view.mjs`; full suite + conformance (86/86) green. Design: [`docs/plans/2026-06-08-inline-manual-edit-design.md`](docs/plans/2026-06-08-inline-manual-edit-design.md). Spec boundary note in `docs/specs/rwa-lens-spec.md` §5.1.
+
 ## 2026-06-07 — universal surfaces: clone, publish-site, operations-API, Telegram, phone
 
 A cluster of surface adapters landed on the same day as the hosted-edit foundation (below), all of them new *doors* onto the existing rewritable operations rather than new implementations. The keystone is a spec that names the contract; the rest are thin adapters that route to it.
