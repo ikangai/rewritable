@@ -26,7 +26,7 @@ already uses, actor `user:edit-surface`).
 | Enter gesture | **Double-click** a block to enter edit. Single-click still anchors the lens (unchanged). |
 | Enter key | **Enter commits + exits**; **Shift+Enter** inserts one `<br>`; **Esc** cancels + reverts |
 | Commit trigger | **Blur** commits; ⌘S commits-then-saves (today's ⌘S); **empty-on-blur deletes** the block |
-| Editable scope | **Leaf text blocks only**: `<p>`, `<h1–6>`, `<li>`, `<td>`, `<blockquote>`, `<figcaption>`. Containers/structural blocks and frozen zones are not editable. Paste forced to plain text. |
+| Editable scope | **Leaf text blocks only** — the leaf-text members of `ANCHORABLE_TAGS`: `<p>`, `<h1–6>`, `<blockquote>`, `<li>`, `<td>`. (`figcaption` was dropped during build: it is not independently anchorable — it lives inside `FIGURE`, so ordinal resolution can't target it.) Containers/structural blocks and frozen zones are not editable. Paste forced to plain text. |
 | Engine | **No LLM.** Commit via `runtimeApplyEnvelope` → `commitCore`, `actor:'user:edit-surface'`. One ⌘Z per edit. |
 
 Deferred (YAGNI): block split/merge (the "Enter splits into a new block" model), rich
@@ -92,25 +92,31 @@ function serializeLeafSafe(el) {
 }
 ```
 
-Commit (blur/Enter), with `{id, tag, entry}` captured **at edit-start** (never read `el`
-after the post-commit re-render):
+Commit (blur/Enter), with `entry` captured **at edit-start** (never read `el` after the
+post-commit re-render). **As-built refinement:** rather than reconstruct `<tag id>` (which
+would drop `class`/`style`/other attributes), re-emit the block's **original opening tag
+verbatim** sliced from the pristine stored source — preserving `data-rwa-id` *and* every
+other attribute, and immune to anything `contenteditable` may have added to the live node
+(e.g. the `contenteditable="true"` attribute itself):
 
 ```js
-const a = resolveAnchorFind(entry);                    // unique {find, prefix, suffix}
-const idAttr  = id ? ` data-rwa-id="${id}"` : '';      // copy id VERBATIM
+const a = resolveAnchorFind(entry);                              // unique {find, prefix, suffix}
 const newText = serializeLeafSafe(el);
-const safeLeaf = `<${tag}${idAttr}>${newText}</${tag}>`;
+const orig = currentDocCache.slice(entry.start, entry.end);      // pristine <p class.. id..>old</p>
+const openTag = orig.match(/^<[a-zA-Z][a-zA-Z0-9]*\b[^>]*>/)[0]; // original open tag, verbatim
+const tag = openTag.match(/^<([a-zA-Z][a-zA-Z0-9]*)/)[1];
 const replace = newText.trim() === ''
-  ? a.replacePrefix + a.replaceSuffix                  // empty → delete the block
-  : a.replacePrefix + safeLeaf + a.replaceSuffix;      // else → replace
+  ? a.replacePrefix + a.replaceSuffix                            // empty → delete the block
+  : a.replacePrefix + openTag + newText + `</${tag}>` + a.replaceSuffix;
 await runtimeApplyEnvelope(
   { version:'rwa-edit/1', edits:[{ find:a.find, replace, reason:'edit' }] },
   { actor:'user:edit-surface', surface:'inline-edit' });
 ```
 
-For un-blessed nodes (no `data-rwa-id`) emit the bare `<tag>text</tag>` and accept the
-commit-time backfill — matching agent behaviour. Never accept a user/paste-supplied id
-(sidesteps the seed-only `reserved_id_used` check that the CLI mirror lacks).
+For un-blessed nodes (no `data-rwa-id`) the original open tag simply lacks one; the
+commit-time backfill adds it — matching agent behaviour. The id is never user/paste-supplied
+(it comes from the stored source), which sidesteps the seed-only `reserved_id_used` check the
+CLI mirror lacks.
 
 ## Interaction edge cases & error handling (fail-loud, Rule 12)
 

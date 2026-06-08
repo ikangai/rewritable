@@ -1365,6 +1365,11 @@ function renderDoc(html) {
     const lens = document.getElementById('rwa-lens');
     if (lens && m.contains(lens)) releaseAnchor();
   }
+  // rwa inline-edit: an open hand-edit is about to be wiped by the innerHTML
+  // reset below. The commit path already exits before its own re-render, so
+  // this only fires for unrelated renders (agent commit, __setDocForTest); it
+  // drops the stale edit-surface state + its element listeners.
+  if (typeof exitInlineEdit === 'function') exitInlineEdit();
   // Capture id-keyed form state so user-entered values survive an unrelated
   // edit (the doc gets re-rendered via innerHTML, which would otherwise
   // destroy them). Spec/benchmark APP-01/APP-02. Only id-keyed elements
@@ -1426,6 +1431,11 @@ function renderDoc(html) {
   // byte-identical to the previous behavior.
   m.removeEventListener('click', handleMountClick);
   if (!activeView) m.addEventListener('click', handleMountClick);
+  // rwa inline-edit: double-click a leaf block to hand-edit it (no LLM). Same
+  // remove-then-add discipline as click-to-anchor; not registered under an
+  // active view (byte-offset resolution is undefined there).
+  m.removeEventListener('dblclick', handleMountDblClick);
+  if (!activeView) m.addEventListener('dblclick', handleMountDblClick);
   // §5.10: post-mount provider seam. render() stays a pure string->string slot;
   // mounted() is the impure slot that restores transient UI state (slide index)
   // after innerHTML + script-rerun + form-restore.
@@ -3018,6 +3028,176 @@ window.releaseAnchor = releaseAnchor;
 if (typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent)) {
   window.__handleMountClick = handleMountClick;
   window.__liveNodeForEntry = liveNodeForEntry;
+}
+
+// ─── Inline manual edit (edit-surface: direct, no-LLM block editing) ──────
+// Double-click a leaf text block to edit its text by hand; Enter or blur
+// commits through the existing non-agent commit path (runtimeApplyEnvelope,
+// actor 'user:edit-surface') — no model call, works offline. Single-click
+// still anchors the lens (handleMountClick), unchanged. Design:
+// docs/plans/2026-06-08-inline-manual-edit-design.md.
+//
+// Editable set = the leaf-text members of ANCHORABLE_TAGS, so the
+// source-position entry resolves by ordinal. FIGURE/PRE/ASIDE/TABLE are
+// containers; FIGCAPTION is not independently anchorable (lives in FIGURE).
+const INLINE_EDITABLE = new Set(['P','H1','H2','H3','H4','H5','H6','BLOCKQUOTE','LI','TD']);
+let inlineEdit = null; // { el, entry } while a block is being hand-edited
+
+// Controlled serializer: turn an edited contenteditable node into a clean
+// replace string. Emits ONLY escaped text and <br> (the Shift+Enter soft
+// break), flattening every other node to its plain text. This is the fix for
+// the contenteditable HTML-soup corruption mode — a stored <div>/<span> inside
+// a <p> hoists out on re-render, orphaning text and desyncing the
+// source-position map from the live DOM (every later click anchors the wrong
+// block).
+function serializeLeafSafe(el) {
+  let out = '';
+  for (const n of el.childNodes) {
+    if (n.nodeType === 3) out += escapeHtml(n.nodeValue);
+    else if (n.nodeName === 'BR') out += '<br>';
+    else out += escapeHtml(n.textContent);
+  }
+  return out;
+}
+window.serializeLeafSafe = serializeLeafSafe;
+
+function enterInlineEdit(el, entry) {
+  if (inlineEdit) exitInlineEdit();
+  inlineEdit = { el, entry };
+  el.setAttribute('contenteditable', 'true');
+  el.addEventListener('keydown', handleInlineKeydown);
+  el.addEventListener('blur', handleInlineBlur);
+  el.addEventListener('paste', handleInlinePaste);
+  try { el.focus(); } catch (_) {}
+}
+function exitInlineEdit() {
+  if (!inlineEdit) return;
+  const el = inlineEdit.el;
+  try { el.removeEventListener('keydown', handleInlineKeydown); } catch (_) {}
+  try { el.removeEventListener('blur', handleInlineBlur); } catch (_) {}
+  try { el.removeEventListener('paste', handleInlinePaste); } catch (_) {}
+  try { el.removeAttribute('contenteditable'); } catch (_) {}
+  inlineEdit = null;
+}
+// Esc — discard the hand-edit and restore the block from the stored doc.
+function revertInlineEdit() {
+  exitInlineEdit();
+  renderDoc(currentDocCache);
+}
+// Paste — force plain text so styled markup never enters the live block.
+// serializeLeafSafe would flatten it at commit anyway; this keeps the caret
+// content honest too. Best-effort (clipboard APIs vary); the serializer is the
+// backstop.
+function handleInlinePaste(e) {
+  if (!inlineEdit || e.target !== inlineEdit.el) return;
+  try {
+    const text = (e.clipboardData || window.clipboardData).getData('text/plain');
+    e.preventDefault();
+    const sel = window.getSelection();
+    if (sel && sel.rangeCount) {
+      const range = sel.getRangeAt(0);
+      range.deleteContents();
+      range.insertNode(document.createTextNode(text));
+      range.collapse(false);
+      sel.removeAllRanges(); sel.addRange(range);
+    } else {
+      inlineEdit.el.appendChild(document.createTextNode(text));
+    }
+  } catch (_) {}
+}
+// Shift+Enter — insert a single <br> at the caret (the only inline markup the
+// serializer preserves). Intercepted so the browser can't insert a <div> split.
+function insertSoftBreak() {
+  try {
+    const sel = window.getSelection();
+    if (sel && sel.rangeCount) {
+      const range = sel.getRangeAt(0);
+      range.deleteContents();
+      const br = document.createElement('br');
+      range.insertNode(br);
+      range.setStartAfter(br); range.collapse(true);
+      sel.removeAllRanges(); sel.addRange(range);
+    } else if (inlineEdit) {
+      inlineEdit.el.appendChild(document.createElement('br'));
+    }
+  } catch (_) {}
+}
+function handleInlineKeydown(e) {
+  if (!inlineEdit || e.target !== inlineEdit.el) return;
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    commitInlineEdit().catch(() => {}); // UX handled inside; swallow unhandled rejection
+  } else if (e.key === 'Enter' && e.shiftKey) {
+    e.preventDefault();
+    insertSoftBreak();
+  } else if (e.key === 'Escape') {
+    e.preventDefault();
+    revertInlineEdit();
+  }
+}
+function handleInlineBlur(e) {
+  if (!inlineEdit || e.target !== inlineEdit.el) return;
+  commitInlineEdit().catch(() => {});
+}
+
+// Commit the active hand-edit. Reuses resolveAnchorFind for a unique anchor
+// (handles find_not_unique for free) and re-emits the block's ORIGINAL opening
+// tag verbatim from the stored source — preserving data-rwa-id and every other
+// attribute (a re-assigned id would break #id fragment links). Empty text
+// deletes the block. Fail-loud: any error restores the last-good render and
+// rethrows so callers (and tests) see it — never a silent partial commit.
+async function commitInlineEdit() {
+  if (!inlineEdit) return;
+  const { el, entry } = inlineEdit;
+  const newText = serializeLeafSafe(el);
+  const a = resolveAnchorFind(entry);
+  exitInlineEdit(); // clear state + listeners before the await/re-render
+  if (!a) {
+    renderDoc(currentDocCache);
+    if (typeof setStatus === 'function') setStatus('err', '✗ could not anchor edit');
+    throw new RwaEditError('anchor_unresolved');
+  }
+  const orig = currentDocCache.slice(entry.start, entry.end);
+  const openMatch = orig.match(/^<[a-zA-Z][a-zA-Z0-9]*\b[^>]*>/);
+  const tagName = openMatch ? openMatch[0].match(/^<([a-zA-Z][a-zA-Z0-9]*)/)[1] : el.tagName.toLowerCase();
+  const openTag = openMatch ? openMatch[0] : ('<' + tagName + '>');
+  const closeTag = '</' + tagName + '>';
+  const replace = newText.trim() === ''
+    ? a.replacePrefix + a.replaceSuffix
+    : a.replacePrefix + openTag + newText + closeTag + a.replaceSuffix;
+  try {
+    await runtimeApplyEnvelope(
+      { version: 'rwa-edit/1', edits: [{ find: a.find, replace, reason: 'edit' }] },
+      { actor: 'user:edit-surface', surface: 'inline-edit' });
+  } catch (err) {
+    renderDoc(currentDocCache);
+    if (typeof setStatus === 'function') setStatus('err', '✗ ' + (err && (err.code || err.message)));
+    throw err;
+  }
+}
+window.commitInlineEdit = commitInlineEdit;
+
+// Double-click a leaf block -> enter hand-edit. Mount-delegated (re-registered
+// each render in renderDoc, so it survives the post-commit re-render). Gated:
+// frozen zones (data-rwa-frozen attribute, marker-form via isWithinLockedRange)
+// and class-locked subtrees are off-limits; under an active view the listener
+// is not registered at all (renderDoc).
+function handleMountDblClick(e) {
+  if (activeView) return;
+  const mount = document.getElementById('rwa-doc-mount');
+  if (!mount) return;
+  let el = e.target;
+  while (el && el !== mount && !INLINE_EDITABLE.has(el.tagName)) el = el.parentNode;
+  if (!el || el === mount) return;
+  if (el.closest('[data-rwa-frozen]') || el.closest('.rwa-locked')) return;
+  const ord = anchorableOrdinal(mount, el);
+  const entry = (ord >= 0 && sourceMap) ? sourceMap[ord] : null;
+  if (!entry) return;
+  if (isWithinLockedRange(entry.start, entry.end)) return; // marker-form frozen backstop
+  enterInlineEdit(el, entry);
+}
+if (typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent)) {
+  window.__handleMountDblClick = handleMountDblClick;
 }
 
   // ─── Skin runtime: deterministic apply / reset (kepler) ───────────────

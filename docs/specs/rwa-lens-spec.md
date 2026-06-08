@@ -88,6 +88,8 @@ Anchoring is primarily a click — click a block, the lens moves to sit below it
 
 The runtime visually highlights the anchored block (subtle border or background tint) so the user always knows what the lens is targeting. The badge on the lens shows the anchor's identity (e.g., *anchored on ¶3*) and, when the anchor has scrolled out of view, augments with a position cue (*anchored on ¶3 — scrolled above*) plus a click-to-return affordance. Without those indicators, the lens model has a known failure mode: sticky scope. Unlike a momentary selection, the anchor persists across multiple submissions until released, which is more powerful for multi-step edits on the same region but easier to forget.
 
+**Single-click vs double-click.** A **single** click anchors the lens (above). A **double** click on a leaf text block enters *inline manual edit* — a distinct direct-manipulation `edit-surface` that bypasses the lens entirely: the block becomes `contenteditable`, the user edits the text by hand, and Enter/blur commits through the non-agent path (`actor:'user:edit-surface'`) with **no model call**. This is not a lens mode and uses none of the lens chrome; it is documented in `docs/plans/2026-06-08-inline-manual-edit-design.md`. The two gestures coexist on the same blocks via click-count; double-click leaving the live word selected is standard word-processor behaviour, and an edit that blurs with no change commits nothing, so accidental entry is free.
+
 ### 5.2 Releasing the anchor
 
 The X on the badge releases the anchor and returns the lens to its docked default position. **Esc** is the keyboard equivalent. The document layout reflows back; transitions animate briefly to avoid jarring jumps.
