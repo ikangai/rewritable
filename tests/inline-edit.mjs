@@ -470,11 +470,14 @@ console.log('\n== C3b: blur in prompt mode discards the prompt, commits nothing 
 // prompts ("/turn this into <h2>") are a primary use case — the model must see
 // what the user TYPED (real '<', real newlines), not entity soup.
 //
-// The unescape ORDERING in runInlineCommand is load-bearing and pinned here:
-// <br> → \n must run FIRST (so only real soft breaks become newlines), and
-// &amp; → & must run LAST. If someone reorders &amp; first, a typed literal
-// "&lt;" (serialized as "&amp;lt;") double-unescapes — &amp;lt; → &lt; → the
-// &lt; pass turns it into "<" — silently corrupting the instruction.
+// The unescape ORDERING in runInlineCommand is load-bearing. The &amp; → &
+// pass must run LAST, and that rule IS pinned here: if someone reorders &amp;
+// first, a typed literal "&lt;" (serialized as "&amp;lt;") double-unescapes —
+// &amp;lt; → &lt; → the &lt; pass turns it into "<" — silently corrupting the
+// instruction. The companion rule (<br> → \n must run FIRST, so only real soft
+// breaks become newlines) is documented in the seed but NOT independently
+// pinned by this fixture — for this input both orderings produce identical
+// output.
 console.log('\n== C3c: instruction reaches the agent unescaped ==');
 {
   await window.__setDocForTest('<p data-rwa-id="c3cccccc">target</p>');
@@ -498,8 +501,8 @@ console.log('\n== C3c: instruction reaches the agent unescaped ==');
     for (let i = 0; i < 80; i++) { await settle(); if (askedPrompt) break; }
     check('typed <h2> reaches the model unescaped', askedPrompt && askedPrompt.includes('turn this into <h2>'));
     check('soft break becomes a newline, not a <br> token', askedPrompt && askedPrompt.includes('<h2>\nkeep a'));
-    // Regression: a stray extra unescape pass (or any entity mishandling) would
-    // leave "a &amp; b" instead of the typed "a & b".
+    // Regression: a dropped/missing &amp; → & unescape (or escapeHtml drift)
+    // would leave "a &amp; b" instead of the typed "a & b".
     check('typed & arrives verbatim (a & b)', askedPrompt && askedPrompt.includes('keep a & b'));
     // Regression: entity-reorder (&amp; unescaped before &lt;) double-unescapes
     // the typed 5-char literal "&lt;" into "<" — this substring proves it survived.
@@ -583,6 +586,9 @@ console.log('\n== C4b: no new edit session while a modify is in flight ==');
 // (handleMountDblClick's data-rwa-frozen/.rwa-locked closest checks + the
 // marker-form isWithinLockedRange backstop) keeps the WHOLE layer — manual
 // edit AND prompt mode — out of frozen territory.
+// NOTE: the base frozen gate is also pinned by E7; this block adds the
+// prompt-mode framing. The .rwa-locked and marker-form gates are not
+// exercised here.
 console.log('\n== C5: frozen block cannot enter inline edit (so no /command) ==');
 {
   await window.__setDocForTest('<p data-rwa-frozen data-rwa-id="c5aaaaaa">locked</p>');
