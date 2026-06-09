@@ -162,6 +162,25 @@ test('resolveSelfDescription returns the static projection when there is no decl
   assert.deepEqual(self.affordances, []);
 });
 
+test('#10: a trustworthy declaration UNIONS installed skills (SD-04 declared+skills)', () => {
+  // A skill-host with BOTH a frozen #rwa-affordances declaration AND installed
+  // skills: the declared projection must not drop the skills (static did union
+  // them, so declared≠live broke SD-04).
+  const skillBlock = `<script type="application/rwa-skill+json">${Buffer.from(JSON.stringify({
+    format: 'rwa-skill/1',
+    skill: { name: 'word-count', version: '1.0.0', kind: 'compute', permissions: [], author_pubkey: 'UEsx', code: 'async function run(i){return i.length}' },
+  })).toString('base64')}</script>`;
+  const doc = `<article><h1>T</h1>${declScript(ALIGNED_DECL, { frozen: true })}<div id="dt-data">[]</div></article>\n<div data-rwa-frozen id="rwa-skills">${skillBlock}</div>`;
+  const self = resolveSelfDescription({ fileText: fileWrap(doc), doc, uuid: 'u', kind: 'datatable', frozenZones: [] });
+  assert.equal(self.source, 'declared');
+  // declared providers still present (the kind-guess override)…
+  assert.ok(self.affordances.some(a => a.kind === 'edit-surface'), 'declared providers retained');
+  // …AND the installed skill is unioned in (was dropped).
+  const inst = self.affordances.find(a => a.provenance === 'installed');
+  assert.ok(inst, 'installed skill unioned into the declared projection');
+  assert.equal(inst.name, 'word-count');
+});
+
 test('a declared projection fills uuid/frozenZones from container facts, not the author claim', () => {
   // uuid/frozenZones are container facts (DOC_UUID / the bytes), authoritative
   // over anything the declaration claims — an author cannot lie about them.

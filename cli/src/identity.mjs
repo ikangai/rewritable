@@ -237,8 +237,15 @@ export function resolveSelfDescription({ fileText, doc, uuid, kind, frozenZones 
       // discriminator and source are the author's claim and must already be
       // correct, or the declaration is non-conforming and we must not "repair"
       // it into a trusted answer (e.g. a `schema`-not-`rwa` pre-aligned block).
+      // Union installed skills (parseSkillZone) into the declared affordances —
+      // the static path does, so dropping them here made declared≠live (SD-04).
+      // Declared providers win a (kind,name) collision; mirrors the seed's
+      // runtimeDescribe registry→declared→installed precedence.
+      const declAff = Array.isArray(declaration.affordances) ? declaration.affordances : [];
+      const seen = new Set(declAff.map((a) => a.kind + '\0' + a.name));
       const candidate = {
         ...declaration,
+        affordances: [...declAff, ...parseSkillZone(doc).filter((s) => !seen.has(s.kind + '\0' + s.name))],
         uuid,
         frozenZones,
         blocks: countBlocks(doc),
