@@ -113,19 +113,33 @@ cmd_build() {
 
 cmd_verify() {
   log "verifying live site — $SITE_URL"
-  local health seed_code seed_bytes tmp="/tmp/rwa-seed.$$"
-  health="$(curl -fsS --max-time 15 "$SITE_URL/health" 2>/dev/null || echo 'UNREACHABLE')"
+  # Poll, don't fire once: `docker compose up -d --build` recreates the
+  # container, and Traefik needs a few seconds to re-register the new backend.
+  # A single immediate curl races that window and reports a false 404 (Traefik's
+  # 19-byte "404 page not found") even though the deploy succeeded. Retry until
+  # the site is genuinely serving, and only fail after sustained failure.
+  local tmp="/tmp/rwa-seed.$$" attempts="${VERIFY_ATTEMPTS:-10}" delay="${VERIFY_DELAY:-6}"
+  local i health seed_code seed_bytes
+  for (( i=1; i<=attempts; i++ )); do
+    health="$(curl -fsS --max-time 15 "$SITE_URL/health" 2>/dev/null || echo 'UNREACHABLE')"
+    seed_code="$(curl -s -o "$tmp" -w '%{http_code}' --max-time 20 "$SITE_URL/rewritable.html" || echo 000)"
+    seed_bytes="$(wc -c < "$tmp" 2>/dev/null | tr -d ' ' || echo 0)"
+    if [[ "$seed_code" == "200" ]] && grep -q 'id="rwa-bootstrap"' "$tmp" 2>/dev/null && (( seed_bytes > 100000 )); then
+      echo "    /health         -> $health"
+      echo "    /rewritable.html-> HTTP $seed_code, ${seed_bytes} bytes"
+      rm -f "$tmp"
+      log "OK — seed served, bootstrap present (${seed_bytes} bytes)  [attempt $i/$attempts]"
+      return 0
+    fi
+    if (( i < attempts )); then
+      warn "not ready (attempt $i/$attempts: /health=$health, seed=HTTP $seed_code ${seed_bytes}b) — waiting ${delay}s for Traefik to re-register…"
+      sleep "$delay"
+    fi
+  done
   echo "    /health         -> $health"
-  seed_code="$(curl -s -o "$tmp" -w '%{http_code}' --max-time 20 "$SITE_URL/rewritable.html" || echo 000)"
-  seed_bytes="$(wc -c < "$tmp" 2>/dev/null | tr -d ' ' || echo 0)"
   echo "    /rewritable.html-> HTTP $seed_code, ${seed_bytes} bytes"
-  if [[ "$seed_code" == "200" ]] && grep -q 'id="rwa-bootstrap"' "$tmp" 2>/dev/null && (( seed_bytes > 100000 )); then
-    rm -f "$tmp"
-    log "OK — seed served, bootstrap present (${seed_bytes} bytes)"
-  else
-    rm -f "$tmp"
-    die "verify FAILED — seed not served as expected (numbers above)"
-  fi
+  rm -f "$tmp"
+  die "verify FAILED after $attempts attempts (~$(( attempts * delay ))s) — seed not served as expected (numbers above)"
 }
 
 main() {
