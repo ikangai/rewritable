@@ -153,6 +153,11 @@ body{font-family:var(--font-ui);background:var(--bg);color:var(--text);min-heigh
 .rwa-frag-pulse{animation:rwa-frag-pulse 1.6s ease-out;}
 @keyframes rwa-frag-pulse{0%{background:rgba(59,130,246,0.22);}100%{background:transparent;}}
 [data-rwa-anchored]{outline:2px solid var(--gray-900);outline-offset:2px;border-radius:4px;}
+/* Inline prompt mode — the block's text starts with "/" (addressing the model,
+   not writing content). Tint + inset accent bar only: no border/padding so the
+   per-keystroke toggle never shifts layout (caret stays put), and no ::before
+   glyph (pseudo-elements on contenteditable cause Chromium caret jumps). */
+[data-rwa-cmd="on"]{background:rgba(59,130,246,0.06);box-shadow:inset 2px 0 0 var(--blue);border-radius:4px;}
 .rwa-locked{position:relative;background:rgba(239,68,68,0.04);border-left:3px solid var(--red);padding-left:8px;}
 .rwa-locked::before{content:'\1F512';position:absolute;top:4px;right:8px;font-size:12px;opacity:.6;}
 /* === DOCUMENT-PRODUCT DEFAULT: baseline content typography === */
