@@ -2712,7 +2712,11 @@ function handleInlineKeydown(e) {
   if (!inlineEdit || e.target !== inlineEdit.el) return;
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault();
-    commitInlineEdit().catch(() => {}); // UX handled inside; swallow unhandled rejection
+    if (inlineEdit.commandMode) {
+      runInlineCommand();   // fire-and-forget; UX + errors handled inside
+    } else {
+      commitInlineEdit().catch(() => {}); // UX handled inside; swallow unhandled rejection
+    }
   } else if (e.key === 'Enter' && e.shiftKey) {
     e.preventDefault();
     insertSoftBreak();
@@ -2731,8 +2735,42 @@ function handleInlineKeydown(e) {
 }
 function handleInlineBlur(e) {
   if (!inlineEdit || e.target !== inlineEdit.el) return;
+  if (inlineEdit.commandMode) {
+    // Blur = click-away, not consent to run a model call — and the "/…" prompt
+    // is never content, so committing it as prose would be worse. Discard.
+    exitInlineEdit();
+    renderDoc(currentDocCache);
+    return;
+  }
   commitInlineEdit().catch(() => {});
 }
+
+// Enter on a "/instruction" block: run the agent on THIS block via the existing
+// anchored-command runner. The typed "/…" is an instruction, never content —
+// restore the committed render FIRST, because exitInlineEdit leaves the typed
+// prompt in the DOM and runAnchoredCommand's retry-exhaustion path returns
+// without re-rendering. The entry is re-resolved by ordinal after renderDoc:
+// resolveAnchorFind matches by reference against the CURRENT sourceMap, and
+// renderDoc rebuilds it (same committed bytes → identical map → same index).
+// Known limitation: the instruction text is serializeLeafSafe output, i.e.
+// HTML-escaped — no unescape helper exists, so entities read literally in the
+// prompt (typing "a & b" sends "a &amp; b").
+async function runInlineCommand() {
+  if (!inlineEdit) return;
+  const instruction = serializeLeafSafe(inlineEdit.el).replace(/^\s*\/\s?/, '').trim();
+  const idx = sourceMap ? sourceMap.indexOf(inlineEdit.entry) : -1;
+  exitInlineEdit();
+  renderDoc(currentDocCache);
+  const entry = (idx >= 0 && sourceMap) ? sourceMap[idx] : null;
+  if (!entry || !instruction) return; // lone "/" → no-op; entry-null is a should-never-happen guard
+  try {
+    await runAnchoredCommand(entry, instruction);
+  } catch (err) {
+    renderDoc(currentDocCache);
+    if (typeof setStatus === 'function') setStatus('err', '✗ ' + (err && (err.code || err.message)));
+  }
+}
+window.runInlineCommand = runInlineCommand; // expose for tests
 
 // Commit the active hand-edit. Reuses resolveAnchorFind for a unique anchor
 // (handles find_not_unique for free) and re-emits the block's ORIGINAL opening

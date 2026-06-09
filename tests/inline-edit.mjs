@@ -396,6 +396,75 @@ console.log('\n== C2: Esc demotes command mode, second Esc reverts ==');
   check('revert kept original content', doc.includes('Keep me'));
 }
 
+// C2b — demotion must not leak across edit sessions: a module-scoped `demoted`
+// flag would pass every other check while killing slash commands for the rest
+// of the page lifetime. A fresh session on the same block must detect "/" again.
+console.log('\n== C2b: demotion does not leak into a new edit session ==');
+{
+  const el = $id('c2aaaaaa'); // re-query: C2's revert renderDoc replaced the node
+  dbl(el);
+  el.textContent = '/x';
+  el.dispatchEvent(new window.InputEvent('input', { bubbles: true }));
+  check('new session: prompt mode works again', el.dataset.rwaCmd === 'on');
+  window.revertInlineEdit();
+}
+
+// C3 — the whole point of the feature: Enter on a "/instruction" runs the
+// agent ON THE BLOCK the user is standing in — no trip to the floating lens,
+// no copy-paste of context. The typed "/…" text is an instruction to the
+// model, NEVER content: it must not appear in the committed document.
+console.log('\n== C3: Enter in prompt mode runs the agent on the block ==');
+{
+  await window.__setDocForTest('<p data-rwa-id="c3aaaaaa">plain sentence</p>');
+  const el = $id('c3aaaaaa');
+  dbl(el);
+  el.textContent = '/make it bold';
+  el.dispatchEvent(new window.InputEvent('input', { bubbles: true }));
+  const realFetch = window.fetch;
+  // canned agent reply: the response replaces the WHOLE block (open tag included),
+  // so it must carry the data-rwa-id for the preservation assertion to be meaningful
+  window.fetch = async () => ({
+    ok: true,
+    json: async () => ({ choices: [{ message: { content: '<p data-rwa-id="c3aaaaaa">plain <strong>sentence</strong></p>' } }] }),
+  });
+  try {
+    el.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    let doc = '';
+    for (let i = 0; i < 80; i++) { await settle(); doc = await window.getDoc(); if (doc.includes('<strong>')) break; }
+    check('block edited by the agent', doc.includes('plain <strong>sentence</strong>'));
+    check('the "/command" text was NOT committed as content', !doc.includes('/make it bold'));
+    check('data-rwa-id preserved', doc.includes('data-rwa-id="c3aaaaaa"'));
+    const top = await readHistTop();
+    check('hist surface is anchored-command', top && top.surface === 'anchored-command');
+  } finally {
+    window.fetch = realFetch;
+  }
+}
+
+// C3b — blur = click-away, not consent. A prompt half-typed when focus leaves
+// must neither run a surprise model call nor be committed as prose ("the /…
+// text is never committed as content" — design doc). Discard, restore, done.
+console.log('\n== C3b: blur in prompt mode discards the prompt, commits nothing ==');
+{
+  await window.__setDocForTest('<p data-rwa-id="c3bbbbbb">stay put</p>');
+  const el = $id('c3bbbbbb');
+  dbl(el);
+  const undoBefore = await readUndoLen();
+  // undo is capped (UNDO_CAP=10) and this suite has long since filled it, so the
+  // length check alone is vacuous here — the hist-top check below is the one
+  // that can actually fail if blur-in-prompt-mode ever commits.
+  const histBefore = JSON.stringify((await readHistTop()) || null);
+  el.textContent = '/something';
+  el.dispatchEvent(new window.InputEvent('input', { bubbles: true }));
+  el.dispatchEvent(new window.FocusEvent('blur'));
+  await settle();
+  const doc = await window.getDoc();
+  check('prompt text not committed on blur', !doc.includes('/something'));
+  check('block restored to committed content', $id('c3bbbbbb') && $id('c3bbbbbb').textContent === 'stay put');
+  check('no undo frame burned on blur-discard', (await readUndoLen()) === undoBefore);
+  check('no history record written on blur-discard', JSON.stringify((await readHistTop()) || null) === histBefore);
+}
+
 // NOTE: inert-under-active-view is tested in tests/view.mjs (which builds a real
 // presentation-kind container with a registered view — this document-kind
 // harness has none). Concurrency (serialize vs non-agent, reject vs agent loop)
