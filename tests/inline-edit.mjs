@@ -469,14 +469,23 @@ console.log('\n== C3b: blur in prompt mode discards the prompt, commits nothing 
 // whose output is HTML-escaped with <br> soft-break tokens. Markup-referencing
 // prompts ("/turn this into <h2>") are a primary use case — the model must see
 // what the user TYPED (real '<', real newlines), not entity soup.
+//
+// The unescape ORDERING in runInlineCommand is load-bearing and pinned here:
+// <br> → \n must run FIRST (so only real soft breaks become newlines), and
+// &amp; → & must run LAST. If someone reorders &amp; first, a typed literal
+// "&lt;" (serialized as "&amp;lt;") double-unescapes — &amp;lt; → &lt; → the
+// &lt; pass turns it into "<" — silently corrupting the instruction.
 console.log('\n== C3c: instruction reaches the agent unescaped ==');
 {
   await window.__setDocForTest('<p data-rwa-id="c3cccccc">target</p>');
   const el = $id('c3cccccc');
   dbl(el);
-  // innerHTML parse: text "/turn this into <h2>" + a real <br> + "second line" —
-  // exactly what typing the prompt with a Shift+Enter soft break leaves behind.
-  el.innerHTML = '/turn this into &lt;h2&gt;<br>second line';
+  // innerHTML parses entities ONCE, so this leaves exactly what a user typing
+  // the prompt with a Shift+Enter soft break leaves behind: text node
+  // "/turn this into <h2>" + a real <br> + text node
+  // "keep a & b and literal &lt; intact" (a typed '&' and the 5-char literal
+  // "&lt;" — fixture '&amp;' → text '&', fixture '&amp;lt;' → text '&lt;').
+  el.innerHTML = '/turn this into &lt;h2&gt;<br>keep a &amp; b and literal &amp;lt; intact';
   el.dispatchEvent(new window.InputEvent('input', { bubbles: true }));
   let askedPrompt = null;
   const realFetch = window.fetch;
@@ -488,7 +497,13 @@ console.log('\n== C3c: instruction reaches the agent unescaped ==');
     el.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
     for (let i = 0; i < 80; i++) { await settle(); if (askedPrompt) break; }
     check('typed <h2> reaches the model unescaped', askedPrompt && askedPrompt.includes('turn this into <h2>'));
-    check('soft break becomes a newline, not a <br> token', askedPrompt && askedPrompt.includes('<h2>\nsecond line'));
+    check('soft break becomes a newline, not a <br> token', askedPrompt && askedPrompt.includes('<h2>\nkeep a'));
+    // Regression: a stray extra unescape pass (or any entity mishandling) would
+    // leave "a &amp; b" instead of the typed "a & b".
+    check('typed & arrives verbatim (a & b)', askedPrompt && askedPrompt.includes('keep a & b'));
+    // Regression: entity-reorder (&amp; unescaped before &lt;) double-unescapes
+    // the typed 5-char literal "&lt;" into "<" — this substring proves it survived.
+    check('typed literal &lt; survives (no double-unescape)', askedPrompt && askedPrompt.includes('literal &lt; intact'));
   } finally {
     window.fetch = realFetch;
   }
@@ -560,6 +575,21 @@ console.log('\n== C4b: no new edit session while a modify is in flight ==');
   } finally {
     window.fetch = realFetch;
   }
+}
+
+// C5 — frozen zones are author-declared invariants. If a frozen block could
+// enter inline edit, the /-command layer would hand the agent an instruction
+// scoped to a block it must never rewrite; pinning at the entry gate
+// (handleMountDblClick's data-rwa-frozen/.rwa-locked closest checks + the
+// marker-form isWithinLockedRange backstop) keeps the WHOLE layer — manual
+// edit AND prompt mode — out of frozen territory.
+console.log('\n== C5: frozen block cannot enter inline edit (so no /command) ==');
+{
+  await window.__setDocForTest('<p data-rwa-frozen data-rwa-id="c5aaaaaa">locked</p>');
+  const el = $id('c5aaaaaa');
+  dbl(el);
+  check('frozen block did not become editable', el.getAttribute('contenteditable') !== 'true');
+  check('no prompt mode on a frozen block', el.dataset.rwaCmd !== 'on');
 }
 
 // NOTE: inert-under-active-view is tested in tests/view.mjs (which builds a real
