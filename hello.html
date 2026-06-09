@@ -4203,13 +4203,17 @@ if (typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent)) {
 // corrupted (a lone `<script>` swallows all following markup as text).
 // We catch this by counting raw tokens in the doc string.
 function tagBalance(doc) {
+  // Symmetric lookaheads so a custom element (<script-foo>, <style-bar>) is
+  // counted neither as an open nor a close — `\b` after "script" matched the
+  // hyphen in <script-foo> while the close regex did not, producing a phantom
+  // 1/0 imbalance that falsely rejected valid edits as structural_shape_changed.
   const opens = {
-    script: (doc.match(/<script\b/gi) || []).length,
-    style: (doc.match(/<style\b/gi) || []).length,
+    script: (doc.match(/<script(?=[\s>/])/gi) || []).length,
+    style: (doc.match(/<style(?=[\s>/])/gi) || []).length,
   };
   const closes = {
-    script: (doc.match(/<\/script\s*>/gi) || []).length,
-    style: (doc.match(/<\/style\s*>/gi) || []).length,
+    script: (doc.match(/<\/script(?=[\s>])/gi) || []).length,
+    style: (doc.match(/<\/style(?=[\s>])/gi) || []).length,
   };
   for (const tag of ['script', 'style']) {
     if (opens[tag] !== closes[tag]) return { tag, opens: opens[tag], closes: closes[tag] };
@@ -5904,8 +5908,11 @@ async function modifyViaBridge(instr, lensMeta = null) {
 // braces honoring strings + escapes to find the envelope.
 function parseBridgeEnvelope(text) {
   if (typeof text !== 'string') return null;
-  // First strip ```json or ``` fences if the model emitted them.
-  const fenceStripped = text.replace(/```(?:json|html)?\s*/i, '').replace(/```\s*$/i, '');
+  // First strip a LEADING ```json / ``` fence if the model wrapped the envelope.
+  // The opening strip is ^-anchored so a ```-fence sitting *inside* the
+  // envelope's own content (e.g. a doc/replace string containing markdown) is
+  // never removed — an unanchored strip silently corrupted such values.
+  const fenceStripped = text.replace(/^\s*```(?:json|html)?\s*\n?/i, '').replace(/```\s*$/i, '');
   const start = fenceStripped.indexOf('{');
   if (start < 0) return null;
   let depth = 0, inStr = false, escape = false;
