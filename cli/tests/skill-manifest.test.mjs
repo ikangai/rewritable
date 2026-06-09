@@ -195,3 +195,17 @@ test('levenshtein edit distance (for lookalike)', () => {
   assert.equal(levenshtein('Acme Skills', 'Acme Skils'), 1); // missing l
   assert.equal(levenshtein('abc', 'xyz'), 3);
 });
+
+// F7/F8/F9 install-gate hardening (parity with the seed _skValidateInstall).
+test('F9: validateInstall rejects a non-array permissions field (no silent coerce to [])', () => {
+  const r = validateInstall({ skill: { name: 'x', kind: 'compute', permissions: 'network:*' } }, { signed: false, verified: false });
+  assert.ok(!r.ok && r.errors.includes('invalid_permission'));
+});
+test('F8: validateInstall rejects a NUL byte in the skill name (skillId ambiguity)', () => {
+  const r = validateInstall({ skill: { name: 'a' + String.fromCharCode(0) + 'b', kind: 'compute', permissions: [] } }, { signed: false, verified: false });
+  assert.ok(!r.ok && r.errors.includes('invalid_skill_id'));
+});
+test('F7: validateInstall rejects an invalid permission VALUE, not just the tier', () => {
+  const r = validateInstall({ skill: { name: 'x', kind: 'tool', permissions: ['network:*evil.com'] } }, { signed: true, verified: true });
+  assert.ok(!r.ok && r.errors.includes('invalid_permission'));
+});

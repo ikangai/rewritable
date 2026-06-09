@@ -5572,9 +5572,44 @@ function _skLevenshtein(a, b) {
   return prev[n];
 }
 // §3.4 install gates (mirror cli validateInstall).
+const _SK_VAULT_NS = /^[a-z0-9_](?:[a-z0-9_-]{0,62}[a-z0-9_])?$/;
+// §4 permission grammar (mirror cli parsePermission) — validates the VALUE, not
+// just the tier (F7): a left-unanchored network wildcard (network:*evil.com) or
+// a bad vault namespace must be rejected, not waved through on a valid tier.
+function _skParsePermission(p) {
+  const s = String(p), i = s.indexOf(':');
+  if (i < 0) throw new Error(`invalid permission (no tier): ${s}`);
+  const tier = s.slice(0, i), value = s.slice(i + 1);
+  if (tier === 'network') {
+    if (value === '*') return { tier, value };
+    if (value.startsWith('**.') || value.startsWith('*.')) {
+      if (value.slice(value.indexOf('.') + 1).includes('*')) throw new Error(`invalid network pattern: ${value}`);
+      return { tier, value };
+    }
+    if (value.includes('*')) throw new Error(`invalid network pattern (left-unanchored wildcard): ${value}`);
+    if (!value) throw new Error('invalid network pattern (empty)');
+    return { tier, value };
+  }
+  if (tier === 'vault') {
+    if (value.length > 64 || !_SK_VAULT_NS.test(value)) throw new Error(`invalid vault namespace: ${value}`);
+    return { tier, value };
+  }
+  throw new Error(`unknown_permission_tier: ${tier}`);
+}
 function _skValidateInstall(skill, vr) {
   const perms = Array.isArray(skill.permissions) ? skill.permissions : [], errors = [];
-  for (const p of perms) { const tier = String(p).split(':')[0]; if (tier !== 'network' && tier !== 'vault') errors.push('unknown_permission_tier'); }
+  // F9: reject a non-array permissions field instead of silently coercing to []
+  // — the signing canon would normalize it to [] and a signature over the real
+  // field would still "verify" (confused deputy).
+  if (skill.permissions != null && !Array.isArray(skill.permissions)) errors.push('invalid_permission');
+  // F8: a NUL in the name makes _skSkillId(name‖0x00‖pubkey) ambiguous — two
+  // distinct (name,pubkey) pairs could collide on one id. Reject it.
+  if (/\0/.test(String(skill.name == null ? '' : skill.name))) errors.push('invalid_skill_id');
+  // F7: validate each permission's VALUE via the grammar, not just the tier.
+  for (const p of perms) {
+    try { _skParsePermission(p); }
+    catch (e) { errors.push(/unknown_permission_tier/.test(e.message) ? 'unknown_permission_tier' : 'invalid_permission'); }
+  }
   if (skill.kind === 'compute' && perms.length > 0) errors.push('compute_with_permissions');
   if (!vr.signed && perms.length > 0) errors.push('unsigned_with_permissions');
   if (skill.kind === 'tool' && !vr.verified) errors.push('unsigned_capability');
@@ -5778,8 +5813,11 @@ function runtimeInvokeSkill(skillId, input) {
   const url = URL.createObjectURL(blob);
   const w = new Worker(url);
   let settled = false;
+  // F6: cancel an in-flight bridge fetch when the 5s timeout (or any settle)
+  // fires, so a slow request doesn't keep running after the skill is finished.
+  const _skAc = (typeof AbortController !== 'undefined') ? new AbortController() : null;
   return new Promise((resolve, reject) => {
-    const finish = (fn, arg) => { if (settled) return; settled = true; clearTimeout(timer); try { w.terminate(); } catch (_) {} URL.revokeObjectURL(url); fn(arg); };
+    const finish = (fn, arg) => { if (settled) return; settled = true; clearTimeout(timer); if (_skAc) { try { _skAc.abort(); } catch (_) {} } try { w.terminate(); } catch (_) {} URL.revokeObjectURL(url); fn(arg); };
     const timer = setTimeout(() => finish(reject, new Error('timeout')), 5000);
     const reply = (id, ok, extra) => w.postMessage(Object.assign({ type: 'bridge:response', id, identity_tag, ok }, extra));
     w.onmessage = async (e) => {
@@ -5795,7 +5833,7 @@ function runtimeInvokeSkill(skillId, input) {
         // pre-check only validates the initial origin; a post-hoc r.url check would be
         // too late (the redirect request would already have been sent). Force it after
         // the opts spread so a skill cannot override it.
-        try { const r = await fetch(msg.payload.url, Object.assign({}, msg.payload.opts || {}, { redirect: 'error' })); reply(msg.id, true, { result: { status: r.status, ok: r.ok, body: await r.text() } }); }
+        try { const r = await fetch(msg.payload.url, Object.assign({}, msg.payload.opts || {}, { redirect: 'error', signal: _skAc ? _skAc.signal : undefined })); reply(msg.id, true, { result: { status: r.status, ok: r.ok, body: await r.text() } }); }
         catch (_) { reply(msg.id, false, { error: 'network_error' }); }
         return;
       }
