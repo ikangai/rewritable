@@ -86,7 +86,7 @@ export async function runAgentLoop({
 
     if (!message.tool_calls || message.tool_calls.length === 0) {
       messages.push(message);
-      if (onRetry) onRetry({ attempt, reason: 'no_tool_call' });
+      if (onRetry) onRetry({ attempt, reason: 'no_tool_call', toolName: undefined });
       messages.push({
         role: 'user',
         content: 'Retry: you must call one of the provided tools (no plain text). Try again.',

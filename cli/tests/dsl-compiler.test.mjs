@@ -38,3 +38,16 @@ test('throws on unknown op', () => {
   const plan = { version: 'rwa-edit-dsl/1', ops: [{ op: 'unknown_op' }] };
   assert.throws(() => compileDslPlan(plan, doc), { code: 'op_unknown' });
 });
+
+test('#3: DslCompileError is exported and carries the offending op', async () => {
+  // Dynamic import so a missing export fails this test cleanly (typeof check),
+  // not the whole module at link time.
+  const { DslCompileError } = await import('../src/dsl-compiler.mjs');
+  assert.equal(typeof DslCompileError, 'function', 'DslCompileError is exported for instanceof discrimination');
+  const plan = { version: 'rwa-edit-dsl/1', ops: [{ op: 'unknown_op', foo: 1 }] };
+  let err;
+  try { compileDslPlan(plan, '<article></article>'); } catch (e) { err = e; }
+  assert.ok(err instanceof DslCompileError, 'thrown error is a DslCompileError');
+  assert.equal(err.code, 'op_unknown');
+  assert.deepEqual(err.op, { op: 'unknown_op', foo: 1 }, 'error carries the offending op object');
+});

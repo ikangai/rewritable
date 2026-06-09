@@ -143,6 +143,10 @@ test('retry on first failure — second attempt succeeds', async () => {
     assert.equal(retries.length, 1);
     assert.equal(retries[0].attempt, 1);
     assert.equal(retries[0].reason, 'no_tool_call');
+    // #4: uniform onRetry shape — the no_tool_call branch must carry a toolName
+    // key (undefined) so consumers see the same shape as the invalid_json branch.
+    assert.ok('toolName' in retries[0], 'no_tool_call retry info includes a toolName key');
+    assert.equal(retries[0].toolName, undefined);
     assert.equal(requests.length, 2);
     const secondAttemptMessages = requests[1].messages;
     assert.ok(secondAttemptMessages.some(

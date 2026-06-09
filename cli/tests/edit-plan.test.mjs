@@ -57,6 +57,18 @@ test('apply_dsl_plan envelope routes through compiler and applies', async () => 
   } finally { fx.cleanup(); }
 });
 
+test('#3: a DSL compile error surfaces the offending op in CliError.details', async () => {
+  const fx = mkFixture('<article><h1>Old</h1></article>');
+  try {
+    const envelope = { version: 'rwa-edit-dsl/1', ops: [{ op: 'unknown_op', target: 'x' }] };
+    let err;
+    try { await applyPlan(fx.path, envelope); } catch (e) { err = e; }
+    assert.ok(err, 'applyPlan rejects on a malformed DSL plan');
+    assert.equal(err.subcode, 'op_unknown');
+    assert.deepEqual(err.details.op, { op: 'unknown_op', target: 'x' }, 'the offending op is passed through, not dropped');
+  } finally { fx.cleanup(); }
+});
+
 test('replace_document envelope swaps the whole doc', async () => {
   const fx = mkFixture('<article><h1>Old</h1></article>');
   try {

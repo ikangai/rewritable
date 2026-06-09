@@ -156,7 +156,9 @@ export async function applyPlan(filePath, envelope) {
     try {
       compiled = compileDslPlan(envelope, currentDoc);
     } catch (e) {
-      throw new CliError(3, e.code || 'dsl_compile_error', { message: e.message });
+      // Pass e.op through: DslCompileError carries the offending DSL op, which
+      // --json consumers need to point at the failing step (was dropped).
+      throw new CliError(3, e.code || 'dsl_compile_error', { message: e.message, op: e.op });
     }
     if (compiled.tool === 'replace_document') {
       newDoc = compiled.envelope.doc;
