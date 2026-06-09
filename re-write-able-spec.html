@@ -916,17 +916,32 @@ async function openDB() {
   });
   return _db;
 }
+// Resolve on tx.oncomplete, not the request's onsuccess: a put/delete REQUEST
+// can succeed while the TRANSACTION still aborts at commit (quota, FS error),
+// rolling the write back — resolving on request success would report a durable
+// write that never landed. Same tx-commit discipline popUndo/commitDoc use.
 const idbGet = (s, k = RWA.KEY) => openDB().then(db => new Promise((res, rej) => {
-  const r = db.transaction(s).objectStore(s).get(k);
-  r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+  const tx = db.transaction(s);
+  const r = tx.objectStore(s).get(k);
+  let v;
+  r.onsuccess = () => { v = r.result; };
+  tx.oncomplete = () => res(v);
+  tx.onerror = () => rej(tx.error || r.error);
+  tx.onabort = () => rej(tx.error || new Error('idbGet tx aborted'));
 }));
 const idbPut = (s, v, k = RWA.KEY) => openDB().then(db => new Promise((res, rej) => {
-  const r = db.transaction(s, 'readwrite').objectStore(s).put(v, k);
-  r.onsuccess = () => res(); r.onerror = () => rej(r.error);
+  const tx = db.transaction(s, 'readwrite');
+  tx.objectStore(s).put(v, k);
+  tx.oncomplete = () => res();
+  tx.onerror = () => rej(tx.error);
+  tx.onabort = () => rej(tx.error || new Error('idbPut tx aborted'));
 }));
 const idbDel = (s, k = RWA.KEY) => openDB().then(db => new Promise((res, rej) => {
-  const r = db.transaction(s, 'readwrite').objectStore(s).delete(k);
-  r.onsuccess = () => res(); r.onerror = () => rej(r.error);
+  const tx = db.transaction(s, 'readwrite');
+  tx.objectStore(s).delete(k);
+  tx.oncomplete = () => res();
+  tx.onerror = () => rej(tx.error);
+  tx.onabort = () => rej(tx.error || new Error('idbDel tx aborted'));
 }));
 
 // === Public runtime API (spec §7) ===========================================
