@@ -351,6 +351,19 @@ console.log('\n== C1: prompt mode toggles on leading slash ==');
   el.textContent = 'make it bolder';
   el.dispatchEvent(new window.InputEvent('input', { bubbles: true }));
   check('no leading slash → prompt mode off', el.dataset.rwaCmd !== 'on');
+  // leading whitespace ignored — contenteditable serialization can lead with
+  // whitespace, so the discriminator must look past it or commands go undetected
+  el.textContent = '  /center this';
+  el.dispatchEvent(new window.InputEvent('input', { bubbles: true }));
+  check('whitespace then slash → prompt mode on', el.dataset.rwaCmd === 'on');
+  // \/ escape — the user wants literal-slash content, not a command
+  el.textContent = '\\/etc/hosts';
+  el.dispatchEvent(new window.InputEvent('input', { bubbles: true }));
+  check('backslash-escaped slash → prompt mode off', el.dataset.rwaCmd !== 'on');
+  // lone "/" already signals addressing the model
+  el.textContent = '/';
+  el.dispatchEvent(new window.InputEvent('input', { bubbles: true }));
+  check('lone slash → prompt mode on', el.dataset.rwaCmd === 'on');
   window.revertInlineEdit();
 }
 

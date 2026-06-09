@@ -2663,6 +2663,9 @@ function handleInlinePaste(e) {
       inlineEdit.el.appendChild(document.createTextNode(text));
     }
   } catch (_) {}
+  // preventDefault above suppresses the input event, so the prompt-mode
+  // discriminator must be re-run by hand or a pasted "/…" goes undetected.
+  handleInlineInput();
 }
 // Shift+Enter — insert a single <br> at the caret (the only inline markup the
 // serializer preserves). Intercepted so the browser can't insert a <div> split.
@@ -2683,7 +2686,9 @@ function insertSoftBreak() {
 }
 // Prompt-mode discriminator — same escape semantics as the lens input listener
 // (a leading slash flips to command mode unless typed `\/` for literal-slash
-// content). Detection runs on serializeLeafSafe output, not raw innerHTML —
+// content), except the whitespace-ignore deliberately diverges from the lens:
+// its textarea starts empty, while contenteditable serialization can lead
+// with whitespace. Detection runs on serializeLeafSafe output, not raw innerHTML —
 // the serialized text is what a commit would write, so the mode the user sees
 // matches what would actually happen. A leading "/" survives HTML-escaping
 // unchanged, so the serializer is safe to discriminate on.
