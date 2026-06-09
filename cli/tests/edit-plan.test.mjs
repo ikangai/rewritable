@@ -69,6 +69,28 @@ test('#3: a DSL compile error surfaces the offending op in CliError.details', as
   } finally { fx.cleanup(); }
 });
 
+test('#1: replace_document rejects an injected reserved id (rwa-doc-mount)', async () => {
+  const fx = mkFixture('<article><h1>Old</h1></article>');
+  try {
+    const env = { version: 'rwa-edit/1', doc: '<article id="rwa-doc-mount"><h1>X</h1></article>', reason: 'hijack the mount' };
+    let err; try { await applyPlan(fx.path, env); } catch (e) { err = e; }
+    assert.ok(err, 'rejects');
+    assert.equal(err.subcode, 'reserved_id_used');
+    assert.equal(err.details.id, 'rwa-doc-mount');
+  } finally { fx.cleanup(); }
+});
+
+test('#1: replace_document rejects a lone surrogate in the doc', async () => {
+  const fx = mkFixture('<article><h1>Old</h1></article>');
+  try {
+    const env = { version: 'rwa-edit/1', doc: '<article>\uD800 lone high surrogate</article>', reason: 'x' };
+    let err; try { await applyPlan(fx.path, env); } catch (e) { err = e; }
+    assert.ok(err, 'rejects');
+    assert.equal(err.subcode, 'malformed_envelope');
+    assert.equal(err.details.reason, 'lone_surrogate');
+  } finally { fx.cleanup(); }
+});
+
 test('replace_document envelope swaps the whole doc', async () => {
   const fx = mkFixture('<article><h1>Old</h1></article>');
   try {

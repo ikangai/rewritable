@@ -73,7 +73,17 @@ function assertFrozenPreserved(currentDoc, newDoc) {
       reason: 'replace_document must preserve data-rwa-frozen elements byte-identically',
     });
   }
+  // Reserved HTML id: the escape hatch must not inject id="rwa-doc-mount" (it
+  // would shadow/hijack the runtime mount). Parser-free mirror of the seed's
+  // findReservedIdViolation (querySelector('#rwa-doc-mount')).
+  if (/\bid\s*=\s*["']?rwa-doc-mount(?=["'\s/>]|$)/i.test(newDoc)) {
+    throw new CliError(3, 'reserved_id_used', { id: 'rwa-doc-mount' });
+  }
 }
+
+// String.prototype.isWellFormed (Node 22+) — false for an unpaired UTF-16
+// surrogate. Mirror of the seed's isWellFormed lone-surrogate guard.
+const isWellFormedStr = (s) => typeof s !== 'string' || typeof s.isWellFormed !== 'function' || s.isWellFormed();
 
 function validateEnvelope(env) {
   if (typeof env !== 'object' || env === null || Array.isArray(env)) {
@@ -107,6 +117,11 @@ function validateEnvelope(env) {
   }
   if (hasDoc && (typeof env.reason !== 'string' || env.reason.length === 0)) {
     throw new CliError(3, 'missing_reason');
+  }
+  // Lone-surrogate guard (mirror seed isWellFormed): an unpaired UTF-16 surrogate
+  // in doc/reason corrupts the durable file on encode.
+  if (hasDoc && (!isWellFormedStr(env.doc) || !isWellFormedStr(env.reason))) {
+    throw new CliError(3, 'malformed_envelope', { reason: 'lone_surrogate' });
   }
   return hasEdits ? 'apply_edits' : hasOps ? 'apply_dsl_plan' : 'replace_document';
 }

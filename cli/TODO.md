@@ -6,11 +6,11 @@ These items were surfaced during code review of the initial `rwa edit` implement
 
 The CLI's `replace_document` branch checks frozen-zone preservation (marker-form) but does NOT check:
 - ~~Zone count match between current and new doc~~ — **DONE** (2026-05-30): `assertFrozenPreserved` now rejects a `replace_document` that ADDS a marker-form frozen zone (`frozen_zone_violation`), parity with the seed's `frozenZonesIntact` + the apply_edits count check.
-- Unterminated marker detection (a stray `<!-- rwa:frozen:begin orphan -->` without a matching end passes the CLI)
+- Unterminated marker detection (a stray `<!-- rwa:frozen:begin orphan -->` without a matching end passes the CLI) — **STILL OPEN**: needs a marker-scan across the three fence forms; deferred (not a clean regex).
 - ~~Attribute-form `data-rwa-frozen` preservation~~ — **DONE** (2026-05-30): `replace_document` (and the DSL escape op) now enforce attribute-form frozen elements via `assertFrozenPreserved` → `dataRwaFrozenSnapshot`.
-- HTML well-formedness (lone surrogate / parse validity)
-- Class-lock coverage
-- Reserved-id violation
+- ~~HTML well-formedness (lone surrogate)~~ — **DONE** (2026-06-09): `validateEnvelope` rejects an unpaired UTF-16 surrogate in `doc`/`reason` via `isWellFormedStr` (`malformed_envelope`/`lone_surrogate`). Parse-validity (`parse_error_post_apply`) stays a scope-down — the CLI is parser-free (no jsdom/DOMParser).
+- Class-lock coverage — **STILL OPEN**: requires a parser-free port of the seed's `lockedRangesIn`/`markerZoneRangesIn` (class-attribute + close-tag matching); deferred to do carefully, not rushed.
+- ~~Reserved-id violation~~ — **DONE** (2026-06-09): `assertFrozenPreserved` rejects an injected `id="rwa-doc-mount"` (`reserved_id_used`), parser-free mirror of the seed's `findReservedIdViolation`.
 
 These checks live at `seeds/rewritable.html:2911-2950`. The CLI's `replace_document` should mirror them for true parity. Tracked here pending a v2 hardening pass.
 
