@@ -373,5 +373,14 @@ export function applyEdits(doc, edits) {
     throw new RwaEditError('frozen_zone_violation', null, { form: 'attribute' });
   }
 
+  // #5 opt-in (rwa-id-strict): mirror of the seed — a container declaring
+  // <meta name="rwa-id-strict"> (in a frozen zone) forbids losing an existing
+  // data-rwa-id (the default would backfill a fresh one, breaking #frag links).
+  if (/<meta\s+name\s*=\s*["']?rwa-id-strict\b/i.test(doc)) {
+    const ids = (s) => new Set([...s.matchAll(/\sdata-rwa-id\s*=\s*(?:"([^"]*)"|'([^']*)')/g)].map((m) => (m[1] != null ? m[1] : m[2])));
+    const after = ids(working);
+    for (const id of ids(doc)) if (!after.has(id)) throw new RwaEditError('rwa_id_stripped', null, { id });
+  }
+
   return working;
 }

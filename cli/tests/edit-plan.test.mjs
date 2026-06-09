@@ -91,6 +91,17 @@ test('#1: replace_document rejects a lone surrogate in the doc', async () => {
   } finally { fx.cleanup(); }
 });
 
+test('#5: rwa-id-strict rejects an apply_edits that drops an existing data-rwa-id', async () => {
+  const fx = mkFixture('<div data-rwa-frozen><meta name="rwa-id-strict"></div>\n<p data-rwa-id="keepme01">Hello</p>');
+  try {
+    const env = { version: 'rwa-edit/1', edits: [{ find: '<p data-rwa-id="keepme01">Hello</p>', replace: '<p>Hello edited</p>' }] };
+    let err; try { await applyPlan(fx.path, env); } catch (e) { err = e; }
+    assert.ok(err, 'rejects');
+    assert.equal(err.subcode, 'rwa_id_stripped');
+    assert.equal(err.details.id, 'keepme01');
+  } finally { fx.cleanup(); }
+});
+
 test('replace_document envelope swaps the whole doc', async () => {
   const fx = mkFixture('<article><h1>Old</h1></article>');
   try {

@@ -104,5 +104,30 @@ console.log('\n== #8 parseBridgeEnvelope fence-strip anchoring ==');
   check('clean envelope parses', !!o && o.tool === 'apply_edits');
 }
 
+// ─── #5 opt-in rwa-id-strict: reject an edit that drops an existing id ────────
+console.log('\n== #5 rwa-id-strict (opt-in) ==');
+{
+  const strip = (doc) => ({ env: { version: 'rwa-edit/1', edits: [{ find: '<p data-rwa-id="keepme01">Hello</p>', replace: '<p>Hello edited</p>' }] }, doc });
+  // OFF (no meta): the default silently reassigns — dropping an id is allowed.
+  {
+    const { env, doc } = strip('<p data-rwa-id="keepme01">Hello</p>');
+    let ok = false; try { await window.applyEdits(env, doc); ok = true; } catch (_) {}
+    check('without rwa-id-strict, dropping a data-rwa-id is allowed (default)', ok);
+  }
+  // ON (meta in a frozen zone): the same edit is rejected.
+  const onDoc = '<div data-rwa-frozen><meta name="rwa-id-strict"></div>\n<p data-rwa-id="keepme01">Hello</p>';
+  {
+    const { env } = strip(onDoc);
+    let code = null; try { await window.applyEdits(env, onDoc); } catch (e) { code = e.code; }
+    check('with rwa-id-strict, dropping a data-rwa-id is rejected (rwa_id_stripped)', code === 'rwa_id_stripped');
+  }
+  // ON but the edit preserves the id → still allowed.
+  {
+    const env = { version: 'rwa-edit/1', edits: [{ find: '<p data-rwa-id="keepme01">Hello</p>', replace: '<p data-rwa-id="keepme01">Hello edited</p>' }] };
+    let ok = false; try { await window.applyEdits(env, onDoc); ok = true; } catch (_) {}
+    check('with rwa-id-strict, preserving the id is allowed', ok);
+  }
+}
+
 console.log(`\n${pass} pass, ${fail} fail`);
 if (fail) process.exit(1);

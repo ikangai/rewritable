@@ -79,6 +79,13 @@ function assertFrozenPreserved(currentDoc, newDoc) {
   if (/\bid\s*=\s*["']?rwa-doc-mount(?=["'\s/>]|$)/i.test(newDoc)) {
     throw new CliError(3, 'reserved_id_used', { id: 'rwa-doc-mount' });
   }
+  // #5 opt-in (rwa-id-strict): the escape hatch must not lose an existing
+  // data-rwa-id when the container declares <meta name="rwa-id-strict">.
+  if (/<meta\s+name\s*=\s*["']?rwa-id-strict\b/i.test(currentDoc)) {
+    const ids = (s) => new Set([...s.matchAll(/\sdata-rwa-id\s*=\s*(?:"([^"]*)"|'([^']*)')/g)].map((m) => (m[1] != null ? m[1] : m[2])));
+    const after = ids(newDoc);
+    for (const id of ids(currentDoc)) if (!after.has(id)) throw new CliError(3, 'rwa_id_stripped', { id });
+  }
 }
 
 // String.prototype.isWellFormed (Node 22+) — false for an unpaired UTF-16

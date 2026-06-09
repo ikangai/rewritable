@@ -4504,6 +4504,16 @@ async function applyEdits(envelope, currentDocRaw, lensMeta = null, opts = null)
   const reservedId = findReservedIdViolation(parseResult.doc);
   if (reservedId) throw new RwaEditError('reserved_id_used', null, { id: reservedId });
 
+  // #5 opt-in (rwa-id-strict): a container with <meta name="rwa-id-strict">
+  // (place it in a frozen zone so the agent can't disable it) forbids LOSING an
+  // existing data-rwa-id — the default backfills a fresh id, breaking #frag
+  // links. Reject if any id present before the edit is absent after.
+  if (/<meta\s+name\s*=\s*["']?rwa-id-strict\b/i.test(currentDoc)) {
+    const ids = (s) => new Set([...s.matchAll(/\sdata-rwa-id\s*=\s*(?:"([^"]*)"|'([^']*)')/g)].map((m) => (m[1] != null ? m[1] : m[2])));
+    const after = ids(work);
+    for (const id of ids(currentDoc)) if (!after.has(id)) throw new RwaEditError('rwa_id_stripped', null, { id });
+  }
+
   if (work.length > RWA_EDIT.MAX_DOC) throw new RwaEditError('target_size_exceeded');
 
   // compose-then-commit (skinning-v2): return the fully-validated, shape-checked
@@ -4568,6 +4578,14 @@ async function replaceDocument(envelope, currentDocRaw, lensMeta = null, frozenB
 
   const reservedId = findReservedIdViolation(parseResult.doc);
   if (reservedId) throw new RwaEditError('reserved_id_used', null, { id: reservedId });
+
+  // #5 opt-in (rwa-id-strict): the escape hatch must not lose an existing
+  // data-rwa-id either (same gate as applyEdits).
+  if (/<meta\s+name\s*=\s*["']?rwa-id-strict\b/i.test(currentDoc)) {
+    const ids = (s) => new Set([...s.matchAll(/\sdata-rwa-id\s*=\s*(?:"([^"]*)"|'([^']*)')/g)].map((m) => (m[1] != null ? m[1] : m[2])));
+    const after = ids(newDoc);
+    for (const id of ids(currentDoc)) if (!after.has(id)) throw new RwaEditError('rwa_id_stripped', null, { id });
+  }
 
   if (newDoc.length > RWA_EDIT.MAX_DOC) throw new RwaEditError('target_size_exceeded');
 
