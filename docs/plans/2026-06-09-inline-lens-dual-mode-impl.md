@@ -9,7 +9,7 @@ the floating lens.
 **Architecture:** Add a command-mode layer on top of the existing inline-edit
 surface (`enterInlineEdit`/`handleInlineKeydown`/`commitInlineEdit` in
 `seeds/rewritable.html`). When the editable's text begins with `/`, the block enters
-*prompt mode* (visual only, reusing the lens's `data-mode='command'` styling). Enter
+*prompt mode* (visual only, reusing the lens's `data-mode='command'` styling). *[Shipped: a dedicated `data-rwa-cmd` attribute + its own mount-scoped CSS — the lens styles target the lens card, not document blocks.]* Enter
 routes to the **existing** `runAnchoredCommand(entry, instruction)` — the lens's
 block-scoped agent path — instead of committing the typed text. Esc demotes prompt
 mode back to literal text. No new agent/commit machinery; this is wiring + a small
@@ -325,6 +325,8 @@ async function runInlineCommand() {
 }
 window.runInlineCommand = runInlineCommand; // expose for tests
 ```
+
+*[Shipped without the exposure: tests drive the real keydown path.]*
 
 > Why `renderDoc(currentDocCache)` before the agent call: `exitInlineEdit` only
 > strips contenteditable — the DOM still shows the typed `/…`. Restoring first means

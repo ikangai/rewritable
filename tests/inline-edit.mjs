@@ -367,6 +367,25 @@ console.log('\n== C1: prompt mode toggles on leading slash ==');
   window.revertInlineEdit();
 }
 
+// C1b — the \/ escape is the type-a-literal-slash route: the escaping
+// backslash is an input artifact, not content. The lens strips it at submit
+// (submitLens); the inline surface must commit the same bytes, or identical
+// keystrokes produce different documents on the two surfaces.
+console.log('\n== C1b: \\/ escape commits a literal "/" (backslash stripped) ==');
+{
+  await window.__setDocForTest('<p data-rwa-id="c1baaaaa">Old line</p>');
+  const el = $id('c1baaaaa');
+  dbl(el);
+  el.textContent = '\\/etc/hosts is the path';
+  el.dispatchEvent(new window.InputEvent('input', { bubbles: true }));
+  check('escaped slash: prompt mode stays off', el.dataset.rwaCmd !== 'on');
+  await window.commitInlineEdit();
+  await settle();
+  const doc = await window.getDoc();
+  check('committed block contains the literal path', doc.includes('/etc/hosts is the path'));
+  check('escaping backslash NOT committed', !doc.includes('\\/etc'));
+}
+
 // C2 — Esc demotion: a block legitimately starting with "/" (paths, dates)
 // must be typeable — Esc is the escape-hatch that demotes command mode to
 // literal text. Demotion is session-sticky: re-triggering command mode on

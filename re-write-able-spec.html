@@ -3226,6 +3226,7 @@ function handleInlineBlur(e) {
 // case), so we invert the serializer: <br> → newline FIRST (a typed literal
 // "<br>" arrives escaped, so only real soft breaks match), then unescape the
 // entities with &amp; LAST (so "&amp;lt;" round-trips back to the typed "&lt;").
+// The quote entities are future-proofing — escapeHtml doesn't emit them today.
 async function runInlineCommand() {
   if (!inlineEdit) return;
   const instruction = serializeLeafSafe(inlineEdit.el)
@@ -3260,6 +3261,13 @@ async function commitInlineEdit() {
   const newText = serializeLeafSafe(el);
   exitInlineEdit(); // clear state + listeners before the await/re-render
   if (newText === original) return; // no change → commit nothing (no undo frame burned)
+  // The \/ escape is the type-a-literal-slash route: strip ONE leading backslash
+  // before "/" (after optional whitespace, same shape isSlashCommand looks past).
+  // submitLens strips the same escape — the inline surface must agree or the same
+  // keystrokes produce different bytes on the two surfaces. The no-op comparison
+  // above stays on the RAW serialization on purpose: `original` is also raw, so
+  // an untouched block whose content already starts "\/" still commits nothing.
+  const committed = newText.replace(/^(\s*)\\\//, '$1/');
   const a = resolveAnchorFind(entry);
   if (!a) {
     renderDoc(currentDocCache);
@@ -3274,10 +3282,10 @@ async function commitInlineEdit() {
   // Empty = delete. Real browsers leave a lone <br> in an emptied contenteditable
   // block, so a <br>/whitespace-only result counts as empty (else "empty deletes"
   // would silently commit <p><br></p> instead of removing the block).
-  const isEmpty = newText.replace(/<br\s*\/?>/gi, '').trim() === '';
+  const isEmpty = committed.replace(/<br\s*\/?>/gi, '').trim() === '';
   const replace = isEmpty
     ? a.replacePrefix + a.replaceSuffix
-    : a.replacePrefix + openTag + newText + closeTag + a.replaceSuffix;
+    : a.replacePrefix + openTag + committed + closeTag + a.replaceSuffix;
   try {
     await runtimeApplyEnvelope(
       { version: 'rwa-edit/1', edits: [{ find: a.find, replace, reason: 'edit' }] },

@@ -1,8 +1,16 @@
 # Inline lens — dual-mode editing design
 
 Date: 2026-06-09
-Status: design (not yet implemented)
+Status: Increment 1 shipped (2026-06-09, branch `feature/inline-lens-dual-mode`); later increments remain design
 Author: brainstormed with the project author
+
+> **Update (2026-06-09):** Increment 1 shipped with **leading-only** `/`
+> discrimination — command mode triggers only on a `/` that is the first
+> non-whitespace character of the edit. The "Command-mode mechanics" rule below
+> (mid-text `/` after whitespace; `/`+space reverts) describes the FULL design,
+> not what shipped. In Increment 1 the literal-slash routes are **Esc-demote**
+> and the `\/` escape. `docs/specs/rwa-lens-spec.md` §5.1 is authoritative for
+> shipped behavior.
 
 ## The problem
 
