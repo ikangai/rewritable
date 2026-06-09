@@ -153,6 +153,11 @@ body{font-family:var(--font-ui);background:var(--bg);color:var(--text);min-heigh
 .rwa-frag-pulse{animation:rwa-frag-pulse 1.6s ease-out;}
 @keyframes rwa-frag-pulse{0%{background:rgba(59,130,246,0.22);}100%{background:transparent;}}
 [data-rwa-anchored]{outline:2px solid var(--gray-900);outline-offset:2px;border-radius:4px;}
+/* Inline prompt mode — the block's text starts with "/" (addressing the model,
+   not writing content). Tint + inset accent bar only: no border/padding so the
+   per-keystroke toggle never shifts layout (caret stays put), and no ::before
+   glyph (pseudo-elements on contenteditable cause Chromium caret jumps). */
+[data-rwa-cmd="on"]{background:rgba(59,130,246,0.06);box-shadow:inset 2px 0 0 var(--blue);border-radius:4px;}
 .rwa-locked{position:relative;background:rgba(239,68,68,0.04);border-left:3px solid var(--red);padding-left:8px;}
 .rwa-locked::before{content:'\1F512';position:absolute;top:4px;right:8px;font-size:12px;opacity:.6;}
 /* === DOCUMENT-PRODUCT DEFAULT: baseline content typography === */
@@ -3078,9 +3083,10 @@ window.serializeLeafSafe = serializeLeafSafe;
 
 function enterInlineEdit(el, entry) {
   if (inlineEdit) exitInlineEdit();
-  inlineEdit = { el, entry, original: '' };
+  inlineEdit = { el, entry, original: '', commandMode: false, demoted: false };
   el.setAttribute('contenteditable', 'true');
   el.addEventListener('keydown', handleInlineKeydown);
+  el.addEventListener('input', handleInlineInput);
   el.addEventListener('blur', handleInlineBlur);
   el.addEventListener('paste', handleInlinePaste);
   try { el.focus(); } catch (_) {}
@@ -3092,9 +3098,11 @@ function exitInlineEdit() {
   if (!inlineEdit) return;
   const el = inlineEdit.el;
   try { el.removeEventListener('keydown', handleInlineKeydown); } catch (_) {}
+  try { el.removeEventListener('input', handleInlineInput); } catch (_) {}
   try { el.removeEventListener('blur', handleInlineBlur); } catch (_) {}
   try { el.removeEventListener('paste', handleInlinePaste); } catch (_) {}
   try { el.removeAttribute('contenteditable'); } catch (_) {}
+  try { delete el.dataset.rwaCmd; } catch (_) {}
   inlineEdit = null;
 }
 // Esc — discard the hand-edit and restore the block from the stored doc.
@@ -3102,6 +3110,7 @@ function revertInlineEdit() {
   exitInlineEdit();
   renderDoc(currentDocCache);
 }
+window.revertInlineEdit = revertInlineEdit;
 // Paste — force plain text so styled markup never enters the live block.
 // serializeLeafSafe would flatten it at commit anyway; this keeps the caret
 // content honest too. Best-effort (clipboard APIs vary); the serializer is the
@@ -3122,6 +3131,9 @@ function handleInlinePaste(e) {
       inlineEdit.el.appendChild(document.createTextNode(text));
     }
   } catch (_) {}
+  // preventDefault above suppresses the input event, so the prompt-mode
+  // discriminator must be re-run by hand or a pasted "/…" goes undetected.
+  handleInlineInput();
 }
 // Shift+Enter — insert a single <br> at the caret (the only inline markup the
 // serializer preserves). Intercepted so the browser can't insert a <div> split.
@@ -3140,22 +3152,100 @@ function insertSoftBreak() {
     }
   } catch (_) {}
 }
+// Prompt-mode discriminator — same escape semantics as the lens input listener
+// (a leading slash flips to command mode unless typed `\/` for literal-slash
+// content), except the whitespace-ignore deliberately diverges from the lens:
+// its textarea starts empty, while contenteditable serialization can lead
+// with whitespace. Detection runs on serializeLeafSafe output, not raw innerHTML —
+// the serialized text is what a commit would write, so the mode the user sees
+// matches what would actually happen. A leading "/" survives HTML-escaping
+// unchanged, so the serializer is safe to discriminate on.
+function isSlashCommand(text) {
+  // leading whitespace ignored; a lone "/" still shows prompt mode
+  const t = text.replace(/^\s+/, '');
+  return t.startsWith('/') && !t.startsWith('\\/');
+}
+function handleInlineInput() {
+  if (!inlineEdit) return;
+  if (inlineEdit.demoted) { setInlineCmd(false); return; } // Esc demoted to plain text — stay there
+  setInlineCmd(isSlashCommand(serializeLeafSafe(inlineEdit.el)));
+}
+function setInlineCmd(on) {
+  if (!inlineEdit) return;
+  inlineEdit.commandMode = !!on;
+  if (on) inlineEdit.el.dataset.rwaCmd = 'on';
+  else delete inlineEdit.el.dataset.rwaCmd;
+}
 function handleInlineKeydown(e) {
   if (!inlineEdit || e.target !== inlineEdit.el) return;
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault();
-    commitInlineEdit().catch(() => {}); // UX handled inside; swallow unhandled rejection
+    if (inlineEdit.commandMode) {
+      runInlineCommand().catch(() => {}); // UX + errors handled inside; swallow unhandled rejection
+    } else {
+      commitInlineEdit().catch(() => {}); // UX handled inside; swallow unhandled rejection
+    }
   } else if (e.key === 'Enter' && e.shiftKey) {
     e.preventDefault();
     insertSoftBreak();
   } else if (e.key === 'Escape') {
     e.preventDefault();
-    revertInlineEdit();
+    if (inlineEdit.commandMode) {
+      // Esc in command mode demotes to literal text — "/usr/local" must be
+      // typeable. Sticky for the rest of this edit session so re-typing
+      // slashes doesn't fight the user. Second Esc reverts as always.
+      inlineEdit.demoted = true;
+      setInlineCmd(false);
+    } else {
+      revertInlineEdit();
+    }
   }
 }
 function handleInlineBlur(e) {
   if (!inlineEdit || e.target !== inlineEdit.el) return;
+  if (inlineEdit.commandMode) {
+    // Blur = click-away, not consent to run a model call — and the "/…" prompt
+    // is never content, so committing it as prose would be worse. Discard.
+    exitInlineEdit();
+    renderDoc(currentDocCache);
+    return;
+  }
   commitInlineEdit().catch(() => {});
+}
+
+// Enter on a "/instruction" block: run the agent on THIS block via the existing
+// anchored-command runner. The typed "/…" is an instruction, never content —
+// restore the committed render FIRST, because exitInlineEdit leaves the typed
+// prompt in the DOM and runAnchoredCommand's retry-exhaustion path returns
+// without re-rendering. The entry is re-resolved by ordinal after renderDoc:
+// resolveAnchorFind matches by reference against the CURRENT sourceMap, and
+// renderDoc rebuilds it (same committed bytes → identical map → same index).
+// The instruction text is serializeLeafSafe output — HTML-escaped, with <br>
+// tokens for Shift+Enter soft breaks. The model must see what the user TYPED
+// (markup-referencing prompts like "/turn this into <h2>" are a primary use
+// case), so we invert the serializer: <br> → newline FIRST (a typed literal
+// "<br>" arrives escaped, so only real soft breaks match), then unescape the
+// entities with &amp; LAST (so "&amp;lt;" round-trips back to the typed "&lt;").
+async function runInlineCommand() {
+  if (!inlineEdit) return;
+  const instruction = serializeLeafSafe(inlineEdit.el)
+    .replace(/^\s*\/\s?/, '')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+    .replace(/&amp;/g, '&')
+    .trim();
+  const idx = sourceMap ? sourceMap.indexOf(inlineEdit.entry) : -1;
+  exitInlineEdit();
+  renderDoc(currentDocCache);
+  const entry = (idx >= 0 && sourceMap) ? sourceMap[idx] : null;
+  if (!entry || !instruction) return; // lone "/" → no-op; entry-null is a should-never-happen guard
+  try {
+    await runAnchoredCommand(entry, instruction);
+  } catch (err) {
+    renderDoc(currentDocCache);
+    if (typeof setStatus === 'function') setStatus('err', '✗ ' + (err && (err.code || err.message)));
+  }
 }
 
 // Commit the active hand-edit. Reuses resolveAnchorFind for a unique anchor
@@ -3207,6 +3297,10 @@ window.commitInlineEdit = commitInlineEdit;
 // is not registered at all (renderDoc).
 function handleMountDblClick(e) {
   if (activeView) return;
+  // An in-flight modify re-renders on commit, wiping any session opened now —
+  // and a session-triggered render would rebuild the sourceMap under the
+  // in-flight anchor. Cheapest correct behavior: don't open the session.
+  if (modifyMutex) return;
   const mount = document.getElementById('rwa-doc-mount');
   if (!mount) return;
   let el = e.target;

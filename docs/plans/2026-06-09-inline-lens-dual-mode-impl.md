@@ -65,6 +65,12 @@ destroys it.
    NOT call `renderDoc` (so the caller must restore the DOM on failure), and (b) it
    reads the anchor via `resolveAnchorFind(anchor)` + `anchor.start` (properties, not
    identity) so a captured `entry` survives an intervening `renderDoc`.
+   *[CORRECTED during implementation: (b) is wrong — `resolveAnchorFind` matches the
+   entry by **reference identity** against the current `sourceMap`, which `renderDoc`
+   rebuilds, so a captured `entry` does NOT survive an intervening re-render. The
+   shipped fix: `runInlineCommand` captures the entry's ordinal
+   (`sourceMap.indexOf(entry)`) before `renderDoc` and re-resolves `sourceMap[idx]`
+   after — same committed bytes → identical rebuilt map → same index.]*
 2. Read `openAiCompatChat` to confirm the response shape it reads
    (`data.choices[0].message.content`) so the canned `fetch` stub is correct.
 
@@ -328,6 +334,11 @@ window.runInlineCommand = runInlineCommand; // expose for tests
 > Confirm in Task-0 verification that `runAnchoredCommand` reads the anchor by
 > `anchor.start`/`resolveAnchorFind`, so the captured `entry` is still valid after
 > this `renderDoc`.
+> *[CORRECTED during implementation: the captured `entry` is NOT still valid —
+> `resolveAnchorFind` is reference-identity vs the current `sourceMap`, and
+> `renderDoc` rebuilds the map. The shipped `runInlineCommand` records
+> `sourceMap.indexOf(entry)` before `renderDoc` and re-resolves the same ordinal
+> from the rebuilt map afterwards.]*
 
 **Step 4: Run, verify pass.**
 
@@ -522,3 +533,20 @@ the tests were wrong — fix them, not just the behavior (Rule 9).
 Single-click-to-edit (changes the documented anchor gesture); selection-substring
 scope; doc-scope from the inline surface; the lens visually relocating to the
 selection; voice input. Each is its own design+plan pass.
+
+---
+
+## Deferred follow-ups (from reviews)
+
+- **`serializeLeafText`** — a text-mode sibling of `serializeLeafSafe` that skips the
+  escape→unescape round trip structurally. Today `runInlineCommand` serializes the
+  editable to escaped HTML and then inverts it entity-by-entity; a direct text
+  serializer would remove the inversion entirely.
+- **`resolveAnchorFind`-null as terminal in `runAnchoredCommand`** — the lens
+  currently treats a null anchor resolution as agent-retryable; arguably it should
+  be terminal (retrying cannot materialize the anchor). Pre-existing lens behavior,
+  its own decision — not this increment's.
+- **The `<br>`-first unescape ordering rule** in `runInlineCommand` (real soft breaks
+  become newlines before entities unescape, so a typed literal `<br>` — which arrives
+  escaped — is not mistaken for a soft break) is documented but not independently
+  kill-testable by the current C3c fixture.

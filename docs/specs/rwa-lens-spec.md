@@ -90,6 +90,8 @@ The runtime visually highlights the anchored block (subtle border or background 
 
 **Single-click vs double-click.** A **single** click anchors the lens (above). A **double** click on a leaf text block enters *inline manual edit* — a distinct direct-manipulation `edit-surface` that bypasses the lens entirely: the block becomes `contenteditable`, the user edits the text by hand, and Enter/blur commits through the non-agent path (`actor:'user:edit-surface'`) with **no model call**. This is not a lens mode and uses none of the lens chrome; it is documented in `docs/plans/2026-06-08-inline-manual-edit-design.md`. The two gestures coexist on the same blocks via click-count; double-click leaving the live word selected is standard word-processor behaviour, and an edit that blurs with no change commits nothing, so accidental entry is free.
 
+**Dual mode inside inline edit.** The inline manual edit itself carries the lens's slash discrimination. Direct text (the default, above) commits by hand with no model call. Text beginning with `/` flips the session into *prompt mode*: the typed `/…` is an instruction about the block, never content. **Enter** runs it through the same block-scoped agent path as an anchored slash command (§5.4) — same envelope synthesis, same retry budget, one undo frame; the agent edits the block's *committed* source, so clearing a block to type a prompt never destroys it. **Esc** demotes the prompt to literal text for the remainder of the edit session (a second Esc reverts as always); **blur** discards the prompt without committing or calling the model — click-away is not consent to a model call. Only a *leading* `/` discriminates (Increment 1); `\/` escapes a literal slash, and whitespace before the `/` is ignored — a deliberate divergence from the lens's `startsWith('/')`, because contenteditable serialization can lead with whitespace the user never typed. The single-click-anchor vs double-click-edit boundary above is unchanged; prompt mode lives entirely inside the double-click surface. Design: `docs/plans/2026-06-09-inline-lens-dual-mode-design.md`.
+
 ### 5.2 Releasing the anchor
 
 The X on the badge releases the anchor and returns the lens to its docked default position. **Esc** is the keyboard equivalent. The document layout reflows back; transitions animate briefly to avoid jarring jumps.
@@ -343,4 +345,4 @@ These properties are load-bearing — every change to the lens model should pres
 
 ---
 
-*Spec version 0.9 — final draft, shipping wording. Companion to re-write-able core spec v0.10 and rwa-edit-spec.md v1.4.*
+*Spec version 0.10 — adds the §5.1 dual-mode note: `/`-prompt inside inline manual edit, routed through the anchored slash-command path. Companion to re-write-able core spec v0.10 and rwa-edit-spec.md v1.4.*

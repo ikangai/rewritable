@@ -3,6 +3,13 @@
 **Status:** design approved (brainstormed + verified), implementation in progress on branch `inline-manual-edit`.
 **Date:** 2026-06-08.
 
+> **Update (2026-06-09):** this edit surface gained a *prompt-mode* layer — typing `/`
+> at the start of an inline edit turns the session into a block-scoped agent command
+> (Enter routes to the lens's anchored-command path; Esc demotes to literal text; blur
+> discards). The no-LLM direct-text path documented here is unchanged. See
+> `docs/plans/2026-06-09-inline-lens-dual-mode-design.md` (design) and
+> `docs/plans/2026-06-09-inline-lens-dual-mode-impl.md` (implementation plan).
+
 ## Motivation
 
 Today the only way to change or delete an existing block is a **lens slash command**
