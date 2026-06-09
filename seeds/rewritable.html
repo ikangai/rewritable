@@ -2615,9 +2615,10 @@ window.serializeLeafSafe = serializeLeafSafe;
 
 function enterInlineEdit(el, entry) {
   if (inlineEdit) exitInlineEdit();
-  inlineEdit = { el, entry, original: '' };
+  inlineEdit = { el, entry, original: '', commandMode: false, demoted: false };
   el.setAttribute('contenteditable', 'true');
   el.addEventListener('keydown', handleInlineKeydown);
+  el.addEventListener('input', handleInlineInput);
   el.addEventListener('blur', handleInlineBlur);
   el.addEventListener('paste', handleInlinePaste);
   try { el.focus(); } catch (_) {}
@@ -2629,9 +2630,11 @@ function exitInlineEdit() {
   if (!inlineEdit) return;
   const el = inlineEdit.el;
   try { el.removeEventListener('keydown', handleInlineKeydown); } catch (_) {}
+  try { el.removeEventListener('input', handleInlineInput); } catch (_) {}
   try { el.removeEventListener('blur', handleInlineBlur); } catch (_) {}
   try { el.removeEventListener('paste', handleInlinePaste); } catch (_) {}
   try { el.removeAttribute('contenteditable'); } catch (_) {}
+  try { delete el.dataset.rwaCmd; } catch (_) {}
   inlineEdit = null;
 }
 // Esc — discard the hand-edit and restore the block from the stored doc.
@@ -2639,6 +2642,7 @@ function revertInlineEdit() {
   exitInlineEdit();
   renderDoc(currentDocCache);
 }
+window.revertInlineEdit = revertInlineEdit;
 // Paste — force plain text so styled markup never enters the live block.
 // serializeLeafSafe would flatten it at commit anyway; this keeps the caret
 // content honest too. Best-effort (clipboard APIs vary); the serializer is the
@@ -2676,6 +2680,28 @@ function insertSoftBreak() {
       inlineEdit.el.appendChild(document.createElement('br'));
     }
   } catch (_) {}
+}
+// Prompt-mode discriminator — same escape semantics as the lens input listener
+// (a leading slash flips to command mode unless typed `\/` for literal-slash
+// content). Detection runs on serializeLeafSafe output, not raw innerHTML —
+// the serialized text is what a commit would write, so the mode the user sees
+// matches what would actually happen. A leading "/" survives HTML-escaping
+// unchanged, so the serializer is safe to discriminate on.
+function isSlashCommand(text) {
+  // leading whitespace ignored; a lone "/" still shows prompt mode
+  const t = text.replace(/^\s+/, '');
+  return t.startsWith('/') && !t.startsWith('\\/');
+}
+function handleInlineInput() {
+  if (!inlineEdit) return;
+  if (inlineEdit.demoted) { setInlineCmd(false); return; } // Esc demoted to plain text — stay there
+  setInlineCmd(isSlashCommand(serializeLeafSafe(inlineEdit.el)));
+}
+function setInlineCmd(on) {
+  if (!inlineEdit) return;
+  inlineEdit.commandMode = !!on;
+  if (on) inlineEdit.el.dataset.rwaCmd = 'on';
+  else delete inlineEdit.el.dataset.rwaCmd;
 }
 function handleInlineKeydown(e) {
   if (!inlineEdit || e.target !== inlineEdit.el) return;

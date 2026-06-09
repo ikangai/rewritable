@@ -329,6 +329,31 @@ console.log('\n== E15: <td> cell is editable end-to-end (coverage) ==');
   check('td id preserved', doc.includes('data-rwa-id="td1aaaaa"'));
 }
 
+// ─────────────────────────────────────────────────────────────────────
+// Group C — prompt mode: a leading "/" in the editable block means the user
+// is addressing the model, not writing content. The data-rwa-cmd attribute is
+// the visual hook (chrome in a later task); without live detection the user
+// has no signal that the block has flipped from text to command.
+
+console.log('\n== C1: prompt mode toggles on leading slash ==');
+{
+  await window.__setDocForTest('<p data-rwa-id="c1aaaaaa">Original text</p>');
+  const el = $id('c1aaaaaa');
+  dbl(el);
+  check('entered inline edit', el.getAttribute('contenteditable') === 'true');
+  // not a command yet
+  check('plain text → not command mode', el.dataset.rwaCmd !== 'on');
+  // simulate clearing + typing a slash command
+  el.textContent = '/make it bolder';
+  el.dispatchEvent(new window.InputEvent('input', { bubbles: true }));
+  check('leading slash → prompt mode on', el.dataset.rwaCmd === 'on');
+  // remove the slash → back to text
+  el.textContent = 'make it bolder';
+  el.dispatchEvent(new window.InputEvent('input', { bubbles: true }));
+  check('no leading slash → prompt mode off', el.dataset.rwaCmd !== 'on');
+  window.revertInlineEdit();
+}
+
 // NOTE: inert-under-active-view is tested in tests/view.mjs (which builds a real
 // presentation-kind container with a registered view — this document-kind
 // harness has none). Concurrency (serialize vs non-agent, reject vs agent loop)
