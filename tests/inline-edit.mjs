@@ -465,6 +465,103 @@ console.log('\n== C3b: blur in prompt mode discards the prompt, commits nothing 
   check('no history record written on blur-discard', JSON.stringify((await readHistTop()) || null) === histBefore);
 }
 
+// C3c — instruction fidelity: the prompt is captured via serializeLeafSafe,
+// whose output is HTML-escaped with <br> soft-break tokens. Markup-referencing
+// prompts ("/turn this into <h2>") are a primary use case — the model must see
+// what the user TYPED (real '<', real newlines), not entity soup.
+console.log('\n== C3c: instruction reaches the agent unescaped ==');
+{
+  await window.__setDocForTest('<p data-rwa-id="c3cccccc">target</p>');
+  const el = $id('c3cccccc');
+  dbl(el);
+  // innerHTML parse: text "/turn this into <h2>" + a real <br> + "second line" —
+  // exactly what typing the prompt with a Shift+Enter soft break leaves behind.
+  el.innerHTML = '/turn this into &lt;h2&gt;<br>second line';
+  el.dispatchEvent(new window.InputEvent('input', { bubbles: true }));
+  let askedPrompt = null;
+  const realFetch = window.fetch;
+  window.fetch = async (url, opts) => {
+    askedPrompt = JSON.parse(opts.body).messages.map(m => m.content).join('\n');
+    return { ok: true, json: async () => ({ choices: [{ message: { content: '<p data-rwa-id="c3cccccc">target</p>' } }] }) };
+  };
+  try {
+    el.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    for (let i = 0; i < 80; i++) { await settle(); if (askedPrompt) break; }
+    check('typed <h2> reaches the model unescaped', askedPrompt && askedPrompt.includes('turn this into <h2>'));
+    check('soft break becomes a newline, not a <br> token', askedPrompt && askedPrompt.includes('<h2>\nsecond line'));
+  } finally {
+    window.fetch = realFetch;
+  }
+}
+
+// C4 — failure path: the typed "/…" prompt is never content, so when the agent
+// call fails the document must be exactly what it was — original bytes, no
+// history record, live DOM restored. runInlineCommand restores FIRST (before
+// the agent runs), so a failure has nothing to clean up.
+console.log('\n== C4: agent failure restores the block, commits nothing ==');
+{
+  await window.__setDocForTest('<p data-rwa-id="c4aaaaaa">untouched</p>');
+  const el = $id('c4aaaaaa');
+  dbl(el);
+  el.textContent = '/do something';
+  el.dispatchEvent(new window.InputEvent('input', { bubbles: true }));
+  const histBefore = JSON.stringify(await readHistTop());
+  const realFetch = window.fetch;
+  window.fetch = async () => { throw new Error('network down'); };
+  try {
+    el.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    // Drain: a callAgentSingleShot throw is awaited OUTSIDE runAnchoredCommand's
+    // inner try, so it escapes the 3-attempt retry loop to the outer catch after
+    // ONE fetch call — no multi-attempt drain needed; a short settle loop suffices.
+    for (let i = 0; i < 10; i++) { await settle(); }
+    const doc = await window.getDoc();
+    check('original content intact', doc.includes('untouched'));
+    check('no "/command" leaked into the doc', !doc.includes('/do something'));
+    check('hist unchanged on failure', JSON.stringify(await readHistTop()) === histBefore);
+    const live = $id('c4aaaaaa');
+    check('live DOM shows original, not the /command', live && live.textContent === 'untouched');
+  } finally {
+    window.fetch = realFetch;
+  }
+}
+
+// C4b — concurrency: an in-flight modify re-renders on commit, which would wipe
+// any edit session opened meanwhile — and worse, a session-triggered render
+// would rebuild the sourceMap under the in-flight anchor. Double-click must be
+// gated on modifyMutex: no new session while a modify runs, normal service after.
+console.log('\n== C4b: no new edit session while a modify is in flight ==');
+{
+  await window.__setDocForTest('<p data-rwa-id="c4bbbbbb">first</p>\n<p data-rwa-id="c4cccccc">second</p>');
+  const el = $id('c4bbbbbb');
+  dbl(el);
+  el.textContent = '/embolden';
+  el.dispatchEvent(new window.InputEvent('input', { bubbles: true }));
+  let releaseAgent;
+  const gate = new Promise(r => { releaseAgent = r; });
+  const realFetch = window.fetch;
+  window.fetch = async () => { await gate; return {
+    ok: true,
+    json: async () => ({ choices: [{ message: { content: '<p data-rwa-id="c4bbbbbb"><strong>first</strong></p>' } }] }),
+  }; };
+  try {
+    el.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await settle(); // restore-render done, agent now parked on the gate
+    const other = $id('c4cccccc');
+    dbl(other);
+    check('double-click during in-flight modify does not open an edit', other.getAttribute('contenteditable') !== 'true');
+    releaseAgent();
+    let doc = '';
+    for (let i = 0; i < 80; i++) { await settle(); doc = await window.getDoc(); if (doc.includes('<strong>')) break; }
+    check('in-flight command still landed after the gate released', doc.includes('<strong>first</strong>'));
+    const after = $id('c4cccccc');
+    dbl(after);
+    check('double-click works again after the modify completes', after.getAttribute('contenteditable') === 'true');
+    window.revertInlineEdit();
+  } finally {
+    window.fetch = realFetch;
+  }
+}
+
 // NOTE: inert-under-active-view is tested in tests/view.mjs (which builds a real
 // presentation-kind container with a registered view — this document-kind
 // harness has none). Concurrency (serialize vs non-agent, reject vs agent loop)

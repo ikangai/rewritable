@@ -2713,7 +2713,7 @@ function handleInlineKeydown(e) {
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault();
     if (inlineEdit.commandMode) {
-      runInlineCommand();   // fire-and-forget; UX + errors handled inside
+      runInlineCommand().catch(() => {}); // UX + errors handled inside; swallow unhandled rejection
     } else {
       commitInlineEdit().catch(() => {}); // UX handled inside; swallow unhandled rejection
     }
@@ -2752,12 +2752,21 @@ function handleInlineBlur(e) {
 // without re-rendering. The entry is re-resolved by ordinal after renderDoc:
 // resolveAnchorFind matches by reference against the CURRENT sourceMap, and
 // renderDoc rebuilds it (same committed bytes → identical map → same index).
-// Known limitation: the instruction text is serializeLeafSafe output, i.e.
-// HTML-escaped — no unescape helper exists, so entities read literally in the
-// prompt (typing "a & b" sends "a &amp; b").
+// The instruction text is serializeLeafSafe output — HTML-escaped, with <br>
+// tokens for Shift+Enter soft breaks. The model must see what the user TYPED
+// (markup-referencing prompts like "/turn this into <h2>" are a primary use
+// case), so we invert the serializer: <br> → newline FIRST (a typed literal
+// "<br>" arrives escaped, so only real soft breaks match), then unescape the
+// entities with &amp; LAST (so "&amp;lt;" round-trips back to the typed "&lt;").
 async function runInlineCommand() {
   if (!inlineEdit) return;
-  const instruction = serializeLeafSafe(inlineEdit.el).replace(/^\s*\/\s?/, '').trim();
+  const instruction = serializeLeafSafe(inlineEdit.el)
+    .replace(/^\s*\/\s?/, '')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+    .replace(/&amp;/g, '&')
+    .trim();
   const idx = sourceMap ? sourceMap.indexOf(inlineEdit.entry) : -1;
   exitInlineEdit();
   renderDoc(currentDocCache);
@@ -2770,7 +2779,6 @@ async function runInlineCommand() {
     if (typeof setStatus === 'function') setStatus('err', '✗ ' + (err && (err.code || err.message)));
   }
 }
-window.runInlineCommand = runInlineCommand; // expose for tests
 
 // Commit the active hand-edit. Reuses resolveAnchorFind for a unique anchor
 // (handles find_not_unique for free) and re-emits the block's ORIGINAL opening
@@ -2821,6 +2829,10 @@ window.commitInlineEdit = commitInlineEdit;
 // is not registered at all (renderDoc).
 function handleMountDblClick(e) {
   if (activeView) return;
+  // An in-flight modify re-renders on commit, wiping any session opened now —
+  // and a session-triggered render would rebuild the sourceMap under the
+  // in-flight anchor. Cheapest correct behavior: don't open the session.
+  if (modifyMutex) return;
   const mount = document.getElementById('rwa-doc-mount');
   if (!mount) return;
   let el = e.target;
