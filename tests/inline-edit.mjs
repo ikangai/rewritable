@@ -367,6 +367,35 @@ console.log('\n== C1: prompt mode toggles on leading slash ==');
   window.revertInlineEdit();
 }
 
+// C2 — Esc demotion: a block legitimately starting with "/" (paths, dates)
+// must be typeable — Esc is the escape-hatch that demotes command mode to
+// literal text. Demotion is session-sticky: re-triggering command mode on
+// every subsequent keystroke would fight the user. A second Esc reverts the
+// edit entirely, as Esc always has.
+
+console.log('\n== C2: Esc demotes command mode, second Esc reverts ==');
+{
+  await window.__setDocForTest('<p data-rwa-id="c2aaaaaa">Keep me</p>');
+  const el = $id('c2aaaaaa');
+  dbl(el);
+  el.textContent = '/usr/local';
+  el.dispatchEvent(new window.InputEvent('input', { bubbles: true }));
+  check('prompt mode on before Esc', el.dataset.rwaCmd === 'on');
+  el.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  check('first Esc demotes (still editing)', el.getAttribute('contenteditable') === 'true');
+  check('first Esc clears prompt mode', el.dataset.rwaCmd !== 'on');
+  // typing more slashes must NOT re-enter command mode this session
+  el.textContent = '/usr/local/bin';
+  el.dispatchEvent(new window.InputEvent('input', { bubbles: true }));
+  check('demoted: leading slash stays literal text', el.dataset.rwaCmd !== 'on');
+  // second Esc reverts the edit entirely (existing behavior)
+  el.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  await settle();
+  check('second Esc reverted edit (not editable)', el.getAttribute('contenteditable') !== 'true');
+  const doc = await window.getDoc();
+  check('revert kept original content', doc.includes('Keep me'));
+}
+
 // NOTE: inert-under-active-view is tested in tests/view.mjs (which builds a real
 // presentation-kind container with a registered view — this document-kind
 // harness has none). Concurrency (serialize vs non-agent, reject vs agent loop)

@@ -2718,7 +2718,15 @@ function handleInlineKeydown(e) {
     insertSoftBreak();
   } else if (e.key === 'Escape') {
     e.preventDefault();
-    revertInlineEdit();
+    if (inlineEdit.commandMode) {
+      // Esc in command mode demotes to literal text — "/usr/local" must be
+      // typeable. Sticky for the rest of this edit session so re-typing
+      // slashes doesn't fight the user. Second Esc reverts as always.
+      inlineEdit.demoted = true;
+      setInlineCmd(false);
+    } else {
+      revertInlineEdit();
+    }
   }
 }
 function handleInlineBlur(e) {
