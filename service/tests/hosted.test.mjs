@@ -458,6 +458,55 @@ test('byte-parity: /modify result equals the local seed/CLI apply of the same en
   }
 });
 
+// ─── images-v1: hosted image insert (rwa-edit-spec §19, virtualizeEnvelope) ──
+// The browser projection relays an EXPANDED envelope (real data: URI in
+// `replace`, far over the 8 KB per-edit cap). /modify must tokenize it server-
+// side, apply on the text budget, and store the real bytes — NOT 422.
+const BIG_IMG_URI = 'data:image/png;base64,' + 'QUJD'.repeat(50000); // ~200 KB
+
+test('images: hosted /modify accepts an expanded ~200KB image-insert envelope (tokenized server-side)', async () => {
+  const srv = await startServer();
+  try {
+    const { id, token, baseHash } = await createAndRead(srv.base, MODIFY_RWA);
+    const envelope = { version: 'rwa-edit/1', edits: [{
+      find: 'Some unique body text here.',
+      replace: 'Some unique body text here.</p>\n<figure><img src="' + BIG_IMG_URI + '" alt="shot"></figure><p>',
+    }] };
+    assert.ok(envelope.edits[0].replace.length > 8 * 1024, 'fixture: replace is over the per-edit cap');
+    const res = await postModify(srv.base, id, token, { envelope, baseHash, actor: 'web:test' });
+    assert.equal(res.status, 200, 'image insert is NOT rejected by the per-edit cap');
+    const out = await res.json();
+    assert.ok(out.doc.includes(BIG_IMG_URI), 'returned doc carries the real image bytes');
+    // Persisted to disk with real bytes (no rwa-asset token leaked into storage).
+    const stored = readFileSync(join(srv.dataDir, 'r', id, 'current.html'), 'utf8');
+    assert.ok(stored.includes(BIG_IMG_URI), 'stored bytes carry the real image');
+    assert.ok(!stored.includes('rwa-asset:'), 'no token persisted server-side');
+  } finally {
+    await srv.stop();
+  }
+});
+
+test('images: hosted /modify rejects an expansion over the 10MB container cap (422 target_size_exceeded)', async () => {
+  const srv = await startServer();
+  try {
+    const { id, token, baseHash } = await createAndRead(srv.base, MODIFY_RWA);
+    const hugeUri = 'data:image/png;base64,' + 'QUJD'.repeat(3_600_000); // ~14.4 MB, under MAX_BODY_BYTES
+    const envelope = { version: 'rwa-edit/1', edits: [{
+      find: 'Some unique body text here.',
+      replace: 'Some unique body text here.</p>\n<figure><img src="' + hugeUri + '" alt="huge"></figure><p>',
+    }] };
+    const res = await postModify(srv.base, id, token, { envelope, baseHash });
+    assert.equal(res.status, 422, 'over-cap expansion is a 422');
+    const out = await res.json();
+    assert.equal(out.error, 'target_size_exceeded');
+    // No write: the stored body is unchanged.
+    const stored = readFileSync(join(srv.dataDir, 'r', id, 'current.html'), 'utf8');
+    assert.ok(!stored.includes('image/png'), 'no image bytes were stored on the rejected path');
+  } finally {
+    await srv.stop();
+  }
+});
+
 test('stale baseHash → 409 stale_base, NO write', async () => {
   const srv = await startServer();
   try {

@@ -954,6 +954,7 @@ function detectProductKind(fileText) {
     // <details?>") so the failure surface is consistent with `rwa edit`.
     if (verb === 'clone') {
       const force = rest.includes('--force') || rest.includes('-f');
+      const localizeImages = rest.includes('--localize-images');
       const positionals = rest.filter(a => !a.startsWith('-'));
       const url = positionals[0];
       const outPath = positionals[1];
@@ -972,7 +973,7 @@ function detectProductKind(fileText) {
       }
       const { cloneCmd } = await import('../src/clone.mjs');
       try {
-        await cloneCmd({ url, outPath, force });
+        await cloneCmd({ url, outPath, force, localizeImages });
       } catch (e) {
         if (e && typeof e.exitCode === 'number') {
           emitClone({ code: codeName(e.exitCode), subcode: e.subcode, details: e.details });

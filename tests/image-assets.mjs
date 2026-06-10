@@ -578,7 +578,8 @@ function dropEventOn(el, dt) {
   img.dispatchEvent(new window.MouseEvent('mouseover', { bubbles: true }));
   const chip = document.getElementById('rwa-img-chip');
   check('G5a chip appears on image hover', !!chip && !chip.hidden);
-  chip.click();
+  // The chip is a toolbar (S/M/L + ✕); click the remove button specifically.
+  chip.querySelector('button[data-action="remove"]').click();
   await settle(); await settle();
   const doc = await readStoreSelf('rwa_doc');
   check('G5b figure removed, prose intact', !doc.includes('<figure') && doc.includes('keep me'));
@@ -622,6 +623,46 @@ function dropEventOn(el, dt) {
   const doc = await readStoreSelf('rwa_doc');
   check('G8a both inserts landed (serialized, none lost)',
     doc.includes('alt="one"') && doc.includes('alt="two"'));
+}
+
+// ─── Block H: deterministic resize presets (S/M/L width) ────────────
+// WHY: a no-model, no-key width control. The width is a figure class in the
+// doc (commits/exports/⌘Z like any edit); the swap targets only the open tag
+// (unique via data-rwa-id, no data URI) so it never trips MAX_REPLACE.
+
+{
+  console.log('-- H1: swapFigureSizeClass — set / replace / preserve other classes --');
+  const swap = window.__swapFigureSizeClass;
+  check('H1a adds a size class when none present',
+    swap('<figure data-rwa-id="b1">', 'md') === '<figure data-rwa-id="b1" class="rwa-img-md">');
+  check('H1b replaces an existing size class',
+    swap('<figure data-rwa-id="b1" class="rwa-img-sm">', 'lg') === '<figure data-rwa-id="b1" class="rwa-img-lg">');
+  check('H1c preserves unrelated classes',
+    swap('<figure class="hero rwa-img-sm pinned">', 'md') === '<figure class="hero pinned rwa-img-md">');
+  check('H1d unknown size is a no-op', swap('<figure>', 'xl') === '<figure>');
+}
+
+{
+  console.log('-- H2: setImageSize commits a width class on the figure (one edit, real bytes intact) --');
+  const real = '<article>\n<p>intro</p>\n' + FIG_A + '\n</article>';
+  await window.__setDocForTest(real);
+  // The committed doc backfills data-rwa-id on the figure; grab the live node.
+  const fig = document.querySelector('#rwa-doc-mount figure');
+  await window.__setImageSize(fig, 'sm');
+  await settle();
+  const doc = await readStoreSelf('rwa_doc');
+  check('H2a figure gained the rwa-img-sm class', /<figure[^>]*\brwa-img-sm\b[^>]*>/.test(doc));
+  check('H2b the image data URI is untouched', doc.includes(URI_A));
+  check('H2c attributed user:image-resize', (await readStoreSelf('rwa_hist'))[0].actor === 'user:image-resize');
+  const undoArr = await readStoreSelf('rwa_undo');
+  check('H2d one undoable frame restores the pre-resize doc', undoArr[undoArr.length - 1] === real);
+  // Re-size to md: replaces, not stacks.
+  const fig2 = document.querySelector('#rwa-doc-mount figure');
+  await window.__setImageSize(fig2, 'md');
+  await settle();
+  const doc2 = await readStoreSelf('rwa_doc');
+  check('H2e re-size replaces (md present, sm gone)',
+    /\brwa-img-md\b/.test(doc2) && !/\brwa-img-sm\b/.test(doc2));
 }
 
 // ─── tail ───────────────────────────────────────────────────────────

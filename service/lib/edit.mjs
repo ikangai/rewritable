@@ -16,7 +16,7 @@ import { readFile } from 'node:fs/promises';
 import { atomicWrite } from './atomic-write.mjs';
 import {
   applyEdits, RwaEditError, dataRwaFrozenSnapshot, FAILURE_HINTS,
-  virtualizeImages, expandImages, assertNoNewAssetTokens,
+  virtualizeImages, expandImages, assertNoNewAssetTokens, mapEnvelopeImages, MAX_DOC_EXPANDED,
   extractFrozenZones3, lockedRangesIn, markerZoneRangesIn,
 } from './apply-edits.mjs';
 import { compileDslPlan } from './dsl-compiler.mjs';
@@ -222,11 +222,17 @@ export async function applyPlan(filePath, envelope, opts = {}) {
   // 3. Validate envelope shape + version.
   const shape = validateEnvelope(envelope);
 
-  // images-v1 (rwa-edit-spec.md §19): with opts.virtualImages the envelope is
-  // token-form — apply against the VIRTUAL doc so token anchors match, then
-  // expand back to real bytes before the write. All guards below (frozen
-  // zones, snapshots) run virtual-vs-virtual, which is self-consistent.
-  const vimg = opts.virtualImages ? virtualizeImages(currentDoc) : null;
+  // images-v1 (rwa-edit-spec.md §19) — two virtualization modes:
+  //  • opts.virtualImages: the envelope is ALREADY token-form (agent/CLI path).
+  //    Virtualize the stored doc so token anchors match, apply, expand.
+  //  • opts.virtualizeEnvelope: the envelope is EXPANDED (real data: URIs) —
+  //    the hosted /modify relay. Seed a map from the stored doc, then tokenize
+  //    the incoming envelope into the SAME map (registering new image bytes),
+  //    so the apply runs on the token form (caps = text budget) and expansion
+  //    resolves both existing and new images.
+  // Either way all guards below (frozen zones, snapshots) run virtual-vs-virtual.
+  const vimg = (opts.virtualImages || opts.virtualizeEnvelope) ? virtualizeImages(currentDoc) : null;
+  if (opts.virtualizeEnvelope) envelope = mapEnvelopeImages(envelope, vimg.assets);
   const workDoc = vimg ? vimg.doc : currentDoc;
 
   // 4. Compute the new doc per shape.
@@ -276,6 +282,14 @@ export async function applyPlan(filePath, envelope, opts = {}) {
   } catch (e) {
     if (e instanceof RwaEditError) throw new CliError(3, e.code, { ...e.context });
     throw e;
+  }
+
+  // Expanded-size guard (image paths only): MAX_DOC measured the VIRTUAL form,
+  // so cap the REAL doc here — the DoS bound that the per-edit byte cap no
+  // longer provides once image bytes are tokenized. Mirrors the GUI's 10 MB
+  // container budget; authoritative server-side on the hosted /modify path.
+  if (vimg && newDoc.length > MAX_DOC_EXPANDED) {
+    throw new CliError(3, 'target_size_exceeded', { expanded: true, length: newDoc.length, cap: MAX_DOC_EXPANDED });
   }
 
   // 5. Splice the new doc back into the bootstrap and write atomically (temp +

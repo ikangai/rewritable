@@ -221,9 +221,14 @@ async function assertHostResolvesPublic(host, lookupImpl = lookup) {
   for (const { address } of addrs) assertPublicIp(address, host);
 }
 
-export async function fetchPage(url, { maxBytes = 3_000_000, timeoutMs = 15000, maxRedirects = 5, deps = {} } = {}) {
-  // Injection seam (testing only): defaults are the real node:dns lookup and the
-  // global fetch, so the public call signature is unchanged for real callers.
+// Shared SSRF-guarded fetch core for fetchPage (HTML) and fetchImageDataUri
+// (images). Validates the URL + every redirect hop (DNS-rebinding re-resolution,
+// never redirect:'follow'), streams with a hard byte cap, and returns the raw
+// bytes + matched mime + final URL. Content-type policy is the CALLER's job
+// (this core is media-agnostic) — the one place the two fetchers differ, plus
+// the `accept` header. Keeping the security machinery here means the image path
+// can never drift from the audited HTML path.
+async function fetchValidatedBytes(url, { maxBytes, timeoutMs, maxRedirects, accept, deps }) {
   const lookupImpl = deps.lookup || lookup;
   const fetchImpl = deps.fetchImpl || fetch;
 
@@ -238,7 +243,7 @@ export async function fetchPage(url, { maxBytes = 3_000_000, timeoutMs = 15000, 
         signal: AbortSignal.timeout(timeoutMs),
         headers: {
           'user-agent': 'rwa-clone/1.0 (+https://rewritable.ikangai.com)',
-          'accept': 'text/html,application/xhtml+xml',
+          'accept': accept,
         },
       });
     } catch (err) {
@@ -271,9 +276,6 @@ export async function fetchPage(url, { maxBytes = 3_000_000, timeoutMs = 15000, 
   // Match the media type only — an unanchored substring test would wrongly pass
   // e.g. `image/svg+xml; charset=text/html` (a parameter that mentions text/html).
   const mime = contentType.split(';')[0].trim().toLowerCase();
-  if (mime !== 'text/html' && mime !== 'application/xhtml+xml') {
-    throw new CloneError(2, 'not_html', { url: current.href, contentType });
-  }
 
   // content-length is advisory; we still cap the streamed bytes below.
   const declared = Number(response.headers.get('content-length'));
@@ -287,7 +289,7 @@ export async function fetchPage(url, { maxBytes = 3_000_000, timeoutMs = 15000, 
     if (buf.byteLength > maxBytes) {
       throw new CloneError(2, 'too_large', { url: current.href, maxBytes });
     }
-    return new TextDecoder('utf-8').decode(buf);
+    return { bytes: new Uint8Array(buf), mime, url: current.href };
   }
 
   const reader = response.body.getReader();
@@ -312,5 +314,33 @@ export async function fetchPage(url, { maxBytes = 3_000_000, timeoutMs = 15000, 
   const out = new Uint8Array(total);
   let off = 0;
   for (const c of chunks) { out.set(c, off); off += c.byteLength; }
-  return new TextDecoder('utf-8').decode(out);
+  return { bytes: out, mime, url: current.href };
+}
+
+export async function fetchPage(url, { maxBytes = 3_000_000, timeoutMs = 15000, maxRedirects = 5, deps = {} } = {}) {
+  // Injection seam (testing only): defaults are the real node:dns lookup and the
+  // global fetch, so the public call signature is unchanged for real callers.
+  const { bytes, mime, url: finalUrl } = await fetchValidatedBytes(url, {
+    maxBytes, timeoutMs, maxRedirects, accept: 'text/html,application/xhtml+xml', deps,
+  });
+  if (mime !== 'text/html' && mime !== 'application/xhtml+xml') {
+    throw new CloneError(2, 'not_html', { url: finalUrl, contentType: mime });
+  }
+  return new TextDecoder('utf-8').decode(bytes);
+}
+
+// Image localization (rwa clone --localize-images). Fetch ONE image URL through
+// the same SSRF-guarded core and return it as a `data:image/<type>;base64,…`
+// URI, or throw CloneError. image/* only (raster + svg+xml — `<img src>` renders
+// SVG in no-script image mode, the same allowance import.mjs makes). The CLI has
+// no canvas, so bytes are inlined RAW (no recompression) — bounded by maxBytes.
+const IMG_MIME_RE = /^image\/(png|jpeg|gif|webp|avif|svg\+xml|bmp|x-icon|vnd\.microsoft\.icon)$/;
+export async function fetchImageDataUri(url, { maxBytes = 2_000_000, timeoutMs = 15000, maxRedirects = 5, deps = {} } = {}) {
+  const { bytes, mime, url: finalUrl } = await fetchValidatedBytes(url, {
+    maxBytes, timeoutMs, maxRedirects, accept: 'image/*', deps,
+  });
+  if (!IMG_MIME_RE.test(mime)) {
+    throw new CloneError(2, 'not_image', { url: finalUrl, contentType: mime });
+  }
+  return `data:${mime};base64,${Buffer.from(bytes).toString('base64')}`;
 }

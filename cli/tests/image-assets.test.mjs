@@ -198,3 +198,67 @@ test('unknown_asset_reference hint is identical across seed and CLI', async () =
   assert.ok(m, 'seed carries the hint');
   assert.equal(FAILURE_HINTS.unknown_asset_reference, m[1]);
 });
+
+// ─── virtualizeEnvelope (hosted /modify relay path, rwa-edit-spec §19) ──
+// The hosted projection relays an EXPANDED envelope (real data: URIs) from a
+// browser. applyPlan({virtualizeEnvelope}) tokenizes it + the stored doc into
+// one map so the per-edit cap measures the text budget, then expands. This is
+// what lets a hosted image insert (replace ~200 KB) survive the 8 KB cap.
+
+test('virtualizeEnvelope: an EXPANDED ~200KB image-insert envelope applies (cap measures tokens)', async () => {
+  const { dir, path } = await imageFixture();          // doc has one URI_A figure already
+  try {
+    // Insert a NEW (different) large image via a fully-expanded envelope, as the
+    // hosted sink would POST it: the data URI lives in `replace`, far over 8 KB.
+    const envelope = { version: 'rwa-edit/1', edits: [{
+      find: '<p>tail paragraph</p>',
+      replace: '<p>tail paragraph</p>\n' + FIG(URI_BIG, 'new'),
+    }] };
+    assert.ok(envelope.edits[0].replace.length > 8 * 1024, 'fixture: replace is over the 8KB per-edit cap');
+    await applyPlan(path, envelope, { virtualizeEnvelope: true });
+    const after = extractInlineDoc(readFileSync(path, 'utf8'));
+    assert.ok(after.includes(FIG(URI_BIG, 'new')), 'new image landed with real bytes');
+    assert.ok(after.includes(FIG(URI_A)), 'pre-existing image preserved');
+    assert.ok(!after.includes('rwa-asset:'), 'no tokens persisted');
+  } finally { rmSync(dir, { recursive: true }); }
+});
+
+test('virtualizeEnvelope: raw path WITHOUT the opt still rejects the same envelope (8KB cap)', async () => {
+  const { dir, path } = await imageFixture();
+  try {
+    const envelope = { version: 'rwa-edit/1', edits: [{
+      find: '<p>tail paragraph</p>',
+      replace: '<p>tail paragraph</p>\n' + FIG(URI_BIG, 'new'),
+    }] };
+    await assert.rejects(
+      () => applyPlan(path, envelope), // no opts → real-byte caps apply
+      (e) => e instanceof CliError && e.subcode === 'replace_too_large',
+    );
+  } finally { rmSync(dir, { recursive: true }); }
+});
+
+test('virtualizeEnvelope: an expansion over 10MB is rejected (target_size_exceeded, expanded)', async () => {
+  const { dir, path } = await imageFixture();
+  try {
+    // A single data URI larger than the 10MB expanded-doc cap.
+    const hugeUri = 'data:image/png;base64,' + 'QUJD'.repeat(3_600_000); // ~14.4 MB
+    const envelope = { version: 'rwa-edit/1', edits: [{
+      find: '<p>tail paragraph</p>',
+      replace: '<p>tail paragraph</p>\n<figure><img src="' + hugeUri + '" alt="huge"></figure>',
+    }] };
+    await assert.rejects(
+      () => applyPlan(path, envelope, { virtualizeEnvelope: true }),
+      (e) => e instanceof CliError && e.subcode === 'target_size_exceeded' && e.details.expanded === true,
+    );
+  } finally { rmSync(dir, { recursive: true }); }
+});
+
+test('virtualizeEnvelope: a non-image edit is unaffected (expands to itself)', async () => {
+  const { dir, path } = await imageFixture();
+  try {
+    await applyPlan(path, { version: 'rwa-edit/1', edits: [{ find: 'intro paragraph', replace: 'intro EDITED' }] },
+      { virtualizeEnvelope: true });
+    const after = extractInlineDoc(readFileSync(path, 'utf8'));
+    assert.ok(after.includes('intro EDITED') && after.includes(FIG(URI_A)));
+  } finally { rmSync(dir, { recursive: true }); }
+});

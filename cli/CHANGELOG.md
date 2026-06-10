@@ -4,6 +4,16 @@ All notable changes to the `rewritable` CLI (`rwa`).
 
 ## [Unreleased]
 
+### Added
+- **`rwa clone --localize-images`** — make a clone self-contained by inlining each
+  remote `<img src>` as a `data:` URI. Each image is fetched through the same
+  SSRF-guarded core as the page (`fetchImageDataUri`; image/* only, raw bytes —
+  the CLI has no canvas to recompress), bounded per-image (2 MB) and total (8 MB).
+  Graceful: a failed, oversized, non-image, or over-budget fetch leaves that
+  `<img>` at its remote URL and prints a `note:` — one bad image never fails the
+  clone. Relative `src` resolves against the page URL. Default `rwa clone` is
+  unchanged (content-only, remote images kept).
+
 ### Changed
 - **`rwa edit <instruction>` virtualizes embedded images** (rwa-edit-spec.md §19,
   seed parity): the model's prompt carries the document with each `data:image`
