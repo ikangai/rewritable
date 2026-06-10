@@ -148,8 +148,15 @@ body{font-family:var(--font-ui);background:var(--bg);color:var(--text);min-heigh
 /* images-v1: drop-position indicator (box-shadow, no layout shift) + hover ✕ chip */
 #rwa-doc-mount .rwa-drop-before{box-shadow:0 -3px 0 0 var(--blue);}
 #rwa-doc-mount .rwa-drop-after{box-shadow:0 3px 0 0 var(--blue);}
-#rwa-img-chip{position:absolute;z-index:60;width:24px;height:24px;border-radius:12px;border:1px solid var(--gray-200);background:var(--white);color:var(--gray-900);font-size:12px;line-height:1;cursor:pointer;font-family:var(--font-ui);box-shadow:0 1px 4px rgba(0,0,0,0.12);padding:0;}
-#rwa-img-chip:hover{background:var(--gray-50);}
+/* images-v1: hover toolbar on an inserted image — S/M/L width presets + ✕ remove */
+#rwa-img-chip{position:absolute;z-index:60;display:flex;gap:2px;padding:2px;border-radius:8px;border:1px solid var(--gray-200);background:var(--white);font-family:var(--font-ui);box-shadow:0 1px 4px rgba(0,0,0,0.12);}
+#rwa-img-chip button{width:22px;height:22px;border:0;border-radius:6px;background:transparent;color:var(--gray-900);font-size:11px;line-height:1;cursor:pointer;padding:0;font-family:var(--font-ui);}
+#rwa-img-chip button:hover{background:var(--gray-100);}
+#rwa-img-chip button.on{background:var(--gray-900);color:var(--white);}
+/* images-v1: deterministic width presets (set by the toolbar; class lives in the doc) */
+:where(#rwa-doc-mount) figure.rwa-img-sm{max-width:33%;}
+:where(#rwa-doc-mount) figure.rwa-img-md{max-width:66%;}
+:where(#rwa-doc-mount) figure.rwa-img-lg{max-width:100%;}
 #rwa-private-mode-banner{position:fixed;inset:0;background:rgba(255,255,255,0.98);z-index:9999;display:flex;align-items:center;justify-content:center;padding:24px;font-family:var(--font-ui);}
 #rwa-private-mode-banner .rwa-pm-card{max-width:480px;text-align:center;padding:32px;border:1px solid var(--gray-200);border-radius:var(--radius);background:var(--white);box-shadow:0 8px 32px rgba(0,0,0,0.08);}
 #rwa-private-mode-banner h2{font-size:18px;font-weight:600;color:var(--gray-900);margin:0 0 12px;}
@@ -3683,16 +3690,75 @@ function openImagePicker() {
 
 // ── hover ✕ chip (figure-wrapped images only — what the inserters create) ──
 let rwaImgChipTarget = null;
+// Deterministic image-width presets (rwa-edit-spec §19; no model, Rule 5). The
+// width lives as a figure class (rwa-img-sm/md/lg) in the doc, so it commits,
+// exports, and ⌘Z-reverts like any edit. The class swap targets only the
+// <figure> OPEN TAG — unique via its data-rwa-id, and free of the image's
+// data: URI — so the find/replace stays tiny (no virtualization needed).
+const RWA_IMG_SIZES = { sm: 'rwa-img-sm', md: 'rwa-img-md', lg: 'rwa-img-lg' };
+function swapFigureSizeClass(openTag, size) {
+  const target = RWA_IMG_SIZES[size];
+  if (!target) return openTag;
+  return openTag.replace(/^(<figure\b)([^>]*)>$/i, (whole, open, attrs) => {
+    const cm = /\sclass\s*=\s*("([^"]*)"|'([^']*)')/.exec(attrs);
+    if (cm) {
+      const kept = (cm[2] || cm[3] || '').split(/\s+/).filter(t => t && !/^rwa-img-(sm|md|lg)$/.test(t));
+      kept.push(target);
+      return open + attrs.replace(cm[0], ' class="' + kept.join(' ') + '"') + '>';
+    }
+    return open + attrs + ' class="' + target + '">';
+  });
+}
+function currentFigureSize(openTag) {
+  const m = /\srwa-img-(sm|md|lg)\b/.exec(openTag);
+  return m ? m[1] : null;
+}
+// Resolve a live <figure> node to its source open-tag substring + range.
+function figureOpenTag(fig) {
+  for (const en of (sourceMap || [])) {
+    if (liveNodeForEntry(en) === fig) {
+      const slice = currentDocCache.slice(en.start, en.end);
+      const om = /^<figure\b[^>]*>/i.exec(slice);
+      if (om) return om[0];
+    }
+  }
+  return null;
+}
+async function setImageSize(fig, size) {
+  if (!fig || !RWA_IMG_SIZES[size]) return;
+  const openTag = figureOpenTag(fig);
+  if (!openTag) { showAffordance('could not resolve the image block'); return; }
+  const newOpen = swapFigureSizeClass(openTag, size);
+  if (newOpen === openTag) return; // already that size
+  const envelope = { version: 'rwa-edit/1', edits: [{ find: openTag, replace: newOpen, reason: 'image: resize' }], reason: 'image resize' };
+  try {
+    await runtimeApplyEnvelope(envelope, { surface: 'image:resize', instruction: 'resize image ' + size, actor: 'user:image-resize' });
+  } catch (err) {
+    showAffordance('image: ' + ((err && err.message) || err));
+  }
+}
 function ensureImgChip() {
   let chip = document.getElementById('rwa-img-chip');
   if (chip) return chip;
-  chip = document.createElement('button');
+  chip = document.createElement('div');
   chip.id = 'rwa-img-chip';
-  chip.type = 'button';
-  chip.textContent = '✕';
-  chip.title = 'Remove image (⌘Z to undo)';
   chip.hidden = true;
-  chip.addEventListener('click', onImgChipClick);
+  for (const size of ['sm', 'md', 'lg']) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.dataset.size = size;
+    b.textContent = size === 'sm' ? 'S' : size === 'md' ? 'M' : 'L';
+    b.title = 'Resize image to ' + (size === 'sm' ? 'small' : size === 'md' ? 'medium' : 'large') + ' (⌘Z to undo)';
+    b.addEventListener('click', () => { const f = rwaImgChipTarget; const c = document.getElementById('rwa-img-chip'); if (c) c.hidden = true; rwaImgChipTarget = null; setImageSize(f, size); });
+    chip.appendChild(b);
+  }
+  const x = document.createElement('button');
+  x.type = 'button';
+  x.dataset.action = 'remove';
+  x.textContent = '✕';
+  x.title = 'Remove image (⌘Z to undo)';
+  x.addEventListener('click', onImgChipClick);
+  chip.appendChild(x);
   document.body.appendChild(chip);
   return chip;
 }
@@ -3705,9 +3771,12 @@ function handleMountImgOver(e) {
   const fig = img.closest('figure');
   if (!fig) return;
   const chip = ensureImgChip();
+  // Reflect the figure's current size on the toolbar (the 'on' pip).
+  const cur = currentFigureSize(figureOpenTag(fig) || '');
+  chip.querySelectorAll('button[data-size]').forEach(b => b.classList.toggle('on', b.dataset.size === cur));
   const r = img.getBoundingClientRect();
   chip.style.top = (window.scrollY + r.top + 6) + 'px';
-  chip.style.left = (window.scrollX + r.right - 30) + 'px';
+  chip.style.left = (window.scrollX + r.right - 102) + 'px';
   chip.hidden = false;
   rwaImgChipTarget = fig;
 }
@@ -3746,6 +3815,8 @@ if (typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent)) {
   window.__insertImageAt = insertImageAt;
   window.__findImageDropTarget = findImageDropTarget;
   window.__openImagePicker = openImagePicker;
+  window.__setImageSize = setImageSize;
+  window.__swapFigureSizeClass = swapFigureSizeClass;
 }
 
   // ─── Skin runtime: deterministic apply / reset (kepler) ───────────────
