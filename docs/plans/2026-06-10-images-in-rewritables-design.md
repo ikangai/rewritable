@@ -1,7 +1,7 @@
 # Images in rewritables — single-file, agent-lean, drag-and-drop
 
 **Date:** 2026-06-10
-**Status:** Design (exploration complete, not yet implemented)
+**Status:** Implemented in the seed (branch images-v1; `tests/image-assets.mjs` blocks A–G). CLI mirror + service re-vendor pending (gated on an in-flight CLI card). Normative contract now lives in `rwa-edit-spec.md` §19; insert surfaces in `rwa-lens-spec.md` §6.3.
 **Owner:** torvalds
 **Companions:** `rwa-edit-spec.md` (caps + validation), `re-write-able-spec.md` §5.3/§5.7 (storage tiers), `docs/specs/rwa-lens-spec.md` (insert surfaces)
 

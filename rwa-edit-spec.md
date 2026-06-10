@@ -1,6 +1,6 @@
-# rwa-edit v1.5 — Anchor-based edit protocol for rewritable containers
+# rwa-edit v1.6 — Anchor-based edit protocol for rewritable containers
 
-**Status:** draft v1.5.
+**Status:** draft v1.6.
 **Targets:** rwa container spec v0.8 and later.
 **Position in the architecture:** Defines how the agent expresses changes to the document. Adopting rwa-edit v1 requires (a) replacing the modify pathway in the bootstrap with a multi-turn tool-use conversation, (b) updating the system prompt, and (c) adopting the typed-record shape for `rwa_hist` entries. It does **not** require changes to IDB store layouts, snapshot format, or the public `runtime.*` surface; the v0.8 disk format is preserved.
 
@@ -413,8 +413,9 @@ The retry budget is per-modify, not lifetime. Each ⌘K starts a fresh conversat
 | `replace_too_large` | An individual edit's `replace` field exceeds the per-edit size cap (default 8 KB). |
 | `target_size_exceeded` | Resulting doc exceeds the implementation-defined whole-document size cap. |
 | `concurrent_modify` | A modify is already in progress. Returned by the modify-lifecycle wrapper, not by `apply_edits`. |
+| `unknown_asset_reference` | A `src` uses an `rwa-asset:` token that maps to no embedded image (§19). Returned with `token`. Raised at expansion time on agent paths, and by the no-assets guard when a writer introduces a NEW token without bytes. |
 
-Failures during the tool-use loop are returned as `tool_result` blocks with structured payload `{ code, edit_index?, count?, hints?, closest?, match?, truncated?, message?, shape_before?, shape_after?, hint? }` so the model can act on them in the next turn. `closest`/`match` carry the `find_not_found` near-miss (§10). The runtime MAY add a plain-English `hint` — a one-line, code-keyed recovery instruction — to steer weaker/local models toward a fix; it is advisory and additive, never a substitute for the structured fields.
+Failures during the tool-use loop are returned as `tool_result` blocks with structured payload `{ code, edit_index?, count?, hints?, closest?, match?, truncated?, message?, shape_before?, shape_after?, token?, hint? }` so the model can act on them in the next turn. `closest`/`match` carry the `find_not_found` near-miss (§10). The runtime MAY add a plain-English `hint` — a one-line, code-keyed recovery instruction — to steer weaker/local models toward a fix; it is advisory and additive, never a substitute for the structured fields.
 
 ---
 
@@ -595,21 +596,47 @@ async function applyEdits(envelope, db) {
 
 ---
 
-## Appendix A — Changes from v1.4 to v1.5
+## 19. Image-asset virtualization (images-v1)
+
+Embedded images live in the document as ordinary `<img src="data:image/…">` data URIs — the file stays single and self-contained, `replace_document`/undo/export all carry real bytes. The protocol, however, never prices pixels: at every **agent boundary** the runtime swaps each data URI for a compact token before building the prompt, and the apply core swaps tokens back after validation, just before commit.
+
+**Token grammar.** `rwa-asset:[0-9a-f]{8,}` in an `<img>` `src` attribute (double- or single-quoted). The hash is FNV-1a over the URI — identity/dedupe within one document, not integrity. Identical images share one token. Tokens are stable across moves/duplications (hash-keyed, not ordinal).
+
+**Virtual form (normative for agent loops).**
+- The document the model receives (`<DOC>`, anchored `<TARGET>`/`<CONTEXT>`) is the *virtual* form: every `data:image/*` `src` replaced by its token.
+- All §5 validation — including the §13 size caps (`MAX_REPLACE`, `MAX_DOC`) — runs on the virtual form: the caps are a **text budget**; image bytes never count against them.
+- After validation, every `src="rwa-asset:…"` is expanded from the call's asset map. A token with no mapping → `unknown_asset_reference` (batch rejected, nothing persisted; fed back as a `tool_result` like any §10 failure).
+- *Orphan tolerance:* a token already present in the stored document before virtualization maps to nothing but expands to itself — a pre-broken document stays editable.
+- The committed document and undo frames hold **real bytes**; `rwa_hist` keeps the **virtual** envelope (compact). A hosted commit sink receives the **expanded** envelope (the server applies on real bytes; an image-bearing edit then exceeds the server's per-edit cap — hosted images are a known v1 limitation).
+
+**Raw envelope paths** (piped envelopes, hosted `/modify`, `runtime.applyEnvelope` without assets) are unchanged: real bytes, real caps. One guard is added: a no-assets write that introduces a *new* `rwa-asset:` token (bytes nowhere) is rejected as `unknown_asset_reference` — a broken image must never commit silently. Writers that insert images programmatically pass an asset map (`runtime.applyEnvelope(env, { assets })`) and send the envelope in token form.
+
+**Agent contract addition (§8/§9.1 prompts):** image `src` tokens are opaque identifiers — move/copy/delete the whole tag, never edit or invent a token.
+
+The wire version stays `rwa-edit/1`: tokens ride the existing envelope shapes; a consumer that never sees images behaves byte-identically.
+
+---
+
+## Appendix A — Changes from v1.5 to v1.6
+
+- **Image-asset virtualization (§19).** data-URI images stay in the document; agent boundaries see `rwa-asset:<hash8>` tokens; caps measured on the virtual form; expansion post-validation; `unknown_asset_reference` (+ `token` payload field, §10); orphan tolerance; no-assets new-token guard; hist stores virtual envelopes; hosted sink gets expanded envelopes.
+- Wire version unchanged (`rwa-edit/1`).
+
+## Appendix B — Changes from v1.4 to v1.5
 
 - **`find_not_found` near-miss.** The dominant failure now carries a deterministic, code-derived recovery aid: `closest` (the closest text actually present in the working copy, verbatim and copy-pasteable; oversized matches are elided and flagged `truncated: true`) and `match` (`whitespace` / `case` / `partial`) — so an agent fixes its own anchor inside the existing retry budget and a human sees a legible reason. No model call (Rule 5: code answers). Self-correcting failure, not just a louder code. Updated: §5.1 step 4, §5.1 rejection paragraph, §9.2 post-budget UX, §10 table + payload shape, §18 helper list.
 - **Optional plain-English `hint`.** The tool-use `tool_result` payload MAY include a one-line, failure-code-keyed `hint` to steer weaker/local models toward a fix. Advisory and additive — never a substitute for the structured fields. §10.
 - **`find_not_unique` snippets clarified as mandatory helper context** alongside the new `find_not_found` near-miss (already emitted by the runtime; spec text now enumerates both consistently in §5.1 and §9.2).
 - Wire version unchanged (`rwa-edit/1`): all additions are optional, backward-compatible context fields; a consumer that ignores them behaves exactly as under v1.4.
 
-## Appendix B — Changes from v1.3 to v1.4
+## Appendix C — Changes from v1.3 to v1.4
 
 - **Structural shape narrowed** from triple `(top-level, script, style)` to pair `(script, style)`. Top-level element count is no longer constrained, because adding a top-level section (e.g. a footer) is a common, intentional edit that should remain in `apply_edits` territory. Script/style count drift remains the realistic accidental-damage signal. Updated: §2 vocab, §5.1 step 5, §5.6, §8 `apply_edits` schema description, §9.1 prompt, §10 `structural_shape_changed`, §13 rule 9, §14, §17, §18 pseudocode.
 - **`replace_too_large` added to §10** as an explicit failure code with default cap of 8 KB. Was referenced in §13 rule 5 and §18 pseudocode but missing from the failure-modes table in v1.3.
 - **§12 size-pressure rationale corrected.** Eliding envelope bodies past the most recent 5 entries is now framed as advisory (IDB quota defence), not normative for "snapshot-format compatibility" — `rwa_hist` is in IndexedDB, not in the snapshot, so elision strategies cannot affect file format.
 - **§6 rule 3 and §7.2 tightened** to require set-equality (not subset) of frozen-zone names post-apply. Adding a new frozen-zone name is a `frozen_zone_corrupted` failure, the same way removing one is. Closes a gap where `replace_document` could introduce new author-only invariants. Implementation already enforces this; the spec text now matches.
 
-## Appendix C — Changes from v1.2 to v1.3
+## Appendix D — Changes from v1.2 to v1.3
 
 (Preserved for review continuity.)
 
@@ -626,7 +653,7 @@ async function applyEdits(envelope, db) {
 - §16 source-format expectations refined.
 - System prompt and tool-schema descriptions updated for shape constraint.
 
-## Appendix D — Changes from v1.1 to v1.2
+## Appendix E — Changes from v1.1 to v1.2
 
 (Preserved.)
 
@@ -646,7 +673,7 @@ async function applyEdits(envelope, db) {
 - §15 adds legacy-comment migration note and `#rwa-doc-mount` reservation.
 - §18 pseudocode updated.
 
-## Appendix E — Changes from v1 to v1.1
+## Appendix F — Changes from v1 to v1.1
 
 (Preserved.)
 

@@ -183,6 +183,10 @@ Pasted content is the most common way prose accidentally starts with a slash —
 
 §6.1 and §6.2 layer. The live mode indicator (§6.1) is the primary defense — every leading-slash input triggers the chrome shift, including single-line slash-leading pastes like a `/api/v1/users` URL. The paste-detection hint (§6.2) is a secondary catch specifically for multi-line code-shaped pastes where the user's attention may not be on the lens chrome at the moment of paste.
 
+### 6.3 Runtime-intercepted commands
+
+A small set of slash commands is dispatched by the runtime itself, before the agent: `/skin` (the style library) and `/image` (the native file picker for inserting an embedded image; anchored → the image lands after the anchor, default → appended). Interception is exact-match on the command head; anything else routes to the agent per the lens state. `/image` is the discoverable sibling of the two direct gestures — dropping an image file onto the document and pasting a screenshot — all three ingest (downscale/compress), then commit a `<figure>` through the non-agent path (`runtimeApplyEnvelope`, actors `user:image-drop` / `user:image-paste` / `user:image-picker`, one ⌘Z frame). Image bytes never reach the agent: prompts carry opaque `rwa-asset:` tokens (rwa-edit-spec.md §19).
+
 ---
 
 ## 7. Frozen Regions
@@ -345,4 +349,4 @@ These properties are load-bearing — every change to the lens model should pres
 
 ---
 
-*Spec version 0.10 — adds the §5.1 dual-mode note: `/`-prompt inside inline manual edit, routed through the anchored slash-command path. Companion to re-write-able core spec v0.10 and rwa-edit-spec.md v1.4.*
+*Spec version 0.11 — adds §6.3 runtime-intercepted commands (`/skin`, `/image`) and the image insert surfaces (drop / paste / picker, non-agent commit path, `rwa-asset:` token virtualization per rwa-edit-spec.md §19). Companion to re-write-able core spec v0.10 and rwa-edit-spec.md v1.6.*
