@@ -1895,6 +1895,69 @@ function containsReservedMarker(s) {
   return false;
 }
 
+// ─── Image-asset virtualization (images-v1) ─────────────────────────
+// The agent never sees image bytes: data:image URIs are swapped for compact
+// rwa-asset:<hash8> tokens at every agent boundary (modify / bridge /
+// anchored command), and expanded back in the apply core after validation —
+// so MAX_DOC/MAX_REPLACE measure the TEXT budget, never pixels. FNV-1a, not
+// crypto: tokens are identity/dedupe within one doc, not integrity. Hash-keyed
+// (not ordinal) so the agent can move/duplicate/delete tags freely.
+function rwaAssetHash8(s) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
+  return h.toString(16).padStart(8, '0');
+}
+const RWA_ASSET_SRC_RE = /(\bsrc\s*=\s*)(["'])(data:image\/[^"']*)\2/g;
+const RWA_ASSET_TOKEN_RE = /(\bsrc\s*=\s*)(["'])(rwa-asset:[0-9a-f]{8,})\2/g;
+function registerImageAsset(assets, uri) {
+  // Collision probe: deterministic re-salt, so two distinct URIs hashing equal
+  // (32-bit birthday, ~1e-6 at 100 images) still get distinct tokens.
+  let n = 1, token;
+  do { token = 'rwa-asset:' + rwaAssetHash8(n === 1 ? uri : uri + '\0' + n); n++; }
+  while (assets.has(token) && assets.get(token) !== uri);
+  assets.set(token, uri);
+  return token;
+}
+function virtualizeImages(doc, assets) {
+  assets = assets || new Map();
+  // Orphans: rwa-asset tokens already present in the RAW doc (user-authored or
+  // pre-broken). They map to nothing; expansion passes them through instead of
+  // throwing, so a pre-broken doc stays editable.
+  const orphans = new Set();
+  let m;
+  RWA_ASSET_TOKEN_RE.lastIndex = 0;
+  while ((m = RWA_ASSET_TOKEN_RE.exec(doc)) !== null) orphans.add(m[3]);
+  const vdoc = doc.replace(RWA_ASSET_SRC_RE, (_, p, q, uri) => p + q + registerImageAsset(assets, uri) + q);
+  return { doc: vdoc, assets, orphans };
+}
+// Apply the URI→token substitution to ANY string (prompt slices, anchored
+// finds, compose commitBase). Plain split/join — URIs are long, quote-free,
+// and regex-hostile, so substring replacement is the safe primitive. A slice
+// of the real doc virtualizes to the corresponding slice of the virtual doc
+// as long as it doesn't cut a URI in half (block slices never do).
+function virtualizeWithMap(s, assets) {
+  if (!s || !assets || assets.size === 0) return s;
+  let out = s;
+  for (const [token, uri] of assets) out = out.split(uri).join(token);
+  return out;
+}
+function expandImages(vdoc, assets, orphans) {
+  return vdoc.replace(RWA_ASSET_TOKEN_RE, (whole, p, q, token) => {
+    const uri = assets ? assets.get(token) : null;
+    if (uri == null) {
+      if (orphans && orphans.has(token)) return whole;
+      throw new RwaEditError('unknown_asset_reference', null, { token });
+    }
+    return p + q + uri + q;
+  });
+}
+if (typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent)) {
+  window.__virtualizeImages = virtualizeImages;
+  window.__virtualizeWithMap = virtualizeWithMap;
+  window.__expandImages = expandImages;
+  window.__registerImageAsset = registerImageAsset;
+}
+
 function countOccurrences(haystack, needle) {
   if (!needle) return 0;
   let n = 0, i = 0;
