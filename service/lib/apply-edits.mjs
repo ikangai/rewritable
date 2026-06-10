@@ -67,7 +67,78 @@ export const FAILURE_HINTS = {
   replace_too_large: 'replace exceeds the per-edit size cap. Split the change into smaller anchored edits.',
   empty_find: 'find must be a non-empty string — provide the exact text to anchor on.',
   parse_error_post_apply: 'The result was not well-formed HTML — check that the tags in replace are balanced.',
+  unknown_asset_reference: 'src uses an rwa-asset: token that does not exist in this document. Copy tokens verbatim from existing <img> tags; never invent or edit them.',
 };
+
+// ─── Image-asset virtualization (images-v1) ─────────────────────────
+// Hand-mirror of the seed block beside containsReservedMarker in
+// seeds/rewritable.html (rwaAssetHash8/registerImageAsset/virtualizeImages/
+// virtualizeWithMap/expandImages/assertNoNewAssetTokens). Normative contract:
+// rwa-edit-spec.md §19. KEEP IN STEP with the seed.
+//
+// The model never sees image bytes: `rwa edit <instruction>` builds its prompt
+// from the VIRTUAL doc (data:image src → rwa-asset:<hash8> token) and the
+// apply expands tokens back before the file write. Hash-keyed (FNV-1a — token
+// identity/dedupe, not integrity), so tokens are stable across moves and the
+// map can be re-derived deterministically from the same doc bytes.
+export function rwaAssetHash8(s) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
+  return h.toString(16).padStart(8, '0');
+}
+const RWA_ASSET_SRC_RE = /(\bsrc\s*=\s*)(["'])(data:image\/[^"']*)\2/g;
+const RWA_ASSET_TOKEN_RE = /(\bsrc\s*=\s*)(["'])(rwa-asset:[0-9a-f]{8,})\2/g;
+export function registerImageAsset(assets, uri) {
+  // Collision probe: deterministic re-salt (32-bit birthday ~1e-6 at 100 images).
+  let n = 1, token;
+  do { token = 'rwa-asset:' + rwaAssetHash8(n === 1 ? uri : uri + '\0' + n); n++; }
+  while (assets.has(token) && assets.get(token) !== uri);
+  assets.set(token, uri);
+  return token;
+}
+export function virtualizeImages(doc, assets) {
+  assets = assets || new Map();
+  // Orphans: tokens already present in the RAW doc (user-authored or
+  // pre-broken). They map to nothing; expansion passes them through instead
+  // of throwing, so a pre-broken doc stays editable.
+  const orphans = new Set();
+  let m;
+  RWA_ASSET_TOKEN_RE.lastIndex = 0;
+  while ((m = RWA_ASSET_TOKEN_RE.exec(doc)) !== null) orphans.add(m[3]);
+  const vdoc = doc.replace(RWA_ASSET_SRC_RE, (_, p, q, uri) => p + q + registerImageAsset(assets, uri) + q);
+  return { doc: vdoc, assets, orphans };
+}
+// URI→token substitution for ANY string (a doc slice virtualizes to the
+// corresponding vdoc slice as long as it doesn't cut a URI in half).
+export function virtualizeWithMap(s, assets) {
+  if (!s || !assets || assets.size === 0) return s;
+  let out = s;
+  for (const [token, uri] of assets) out = out.split(uri).join(token);
+  return out;
+}
+export function expandImages(vdoc, assets, orphans) {
+  return vdoc.replace(RWA_ASSET_TOKEN_RE, (whole, p, q, token) => {
+    const uri = assets ? assets.get(token) : null;
+    if (uri == null) {
+      if (orphans && orphans.has(token)) return whole;
+      throw new RwaEditError('unknown_asset_reference', null, { token });
+    }
+    return p + q + uri + q;
+  });
+}
+// No-assets writers must not introduce a NEW rwa-asset token — a token with no
+// bytes behind it is a permanently broken image; committing one silently is the
+// failure mode Rule 12 forbids. Tokens already in the current doc stay legal.
+export function assertNoNewAssetTokens(currentDoc, work) {
+  const seen = new Set();
+  let m;
+  RWA_ASSET_TOKEN_RE.lastIndex = 0;
+  while ((m = RWA_ASSET_TOKEN_RE.exec(currentDoc)) !== null) seen.add(m[3]);
+  RWA_ASSET_TOKEN_RE.lastIndex = 0;
+  while ((m = RWA_ASSET_TOKEN_RE.exec(work)) !== null) {
+    if (!seen.has(m[3])) throw new RwaEditError('unknown_asset_reference', null, { token: m[3] });
+  }
+}
 
 // Source of truth: seeds/rewritable.html RWA_EDIT.RESERVED (line ~1608).
 // The string-concat trick on the comment/attribute markers prevents this
@@ -371,6 +442,15 @@ export function applyEdits(doc, edits) {
   // (the FAILURE_HINTS message already covers "author-protected frozen zone").
   if (!snapshotsEqual(frozenAttr, dataRwaFrozenSnapshot(working))) {
     throw new RwaEditError('frozen_zone_violation', null, { form: 'attribute' });
+  }
+
+  // #5 opt-in (rwa-id-strict): mirror of the seed — a container declaring
+  // <meta name="rwa-id-strict"> (in a frozen zone) forbids losing an existing
+  // data-rwa-id (the default would backfill a fresh one, breaking #frag links).
+  if (/<meta\s+name\s*=\s*["']?rwa-id-strict\b/i.test(doc)) {
+    const ids = (s) => new Set([...s.matchAll(/\sdata-rwa-id\s*=\s*(?:"([^"]*)"|'([^']*)')/g)].map((m) => (m[1] != null ? m[1] : m[2])));
+    const after = ids(working);
+    for (const id of ids(doc)) if (!after.has(id)) throw new RwaEditError('rwa_id_stripped', null, { id });
   }
 
   return working;

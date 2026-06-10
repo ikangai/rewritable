@@ -436,8 +436,14 @@ function detectProductKind(fileText) {
 
         // Compute marker-form frozen-zone names from the CURRENT doc so the
         // model sees the same list the apply-edits guard will enforce.
-        const { findFrozenZones } = await import('../src/apply-edits.mjs');
+        const { findFrozenZones, virtualizeImages } = await import('../src/apply-edits.mjs');
         const frozenZoneNames = findFrozenZones(currentDoc).map(z => z.name);
+
+        // images-v1 (rwa-edit-spec.md §19): the model never sees image bytes.
+        // The prompt carries the VIRTUAL doc (data:image src → rwa-asset
+        // tokens); applyPlan({virtualImages}) re-derives the same hash-keyed
+        // map and expands the model's token-form envelope back to real bytes.
+        const promptDoc = virtualizeImages(currentDoc).doc;
 
         // Run the agent loop. Retry telemetry goes to stderr (plain or
         // JSON depending on mode) so CI / wrapper scripts can observe
@@ -448,7 +454,7 @@ function detectProductKind(fileText) {
           const result = await runAgentLoop({
             systemPrompt,
             toolSchemas: TOOL_SCHEMAS,
-            currentDoc,
+            currentDoc: promptDoc,
             instruction,
             frozenZoneNames,
             backend: { baseUrl, model: modelId, apiKey },
@@ -470,10 +476,11 @@ function detectProductKind(fileText) {
         }
 
         // Apply the envelope through the same applyPlan used by the plan
-        // path — single splice/write code path, single error surface.
+        // path — single splice/write code path, single error surface. The
+        // model saw the virtual doc, so the envelope is token-form.
         const { applyPlan } = await import('../src/edit.mjs');
         try {
-          await applyPlan(filePath, envelope);
+          await applyPlan(filePath, envelope, { virtualImages: true });
           return;
         } catch (e) {
           if (e && typeof e.exitCode === 'number') {

@@ -146,6 +146,11 @@ export function validateInstall(envelope, { signed, verified } = {}) {
   const skill = (envelope && envelope.skill) || {};
   const perms = Array.isArray(skill.permissions) ? skill.permissions : [];
   const errors = [];
+  // F9: reject a non-array permissions field rather than silently coercing to []
+  // (the signing canon would normalize it to [] → confused-deputy signature).
+  if (skill.permissions != null && !Array.isArray(skill.permissions)) errors.push('invalid_permission');
+  // F8: a NUL in the name makes skillId(name‖0x00‖pubkey) ambiguous — reject it.
+  if (/\0/.test(String(skill.name == null ? '' : skill.name))) errors.push('invalid_skill_id');
   for (const p of perms) {
     try { parsePermission(p); }
     catch (e) { errors.push(/unknown_permission_tier/.test(e.message) ? 'unknown_permission_tier' : 'invalid_permission'); }

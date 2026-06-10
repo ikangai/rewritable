@@ -14,7 +14,10 @@
 
 import { readFile } from 'node:fs/promises';
 import { atomicWrite } from './atomic-write.mjs';
-import { applyEdits, RwaEditError, findFrozenZones, dataRwaFrozenSnapshot, FAILURE_HINTS } from './apply-edits.mjs';
+import {
+  applyEdits, RwaEditError, findFrozenZones, dataRwaFrozenSnapshot, FAILURE_HINTS,
+  virtualizeImages, expandImages, assertNoNewAssetTokens,
+} from './apply-edits.mjs';
 import { compileDslPlan } from './dsl-compiler.mjs';
 import { extractInlineDoc, replaceInlineDoc } from './seed.mjs';
 
@@ -73,7 +76,24 @@ function assertFrozenPreserved(currentDoc, newDoc) {
       reason: 'replace_document must preserve data-rwa-frozen elements byte-identically',
     });
   }
+  // Reserved HTML id: the escape hatch must not inject id="rwa-doc-mount" (it
+  // would shadow/hijack the runtime mount). Parser-free mirror of the seed's
+  // findReservedIdViolation (querySelector('#rwa-doc-mount')).
+  if (/\bid\s*=\s*["']?rwa-doc-mount(?=["'\s/>]|$)/i.test(newDoc)) {
+    throw new CliError(3, 'reserved_id_used', { id: 'rwa-doc-mount' });
+  }
+  // #5 opt-in (rwa-id-strict): the escape hatch must not lose an existing
+  // data-rwa-id when the container declares <meta name="rwa-id-strict">.
+  if (/<meta\s+name\s*=\s*["']?rwa-id-strict\b/i.test(currentDoc)) {
+    const ids = (s) => new Set([...s.matchAll(/\sdata-rwa-id\s*=\s*(?:"([^"]*)"|'([^']*)')/g)].map((m) => (m[1] != null ? m[1] : m[2])));
+    const after = ids(newDoc);
+    for (const id of ids(currentDoc)) if (!after.has(id)) throw new CliError(3, 'rwa_id_stripped', { id });
+  }
 }
+
+// String.prototype.isWellFormed (Node 22+) — false for an unpaired UTF-16
+// surrogate. Mirror of the seed's isWellFormed lone-surrogate guard.
+const isWellFormedStr = (s) => typeof s !== 'string' || typeof s.isWellFormed !== 'function' || s.isWellFormed();
 
 function validateEnvelope(env) {
   if (typeof env !== 'object' || env === null || Array.isArray(env)) {
@@ -108,6 +128,11 @@ function validateEnvelope(env) {
   if (hasDoc && (typeof env.reason !== 'string' || env.reason.length === 0)) {
     throw new CliError(3, 'missing_reason');
   }
+  // Lone-surrogate guard (mirror seed isWellFormed): an unpaired UTF-16 surrogate
+  // in doc/reason corrupts the durable file on encode.
+  if (hasDoc && (!isWellFormedStr(env.doc) || !isWellFormedStr(env.reason))) {
+    throw new CliError(3, 'malformed_envelope', { reason: 'lone_surrogate' });
+  }
   return hasEdits ? 'apply_edits' : hasOps ? 'apply_dsl_plan' : 'replace_document';
 }
 
@@ -116,10 +141,17 @@ function validateEnvelope(env) {
  *
  * @param {string} filePath — absolute or relative path to the target .html
  * @param {object} envelope — apply_edits / apply_dsl_plan / replace_document envelope
+ * @param {object} [opts]
+ * @param {boolean} [opts.virtualImages] — the envelope speaks rwa-asset token
+ *   form (rwa-edit-spec.md §19): the agent saw the VIRTUAL doc, so apply on the
+ *   virtual form and expand tokens back before the file write. Hash-keyed
+ *   tokens make the map re-derivable from the doc bytes — no map threading.
+ *   Raw paths (piped envelope / --plan) leave this unset: real bytes, plus the
+ *   fail-loud guard against introducing a NEW token with no bytes behind it.
  * @returns {Promise<{exitCode: 0}>}
  * @throws {CliError} on any validation, compile, or apply failure
  */
-export async function applyPlan(filePath, envelope) {
+export async function applyPlan(filePath, envelope, opts = {}) {
   // 1. Read the file. Surfacing not_found before envelope validation matches
   // the user's mental model: file errors first, then plan errors.
   let fileText;
@@ -146,24 +178,33 @@ export async function applyPlan(filePath, envelope) {
   // 3. Validate envelope shape + version.
   const shape = validateEnvelope(envelope);
 
+  // images-v1 (rwa-edit-spec.md §19): with opts.virtualImages the envelope is
+  // token-form — apply against the VIRTUAL doc so token anchors match, then
+  // expand back to real bytes before the write. All guards below (frozen
+  // zones, snapshots) run virtual-vs-virtual, which is self-consistent.
+  const vimg = opts.virtualImages ? virtualizeImages(currentDoc) : null;
+  const workDoc = vimg ? vimg.doc : currentDoc;
+
   // 4. Compute the new doc per shape.
   let newDoc;
   if (shape === 'replace_document') {
     newDoc = envelope.doc;
-    assertFrozenPreserved(currentDoc, newDoc);
+    assertFrozenPreserved(workDoc, newDoc);
   } else if (shape === 'apply_dsl_plan') {
     let compiled;
     try {
-      compiled = compileDslPlan(envelope, currentDoc);
+      compiled = compileDslPlan(envelope, workDoc);
     } catch (e) {
-      throw new CliError(3, e.code || 'dsl_compile_error', { message: e.message });
+      // Pass e.op through: DslCompileError carries the offending DSL op, which
+      // --json consumers need to point at the failing step (was dropped).
+      throw new CliError(3, e.code || 'dsl_compile_error', { message: e.message, op: e.op });
     }
     if (compiled.tool === 'replace_document') {
       newDoc = compiled.envelope.doc;
-      assertFrozenPreserved(currentDoc, newDoc); // the DSL escape op must not bypass frozen zones either
+      assertFrozenPreserved(workDoc, newDoc); // the DSL escape op must not bypass frozen zones either
     } else {
       try {
-        newDoc = applyEdits(currentDoc, compiled.envelope.edits);
+        newDoc = applyEdits(workDoc, compiled.envelope.edits);
       } catch (e) {
         if (e instanceof RwaEditError) {
           throw new CliError(3, e.code, { editIndex: e.editIndex, ...e.context });
@@ -173,13 +214,24 @@ export async function applyPlan(filePath, envelope) {
     }
   } else {
     try {
-      newDoc = applyEdits(currentDoc, envelope.edits);
+      newDoc = applyEdits(workDoc, envelope.edits);
     } catch (e) {
       if (e instanceof RwaEditError) {
         throw new CliError(3, e.code, { editIndex: e.editIndex, ...e.context });
       }
       throw e;
     }
+  }
+
+  // images-v1: expand token-form output to real bytes (an invented token
+  // rejects here, before anything is written); raw paths get the fail-loud
+  // guard against minting a NEW token with no bytes behind it.
+  try {
+    if (vimg) newDoc = expandImages(newDoc, vimg.assets, vimg.orphans);
+    else assertNoNewAssetTokens(currentDoc, newDoc);
+  } catch (e) {
+    if (e instanceof RwaEditError) throw new CliError(3, e.code, { ...e.context });
+    throw e;
   }
 
   // 5. Splice the new doc back into the bootstrap and write atomically (temp +
