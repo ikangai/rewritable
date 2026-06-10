@@ -4375,6 +4375,8 @@ async function __setDocForTest(d) {
 // could otherwise call __setDocForTest('') to wipe the doc with no undo.
 if (typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent)) {
   window.__setDocForTest = __setDocForTest;
+  window.__applyEdits = applyEdits;
+  window.__replaceDocument = replaceDocument;
 }
 
 // Token-level balance check for <script> and <style>. The HTML parser
@@ -4542,7 +4544,7 @@ window.injectMissingBlockIds = injectMissingBlockIds; // expose for tests
 // Single IDB transaction across rwa_doc, rwa_undo, rwa_hist. Reads happen
 // before the transaction (modifyMutex prevents concurrent writes). The
 // transaction itself only writes — three put()s, all atomic.
-async function commitDoc(currentDoc, newDoc, histRecord) {
+async function commitDoc(currentDoc, newDoc, histRecord, assets, orphans) {
   // Hosted projection seam: when a commit sink is installed, the SERVER is the
   // authoritative apply path. Reconstruct the rwa-edit/1 envelope, hand it to the
   // sink (which POSTs it and returns the server's canonical new doc), and mirror
@@ -4550,9 +4552,20 @@ async function commitDoc(currentDoc, newDoc, histRecord) {
   // rwa_undo/rwa_hist write — history is server-side in hosted mode. Unset → the
   // existing transaction below runs byte-identically (additive, guarded).
   if (typeof window.__rwaCommitSink === 'function') {
-    const envelope = histRecord.kind === 'edit_batch'
+    let envelope = histRecord.kind === 'edit_batch'
       ? histRecord.envelope
       : { version: 'rwa-edit/1', doc: newDoc, reason: histRecord.reason };
+    // images-v1: the server applies on the REAL stored doc, so a virtual-form
+    // envelope must be expanded before it leaves the page. (Known v1 limit:
+    // an image-bearing edit then exceeds the server's per-edit cap — hosted
+    // images are deferred; non-image edits expand to themselves.)
+    if (assets && Array.isArray(envelope.edits)) {
+      envelope = { ...envelope, edits: envelope.edits.map(e => ({
+        ...e,
+        find: expandImages(e.find || '', assets, orphans),
+        replace: expandImages(e.replace || '', assets, orphans),
+      })) };
+    }
     const serverDoc = await window.__rwaCommitSink(envelope, histRecord, currentDoc);
     await idbPut(RWA.DOC, serverDoc);
     return serverDoc;
@@ -4696,13 +4709,24 @@ async function applyEdits(envelope, currentDocRaw, lensMeta = null, opts = null)
     histRecord.scope = lensMeta.scope;
     if (lensMeta.actor != null) histRecord.actor = lensMeta.actor;   // audit R2
   }
-  return await commitDoc(currentDoc, work, histRecord);
+  // images-v1: with opts.assets the caller passed the VIRTUAL doc — every
+  // validation above (incl. MAX_DOC/MAX_REPLACE: the TEXT budget) ran on the
+  // token form. Expand back to real bytes for persistence: the committed doc
+  // and the undo frame must hold pixels, never tokens. hist keeps the virtual
+  // envelope (compact). expandImages throws unknown_asset_reference on an
+  // invented token — before anything is written.
+  let commitCur = currentDoc, commitWork = work;
+  if (opts && opts.assets) {
+    commitCur = expandImages(currentDoc, opts.assets, opts.orphans);
+    commitWork = expandImages(work, opts.assets, opts.orphans);
+  }
+  return await commitDoc(commitCur, commitWork, histRecord, opts && opts.assets, opts && opts.orphans);
 }
 
 // `frozenBypass` (a Set of frozen-zone ids) is set ONLY by runtimeRegionCommit
 // (rwa-runtime-region-commit/1); the agent's replace_document tool always passes
 // null, so the frozen-zone wall holds for the agent. See the spec §4.1 / §8.
-async function replaceDocument(envelope, currentDocRaw, lensMeta = null, frozenBypass = null) {
+async function replaceDocument(envelope, currentDocRaw, lensMeta = null, frozenBypass = null, opts = null) {
   if (envelope?.version !== 'rwa-edit/1') throw new RwaEditError('version_unsupported');
   if (typeof envelope.doc !== 'string' || typeof envelope.reason !== 'string' || !envelope.reason)
     throw new RwaEditError('malformed_envelope');
@@ -4761,7 +4785,14 @@ async function replaceDocument(envelope, currentDocRaw, lensMeta = null, frozenB
     histRecord.scope = lensMeta.scope;
     if (lensMeta.actor != null) histRecord.actor = lensMeta.actor;   // audit R2
   }
-  return await commitDoc(currentDoc, newDoc, histRecord);
+  // images-v1: mirror of applyEdits' tail — validations ran on the virtual
+  // form; persist real bytes (see the comment there).
+  let commitCur = currentDoc, commitNew = newDoc;
+  if (opts && opts.assets) {
+    commitCur = expandImages(currentDoc, opts.assets, opts.orphans);
+    commitNew = expandImages(newDoc, opts.assets, opts.orphans);
+  }
+  return await commitDoc(commitCur, commitNew, histRecord, opts && opts.assets, opts && opts.orphans);
 }
 
 // ─── apply_dsl_plan compiler (rwa-edit-dsl/1) ──────────────────────
@@ -5819,6 +5850,7 @@ const FAILURE_HINTS = {
   replace_too_large: 'replace exceeds the per-edit size cap. Split the change into smaller anchored edits.',
   empty_find: 'find must be a non-empty string — provide the exact text to anchor on.',
   parse_error_post_apply: 'The result was not well-formed HTML — check that the tags in replace are balanced.',
+  unknown_asset_reference: 'src uses an rwa-asset: token that does not exist in this document. Copy tokens verbatim from existing <img> tags; never invent or edit them.',
 };
 
 function failureToToolResult(err) {

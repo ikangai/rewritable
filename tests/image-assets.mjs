@@ -121,6 +121,137 @@ const URI_B = 'data:image/webp;base64,' + 'ZGVm'.repeat(90);
   check('A5b single-quote form round-trips', window.__expandImages(v.doc, v.assets, v.orphans) === doc);
 }
 
+// ─── Block B: apply core expands tokens (caps on virtual form) ──────
+// WHY: the agent edits the VIRTUAL doc, but commits must persist real bytes,
+// undo must restore real bytes, and hist must stay compact (virtual). If any
+// of these flip, either pixels leak into prompts/caps or undo corrupts images.
+
+async function readStoreSelf(name) {
+  const db = await window.openDB();
+  return new Promise(res => {
+    const r = db.transaction(name).objectStore(name).get('self');
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => res(undefined);
+  });
+}
+
+const FIG_A = '<figure><img src="' + URI_A + '" alt="photo"></figure>';
+
+{
+  console.log('-- B1: agent move on the virtual form commits real bytes --');
+  const real = '<article>\n<h1>Title</h1>\n<p>intro paragraph</p>\n'
+    + FIG_A + '\n<p>tail paragraph</p>\n</article>';
+  await window.__setDocForTest(real);
+  const v = window.__virtualizeImages(real);
+  const vfig = window.__virtualizeWithMap(FIG_A, v.assets);
+  const envelope = { version: 'rwa-edit/1', edits: [{
+    find: vfig + '\n<p>tail paragraph</p>',
+    replace: '<p>tail paragraph</p>\n' + vfig,
+  }] };
+  const out = await window.__applyEdits(envelope, v.doc, { surface: 'test', actor: 'test' },
+    { assets: v.assets, orphans: v.orphans });
+  const expected = '<article>\n<h1>Title</h1>\n<p>intro paragraph</p>\n'
+    + '<p>tail paragraph</p>\n' + FIG_A + '\n</article>';
+  check('B1a returned doc is the REAL doc, image moved', out === expected);
+  check('B1b rwa_doc store holds the real doc', (await readStoreSelf('rwa_doc')) === expected);
+  const undoArr = await readStoreSelf('rwa_undo');
+  check('B1c undo frame is the REAL pre-edit doc (⌘Z restores pixels)', undoArr[undoArr.length - 1] === real);
+  const hist = (await readStoreSelf('rwa_hist'))[0];
+  const histStr = JSON.stringify(hist.envelope);
+  check('B1d hist stores the VIRTUAL envelope (compact)', histStr.includes('rwa-asset:') && !histStr.includes('data:image/'));
+}
+
+{
+  console.log('-- B2/B3: duplicate and delete --');
+  const real = '<article>\n<p>intro</p>\n' + FIG_A + '\n</article>';
+  await window.__setDocForTest(real);
+  const v = window.__virtualizeImages(real);
+  const vfig = window.__virtualizeWithMap(FIG_A, v.assets);
+  const dup = await window.__applyEdits(
+    { version: 'rwa-edit/1', edits: [{ find: vfig, replace: vfig + '\n' + vfig }] },
+    v.doc, null, { assets: v.assets, orphans: v.orphans });
+  check('B2a duplicated token expands twice', dup.split(URI_A).length - 1 === 2);
+  await window.__setDocForTest(real);
+  const del = await window.__applyEdits(
+    { version: 'rwa-edit/1', edits: [{ find: '\n' + vfig, replace: '' }] },
+    v.doc, null, { assets: v.assets, orphans: v.orphans });
+  check('B3a deleted token leaves no URI behind', !del.includes(URI_A) && !del.includes('rwa-asset:'));
+}
+
+{
+  console.log('-- B4: invented token rejects, doc untouched --');
+  const real = '<article>\n<p>solo</p>\n</article>';
+  await window.__setDocForTest(real);
+  const v = window.__virtualizeImages(real);
+  let code = null;
+  try {
+    await window.__applyEdits(
+      { version: 'rwa-edit/1', edits: [{ find: '<p>solo</p>', replace: '<p>solo</p>\n<img src="rwa-asset:0badf00d" alt="ghost">' }] },
+      v.doc, null, { assets: v.assets, orphans: v.orphans });
+  } catch (e) { code = e.code; }
+  check('B4a unknown_asset_reference surfaces', code === 'unknown_asset_reference');
+  check('B4b doc store unchanged after the reject', (await readStoreSelf('rwa_doc')) === real);
+}
+
+{
+  console.log('-- B5: caps are measured on the VIRTUAL form --');
+  const URI_BIG = 'data:image/png;base64,' + 'QUJD'.repeat(370000); // ~1.48 MB > MAX_DOC
+  const real = '<article>\n<p>intro</p>\n<figure><img src="' + URI_BIG + '" alt="big"></figure>\n</article>';
+  await window.__setDocForTest(real);
+  const v = window.__virtualizeImages(real);
+  check('B5a fixture: REAL form exceeds MAX_DOC', real.length > 1024 * 1024);
+  const out = await window.__applyEdits(
+    { version: 'rwa-edit/1', edits: [{ find: '<p>intro</p>', replace: '<p>intro!</p>' }] },
+    v.doc, null, { assets: v.assets, orphans: v.orphans });
+  check('B5b edit on an over-1MB-real doc succeeds (text budget is virtual)', out.includes('<p>intro!</p>') && out.includes(URI_BIG));
+  // No-assets path: today's caps still bite raw URIs (no regression).
+  await window.__setDocForTest(real);
+  let code = null;
+  try {
+    await window.__applyEdits(
+      { version: 'rwa-edit/1', edits: [{ find: '<p>intro</p>', replace: '<p>intro</p><img src="' + URI_BIG + '">' }] },
+      real, null, null);
+  } catch (e) { code = e.code; }
+  check('B5c raw-URI replace without assets still trips replace_too_large', code === 'replace_too_large');
+}
+
+{
+  console.log('-- B6: frozen image survives byte-identical; touching it rejects --');
+  const real = '<article>\n<p>open text</p>\n'
+    + '<div data-rwa-frozen="brand"><img src="' + URI_A + '" alt="logo"></div>\n</article>';
+  await window.__setDocForTest(real);
+  const v = window.__virtualizeImages(real);
+  const ok = await window.__applyEdits(
+    { version: 'rwa-edit/1', edits: [{ find: '<p>open text</p>', replace: '<p>open text edited</p>' }] },
+    v.doc, null, { assets: v.assets, orphans: v.orphans });
+  check('B6a unrelated edit: frozen image bytes are byte-identical',
+    ok.includes('<div data-rwa-frozen="brand"><img src="' + URI_A + '" alt="logo"></div>'));
+  await window.__setDocForTest(real);
+  const v2 = window.__virtualizeImages(real);
+  const vimg = window.__virtualizeWithMap('<img src="' + URI_A + '" alt="logo">', v2.assets);
+  let code = null;
+  try {
+    await window.__applyEdits(
+      { version: 'rwa-edit/1', edits: [{ find: vimg, replace: '' }] },
+      v2.doc, null, { assets: v2.assets, orphans: v2.orphans });
+  } catch (e) { code = e.code; }
+  check('B6b deleting the frozen img rejects (frozen wall holds on virtual form)',
+    code === 'frozen_zone_corrupted' || code === 'frozen_zone_violation');
+}
+
+{
+  console.log('-- B8: replace_document with assets expands too --');
+  const real = '<article>\n<p>doc</p>\n' + FIG_A + '\n</article>';
+  await window.__setDocForTest(real);
+  const v = window.__virtualizeImages(real);
+  const vfig = window.__virtualizeWithMap(FIG_A, v.assets);
+  const out = await window.__replaceDocument(
+    { version: 'rwa-edit/1', doc: '<article>\n' + vfig + '\n<p>rewritten</p>\n</article>', reason: 'test rewrite' },
+    v.doc, null, null, { assets: v.assets, orphans: v.orphans });
+  check('B8a replace_document output expands the token', out.includes(URI_A) && !out.includes('rwa-asset:'));
+  check('B8b store matches', (await readStoreSelf('rwa_doc')) === out);
+}
+
 // ─── tail ───────────────────────────────────────────────────────────
 await settle();
 console.log(`\n${pass} passed, ${fail} failed`);
