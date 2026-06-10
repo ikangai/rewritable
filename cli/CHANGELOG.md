@@ -2,6 +2,21 @@
 
 All notable changes to the `rewritable` CLI (`rwa`).
 
+## [Unreleased]
+
+### Changed
+- **`rwa edit <instruction>` virtualizes embedded images** (rwa-edit-spec.md §19,
+  seed parity): the model's prompt carries the document with each `data:image`
+  `src` replaced by a compact `rwa-asset:<hash8>` token — a 200 KB photo no
+  longer costs ~170K prompt tokens — and the model's token-form envelope is
+  expanded back to real bytes before the atomic write. An invented token fails
+  as `unknown_asset_reference` (exit 3) with the same self-correcting hint
+  surface as other failure codes.
+- **Raw envelope paths fail loud on broken images**: a piped / `--plan`
+  envelope that introduces a *new* `rwa-asset:` token (bytes nowhere) is
+  rejected as `unknown_asset_reference` instead of committing a permanently
+  broken image. Pre-existing tokens in the document stay editable.
+
 ## [0.4.0] - 2026-05-31
 
 ### Added

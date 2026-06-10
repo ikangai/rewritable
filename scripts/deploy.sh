@@ -12,6 +12,7 @@
 #   ├── Dockerfile                     <- == repo service/Dockerfile (byte-identical)
 #   ├── docker-compose.yml             <- the active prod compose (no -f flag needed)
 #   ├── service/server.js              <- COPYed into image  (THE current server, 24 KB)
+#   ├── service/lib/                   <- COPYed into image  (vendored apply pipeline — added with the hosted runtime; the Dockerfile COPYs it, so it MUST ship)
 #   ├── service/public/                <- COPYed into image  (static assets)
 #   ├── seeds/                         <- COPYed into image  (seed template)
 #   ├── demo/html-effectiveness/       <- COPYed into image  (demo tree)
@@ -56,6 +57,7 @@ SSH=(ssh -o ConnectTimeout=15 "$REMOTE_HOST")
 SOURCES=(
   seeds
   service/server.js
+  service/lib
   service/public
   demo/html-effectiveness
 )
