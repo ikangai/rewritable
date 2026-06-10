@@ -23,6 +23,7 @@ rwa import notes.md         # → ./notes.html
 rwa import page.html out.html
 
 rwa clone https://example.com/post   # → ./post.html (fetches; SSRF-guarded)
+rwa clone https://example.com/post --localize-images  # also inline remote images as data: URIs (self-contained)
 
 rwa edit notes.html "Add a section on testing"      # instruction → agent loop
 echo '{"version":"rwa-edit/1","edits":[...]}' | rwa edit notes.html
