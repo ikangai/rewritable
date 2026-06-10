@@ -410,6 +410,57 @@ function toolCallResponse(envelope, name = 'apply_edits') {
   check('D3b doc unchanged after exhaustion', (await readStoreSelf('rwa_doc')) === real);
 }
 
+// ─── Block E: non-agent insert path (GUI rides the R5 queue) ────────
+// WHY: a 200 KB data URI in an envelope replace would trip MAX_REPLACE (8 KB).
+// GUI inserts therefore travel in token form with an assets map, through the
+// SAME runtimeApplyEnvelope/commitCore the other edit-surfaces use.
+
+{
+  console.log('-- E1: runtime.applyEnvelope({assets}) — token in, pixels out --');
+  const URI_BIGISH = 'data:image/webp;base64,' + 'd2Vi'.repeat(50000); // ~200 KB
+  const real = '<article>\n<p>insert after me</p>\n</article>';
+  await window.__setDocForTest(real);
+  const assets = new Map();
+  const token = window.__registerImageAsset(assets, URI_BIGISH);
+  const env = { version: 'rwa-edit/1', edits: [{
+    find: '<p>insert after me</p>',
+    replace: '<p>insert after me</p>\n<figure><img src="' + token + '" alt="pic"></figure>',
+  }] };
+  const out = await window.runtime.applyEnvelope(env, { surface: 'image:insert', actor: 'user:image-drop', assets });
+  check('E1a committed doc carries the real 200 KB URI (token replace beat MAX_REPLACE)',
+    out.includes(URI_BIGISH) && !out.includes('rwa-asset:'));
+  check('E1b store matches', (await readStoreSelf('rwa_doc')) === out);
+  const hist = (await readStoreSelf('rwa_hist'))[0];
+  check('E1c hist self-attributes the surface actor', hist.actor === 'user:image-drop' && hist.surface === 'image:insert');
+  check('E1d hist envelope stays virtual (compact)', !JSON.stringify(hist.envelope).includes('data:image/'));
+  const undoArr = await readStoreSelf('rwa_undo');
+  check('E1e undo frame is the real pre-insert doc', undoArr[undoArr.length - 1] === real);
+}
+
+{
+  console.log('-- E2: token envelope WITHOUT assets fails loud --');
+  const real = '<article>\n<p>plain</p>\n</article>';
+  await window.__setDocForTest(real);
+  let code = null;
+  try {
+    await window.runtime.applyEnvelope({ version: 'rwa-edit/1', edits: [{
+      find: '<p>plain</p>',
+      replace: '<p>plain</p>\n<img src="rwa-asset:0badf00d" alt="ghost">',
+    }] }, { surface: 'test:broken' });
+  } catch (e) { code = e.code; }
+  check('E2a NEW token without bytes rejects (no silent broken image)', code === 'unknown_asset_reference');
+  check('E2b doc unchanged', (await readStoreSelf('rwa_doc')) === real);
+  // …but an envelope merely MOVING a pre-existing orphan token stays legal
+  // (the doc was already broken that way; editing must not be bricked).
+  const realOrphan = '<article>\n<p>a</p>\n<img src="rwa-asset:cafebabe" alt="pre">\n</article>';
+  await window.__setDocForTest(realOrphan);
+  const out = await window.runtime.applyEnvelope({ version: 'rwa-edit/1', edits: [{
+    find: '<p>a</p>\n<img src="rwa-asset:cafebabe" alt="pre">',
+    replace: '<img src="rwa-asset:cafebabe" alt="pre">\n<p>a</p>',
+  }] }, { surface: 'test:orphan-move' });
+  check('E2c moving a PRE-EXISTING orphan token is allowed', out.includes('rwa-asset:cafebabe'));
+}
+
 // ─── tail ───────────────────────────────────────────────────────────
 await settle();
 console.log(`\n${pass} passed, ${fail} failed`);

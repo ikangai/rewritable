@@ -882,7 +882,9 @@ async function runtimeUndo() { return undo(); }
 async function runtimeApplyEnvelope(envelope, options) {
   options = options || {};
   if (!envelope || typeof envelope !== 'object') throw new TypeError('runtime.applyEnvelope: envelope is required');
-  return synthesizeAndCommit(envelope, options.surface || 'runtime:apply-envelope', options.instruction || '', options.actor);
+  // images-v1: options.assets (Map token→data URI) lets a writer send its
+  // envelope in token form — see commitCore. Absent → byte-identical path.
+  return synthesizeAndCommit(envelope, options.surface || 'runtime:apply-envelope', options.instruction || '', options.actor, options.assets);
 }
 
 async function getDoc() {
@@ -1953,6 +1955,20 @@ function expandImages(vdoc, assets, orphans) {
     }
     return p + q + uri + q;
   });
+}
+// No-assets writers must not introduce a NEW rwa-asset token — a token with
+// no bytes behind it is a permanently broken image, and committing one
+// silently is exactly the failure mode Rule 12 forbids. Tokens already in
+// the current doc stay legal (editing a pre-broken doc must not be bricked).
+function assertNoNewAssetTokens(currentDoc, work) {
+  const seen = new Set();
+  let m;
+  RWA_ASSET_TOKEN_RE.lastIndex = 0;
+  while ((m = RWA_ASSET_TOKEN_RE.exec(currentDoc)) !== null) seen.add(m[3]);
+  RWA_ASSET_TOKEN_RE.lastIndex = 0;
+  while ((m = RWA_ASSET_TOKEN_RE.exec(work)) !== null) {
+    if (!seen.has(m[3])) throw new RwaEditError('unknown_asset_reference', null, { token: m[3] });
+  }
 }
 if (typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent)) {
   window.__virtualizeImages = virtualizeImages;
@@ -4165,7 +4181,7 @@ if (typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent)) {
 // first commit chains cleanly.
 let nonAgentCommitChain = Promise.resolve();
 
-async function synthesizeAndCommit(envelope, surface, instruction, actor) {
+async function synthesizeAndCommit(envelope, surface, instruction, actor, assets) {
   // Test seam preserved (kept 3-arg so existing stubs keep matching; the actor
   // passthrough is exercised via the rwa_hist integration tests, not the seam).
   if (typeof window.__synthesizeAndCommit === 'function') {
@@ -4178,7 +4194,7 @@ async function synthesizeAndCommit(envelope, surface, instruction, actor) {
   // concurrent_modify when an AGENT loop holds the mutex) does not poison the
   // queue for the next writer. Agent-loop exclusivity is unchanged — only
   // non-agent-vs-non-agent races now serialize.
-  const run = () => commitCore(envelope, surface, instruction, actor);
+  const run = () => commitCore(envelope, surface, instruction, actor, undefined, assets);
   const p = nonAgentCommitChain.then(run, run);
   nonAgentCommitChain = p.catch(() => {});
   return p;
@@ -4187,7 +4203,7 @@ async function synthesizeAndCommit(envelope, surface, instruction, actor) {
 // The reentrant commit body. Assumes the queue above serializes it, so the
 // `if (modifyMutex) throw` guard now fires only when an AGENT loop (modify /
 // modifyViaBridge / runAnchoredCommand) holds the mutex — a genuine conflict.
-async function commitCore(envelope, surface, instruction, actor, frozenBypass) {
+async function commitCore(envelope, surface, instruction, actor, frozenBypass, assets) {
   // Acquire modifyMutex around the read+commit window. Without this, two
   // concurrent ⌘Enter submits could race against each other: both read the
   // same currentDoc, both push it onto rwa_undo, and the later commit
@@ -4222,6 +4238,18 @@ async function commitCore(envelope, surface, instruction, actor, frozenBypass) {
       // writer self-attributes in rwa_hist instead of masquerading as the lens.
       actor: actor || 'user:lens',
     };
+    // images-v1: a caller that supplies an assets map (Map token→data URI)
+    // sends its envelope in TOKEN form — a raw 200 KB URI in `replace` would
+    // trip MAX_REPLACE. Virtualize the stored doc ONCE, seeding the map with
+    // the caller's new entries, so existing images and the new ones share one
+    // vocabulary; the apply core expands at commit. Absent → today's path.
+    let baseDoc = await getDoc();
+    let vOpts = null;
+    if (assets) {
+      const vimg = virtualizeImages(canonLF(baseDoc), new Map(assets));
+      baseDoc = vimg.doc;
+      vOpts = { assets: vimg.assets, orphans: vimg.orphans };
+    }
     let result;
     if (!envelope) {
       // Empty doc → first append → use replace_document.
@@ -4231,7 +4259,7 @@ async function commitCore(envelope, surface, instruction, actor, frozenBypass) {
         doc: wrapped,
         reason: 'initial content into an empty document',
       };
-      result = await replaceDocument(repEnv, await getDoc(), lensMeta);
+      result = await replaceDocument(repEnv, baseDoc, lensMeta, null, vOpts);
     } else if (typeof envelope.doc === 'string') {
       // A deterministic replace_document envelope ({version, doc, reason}) from a
       // runtime writer (e.g. runtime.applyEnvelope for a skin insert/reset).
@@ -4242,9 +4270,9 @@ async function commitCore(envelope, surface, instruction, actor, frozenBypass) {
       // replace_document up front (it is not an apply_edits that escalated).
       // frozenBypass is non-null only for a runtimeRegionCommit('frozen') write,
       // scoping the snapshot exception to the region's own id (spec §4.1).
-      result = await replaceDocument(envelope, await getDoc(), lensMeta, frozenBypass);
+      result = await replaceDocument(envelope, baseDoc, lensMeta, frozenBypass, vOpts);
     } else {
-      result = await applyEdits(envelope, await getDoc(), lensMeta);
+      result = await applyEdits(envelope, baseDoc, lensMeta, vOpts);
     }
     // Re-render so the user sees the new content. renderDoc rebuilds sourceMap
     // and (because the lens may sit inside the mount) calls releaseAnchor, so we
@@ -4730,6 +4758,8 @@ async function applyEdits(envelope, currentDocRaw, lensMeta = null, opts = null)
   if (opts && opts.assets) {
     commitCur = expandImages(currentDoc, opts.assets, opts.orphans);
     commitWork = expandImages(work, opts.assets, opts.orphans);
+  } else {
+    assertNoNewAssetTokens(currentDoc, work);
   }
   return await commitDoc(commitCur, commitWork, histRecord, opts && opts.assets, opts && opts.orphans);
 }
@@ -4802,6 +4832,8 @@ async function replaceDocument(envelope, currentDocRaw, lensMeta = null, frozenB
   if (opts && opts.assets) {
     commitCur = expandImages(currentDoc, opts.assets, opts.orphans);
     commitNew = expandImages(newDoc, opts.assets, opts.orphans);
+  } else {
+    assertNoNewAssetTokens(currentDoc, newDoc);
   }
   return await commitDoc(commitCur, commitNew, histRecord, opts && opts.assets, opts && opts.orphans);
 }
