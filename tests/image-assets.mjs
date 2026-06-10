@@ -28,6 +28,8 @@ function check(label, cond) {
   else      { fail++; console.log('  FAIL', label); }
 }
 
+let fetchHandler = async () => { throw new Error('image-assets tests must not call the network'); };
+
 const virtualConsole = new VirtualConsole();
 virtualConsole.on('jsdomError', e => console.error('[jsdomError]', e?.detail?.stack || e?.detail || e));
 
@@ -41,7 +43,7 @@ const dom = new JSDOM(html, {
     window.IDBKeyRange = IDBKeyRange;
     window.sessionStorage.setItem('rwa_apikey', 'test-key');
     window.sessionStorage.setItem('rwa_model', 'test-model');
-    window.fetch = async () => { throw new Error('image-assets tests must not call the network'); };
+    window.fetch = (...args) => fetchHandler(...args);   // per-test reassignable (lens.mjs pattern)
     window.BroadcastChannel = globalThis.BroadcastChannel;
     Object.defineProperty(window.navigator, 'storage', {
       value: { persist: () => Promise.resolve(false) }, configurable: true,
@@ -250,6 +252,162 @@ const FIG_A = '<figure><img src="' + URI_A + '" alt="photo"></figure>';
     v.doc, null, null, { assets: v.assets, orphans: v.orphans });
   check('B8a replace_document output expands the token', out.includes(URI_A) && !out.includes('rwa-asset:'));
   check('B8b store matches', (await readStoreSelf('rwa_doc')) === out);
+}
+
+// ─── Block C: agent boundaries — modify()/bridge never see pixels ───
+// WHY: this is the entire point of the feature. If a data URI leaks into the
+// prompt, one photo costs ~170K tokens and blows weaker backends entirely.
+
+function toolCallResponse(envelope, name = 'apply_edits') {
+  return {
+    ok: true, status: 200,
+    json: async () => ({ choices: [{ message: { role: 'assistant', content: '', tool_calls: [{
+      id: 'tc1', type: 'function', function: { name, arguments: JSON.stringify(envelope) },
+    }] } }] }),
+  };
+}
+
+{
+  console.log('-- C1/C2: modify() prompt carries tokens, commit restores bytes --');
+  const URI_BIGISH = 'data:image/jpeg;base64,' + 'QUJD'.repeat(50000); // ~200 KB
+  const FIG = '<figure><img src="' + URI_BIGISH + '" alt="photo"></figure>';
+  const real = '<article>\n<p>intro</p>\n' + FIG + '\n<p>tail</p>\n</article>';
+  await window.__setDocForTest(real);
+  const v = window.__virtualizeImages(real);
+  const vfig = window.__virtualizeWithMap(FIG, v.assets);
+  const bodies = [];
+  fetchHandler = async (url, init) => {
+    bodies.push(init.body);
+    return toolCallResponse({ version: 'rwa-edit/1', edits: [{
+      find: vfig + '\n<p>tail</p>', replace: '<p>tail</p>\n' + vfig,
+    }] });
+  };
+  await window.modify('move the image below the tail');
+  await settle();
+  check('C1a prompt body carries the token', bodies.length === 1 && bodies[0].includes('rwa-asset:'));
+  check('C1b prompt body carries NO image bytes', !bodies[0].includes('data:image/'));
+  check('C1c prompt body is small (<20 KB for a 200 KB image doc)', bodies[0].length < 20 * 1024);
+  const doc = await readStoreSelf('rwa_doc');
+  check('C2a committed doc has the real URI at the new position',
+    doc === '<article>\n<p>intro</p>\n<p>tail</p>\n' + FIG + '\n</article>');
+}
+
+{
+  console.log('-- C3: invented token feeds back as a structured retry --');
+  const FIG = '<figure><img src="' + URI_A + '" alt="p"></figure>';
+  const real = '<article>\n<p>solo</p>\n' + FIG + '\n</article>';
+  await window.__setDocForTest(real);
+  const calls = [];
+  fetchHandler = async (url, init) => {
+    calls.push(JSON.parse(init.body));
+    return toolCallResponse({ version: 'rwa-edit/1', edits: [{
+      find: '<p>solo</p>', replace: '<p>solo</p>\n<img src="rwa-asset:0badf00d" alt="ghost">',
+    }] });
+  };
+  await window.modify('add a ghost image');
+  await settle();
+  check('C3a retried (3 attempts)', calls.length === 3);
+  const retryMsg = calls[1].messages.find(m => m.role === 'tool');
+  check('C3b retry tool_result names unknown_asset_reference',
+    retryMsg && retryMsg.content.includes('unknown_asset_reference'));
+  check('C3c doc unchanged after exhaustion', (await readStoreSelf('rwa_doc')) === real);
+}
+
+{
+  console.log('-- C4: compose (skin) on an image doc — ONE commit, pixels intact --');
+  const FIG = '<figure><img src="' + URI_B + '" alt="s"></figure>';
+  const real = '<article>\n<h1>Skin me</h1>\n' + FIG + '\n</article>';
+  await window.__setDocForTest(real);
+  const v = window.__virtualizeImages(real);
+  const vfig = window.__virtualizeWithMap(FIG, v.assets);
+  fetchHandler = async () => toolCallResponse({ version: 'rwa-edit/1', edits: [{
+    find: vfig, replace: '<div class="sk-card">' + vfig + '</div>',
+  }] });
+  const undoBefore = ((await readStoreSelf('rwa_undo')) || []).length;
+  await window.applySkinL1('linear-dark');
+  await settle();
+  const doc = await readStoreSelf('rwa_doc');
+  check('C4a theme block landed', /<style data-rwa-skin="linear-dark">/.test(doc));
+  check('C4b agent sk-wrapper landed with the REAL URI inside', doc.includes('<div class="sk-card">' + FIG + '</div>'));
+  check('C4c no tokens persisted', !doc.includes('rwa-asset:'));
+  check('C4d compose stayed ONE commit (one undo frame)', (await readStoreSelf('rwa_undo')).length - undoBefore === 1);
+}
+
+{
+  console.log('-- C5: bridge single-shot — prompt virtual, commit real --');
+  const FIG = '<figure><img src="' + URI_A + '" alt="b"></figure>';
+  const real = '<article>\n<p>bridge intro</p>\n' + FIG + '\n</article>';
+  await window.__setDocForTest(real);
+  const v = window.__virtualizeImages(real);
+  const vfig = window.__virtualizeWithMap(FIG, v.assets);
+  window.sessionStorage.setItem('rwa_backend', 'bridge');
+  let decodedPrompt = null;
+  fetchHandler = async (url, init) => {
+    const cmd = JSON.parse(init.body).command;
+    const b64 = /echo '([^']+)'/.exec(cmd)[1];
+    decodedPrompt = Buffer.from(b64, 'base64').toString('utf8');
+    return { ok: true, status: 200, json: async () => ({ exit_code: 0, stderr: '', stdout: JSON.stringify({
+      tool: 'apply_edits',
+      envelope: { version: 'rwa-edit/1', edits: [{ find: '<p>bridge intro</p>', replace: '<p>bridge intro!</p>' }] },
+    }) }) };
+  };
+  await window.modify('punctuate the intro');
+  await settle();
+  window.sessionStorage.setItem('rwa_backend', 'openrouter');
+  check('C5a bridge prompt carries the token, not the bytes',
+    decodedPrompt && decodedPrompt.includes('rwa-asset:') && !decodedPrompt.includes('data:image/'));
+  const doc = await readStoreSelf('rwa_doc');
+  check('C5b bridge commit expands back to real bytes',
+    doc.includes('<p>bridge intro!</p>') && doc.includes(URI_A) && !doc.includes('rwa-asset:'));
+}
+
+// ─── Block D: anchored /-commands on an image block ─────────────────
+// WHY: clicking an image anchors the lens on its <figure>; "make this
+// smaller" must ship a 60-byte token to the model, not 600 KB of base64 —
+// and the single-shot response (token form) must expand on commit.
+
+{
+  console.log('-- D1/D2: anchored command — virtual prompt, real commit --');
+  const URI_BIGISH = 'data:image/jpeg;base64,' + 'QUJD'.repeat(50000); // ~200 KB
+  const real = '<article>\n<h1>Head</h1>\n<p>before</p>\n'
+    + '<figure><img src="' + URI_BIGISH + '" alt="big"></figure>\n<p>after</p>\n</article>';
+  await window.__setDocForTest(real);
+  const map = window.getSourceMap();
+  const figEntry = map.find(e => e.tag === 'FIGURE');
+  check('D1a figure is anchorable (sourceMap entry exists)', !!figEntry);
+  const v = window.__virtualizeImages(real);
+  const token = [...v.assets.keys()][0];
+  const bodies = [];
+  fetchHandler = async (url, init) => {
+    bodies.push(init.body);
+    return { ok: true, status: 200, json: async () => ({ choices: [{ message: { role: 'assistant',
+      content: '<figure class="small"><img src="' + token + '" alt="big"></figure>' } }] }) };
+  };
+  await window.runAnchoredCommand(figEntry, 'make this smaller');
+  await settle();
+  check('D1b anchored prompt carries the token', bodies.length >= 1 && bodies[0].includes('rwa-asset:'));
+  check('D1c anchored prompt carries NO image bytes', !bodies[0].includes('data:image/'));
+  const doc = await readStoreSelf('rwa_doc');
+  check('D2a committed doc has the styled figure with REAL bytes',
+    doc.includes('<figure class="small"><img src="' + URI_BIGISH + '" alt="big"></figure>') && !doc.includes('rwa-asset:'));
+}
+
+{
+  console.log('-- D3: anchored response with an invented token fails clean --');
+  const real = '<article>\n<h1>H</h1>\n<figure><img src="' + URI_A + '" alt="x"></figure>\n</article>';
+  await window.__setDocForTest(real);
+  const map = window.getSourceMap();
+  const figEntry = map.find(e => e.tag === 'FIGURE');
+  let calls = 0;
+  fetchHandler = async () => {
+    calls++;
+    return { ok: true, status: 200, json: async () => ({ choices: [{ message: { role: 'assistant',
+      content: '<figure><img src="rwa-asset:0badf00d" alt="ghost"></figure>' } }] }) };
+  };
+  await window.runAnchoredCommand(figEntry, 'swap the image');
+  await settle();
+  check('D3a retried to exhaustion (3 attempts)', calls === 3);
+  check('D3b doc unchanged after exhaustion', (await readStoreSelf('rwa_doc')) === real);
 }
 
 // ─── tail ───────────────────────────────────────────────────────────

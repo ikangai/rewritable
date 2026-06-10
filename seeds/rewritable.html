@@ -1627,6 +1627,9 @@ Stable block identifiers (data-rwa-id):
   • Preserve these attributes verbatim when editing. If you replace the surrounding text of a block, copy the existing data-rwa-id into your replace string. They are the stable name of that block; URLs link to them.
   • Never invent new data-rwa-id values. The runtime backfills any block you produce without one. Inventing duplicates would break fragment links to existing blocks.
 
+Embedded images (rwa-asset tokens):
+  • Image src values appear as opaque \`rwa-asset:<id>\` tokens — stable identifiers for images embedded in the file. Move, copy, or delete the whole <img>/<figure> tag freely (quote the token verbatim in find/replace), but never edit a token, invent a new one, or replace one with a URL. An unknown token is rejected as unknown_asset_reference.
+
 Always call a tool. Respond with text-only only when you genuinely need to ask for clarification before editing.`;
 // rwa:extract:end SYSTEM_PROMPT_RULES
 
@@ -4039,8 +4042,16 @@ async function runAnchoredCommand(anchor, instruction) {
   setStatus('run', '⌘K running');
   setLensProgress('thinking', 'Thinking…');
   try {
+    // images-v1: anchored prompts and finds are slices of the REAL doc
+    // (currentDocCache), so virtualize the slices with one shared map and run
+    // the apply on the matching virtual doc — the model sees tokens, the
+    // commit expands them, and an invented token rejects instead of landing.
+    const vimg = virtualizeImages(canonLF(await getDoc()));
     const { target, context } = buildAnchoredContextWindow(anchor);
-    const basePrompt = buildAnchoredPrompt(target, context, instruction);
+    const basePrompt = buildAnchoredPrompt(
+      virtualizeWithMap(target, vimg.assets),
+      virtualizeWithMap(context, vimg.assets),
+      instruction);
     let attempts = 0;
     let lastFailure = null;
     while (attempts < 3) {
@@ -4056,8 +4067,8 @@ async function runAnchoredCommand(anchor, instruction) {
       const envelope = {
         version: 'rwa-edit/1',
         edits: [{
-          find: find.find,
-          replace: find.replacePrefix + response + find.replaceSuffix,
+          find: virtualizeWithMap(find.find, vimg.assets),
+          replace: virtualizeWithMap(find.replacePrefix, vimg.assets) + response + virtualizeWithMap(find.replaceSuffix, vimg.assets),
           reason: 'lens: anchored slash command',
         }],
         reason: `lens: ${instruction}`,
@@ -4070,7 +4081,7 @@ async function runAnchoredCommand(anchor, instruction) {
           actor: getActiveActor(),   // audit R2
         };
         setLensProgress('thinking', 'Applying edits…');
-        const result = await applyEdits(envelope, await getDoc(), lensMeta);
+        const result = await applyEdits(envelope, vimg.doc, lensMeta, { assets: vimg.assets, orphans: vimg.orphans });
         renderDoc(result);
         setDirty(true);
         await rwaBumpDirtyCount().catch(() => {});
@@ -5908,7 +5919,15 @@ async function modify(instr, lensMeta = null, opts = null) {
   try {
     // compose callers (applySkinL1) may pass an explicit baseDoc — the deterministically
     // de-skinned base the agent should restyle, so a re-skin starts clean. Defaults to getDoc().
-    const cur = canonLF((opts && opts.baseDoc != null) ? opts.baseDoc : await getDoc());
+    const realCur = canonLF((opts && opts.baseDoc != null) ? opts.baseDoc : await getDoc());
+    // images-v1: the agent never sees image bytes. Virtualize ONCE per call;
+    // a compose commitBase is scanned into the SAME map so every string in
+    // this call speaks one token vocabulary. `cur` (and everything derived
+    // from it — prompt, finds, compose output) is the VIRTUAL doc; the apply
+    // core expands back to real bytes at commit (opts.assets).
+    const vimg = virtualizeImages(realCur);
+    if (opts && opts.commitBase != null) virtualizeImages(canonLF(opts.commitBase), vimg.assets);
+    const cur = vimg.doc;
     const frozenZones = extractFrozenZones(cur);
 
     const messages = [
@@ -5987,21 +6006,21 @@ async function modify(instr, lensMeta = null, opts = null) {
       // theme block and commit ONCE after the loop. replace_document is refused
       // here (it would let the agent rewrite the whole doc, bypassing the
       // additive / computeShape guard); the retry steers it back to apply_edits.
-      const editOpts = (opts && opts.compose) ? { noCommit: true } : null;
+      const editOpts = { noCommit: !!(opts && opts.compose), assets: vimg.assets, orphans: vimg.orphans };
       try {
         if (fnName === 'apply_dsl_plan') {
           const compiled = compileDslPlan(envelope, cur);
           if (compiled.tool === 'apply_edits') newDoc = await applyEdits(compiled.envelope, cur, lensMeta, editOpts);
           else if (compiled.tool === 'replace_document') {
-            if (editOpts) throw new RwaEditError('compose_requires_apply_edits');
-            newDoc = await replaceDocument(compiled.envelope, cur, lensMeta);
+            if (editOpts.noCommit) throw new RwaEditError('compose_requires_apply_edits');
+            newDoc = await replaceDocument(compiled.envelope, cur, lensMeta, null, editOpts);
           }
           else throw new RwaEditError('unknown_tool', null, { name: compiled.tool });
         }
         else if (fnName === 'apply_edits') newDoc = await applyEdits(envelope, cur, lensMeta, editOpts);
         else if (fnName === 'replace_document') {
-          if (editOpts) throw new RwaEditError('compose_requires_apply_edits');
-          newDoc = await replaceDocument(envelope, cur, lensMeta);
+          if (editOpts.noCommit) throw new RwaEditError('compose_requires_apply_edits');
+          newDoc = await replaceDocument(envelope, cur, lensMeta, null, editOpts);
         }
         else throw new RwaEditError('unknown_tool', null, { name: fnName });
       } catch (err) {
@@ -6026,9 +6045,13 @@ async function modify(instr, lensMeta = null, opts = null) {
       const finalDoc = opts.compose.transform(base, cur);
       // commitBase = the ORIGINAL (pre-deskin) doc, so one ⌘Z reverts to the prior
       // skin rather than to the deskinned base. Defaults to cur when not overridden.
-      const commitBase = (opts.commitBase != null) ? canonLF(opts.commitBase) : cur;
+      // images-v1: base/finalDoc are VIRTUAL (noCommit returned the token form), so
+      // commitBase joins them in token form via the shared map (seeded above) and
+      // the final commit expands everything back through opts.assets.
+      const commitBase = (opts.commitBase != null) ? virtualizeWithMap(canonLF(opts.commitBase), vimg.assets) : cur;
       newDoc = await replaceDocument(
-        { version: 'rwa-edit/1', doc: finalDoc, reason: opts.compose.reason }, commitBase, lensMeta);
+        { version: 'rwa-edit/1', doc: finalDoc, reason: opts.compose.reason }, commitBase, lensMeta,
+        null, { assets: vimg.assets, orphans: vimg.orphans });
     }
 
     if (newDoc !== null) {
@@ -6088,7 +6111,11 @@ async function modifyViaBridge(instr, lensMeta = null) {
   setLensProgress('thinking', 'Asking claude -p…');
 
   try {
-    const cur = canonLF(await getDoc());
+    // images-v1: bridge speaks the same token vocabulary as modify() — the
+    // claude -p prompt gets the virtual doc, the apply below expands (vOpts).
+    const vimg = virtualizeImages(canonLF(await getDoc()));
+    const cur = vimg.doc;
+    const vOpts = { assets: vimg.assets, orphans: vimg.orphans };
     const frozenZones = extractFrozenZones(cur);
 
     const prompt = SYSTEM_PROMPT + '\n\n' + buildUserPrompt(instr, cur, frozenZones) +
@@ -6131,13 +6158,13 @@ async function modifyViaBridge(instr, lensMeta = null) {
     let newDoc = null;
     if (parsed.tool === 'apply_dsl_plan') {
       const compiled = compileDslPlan(parsed.envelope, cur);
-      if (compiled.tool === 'apply_edits') newDoc = await applyEdits(compiled.envelope, cur, lensMeta);
-      else if (compiled.tool === 'replace_document') newDoc = await replaceDocument(compiled.envelope, cur, lensMeta);
+      if (compiled.tool === 'apply_edits') newDoc = await applyEdits(compiled.envelope, cur, lensMeta, vOpts);
+      else if (compiled.tool === 'replace_document') newDoc = await replaceDocument(compiled.envelope, cur, lensMeta, null, vOpts);
       else throw new RwaEditError('unknown_tool', null, { name: compiled.tool });
     } else if (parsed.tool === 'apply_edits') {
-      newDoc = await applyEdits(parsed.envelope, cur, lensMeta);
+      newDoc = await applyEdits(parsed.envelope, cur, lensMeta, vOpts);
     } else if (parsed.tool === 'replace_document') {
-      newDoc = await replaceDocument(parsed.envelope, cur, lensMeta);
+      newDoc = await replaceDocument(parsed.envelope, cur, lensMeta, null, vOpts);
     } else {
       throw new RwaEditError('unknown_tool', null, { name: parsed.tool });
     }
