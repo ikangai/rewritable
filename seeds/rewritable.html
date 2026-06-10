@@ -145,6 +145,11 @@ body{font-family:var(--font-ui);background:var(--bg);color:var(--text);min-heigh
 .rwa-lens-prog-text{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 @keyframes rwa-lens-spin{to{transform:rotate(360deg);}}
 .rwa-lens-toast{position:fixed;bottom:140px;left:50%;transform:translateX(-50%);background:var(--gray-900);color:var(--white);padding:10px 16px;border-radius:8px;z-index:11;font-size:13px;font-family:var(--font-ui);box-shadow:0 8px 24px rgba(0,0,0,0.12);}
+/* images-v1: drop-position indicator (box-shadow, no layout shift) + hover ✕ chip */
+#rwa-doc-mount .rwa-drop-before{box-shadow:0 -3px 0 0 var(--blue);}
+#rwa-doc-mount .rwa-drop-after{box-shadow:0 3px 0 0 var(--blue);}
+#rwa-img-chip{position:absolute;z-index:60;width:24px;height:24px;border-radius:12px;border:1px solid var(--gray-200);background:var(--white);color:var(--gray-900);font-size:12px;line-height:1;cursor:pointer;font-family:var(--font-ui);box-shadow:0 1px 4px rgba(0,0,0,0.12);padding:0;}
+#rwa-img-chip:hover{background:var(--gray-50);}
 #rwa-private-mode-banner{position:fixed;inset:0;background:rgba(255,255,255,0.98);z-index:9999;display:flex;align-items:center;justify-content:center;padding:24px;font-family:var(--font-ui);}
 #rwa-private-mode-banner .rwa-pm-card{max-width:480px;text-align:center;padding:32px;border:1px solid var(--gray-200);border-radius:var(--radius);background:var(--white);box-shadow:0 8px 32px rgba(0,0,0,0.08);}
 #rwa-private-mode-banner h2{font-size:18px;font-weight:600;color:var(--gray-900);margin:0 0 12px;}
@@ -995,6 +1000,24 @@ function renderDoc(html) {
   // active view (byte-offset resolution is undefined there).
   m.removeEventListener('dblclick', handleMountDblClick);
   if (!activeView) m.addEventListener('dblclick', handleMountDblClick);
+  // images-v1: drag-drop insert + hover-✕ chip. Same remove-then-add
+  // discipline; inert under a render mode (byte-offset resolution undefined).
+  // The chip/drop-mark reference DOM the innerHTML reset just destroyed.
+  if (typeof clearDropMark === 'function') clearDropMark();
+  const imgChip = document.getElementById('rwa-img-chip');
+  if (imgChip) imgChip.hidden = true;
+  m.removeEventListener('dragover', handleMountDragOver);
+  m.removeEventListener('dragleave', handleMountDragLeave);
+  m.removeEventListener('drop', handleMountDrop);
+  m.removeEventListener('mouseover', handleMountImgOver);
+  m.removeEventListener('mouseout', handleMountImgOut);
+  if (!activeView) {
+    m.addEventListener('dragover', handleMountDragOver);
+    m.addEventListener('dragleave', handleMountDragLeave);
+    m.addEventListener('drop', handleMountDrop);
+    m.addEventListener('mouseover', handleMountImgOver);
+    m.addEventListener('mouseout', handleMountImgOut);
+  }
   // §5.10: post-mount provider seam. render() stays a pure string->string slot;
   // mounted() is the impure slot that restores transient UI state (slide index)
   // after innerHTML + script-rerun + form-restore.
@@ -3040,6 +3063,225 @@ if (typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent)) {
   window.__ingestImageFile = ingestImageFile;
 }
 
+// ─── Image insert surfaces (images-v1) ────────────────────────────────
+// Three doors, one path: drag-drop onto the doc, paste a screenshot, /image
+// in the lens. Each ingests (above), then commits a <figure> through the
+// SAME non-agent path every edit-surface uses (runtimeApplyEnvelope → R5
+// queue → commitCore) — token-form envelope + assets map, one ⌘Z frame,
+// honest actor attribution (user:image-drop / -paste / -picker / -delete).
+// No model call anywhere here (Rule 5).
+
+// Nearest anchorable block for a pointer event; null → caller appends at EOF.
+// Frozen/locked regions are never split — same exclusions as click-to-anchor.
+function findImageDropTarget(e) {
+  const m = document.getElementById('rwa-doc-mount');
+  let el = e.target instanceof Element ? e.target : null;
+  if (!el || !m || !m.contains(el)) return null;
+  if (el.closest('[data-rwa-frozen]') || el.closest('.rwa-locked')) return null;
+  while (el && el !== m && !ANCHORABLE_TAGS.has(el.tagName)) el = el.parentElement;
+  if (!el || el === m) return null;
+  for (const entry of (sourceMap || [])) {
+    if (liveNodeForEntry(entry) === el) {
+      const r = el.getBoundingClientRect();
+      return { entry, el, before: e.clientY < r.top + r.height / 2 };
+    }
+  }
+  return null;
+}
+
+// Build + commit the insert envelope. target = {entry, before} | null (EOF).
+// Returns the asset token on success, null when refused (budget).
+async function insertImageAt(ingested, target, actor) {
+  const cur = canonLF(await getDoc());
+  const projected = cur.length + ingested.dataUri.length;
+  if (projected > RWA_IMG.FILE_STOP) {
+    showAffordance('not added — container would exceed ' + Math.round(RWA_IMG.FILE_STOP / (1024 * 1024)) + ' MB');
+    return null;
+  }
+  const assets = new Map();
+  const token = registerImageAsset(assets, ingested.dataUri);
+  const figure = buildImageFigure(token, rwaFileStem(ingested.name));
+  let envelope = null;
+  if (target && target.entry) {
+    const f = resolveAnchorFind(target.entry);
+    if (f) {
+      const slice = f.find.slice(f.replacePrefix.length, f.find.length - f.replaceSuffix.length);
+      const replace = target.before
+        ? f.replacePrefix + figure + '\n' + slice + f.replaceSuffix
+        : f.replacePrefix + slice + '\n' + figure + f.replaceSuffix;
+      envelope = { version: 'rwa-edit/1', edits: [{ find: f.find, replace, reason: 'image: insert at block' }], reason: 'image insert' };
+    }
+  }
+  if (!envelope) {
+    const eof = resolveEofAnchor();
+    envelope = eof
+      ? { version: 'rwa-edit/1', edits: [{ find: eof.find, replace: eof.find + '\n' + figure, reason: 'image: append' }], reason: 'image insert' }
+      : { version: 'rwa-edit/1', doc: figure, reason: 'image into an empty document' };
+  }
+  await runtimeApplyEnvelope(envelope, { surface: 'image:insert', instruction: 'image: ' + ingested.name, actor, assets });
+  const kb = Math.round(ingested.bytes / 1024);
+  let note = 'added ' + ingested.name + ' — ' + kb + ' KB'
+    + (ingested.resizedFrom ? ' (resized from ' + Math.round(ingested.resizedFrom / 1024) + ' KB)' : '');
+  if (projected > RWA_IMG.FILE_WARN) note += ' · container is ' + (projected / (1024 * 1024)).toFixed(1) + ' MB';
+  showAffordance(note);
+  return token;
+}
+
+// Shared ingest-then-insert for a FileList; errors surface per-file, the rest
+// continue. After the first insert the drop entry is stale (renderDoc rebuilt
+// the map), so later files of a multi-drop append at EOF — acceptable v1.
+async function insertImageFiles(files, target, actor) {
+  for (const f of files) {
+    try {
+      const ingested = await ingestImageFile(f);
+      await insertImageAt(ingested, target, actor);
+    } catch (err) {
+      showAffordance('image: ' + ((err && err.message) || err));
+    }
+    target = null;
+  }
+}
+
+// ── drag-drop ──
+let rwaDropMark = null;
+function clearDropMark() {
+  if (rwaDropMark) rwaDropMark.classList.remove('rwa-drop-before', 'rwa-drop-after');
+  rwaDropMark = null;
+}
+function dragHasFiles(e) {
+  const t = e.dataTransfer;
+  if (!t) return false;
+  if (Array.from(t.items || []).some(i => i.kind === 'file')) return true;
+  return Array.from(t.types || []).includes('Files');
+}
+function handleMountDragOver(e) {
+  if (modifyMutex || !dragHasFiles(e)) return;
+  e.preventDefault();
+  if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+  clearDropMark();
+  const target = findImageDropTarget(e);
+  if (target) {
+    target.el.classList.add(target.before ? 'rwa-drop-before' : 'rwa-drop-after');
+    rwaDropMark = target.el;
+  }
+}
+function handleMountDragLeave(e) {
+  const m = document.getElementById('rwa-doc-mount');
+  if (!m || !e.relatedTarget || !m.contains(e.relatedTarget)) clearDropMark();
+}
+function handleMountDrop(e) {
+  if (!dragHasFiles(e)) return;
+  e.preventDefault();
+  const target = findImageDropTarget(e);
+  clearDropMark();
+  const files = Array.from((e.dataTransfer && e.dataTransfer.files) || []).filter(f => /^image\//.test(f.type || ''));
+  if (files.length === 0) {
+    showAffordance('only image files can be dropped here');
+    return;
+  }
+  insertImageFiles(files, target, 'user:image-drop');
+}
+
+// ── paste (a screenshot is the #1 case) ──
+function handleDocumentImagePaste(e) {
+  if (activeView) return;
+  if (typeof inlineEdit !== 'undefined' && inlineEdit) return;   // hand-edit owns its paste
+  const files = Array.from((e.clipboardData && e.clipboardData.files) || []).filter(f => /^image\//.test(f.type || ''));
+  if (files.length === 0) return;
+  // Pasting an image into a chrome text field (settings, etc.) is not an
+  // insert — except the lens input, where the obvious intent IS insertion.
+  const t = e.target instanceof Element ? e.target : null;
+  if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA') && t.id !== 'rwa-lens-input') return;
+  e.preventDefault();
+  const target = lensState && lensState.anchor ? { entry: lensState.anchor, before: false } : null;
+  insertImageFiles(files, target, 'user:image-paste');
+}
+document.addEventListener('paste', handleDocumentImagePaste);
+
+// ── /image picker ──
+function openImagePicker() {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = 'image/*';
+  input.multiple = true;
+  input.style.display = 'none';
+  document.body.appendChild(input);
+  input.addEventListener('change', () => {
+    const files = Array.from(input.files || []);
+    input.remove();
+    const target = lensState && lensState.anchor ? { entry: lensState.anchor, before: false } : null;
+    insertImageFiles(files, target, 'user:image-picker');
+  });
+  input.click();
+}
+
+// ── hover ✕ chip (figure-wrapped images only — what the inserters create) ──
+let rwaImgChipTarget = null;
+function ensureImgChip() {
+  let chip = document.getElementById('rwa-img-chip');
+  if (chip) return chip;
+  chip = document.createElement('button');
+  chip.id = 'rwa-img-chip';
+  chip.type = 'button';
+  chip.textContent = '✕';
+  chip.title = 'Remove image (⌘Z to undo)';
+  chip.hidden = true;
+  chip.addEventListener('click', onImgChipClick);
+  document.body.appendChild(chip);
+  return chip;
+}
+function handleMountImgOver(e) {
+  if (activeView || modifyMutex) return;
+  const img = e.target instanceof Element ? e.target.closest('img') : null;
+  const m = document.getElementById('rwa-doc-mount');
+  if (!img || !m || !m.contains(img)) return;
+  if (img.closest('[data-rwa-frozen]') || img.closest('.rwa-locked')) return;
+  const fig = img.closest('figure');
+  if (!fig) return;
+  const chip = ensureImgChip();
+  const r = img.getBoundingClientRect();
+  chip.style.top = (window.scrollY + r.top + 6) + 'px';
+  chip.style.left = (window.scrollX + r.right - 30) + 'px';
+  chip.hidden = false;
+  rwaImgChipTarget = fig;
+}
+function handleMountImgOut(e) {
+  const chip = document.getElementById('rwa-img-chip');
+  if (!chip || chip.hidden) return;
+  const to = e.relatedTarget;
+  if (to && (to === chip || (rwaImgChipTarget && rwaImgChipTarget.contains(to)))) return;
+  chip.hidden = true;
+}
+async function onImgChipClick() {
+  const fig = rwaImgChipTarget;
+  const chip = document.getElementById('rwa-img-chip');
+  if (chip) chip.hidden = true;
+  rwaImgChipTarget = null;
+  if (!fig) return;
+  let entry = null;
+  for (const en of (sourceMap || [])) {
+    if (liveNodeForEntry(en) === fig) { entry = en; break; }
+  }
+  const f = entry && resolveAnchorFind(entry);
+  if (!f) { showAffordance('could not resolve the image block'); return; }
+  // Drop one adjoining newline with the block so no blank line is left behind.
+  let pre = f.replacePrefix, suf = f.replaceSuffix;
+  if (pre.endsWith('\n')) pre = pre.slice(0, -1);
+  else if (suf.startsWith('\n')) suf = suf.slice(1);
+  const envelope = { version: 'rwa-edit/1', edits: [{ find: f.find, replace: pre + suf, reason: 'image: remove' }], reason: 'image remove' };
+  try {
+    await runtimeApplyEnvelope(envelope, { surface: 'image:delete', instruction: 'remove image', actor: 'user:image-delete' });
+    showAffordance('image removed — ⌘Z to undo');
+  } catch (err) {
+    showAffordance('image: ' + ((err && err.message) || err));
+  }
+}
+if (typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent)) {
+  window.__insertImageAt = insertImageAt;
+  window.__findImageDropTarget = findImageDropTarget;
+  window.__openImagePicker = openImagePicker;
+}
+
   // ─── Skin runtime: deterministic apply / reset (kepler) ───────────────
   // A skin is ONE <style data-rwa-skin> block inside the document body, so it
   // commits with the doc, ships in the exported file, and ⌘Z reverts it.
@@ -3898,6 +4140,10 @@ async function submitLens(text) {
       } else {
         await applySkinL1(arg);
       }
+    } else if (/^image$/.test(instruction.trim())) {
+      // /image opens the native file picker — the discoverable sibling of
+      // drag-drop and paste (anchored → the insert lands after the anchor).
+      (typeof window.__rwaOpenImagePicker === 'function' ? window.__rwaOpenImagePicker : openImagePicker)();
     } else if (anchored) {
       await runAnchoredCommand(lensState.anchor, instruction);
     } else {

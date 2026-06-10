@@ -506,6 +506,124 @@ function toolCallResponse(envelope, name = 'apply_edits') {
   check('F4b oversized GIF passthrough refuses loud', /too large/.test(msg));
 }
 
+// ─── Block G: insert surfaces — drop, paste, /image, hover ✕ ────────
+// WHY: this is the "pleasure" contract: drop → figure lands at the block
+// boundary as ONE undoable non-agent commit with honest attribution.
+
+const FAKE_URI = 'data:image/png;base64,QUJDREVG';
+window.__rwaIngestImage = async (f) => ({ dataUri: FAKE_URI, bytes: 6, name: (f && f.name) || 'x.png', resizedFrom: null });
+const fakeFile = { type: 'image/png', name: 'team.png', size: 6 };
+function dropEventOn(el, dt) {
+  const ev = new window.Event('drop', { bubbles: true, cancelable: true });
+  ev.dataTransfer = dt || { files: [fakeFile], items: [{ kind: 'file', type: 'image/png' }], types: ['Files'] };
+  el.dispatchEvent(ev);
+}
+
+{
+  console.log('-- G1: drop on a block inserts a figure after it (one commit) --');
+  const real = '<article>\n<p data-rwa-id="g1a">first</p>\n<p data-rwa-id="g1b">second</p>\n</article>';
+  await window.__setDocForTest(real);
+  const p2 = document.querySelector('[data-rwa-id="g1b"]');
+  dropEventOn(p2);
+  await settle(); await settle();
+  const doc = await readStoreSelf('rwa_doc');
+  check('G1a figure landed after the drop block, real URI',
+    new RegExp('second</p>\\n<figure[^>]*><img src="' + FAKE_URI + '" alt="team"></figure>').test(doc));
+  const hist = (await readStoreSelf('rwa_hist'))[0];
+  check('G1b attributed user:image-drop / image:insert', hist.actor === 'user:image-drop' && hist.surface === 'image:insert');
+  const undoArr = await readStoreSelf('rwa_undo');
+  check('G1c one undoable frame restores the pre-drop doc', undoArr[undoArr.length - 1] === real);
+}
+
+{
+  console.log('-- G2: before/after placement via insertImageAt --');
+  const real = '<article>\n<p data-rwa-id="g2a">alpha</p>\n<p data-rwa-id="g2b">beta</p>\n</article>';
+  await window.__setDocForTest(real);
+  const map = window.getSourceMap();
+  const entry = map.find(e => (e.tag === 'P') && /alpha/.test(real.slice(e.start, e.end)));
+  await window.__insertImageAt({ dataUri: FAKE_URI, bytes: 6, name: 'logo.png', resizedFrom: null }, { entry, before: true }, 'user:image-drop');
+  const doc = await readStoreSelf('rwa_doc');
+  check('G2a before:true puts the figure ABOVE the block',
+    new RegExp('<figure[^>]*><img src="' + FAKE_URI + '" alt="logo"></figure>\\n<p data-rwa-id="g2a">alpha</p>').test(doc));
+}
+
+{
+  console.log('-- G3: paste with an image file appends (no anchor) --');
+  const real = '<article>\n<p data-rwa-id="g3a">prose</p>\n</article>';
+  await window.__setDocForTest(real);
+  const ev = new window.Event('paste', { bubbles: true, cancelable: true });
+  ev.clipboardData = { files: [{ type: 'image/png', name: 'shot.png', size: 6 }] };
+  document.dispatchEvent(ev);
+  await settle(); await settle();
+  const doc = await readStoreSelf('rwa_doc');
+  check('G3a pasted image appended after the last block',
+    new RegExp('prose</p>\\n<figure[^>]*><img src="' + FAKE_URI + '" alt="shot"></figure>').test(doc));
+  check('G3b attributed user:image-paste', (await readStoreSelf('rwa_hist'))[0].actor === 'user:image-paste');
+}
+
+{
+  console.log('-- G4: /image routes to the picker --');
+  let opened = 0;
+  window.__rwaOpenImagePicker = () => { opened++; };
+  await window.submitLens('/image');
+  check('G4a submitLens(/image) opens the picker', opened === 1);
+  delete window.__rwaOpenImagePicker;
+}
+
+{
+  console.log('-- G5: hover ✕ chip deletes the figure --');
+  const real = '<article>\n<p data-rwa-id="g5a">keep me</p>\n<figure data-rwa-id="g5f"><img src="' + URI_A + '" alt="bye"></figure>\n</article>';
+  await window.__setDocForTest(real);
+  const img = document.querySelector('[data-rwa-id="g5f"] img');
+  img.dispatchEvent(new window.MouseEvent('mouseover', { bubbles: true }));
+  const chip = document.getElementById('rwa-img-chip');
+  check('G5a chip appears on image hover', !!chip && !chip.hidden);
+  chip.click();
+  await settle(); await settle();
+  const doc = await readStoreSelf('rwa_doc');
+  check('G5b figure removed, prose intact', !doc.includes('<figure') && doc.includes('keep me'));
+  check('G5c attributed user:image-delete', (await readStoreSelf('rwa_hist'))[0].actor === 'user:image-delete');
+  const undoArr = await readStoreSelf('rwa_undo');
+  check('G5d undo frame restores the figure', undoArr[undoArr.length - 1] === real);
+}
+
+{
+  console.log('-- G6: container budget stop refuses the insert --');
+  const real = '<article>\n<p data-rwa-id="g6a">tiny</p>\n</article>';
+  await window.__setDocForTest(real);
+  const hugeUri = 'data:image/png;base64,' + 'Q'.repeat(11 * 1024 * 1024);
+  const res = await window.__insertImageAt({ dataUri: hugeUri, bytes: hugeUri.length, name: 'huge.png', resizedFrom: null }, null, 'user:image-drop');
+  check('G6a oversized insert refused (returns null)', res === null);
+  check('G6b doc unchanged', (await readStoreSelf('rwa_doc')) === real);
+}
+
+{
+  console.log('-- G7: drop targeting a frozen block falls back to EOF append --');
+  const real = '<article>\n<div data-rwa-frozen="hdr"><p>frozen para</p></div>\n<p data-rwa-id="g7a">open</p>\n</article>';
+  await window.__setDocForTest(real);
+  const frozenP = document.querySelector('[data-rwa-frozen] p');
+  dropEventOn(frozenP);
+  await settle(); await settle();
+  const doc = await readStoreSelf('rwa_doc');
+  check('G7a frozen zone untouched', doc.includes('<div data-rwa-frozen="hdr"><p>frozen para</p></div>'));
+  check('G7b figure appended at EOF instead',
+    new RegExp('open</p>\\n<figure[^>]*><img src="' + FAKE_URI + '"').test(doc));
+}
+
+{
+  console.log('-- G8: rapid double insert — R5 queue lands both --');
+  const real = '<article>\n<p data-rwa-id="g8a">base</p>\n</article>';
+  await window.__setDocForTest(real);
+  const ing = (n) => ({ dataUri: FAKE_URI, bytes: 6, name: n, resizedFrom: null });
+  await Promise.all([
+    window.__insertImageAt(ing('one.png'), null, 'user:image-drop'),
+    window.__insertImageAt(ing('two.png'), null, 'user:image-drop'),
+  ]);
+  const doc = await readStoreSelf('rwa_doc');
+  check('G8a both inserts landed (serialized, none lost)',
+    doc.includes('alt="one"') && doc.includes('alt="two"'));
+}
+
 // ─── tail ───────────────────────────────────────────────────────────
 await settle();
 console.log(`\n${pass} passed, ${fail} failed`);
