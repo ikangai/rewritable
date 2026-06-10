@@ -2283,11 +2283,14 @@ window.getCurrentDocCache = () => currentDocCache;
 let lockedRanges = [];
 function lockedRangesIn(doc) {
   if (!doc) return [];
-  const opening = /<([a-zA-Z][a-zA-Z0-9]*)\b[^>]*\bclass\s*=\s*("([^"]*)"|'([^']*)')[^>]*>/g;
+  // Quoted ("…" / '…') OR unquoted (class=rwa-locked) attribute values — the
+  // browser's classList enforces the lock regardless of quoting, so the
+  // text-scan must too, else an unquoted class=rwa-locked silently voids it.
+  const opening = /<([a-zA-Z][a-zA-Z0-9]*)\b[^>]*\bclass\s*=\s*("([^"]*)"|'([^']*)'|([^\s"'>]+))[^>]*>/g;
   const out = [];
   let m;
   while ((m = opening.exec(doc)) !== null) {
-    const cls = (m[3] || m[4] || '');
+    const cls = (m[3] || m[4] || m[5] || '');
     if (!/\brwa-locked\b/.test(cls)) continue;
     const tag = m[1];
     const start = m.index;

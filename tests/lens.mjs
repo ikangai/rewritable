@@ -707,6 +707,19 @@ console.log('\n== Test L8.1: source-position map flags locked entries ==');
     doc.slice(lockedRanges[0][0], lockedRanges[0][1]).includes('Locked.'));
 }
 
+console.log('\n== Test L8.1b: an UNQUOTED class=rwa-locked is still detected ==');
+{
+  // The browser's classList enforces the lock regardless of quoting; the
+  // source-position lock scan must match, else an unquoted attribute silently
+  // voids the lock. (lockedRangesIn quoted+unquoted alternation.)
+  const doc = '<p>Free.</p>\n<section class=rwa-locked><p>Locked.</p></section>';
+  await window.__setDocForTest(doc);
+  const lockedRanges = window.getLockedRanges();
+  check('unquoted class=rwa-locked yields one locked range', lockedRanges.length === 1);
+  check('unquoted locked range covers the section',
+    lockedRanges.length === 1 && doc.slice(lockedRanges[0][0], lockedRanges[0][1]).includes('Locked.'));
+}
+
 console.log('\n== Test L8.2: clicking a locked block does not anchor ==');
 {
   await window.__setDocForTest('<section class="rwa-locked"><p>Legal.</p></section>\n<p>Free.</p>');

@@ -373,3 +373,95 @@ test('attribute-form: a longer attribute name (data-rwa-frozen-note) is not froz
   const doc = '<article><div data-rwa-frozen-note="x"><p>editable</p></div></article>';
   assert.match(applyEdits(doc, [{ find: 'editable', replace: 'edited' }]), /edited/);
 });
+
+// ─── deferred scope-downs (2026-06-10): seed-faithful caps + canon + surrogate ──
+// These close documented CLI-vs-seed gaps tracked in cli/TODO.md. Each mirrors a
+// seed guard in seeds/rewritable.html applyEdits, so a file edited via the CLI
+// behaves identically to one edited in the browser.
+
+test('cap: a replace exceeding MAX_REPLACE (8KB) throws replace_too_large', () => {
+  const doc = '<article><p>anchor</p></article>';
+  const big = 'x'.repeat(8 * 1024 + 1);
+  assert.throws(
+    () => applyEdits(doc, [{ find: 'anchor', replace: big }]),
+    err => err.code === 'replace_too_large' && err.editIndex === 0,
+  );
+});
+
+test('cap: a replace exactly at MAX_REPLACE (8KB) is allowed', () => {
+  const doc = '<article><p>anchor</p></article>';
+  const atCap = 'x'.repeat(8 * 1024);
+  assert.match(applyEdits(doc, [{ find: 'anchor', replace: atCap }]), /xxxx/);
+});
+
+test('cap: a result exceeding MAX_DOC (1MB) throws target_size_exceeded', () => {
+  // Base doc near the cap; a modest replace pushes the whole doc over 1MB.
+  const filler = 'y'.repeat(1024 * 1024 - 40);
+  const doc = '<article><p>anchor</p>' + filler + '</article>';
+  const chunk = 'z'.repeat(4096); // under MAX_REPLACE, but tips the doc past MAX_DOC
+  assert.throws(
+    () => applyEdits(doc, [{ find: 'anchor', replace: 'anchor' + chunk }]),
+    err => err.code === 'target_size_exceeded',
+  );
+});
+
+test('canonLF: a CRLF document matches an LF-only find (browser parity)', () => {
+  const doc = '<article>\r\n<p>line one</p>\r\n<p>line two</p>\r\n</article>';
+  // Anchor written with LF only — the seed canonicalizes the doc to LF before
+  // matching, so this must hit. Pre-fix the CLI would throw find_not_found.
+  const out = applyEdits(doc, [{ find: '<p>line one</p>\n<p>line two</p>', replace: '<p>merged</p>' }]);
+  assert.match(out, /<p>merged<\/p>/);
+  assert.ok(!out.includes('\r'), 'output is LF-canonical');
+});
+
+test('canonLF: a CRLF-containing find anchors against an LF doc', () => {
+  const doc = '<article>\n<p>a</p>\n<p>b</p>\n</article>';
+  const out = applyEdits(doc, [{ find: '<p>a</p>\r\n<p>b</p>', replace: '<p>c</p>' }]);
+  assert.match(out, /<p>c<\/p>/);
+});
+
+test('surrogate: a lone surrogate in replace throws malformed_envelope', () => {
+  const doc = '<article><p>anchor</p></article>';
+  assert.throws(
+    () => applyEdits(doc, [{ find: 'anchor', replace: 'bad \uD800 surrogate' }]),
+    err => err.code === 'malformed_envelope' && err.context && err.context.reason === 'lone_surrogate',
+  );
+});
+
+// ─── regex limit fixes: unquoted class attribute on a .rwa-locked block ──
+// Previously lockedRangesIn matched only quoted class="…"; an unquoted
+// class=rwa-locked silently voided the lock. The browser enforces via real
+// classList, so the text-scan must catch it too (fix lands in seed + CLI).
+test('lockedRangesIn detects an UNQUOTED class=rwa-locked attribute', () => {
+  const ranges = lockedRangesIn('<article><div class=rwa-locked><p>x</p></div></article>');
+  assert.equal(ranges.length, 1, 'unquoted class=rwa-locked is a lock range');
+});
+
+test('lockedRangesIn detects rwa-locked among multiple unquoted-ish classes', () => {
+  const ranges = lockedRangesIn('<article><div class="note rwa-locked pinned"><p>x</p></div></article>');
+  assert.equal(ranges.length, 1);
+});
+
+// ─── class_lock_violation on the apply_edits path (seed parity) ──────────
+// An edit whose find-range overlaps a .rwa-locked subtree must be rejected
+// (the seed rejects it; the CLI previously only guarded replace_document).
+test('apply_edits rejects an edit overlapping a .rwa-locked range', () => {
+  const doc = '<article><p>free</p><section class="rwa-locked"><p>locked text</p></section></article>';
+  assert.throws(
+    () => applyEdits(doc, [{ find: 'locked text', replace: 'tampered' }]),
+    err => err.code === 'class_lock_violation' && err.editIndex === 0,
+  );
+});
+
+test('apply_edits allows an edit OUTSIDE a .rwa-locked range', () => {
+  const doc = '<article><p>free</p><section class="rwa-locked"><p>locked text</p></section></article>';
+  assert.match(applyEdits(doc, [{ find: 'free', replace: 'edited' }]), /edited/);
+});
+
+test('apply_edits rejects an edit overlapping an UNQUOTED class=rwa-locked range', () => {
+  const doc = '<article><p>free</p><section class=rwa-locked><p>locked text</p></section></article>';
+  assert.throws(
+    () => applyEdits(doc, [{ find: 'locked text', replace: 'tampered' }]),
+    err => err.code === 'class_lock_violation',
+  );
+});

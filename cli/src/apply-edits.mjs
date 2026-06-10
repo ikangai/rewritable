@@ -55,6 +55,26 @@ export class RwaEditError extends Error {
   }
 }
 
+// Size caps — mirror of the seed's RWA_EDIT (search `MAX_REPLACE:` in
+// seeds/rewritable.html). MAX_REPLACE is the per-edit `replace` cap;
+// MAX_DOC is the whole-document cap after the batch applies. With images-v1
+// these are measured on the VIRTUAL (rwa-asset token) form when the caller
+// virtualizes — a text budget, never a pixel budget (rwa-edit-spec.md §19).
+const MAX_REPLACE = 8 * 1024;
+const MAX_DOC = 1024 * 1024;
+
+// LF canonicalization — mirror of the seed's canonLF. The seed normalizes the
+// doc AND every find/replace to LF before matching, so a CRLF document or a
+// CRLF-containing anchor behaves identically in the CLI and the browser.
+// Without this a CRLF doc + LF anchor (or vice versa) spuriously misses.
+const canonLF = (s) => (s == null ? '' : String(s).replace(/\r\n/g, '\n').replace(/\r/g, '\n'));
+
+// UTF-16 well-formedness — a lone surrogate in find/replace becomes U+FFFD on
+// UTF-8 encode (the durable file write) and silently corrupts byte-equality.
+// Mirror of the seed's isWellFormed guard. String.prototype.isWellFormed is
+// Node 22+; treat its absence as "no check available."
+const isWellFormed = (s) => typeof s !== 'string' || typeof s.isWellFormed !== 'function' || s.isWellFormed();
+
 // Plain-English, code-keyed recovery hints. Self-documenting failures: an agent
 // (or `rwa edit --json` consumer) gets one actionable line, not just a code.
 // A static lookup — never a model call (Rule 5). Keep in sync with the seed's
@@ -356,14 +376,19 @@ const VOID_ELEMENTS = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img'
 
 // Index just past the matching `</tag>` for an element opened at `from`,
 // tracking nested same-tag depth so a naive "next close" can't stop early.
-// -1 if unterminated.
+// -1 if unterminated. Mirror of the seed's findCloseTagEnd: EVERY non-close
+// open of `tag` increments depth — including a self-closing `<tag/>`, because
+// for the non-void container tags this is called with (void tags are guarded
+// before the call), HTML ignores the trailing slash and treats it as an open.
+// (A prior CLI deviation exempted `<tag/>`, diverging from the seed on
+// malformed self-closing same-tag nesting — removed for parity.)
 function matchingCloseEnd(doc, tag, from) {
   const tagRe = new RegExp('<(/?)' + tag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b[^>]*>', 'gi');
   tagRe.lastIndex = from;
   let depth = 1, t;
   while ((t = tagRe.exec(doc)) !== null) {
     if (t[1] === '/') { if (--depth === 0) return t.index + t[0].length; }
-    else if (!/\/>\s*$/.test(t[0])) depth++; // a self-closing open doesn't nest
+    else depth++;
   }
   return -1;
 }
@@ -430,11 +455,14 @@ function snapshotsEqual(a, b) {
 // KEEP IN STEP with the seed.
 export function lockedRangesIn(doc) {
   if (!doc) return [];
-  const opening = /<([a-zA-Z][a-zA-Z0-9]*)\b[^>]*\bclass\s*=\s*("([^"]*)"|'([^']*)')[^>]*>/g;
+  // Quoted ("…" / '…') OR unquoted (class=rwa-locked) attribute values — the
+  // browser's classList enforces the lock regardless of quoting, so the
+  // text-scan must too (mirror of the seed's lockedRangesIn).
+  const opening = /<([a-zA-Z][a-zA-Z0-9]*)\b[^>]*\bclass\s*=\s*("([^"]*)"|'([^']*)'|([^\s"'>]+))[^>]*>/g;
   const out = [];
   let m;
   while ((m = opening.exec(doc)) !== null) {
-    const cls = (m[3] || m[4] || '');
+    const cls = (m[3] || m[4] || m[5] || '');
     if (!/\brwa-locked\b/.test(cls)) continue;
     const end = matchingCloseEnd(doc, m[1], m.index + m[0].length);
     if (end !== -1) out.push([m.index, end]);
@@ -503,6 +531,11 @@ export function applyEdits(doc, edits) {
     throw new RwaEditError('malformed_envelope', null, { reason: 'edits must be a non-empty array' });
   }
 
+  // LF-canonicalize the document up front (mirror of the seed): all matching,
+  // splicing, and the post-apply doc are LF-only, so CRLF in the source no
+  // longer causes spurious find_not_found against LF anchors (or vice versa).
+  doc = canonLF(doc);
+
   const before = structuralShape(doc);
   const zones = findFrozenZones(doc);
   // Attribute-form frozen zones (data-rwa-frozen) are enforced batch-level by
@@ -511,12 +544,27 @@ export function applyEdits(doc, edits) {
 
   let working = doc;
   for (let i = 0; i < edits.length; i++) {
-    const { find, replace } = edits[i] || {};
-    if (!find) throw new RwaEditError('empty_find', i);
+    const raw = edits[i] || {};
+    if (!raw.find) throw new RwaEditError('empty_find', i);
+    // Lone-surrogate guard BEFORE canonLF/match: a malformed find/replace would
+    // corrupt the durable file on UTF-8 encode (mirror of the seed).
+    if (!isWellFormed(raw.find) || !isWellFormed(raw.replace)) {
+      throw new RwaEditError('malformed_envelope', i, { reason: 'lone_surrogate' });
+    }
+    // Per-edit replace cap (mirror of the seed's MAX_REPLACE). Measured on the
+    // raw replace bytes the caller supplied (the virtual/token form under
+    // images-v1) — a text budget.
+    if ((raw.replace || '').length > MAX_REPLACE) {
+      throw new RwaEditError('replace_too_large', i, { length: (raw.replace || '').length, cap: MAX_REPLACE });
+    }
+    // Canonicalize the anchor + replacement to LF so a CRLF-containing find
+    // matches the LF-canonical working copy (and the splice stays LF-only).
+    const find = canonLF(raw.find);
+    const replace = canonLF(raw.replace);
 
     // Reserved-substring check (spec §4 rule 6) — runs before the find lookup
     // so a literal `data-rwa-frozen` in either side fails fast.
-    if (containsReservedMarker(find) || containsReservedMarker(replace || '')) {
+    if (containsReservedMarker(find) || containsReservedMarker(replace)) {
       throw new RwaEditError('reserved_substring', i, { find, replace });
     }
 
@@ -531,6 +579,19 @@ export function applyEdits(doc, edits) {
     const zone = editCrossesFrozenZone(working, find, liveZones);
     if (zone) {
       throw new RwaEditError('frozen_zone_violation', i, { zone: zone.name });
+    }
+
+    // Class-declared lock check (rwa-lens/1 spec §7; mirror of the seed's
+    // apply path). Reject any find-range overlapping a .rwa-locked source
+    // range. Adjacent insertions (find ends exactly where a lock begins, or
+    // starts where one ends) are OK. Recomputed per iteration because
+    // `working` mutates after each splice.
+    const idxLock = working.indexOf(find);
+    const editStart = idxLock, editEnd = idxLock + find.length;
+    for (const [ls, le] of lockedRangesIn(working)) {
+      if (editEnd > ls && editStart < le) {
+        throw new RwaEditError('class_lock_violation', i, { lockRange: [ls, le], editRange: [editStart, editEnd] });
+      }
     }
 
     // Slice-based splice — String.prototype.replace honors $&/$`/$'/$$
@@ -572,6 +633,11 @@ export function applyEdits(doc, edits) {
     const after = ids(working);
     for (const id of ids(doc)) if (!after.has(id)) throw new RwaEditError('rwa_id_stripped', null, { id });
   }
+
+  // Whole-document cap (mirror of the seed's MAX_DOC). Measured on the final
+  // working copy — the virtual/token form under images-v1, so image bytes
+  // never count against the text budget.
+  if (working.length > MAX_DOC) throw new RwaEditError('target_size_exceeded', null, { length: working.length, cap: MAX_DOC });
 
   return working;
 }
