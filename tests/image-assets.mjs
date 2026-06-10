@@ -461,6 +461,51 @@ function toolCallResponse(envelope, name = 'apply_edits') {
   check('E2c moving a PRE-EXISTING orphan token is allowed', out.includes('rwa-asset:cafebabe'));
 }
 
+// ─── Block F: ingestion pipeline pure helpers ───────────────────────
+// WHY: the canvas/bitmap parts only run in real browsers (Task 14 proves
+// those); the budget/geometry/markup decisions are pure and pinned here.
+
+{
+  console.log('-- F1: target dimensions (downscale, never upscale) --');
+  const d1 = window.__rwaImageTargetDims(4000, 3000);
+  check('F1a 4000×3000 → 1600×1200', d1.w === 1600 && d1.h === 1200);
+  const d2 = window.__rwaImageTargetDims(800, 600);
+  check('F1b 800×600 unchanged (no upscale)', d2.w === 800 && d2.h === 600);
+  const d3 = window.__rwaImageTargetDims(3000, 4000);
+  check('F1c portrait 3000×4000 → 1200×1600', d3.w === 1200 && d3.h === 1600);
+  const d4 = window.__rwaImageTargetDims(1, 100000);
+  check('F1d extreme aspect never rounds to 0', d4.w >= 1 && d4.h === 1600);
+  const d5 = window.__rwaImageTargetDims(5000, 5000, 1280);
+  check('F1e retry pass honors the smaller edge', d5.w === 1280 && d5.h === 1280);
+}
+
+{
+  console.log('-- F2: figure markup is attribute-safe --');
+  const fig = window.__buildImageFigure('rwa-asset:00000001', 'she said "hi" & <waved>');
+  check('F2a alt is quote-and-angle escaped',
+    fig === '<figure><img src="rwa-asset:00000001" alt="she said &quot;hi&quot; &amp; &lt;waved&gt;"></figure>');
+}
+
+{
+  console.log('-- F3: filename stem for default alt --');
+  check('F3a photo.JPG → photo', window.__rwaFileStem('photo.JPG') === 'photo');
+  check('F3b archive.tar.gz → archive.tar', window.__rwaFileStem('archive.tar.gz') === 'archive.tar');
+  check('F3c extensionless name unchanged', window.__rwaFileStem('snapshot') === 'snapshot');
+  check('F3d missing name → image', window.__rwaFileStem(undefined) === 'image');
+}
+
+{
+  console.log('-- F4: ingest rejects non-images and oversized passthrough --');
+  const notImage = { type: 'text/plain', name: 'notes.txt', size: 10 };
+  let msg = null;
+  try { await window.__ingestImageFile(notImage); } catch (e) { msg = e.message; }
+  check('F4a non-image rejects with a clear error', /not an image/.test(msg));
+  const hugeGif = { type: 'image/gif', name: 'party.gif', size: 600 * 1024 };
+  msg = null;
+  try { await window.__ingestImageFile(hugeGif); } catch (e) { msg = e.message; }
+  check('F4b oversized GIF passthrough refuses loud', /too large/.test(msg));
+}
+
 // ─── tail ───────────────────────────────────────────────────────────
 await settle();
 console.log(`\n${pass} passed, ${fail} failed`);

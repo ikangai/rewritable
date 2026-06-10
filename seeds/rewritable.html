@@ -2947,6 +2947,99 @@ if (typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent)) {
   window.__handleMountDblClick = handleMountDblClick;
 }
 
+// ─── Image ingestion (images-v1) ──────────────────────────────────────
+// Deterministic transform, no model (Rule 5). Drag-drop / paste / the /image
+// picker all funnel through ingestImageFile: decode → downscale to ≤1600px
+// long edge → encode WebP q0.82 (JPEG fallback where toBlob/webp is
+// unsupported — Safari <17) → keep the original bytes when re-encoding
+// doesn't help → second pass at 1280px/q0.7 if over the 500 KB budget →
+// refuse loud, never a silent thumbnail. SVG/GIF pass through un-recoded
+// (animation / vector would be destroyed by a raster re-encode).
+const RWA_IMG = {
+  MAX_EDGE: 1600, RETRY_EDGE: 1280, Q: 0.82, RETRY_Q: 0.7,
+  MAX_BYTES: 500 * 1024,                  // per-image budget (post-encode)
+  FILE_WARN: 5 * 1024 * 1024,             // container size: warn
+  FILE_STOP: 10 * 1024 * 1024,            // container size: refuse insert
+};
+function rwaImageTargetDims(w, h, maxEdge) {
+  const cap = maxEdge || RWA_IMG.MAX_EDGE;
+  const edge = Math.max(w, h);
+  if (edge <= cap) return { w, h };
+  const k = cap / edge;
+  return { w: Math.max(1, Math.round(w * k)), h: Math.max(1, Math.round(h * k)) };
+}
+function rwaFileStem(name) {
+  return String(name || 'image').replace(/\.[A-Za-z0-9]+$/, '');
+}
+// escapeHtml doesn't emit quote entities (it never needed to); attribute
+// values do need them, so alt text gets its own escaper.
+function rwaEscapeAttr(s) {
+  return escapeHtml(String(s == null ? '' : s)).replace(/"/g, '&quot;');
+}
+function buildImageFigure(src, alt) {
+  return '<figure><img src="' + src + '" alt="' + rwaEscapeAttr(alt) + '"></figure>';
+}
+function rwaBlobToDataUri(blob) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result);
+    r.onerror = () => reject(r.error || new Error('image read failed'));
+    r.readAsDataURL(blob);
+  });
+}
+async function rwaEncodeBitmap(bitmap, w, h, type, q) {
+  const canvas = document.createElement('canvas');
+  canvas.width = w; canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return null;
+  ctx.drawImage(bitmap, 0, 0, w, h);
+  return new Promise(resolve => canvas.toBlob(resolve, type, q));
+}
+async function ingestImageFile(file) {
+  if (typeof window.__rwaIngestImage === 'function') return window.__rwaIngestImage(file);   // test seam
+  const type = (file && file.type) || '';
+  if (!/^image\//.test(type)) throw new Error('not an image: ' + (type || (file && file.name) || 'unknown file'));
+  if (type === 'image/svg+xml' || type === 'image/gif') {
+    if (file.size > RWA_IMG.MAX_BYTES)
+      throw new Error('image too large (' + Math.round(file.size / 1024) + ' KB) — export a raster version and retry');
+    return { dataUri: await rwaBlobToDataUri(file), bytes: file.size, name: file.name || 'image', resizedFrom: null };
+  }
+  const bitmap = await createImageBitmap(file);
+  let best = null;
+  for (const pass of [{ edge: RWA_IMG.MAX_EDGE, q: RWA_IMG.Q }, { edge: RWA_IMG.RETRY_EDGE, q: RWA_IMG.RETRY_Q }]) {
+    const d = rwaImageTargetDims(bitmap.width, bitmap.height, pass.edge);
+    let blob = await rwaEncodeBitmap(bitmap, d.w, d.h, 'image/webp', pass.q);
+    // toBlob falls back to image/png when the requested type is unsupported.
+    if (!blob || blob.type !== 'image/webp') blob = await rwaEncodeBitmap(bitmap, d.w, d.h, 'image/jpeg', Math.min(pass.q + 0.03, 0.92));
+    if (!blob) throw new Error('image encode failed — the browser could not rasterize this file');
+    best = blob;
+    if (blob.size <= RWA_IMG.MAX_BYTES) break;
+  }
+  // Re-encoding a small, already-fitting original (tiny PNG icon, optimized
+  // JPEG) can grow it — keep the original bytes when they win.
+  let out = best;
+  if (file.size <= best.size && file.size <= RWA_IMG.MAX_BYTES
+      && bitmap.width <= RWA_IMG.MAX_EDGE && bitmap.height <= RWA_IMG.MAX_EDGE) {
+    out = file;
+  }
+  if (out.size > RWA_IMG.MAX_BYTES)
+    throw new Error('image too large even after compression (' + Math.round(out.size / 1024) + ' KB > '
+      + Math.round(RWA_IMG.MAX_BYTES / 1024) + ' KB) — try cropping it');
+  return {
+    dataUri: await rwaBlobToDataUri(out),
+    bytes: out.size,
+    name: file.name || 'image',
+    resizedFrom: out === file ? null : file.size,
+  };
+}
+if (typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent)) {
+  window.__rwaImageTargetDims = rwaImageTargetDims;
+  window.__rwaFileStem = rwaFileStem;
+  window.__buildImageFigure = buildImageFigure;
+  window.__RWA_IMG = RWA_IMG;
+  window.__ingestImageFile = ingestImageFile;
+}
+
   // ─── Skin runtime: deterministic apply / reset (kepler) ───────────────
   // A skin is ONE <style data-rwa-skin> block inside the document body, so it
   // commits with the doc, ships in the exported file, and ⌘Z reverts it.
