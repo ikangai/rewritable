@@ -410,6 +410,157 @@ test('frozen_zone_violation — replace_document must not ADD a new frozen zone'
   } finally { fx.cleanup(); }
 });
 
+// ─── #1: replace_document unterminated-marker detection ───────────────
+// A stray begin marker with no matching end is NOT a terminated zone, so the
+// byte-preservation + add-rejection guards above (which only see terminated
+// zones) miss it. The seed catches it via extractFrozenZones 'unterminated' →
+// frozenZonesIntact reject. The escape hatch must not be able to leave the doc
+// with a half-open frozen fence that the next loader would choke on.
+
+test('#1: replace_document rejects an unterminated frozen-zone marker (comment form)', async () => {
+  const fx = mkFixture('<article>just text</article>'); // no frozen zones
+  try {
+    await assert.rejects(
+      applyPlan(fx.path, {
+        version: 'rwa-edit/1',
+        doc: '<article>just text<!-- rwa:frozen:begin orphan --></article>', // begin, no end
+        reason: 'leave a half-open fence',
+      }),
+      err => err.exitCode === 3 && err.subcode === 'frozen_zone_violation' && err.details.zone === 'orphan',
+    );
+  } finally { fx.cleanup(); }
+});
+
+test('#1: replace_document rejects an unterminated frozen-zone marker (script-comment form)', async () => {
+  const fx = mkFixture('<article>just text</article>');
+  try {
+    await assert.rejects(
+      applyPlan(fx.path, {
+        version: 'rwa-edit/1',
+        doc: '<article>just text</article>\n// rwa:frozen:begin orphan\nconsole.log(1);',
+        reason: 'half-open JS fence',
+      }),
+      err => err.exitCode === 3 && err.subcode === 'frozen_zone_violation' && err.details.zone === 'orphan',
+    );
+  } finally { fx.cleanup(); }
+});
+
+// ─── #1: replace_document class-lock coverage (class_lock_uncovered) ────
+// A bare .rwa-locked block in the CURRENT doc cannot survive a wholesale
+// rewrite — the wrapper can be reshaped, attribute-mutated, or dropped. The
+// seed rejects ANY replace_document while a lock sits outside a marker-form
+// frozen zone (rwa-lens/1 spec §7; replaceDocument class_lock_uncovered).
+
+test('#1: replace_document rejects a wholesale rewrite while a bare .rwa-locked block is uncovered', async () => {
+  const fx = mkFixture('<article>a<div class="rwa-locked"><p>locked</p></div>z</article>');
+  try {
+    await assert.rejects(
+      applyPlan(fx.path, {
+        version: 'rwa-edit/1',
+        doc: '<article>brand new content</article>',
+        reason: 'wholesale rewrite over an uncovered lock',
+      }),
+      err => err.exitCode === 3 && err.subcode === 'class_lock_uncovered',
+    );
+  } finally { fx.cleanup(); }
+});
+
+test('#1: replace_document allows a rewrite when the .rwa-locked block is covered by a frozen zone', async () => {
+  // Lock fully inside a marker-form frozen zone: the zone protects it
+  // byte-identically, so the rewrite is safe and must NOT be rejected.
+  const fx = mkFixture(
+    '<article>a<!-- rwa:frozen:begin lk --><div class="rwa-locked"><p>locked</p></div><!-- rwa:frozen:end lk -->z</article>',
+  );
+  try {
+    const result = await applyPlan(fx.path, {
+      version: 'rwa-edit/1',
+      doc: '<article>NEW<!-- rwa:frozen:begin lk --><div class="rwa-locked"><p>locked</p></div><!-- rwa:frozen:end lk -->NEW</article>',
+      reason: 'rewrite surrounding, lock stays covered',
+    });
+    assert.equal(result.exitCode, 0);
+  } finally { fx.cleanup(); }
+});
+
+test('#1: replace_document with no .rwa-locked block is unaffected by the coverage check (regression)', async () => {
+  const fx = mkFixture('<article>plain content, no locks</article>');
+  try {
+    const result = await applyPlan(fx.path, {
+      version: 'rwa-edit/1',
+      doc: '<article>totally new content</article>',
+      reason: 'plain rewrite',
+    });
+    assert.equal(result.exitCode, 0);
+  } finally { fx.cleanup(); }
+});
+
+// ─── review follow-up: 3-fence-form parity on the BYTE-PRESERVATION path ──
+// The card shipped a 3-form coverage + unterminated check, but byte-preservation
+// and add-rejection were comment-form-only (findFrozenZones). A /* */ or // zone
+// could then be dropped (its content unprotected) or minted (a new author-
+// invariant) via the escape hatch — divergence from the seed's 3-form
+// extractFrozenZones/frozenZonesIntact. These pin the fix.
+
+test('review: replace_document must preserve a CSS-comment-form (/* */) frozen zone byte-identically', async () => {
+  const fx = mkFixture('<article>a<style>/* rwa:frozen:begin css */.x{color:red}/* rwa:frozen:end css */</style>z</article>');
+  try {
+    await assert.rejects(
+      applyPlan(fx.path, {
+        version: 'rwa-edit/1',
+        doc: '<article>a<style>/* rwa:frozen:begin css */.x{color:BLUE}/* rwa:frozen:end css */</style>z</article>',
+        reason: 'drift the content of a CSS-form frozen zone',
+      }),
+      err => err.exitCode === 3 && err.subcode === 'frozen_zone_violation' && err.details.zone === 'css',
+    );
+  } finally { fx.cleanup(); }
+});
+
+test('review: replace_document must not MINT a terminated // (script-comment) frozen zone', async () => {
+  const fx = mkFixture('<article><script>console.log(1)</script></article>');
+  try {
+    await assert.rejects(
+      applyPlan(fx.path, {
+        version: 'rwa-edit/1',
+        doc: '<article><script>// rwa:frozen:begin minted\nconsole.log(1)\n// rwa:frozen:end minted</script></article>',
+        reason: 'mint a new JS-form author-invariant via the escape hatch',
+      }),
+      err => err.exitCode === 3 && err.subcode === 'frozen_zone_violation' && err.details.zone === 'minted',
+    );
+  } finally { fx.cleanup(); }
+});
+
+test('review: replace_document rejects a DUPLICATE-name frozen zone (shadow-copy tamper)', async () => {
+  // Current doc: one zone z. New doc: a TAMPERED first copy + a pristine duplicate.
+  // A last-wins Map would compare only the pristine copy and pass — the seed (and
+  // now the CLI) rejects the duplicate name outright.
+  const fx = mkFixture('<article><!-- rwa:frozen:begin z -->KEEP<!-- rwa:frozen:end z --></article>');
+  try {
+    await assert.rejects(
+      applyPlan(fx.path, {
+        version: 'rwa-edit/1',
+        doc: '<article><!-- rwa:frozen:begin z -->TAMPERED<!-- rwa:frozen:end z --><!-- rwa:frozen:begin z -->KEEP<!-- rwa:frozen:end z --></article>',
+        reason: 'smuggle a tampered shadow copy behind a duplicate name',
+      }),
+      err => err.exitCode === 3 && err.subcode === 'frozen_zone_violation' && err.details.zone === 'z',
+    );
+  } finally { fx.cleanup(); }
+});
+
+// The DSL escape op (apply_dsl_plan → replace_document) must hit the SAME
+// frozen guards as a direct replace_document — the card claims it does
+// (assertFrozenPreserved is called on both branches), but nothing exercised it.
+test('review: apply_dsl_plan escape op is subject to the frozen-zone guard', async () => {
+  const fx = mkFixture('<article>a<!-- rwa:frozen:begin keep -->X<!-- rwa:frozen:end keep -->z</article>');
+  try {
+    await assert.rejects(
+      applyPlan(fx.path, {
+        version: 'rwa-edit-dsl/1',
+        ops: [{ op: 'replace_document', doc: '<article>wiped the frozen zone</article>', reason: 'drop frozen via DSL escape' }],
+      }),
+      err => err.exitCode === 3 && err.subcode === 'frozen_zone_violation',
+    );
+  } finally { fx.cleanup(); }
+});
+
 // ─── Regression: I-2 — non-ENOENT read errors mislabeled as not_found ─
 // EACCES (and other non-ENOENT codes) used to map to `not_found`, which
 // misleads users about why the read failed. Now they surface as

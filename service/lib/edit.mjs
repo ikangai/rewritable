@@ -15,8 +15,9 @@
 import { readFile } from 'node:fs/promises';
 import { atomicWrite } from './atomic-write.mjs';
 import {
-  applyEdits, RwaEditError, findFrozenZones, dataRwaFrozenSnapshot, FAILURE_HINTS,
+  applyEdits, RwaEditError, dataRwaFrozenSnapshot, FAILURE_HINTS,
   virtualizeImages, expandImages, assertNoNewAssetTokens,
+  extractFrozenZones3, lockedRangesIn, markerZoneRangesIn,
 } from './apply-edits.mjs';
 import { compileDslPlan } from './dsl-compiler.mjs';
 import { extractInlineDoc, replaceInlineDoc } from './seed.mjs';
@@ -40,26 +41,69 @@ export class CliError extends Error {
 // Returns the canonical tool name on success.
 // Frozen-zone preservation for wholesale-replacement paths (replace_document and
 // the DSL escape op) — the equivalent of the guards applyEdits runs on the
-// find/replace path. MARKER-form zones must survive byte-identically by name
-// (mirror of seed replaceDocument ~:2938); the set of ATTRIBUTE-form
-// data-rwa-frozen elements must be unchanged (snapshot equality, mirror of seed
-// dataRwaFrozenSnapshot :2971). Without this the escape hatch would let an agent
-// drift a frozen self-description declaration that apply_edits protects.
+// find/replace path. MARKER-form zones (all three fence forms) must survive
+// byte-identically by name (mirror of seed replaceDocument's extractFrozenZones/
+// frozenZonesIntact check); the set of ATTRIBUTE-form data-rwa-frozen elements
+// must be unchanged (snapshot equality, mirror of seed dataRwaFrozenSnapshot).
+// Without this the escape hatch would let an agent drift a frozen self-
+// description declaration that apply_edits protects.
 function assertFrozenPreserved(currentDoc, newDoc) {
-  const oldByName = new Map(findFrozenZones(currentDoc).map(z => [z.name, currentDoc.slice(z.start, z.end)]));
-  const newByName = new Map(findFrozenZones(newDoc).map(z => [z.name, newDoc.slice(z.start, z.end)]));
-  for (const [name, originalBytes] of oldByName) {
-    if (!newByName.has(name) || newByName.get(name) !== originalBytes) {
+  // Class-lock coverage (rwa-lens/1 spec §7; seed replaceDocument class_lock_uncovered).
+  // A bare .rwa-locked block in the CURRENT doc cannot survive a wholesale rewrite —
+  // the wrapper can be reshaped, attribute-mutated, or dropped. Locks are only safe
+  // under replace_document if their source range is entirely contained within a
+  // marker-form frozen zone (markers wrap or equal the lock — NOT the inverse).
+  // Precondition on the current doc: if any lock is uncovered, NO replace_document
+  // is allowed, regardless of the new doc. markerZoneRangesIn is 3-fence-form, and
+  // the byte-preservation scan below is too (extractFrozenZones3) — so a lock the
+  // coverage check accepts as covered by a /* */ or // zone is a zone the
+  // preservation check actually protects. The two agree on the fence-form axis.
+  const lockRanges = lockedRangesIn(currentDoc);
+  if (lockRanges.length) {
+    const markerRanges = markerZoneRangesIn(currentDoc);
+    for (const [ls, le] of lockRanges) {
+      const covered = markerRanges.some(([ms, me]) => ms <= ls && le <= me);
+      if (!covered) throw new CliError(3, 'class_lock_uncovered', { lockRange: [ls, le] });
+    }
+  }
+  // Marker-form frozen zones — all three fence forms, with unterminated AND
+  // duplicate detection (faithful mirror of the seed's extractFrozenZones +
+  // frozenZonesIntact). One scan feeds byte-preservation, add-rejection, the
+  // half-open-fence check, and the shadow-duplicate check, so a /* */ or // zone
+  // can't be silently dropped, minted, half-opened, or duplicated via the escape
+  // hatch — and a duplicate-name pair can't smuggle a tampered copy past a
+  // last-wins Map. The CLI surfaces frozen_zone_violation (its replace-path
+  // convention) where the seed throws frozen_zone_corrupted.
+  const oldZones = extractFrozenZones3(currentDoc);
+  const newZones = extractFrozenZones3(newDoc);
+  const orphan = newZones.find(z => z.error === 'unterminated');
+  if (orphan) {
+    throw new CliError(3, 'frozen_zone_violation', {
+      zone: orphan.name,
+      reason: 'replace_document must not leave an unterminated frozen-zone marker',
+    });
+  }
+  const dup = newZones.find(z => z.error === 'duplicate') || oldZones.find(z => z.error === 'duplicate');
+  if (dup) {
+    throw new CliError(3, 'frozen_zone_violation', {
+      zone: dup.name,
+      reason: 'duplicate frozen-zone name (a tampered shadow copy could hide behind a last-wins match)',
+    });
+  }
+  const oldByName = new Map(oldZones.map(z => [z.name, z.inner]));
+  const newByName = new Map(newZones.map(z => [z.name, z.inner]));
+  // Preserve byte-identically by name (the seed compares inner content; marker
+  // text is fixed grammar, the name is the key).
+  for (const [name, inner] of oldByName) {
+    if (!newByName.has(name) || newByName.get(name) !== inner) {
       throw new CliError(3, 'frozen_zone_violation', {
         zone: name,
         reason: 'replace_document must preserve frozen zones byte-identically',
       });
     }
   }
-  // …and must not ADD new marker-form frozen zones (parity with the seed's
-  // frozenZonesIntact zone-count check and the apply_edits path): an agent can't
-  // mint new author-invariants via the escape hatch. (Attribute-form add/remove
-  // is caught by the dataRwaFrozenSnapshot check below.)
+  // …and must not ADD a new marker-form zone (mint an author-invariant). The
+  // attribute-form add/remove is caught by the dataRwaFrozenSnapshot check below.
   for (const name of newByName.keys()) {
     if (!oldByName.has(name)) {
       throw new CliError(3, 'frozen_zone_violation', {

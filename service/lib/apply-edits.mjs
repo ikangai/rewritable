@@ -1,5 +1,5 @@
 // rwa-edit/1 apply-edits — hand-mirrored from seeds/rewritable.html's
-// applyEdits pipeline (~line 2823). Read alongside rwa-edit-spec.md §5
+// applyEdits pipeline (search `async function applyEdits`). Read alongside rwa-edit-spec.md §5
 // (apply_edits semantics) and §7 (frozen zones).
 //
 // Differences from the seed, called out so future maintainers don't expect
@@ -20,8 +20,8 @@
 //      The seed's DOMParser handles edge cases (a `>` inside a quoted attribute
 //      value) that the CLI's pragmatic regex matcher does not; the before/after
 //      snapshot is relative, so a consistent mis-parse of an UNCHANGED element
-//      still compares equal. KEEP IN STEP with the seed (dataRwaFrozenSnapshot
-//      :2971).
+//      still compares equal. KEEP IN STEP with the seed (search
+//      `function dataRwaFrozenSnapshot`).
 //   3. Seed's structural-shape check uses DOMParser + executable-script-
 //      type filtering + top-level-tag-types set. CLI v1 uses regex counting
 //      of <script>/<style> tags — enough to catch the realistic accidental-
@@ -30,7 +30,7 @@
 //
 // ## Other known v1 scope-downs vs seed
 //
-// The seed (seeds/rewritable.html ~lines 2825-2910) enforces additional
+// The seed (search `async function applyEdits` in seeds/rewritable.html) enforces additional
 // invariants the CLI does NOT in v1. Tracked in cli/TODO.md for v2:
 //
 //   - MAX_REPLACE = 8KB per-edit cap (seed throws 'replace_too_large')
@@ -39,7 +39,10 @@
 //   - canonLF normalization of find/replace before matching
 //     (CRLF-containing anchors fail with find_not_found in the CLI but
 //     match correctly in the browser)
-//   - Class-lock violation check (class_lock_violation / class_lock_uncovered)
+//   - Class-lock violation check on apply_edits (class_lock_violation — an edit
+//     find-range crossing a .rwa-locked subtree). NOTE: the replace_document
+//     coverage check (class_lock_uncovered) IS enforced — see edit.mjs
+//     assertFrozenPreserved + the exported lockedRangesIn/markerZoneRangesIn.
 //   - Reserved-id violation (reserved_id_used) — including data-rwa-id injection
 //   - HTML parse-validity post-apply (parse_error_post_apply)
 
@@ -278,6 +281,61 @@ export function findFrozenZones(doc) {
   return zones;
 }
 
+// Regex-escape a dynamic literal (zone name) before embedding it in a RegExp.
+// Mirror of the seed's escapeRegex. Zone names are [A-Za-z0-9_-]+ today so this
+// is belt-and-suspenders, but keeping it shared means the three fence-form
+// builders below stay byte-aligned with the seed and with each other.
+function escapeRegex(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+
+// Full 3-fence-form frozen-zone scan — faithful mirror of the seed's
+// extractFrozenZones (seeds/rewritable.html, search `function extractFrozenZones`).
+// Returns one entry per begin-marker: { name, inner } for a terminated zone, or
+// { name, error: 'unterminated' | 'duplicate' }. This is the canonical scan the
+// replace_document guard uses for byte-preservation, add-rejection, unterminated
+// AND duplicate detection — across <!-- -->, /* */ and // fence forms — so the
+// escape hatch can't silently drop, mint, half-open, or shadow-duplicate a zone
+// in any fence form. (findFrozenZones below stays comment-form-only on purpose:
+// it is the REPORTING source for `rwa doc`/`ls` frozenZones, where SD-04 pins it
+// to the seed's reporting projection. This scan is the ENFORCEMENT source.)
+// KEEP IN STEP with the seed.
+export function extractFrozenZones3(doc) {
+  const zones = [];
+  if (!doc) return zones;
+  const seen = new Set();
+  const beginRe = /(<!--|\/\*|\/\/)\s*rwa:frozen:begin\s+([A-Za-z0-9_-]+)\s*(-->|\*\/|(?=\r?\n|$))/g;
+  let m;
+  while ((m = beginRe.exec(doc)) !== null) {
+    const opener = m[1];
+    const name = m[2];
+    let innerStart = m.index + m[0].length;
+    if (opener === '//') {
+      // Line-comment form: the inner zone starts after this line's newline.
+      while (innerStart < doc.length && doc[innerStart] !== '\n') innerStart++;
+      if (innerStart < doc.length) innerStart++;
+    }
+    let endRe;
+    if (opener === '<!--') endRe = new RegExp('<!--\\s*rwa:frozen:end\\s+' + escapeRegex(name) + '\\s*-->', 'g');
+    else if (opener === '/*') endRe = new RegExp('\\/\\*\\s*rwa:frozen:end\\s+' + escapeRegex(name) + '\\s*\\*\\/', 'g');
+    else endRe = new RegExp('\\/\\/\\s*rwa:frozen:end\\s+' + escapeRegex(name) + '(?=\\r?\\n|$)', 'g');
+    endRe.lastIndex = innerStart;
+    const e = endRe.exec(doc);
+    if (!e) { zones.push({ name, error: 'unterminated' }); continue; }
+    if (seen.has(name)) { zones.push({ name, error: 'duplicate' }); continue; }
+    seen.add(name);
+    zones.push({ name, inner: doc.slice(innerStart, e.index) });
+  }
+  return zones;
+}
+
+// Detect an unterminated marker-form frozen zone (a begin marker with no
+// matching end), across all three fence forms. Thin projection of
+// extractFrozenZones3 so the standalone check and the full guard can never
+// disagree. Returns the offending zone name, or null. KEEP IN STEP with the seed.
+export function unterminatedFrozenMarker(doc) {
+  const z = extractFrozenZones3(doc).find(z => z.error === 'unterminated');
+  return z ? z.name : null;
+}
+
 function editCrossesFrozenZone(doc, find, zones) {
   const findIdx = doc.indexOf(find);
   if (findIdx === -1) return null;
@@ -328,8 +386,8 @@ export function tagHasFrozenAttr(openTag) {
   return false;
 }
 
-// Parser-free mirror of the seed's dataRwaFrozenSnapshot (seeds/rewritable.html
-// :2971): each data-rwa-frozen element captured as `tagName\0outerHTML`, sorted.
+// Parser-free mirror of the seed's dataRwaFrozenSnapshot (seeds/rewritable.html, search
+// `function dataRwaFrozenSnapshot`): each data-rwa-frozen element captured as `tagName\0outerHTML`, sorted.
 // applyEdits compares this before/after to reject ANY change (inner text,
 // attributes, add/remove) to an attribute-form frozen element — position-
 // independent (sorted; outerHTML self-contained), batch-level like the seed.
@@ -363,6 +421,68 @@ function snapshotsEqual(a, b) {
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
   return true;
+}
+
+// Parser-free port of the seed's lockedRangesIn (seeds/rewritable.html, search `function lockedRangesIn`):
+// the [start, end] byte range of each .rwa-locked element's whole subtree.
+// Used by replace_document's class-lock coverage check. matchingCloseEnd is the
+// CLI's equivalent of the seed's findCloseTagEnd (depth-tracked same-tag close).
+// KEEP IN STEP with the seed.
+export function lockedRangesIn(doc) {
+  if (!doc) return [];
+  const opening = /<([a-zA-Z][a-zA-Z0-9]*)\b[^>]*\bclass\s*=\s*("([^"]*)"|'([^']*)')[^>]*>/g;
+  const out = [];
+  let m;
+  while ((m = opening.exec(doc)) !== null) {
+    const cls = (m[3] || m[4] || '');
+    if (!/\brwa-locked\b/.test(cls)) continue;
+    const end = matchingCloseEnd(doc, m[1], m.index + m[0].length);
+    if (end !== -1) out.push([m.index, end]);
+  }
+  return out;
+}
+
+// Parser-free port of the seed's markerZoneRangesIn (seeds/rewritable.html, search `function markerZoneRangesIn`):
+// the [start, end] byte ranges of every protected zone — marker-form frozen
+// zones (all three fence forms, INCLUDING the fences) and data-rwa-frozen
+// attribute-form element subtrees. Used by the class-lock coverage check to
+// verify each .rwa-locked range is fully contained in a protected zone.
+// Unterminated begin markers are skipped here (they carry no closed range);
+// they are rejected separately by unterminatedFrozenMarker. KEEP IN STEP with
+// the seed.
+export function markerZoneRangesIn(doc) {
+  if (!doc) return [];
+  const out = [];
+  const beginRe = /(<!--|\/\*|\/\/)\s*rwa:frozen:begin\s+([A-Za-z0-9_-]+)\s*(-->|\*\/|(?=\r?\n|$))/g;
+  let m;
+  while ((m = beginRe.exec(doc)) !== null) {
+    const opener = m[1];
+    const name = m[2];
+    const startOfBegin = m.index;
+    let innerStart = m.index + m[0].length;
+    if (opener === '//') {
+      while (innerStart < doc.length && doc[innerStart] !== '\n') innerStart++;
+      if (innerStart < doc.length) innerStart++;
+    }
+    const esc = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    let endRe;
+    if (opener === '<!--') endRe = new RegExp('<!--\\s*rwa:frozen:end\\s+' + esc + '\\s*-->', 'g');
+    else if (opener === '/*') endRe = new RegExp('\\/\\*\\s*rwa:frozen:end\\s+' + esc + '\\s*\\*\\/', 'g');
+    else endRe = new RegExp('\\/\\/\\s*rwa:frozen:end\\s+' + esc + '(?=\\r?\\n|$)', 'g');
+    endRe.lastIndex = innerStart;
+    const e = endRe.exec(doc);
+    if (!e) continue; // unterminated — skip (caught by unterminatedFrozenMarker)
+    out.push([startOfBegin, e.index + e[0].length]);
+  }
+  // data-rwa-frozen elements: opening tags carrying that attribute as a real
+  // NAME (tagHasFrozenAttr filters value/longer-name false positives).
+  const fzAttr = /<([a-zA-Z][a-zA-Z0-9]*)\b[^>]*\bdata-rwa-frozen\b[^>]*>/g;
+  while ((m = fzAttr.exec(doc)) !== null) {
+    if (!tagHasFrozenAttr(m[0])) continue;
+    const end = matchingCloseEnd(doc, m[1], m.index + m[0].length);
+    if (end !== -1) out.push([m.index, end]);
+  }
+  return out;
 }
 
 // Structural-shape check (rwa-edit-spec.md §7).

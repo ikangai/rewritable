@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { applyEdits, containsReservedMarker } from '../src/apply-edits.mjs';
+import { applyEdits, containsReservedMarker, lockedRangesIn, markerZoneRangesIn, unterminatedFrozenMarker } from '../src/apply-edits.mjs';
 
 // ─── Happy-path ────────────────────────────────────────────────────────
 
@@ -311,6 +311,62 @@ test('attribute-form: data-rwa-frozen in an attribute VALUE is not a frozen elem
   const doc = '<article><div class="data-rwa-frozen"><p>editable</p></div></article>';
   const out = applyEdits(doc, [{ find: 'editable', replace: 'edited' }]);
   assert.equal(out, '<article><div class="data-rwa-frozen"><p>edited</p></div></article>');
+});
+
+// ─── #1: lockedRangesIn — byte ranges of .rwa-locked subtrees ──────────
+
+test('lockedRangesIn returns the full subtree range of a .rwa-locked element', () => {
+  const doc = '<article>a<div class="rwa-locked"><p>x</p></div>b</article>';
+  const ranges = lockedRangesIn(doc);
+  assert.equal(ranges.length, 1);
+  const [start, end] = ranges[0];
+  assert.equal(doc.slice(start, end), '<div class="rwa-locked"><p>x</p></div>');
+});
+
+test('lockedRangesIn tracks nested same-tag depth (does not stop at the first close)', () => {
+  const doc = '<section class="rwa-locked"><section>inner</section>tail</section>after';
+  const [[start, end]] = lockedRangesIn(doc);
+  assert.equal(doc.slice(start, end), '<section class="rwa-locked"><section>inner</section>tail</section>');
+});
+
+test('lockedRangesIn ignores elements without the rwa-locked class', () => {
+  assert.deepEqual(lockedRangesIn('<div class="other">x</div>'), []);
+});
+
+// ─── #1: markerZoneRangesIn — byte ranges of protected zones ───────────
+
+test('markerZoneRangesIn covers a comment-form frozen zone including its fences', () => {
+  const doc = 'before<!-- rwa:frozen:begin z --><b>x</b><!-- rwa:frozen:end z -->after';
+  const [[start, end]] = markerZoneRangesIn(doc);
+  assert.equal(doc.slice(start, end), '<!-- rwa:frozen:begin z --><b>x</b><!-- rwa:frozen:end z -->');
+});
+
+test('markerZoneRangesIn covers a data-rwa-frozen attribute-form element subtree', () => {
+  const doc = 'a<div data-rwa-frozen><p>x</p></div>b';
+  const [[start, end]] = markerZoneRangesIn(doc);
+  assert.equal(doc.slice(start, end), '<div data-rwa-frozen><p>x</p></div>');
+});
+
+test('markerZoneRangesIn skips an unterminated begin marker', () => {
+  assert.deepEqual(markerZoneRangesIn('x<!-- rwa:frozen:begin z -->y'), []);
+});
+
+// ─── #1: unterminatedFrozenMarker — half-open fence detection ──────────
+
+test('unterminatedFrozenMarker flags a begin marker with no matching end (comment form)', () => {
+  assert.equal(unterminatedFrozenMarker('<p>x</p><!-- rwa:frozen:begin orphan -->'), 'orphan');
+});
+
+test('unterminatedFrozenMarker flags a half-open script-comment fence', () => {
+  assert.equal(unterminatedFrozenMarker('code;\n// rwa:frozen:begin orphan\nmore;'), 'orphan');
+});
+
+test('unterminatedFrozenMarker returns null when every begin has a matching end', () => {
+  assert.equal(unterminatedFrozenMarker('<!-- rwa:frozen:begin z --><b>x</b><!-- rwa:frozen:end z -->'), null);
+});
+
+test('unterminatedFrozenMarker returns null for a doc with no frozen markers', () => {
+  assert.equal(unterminatedFrozenMarker('<article>plain</article>'), null);
 });
 
 test('attribute-form: a longer attribute name (data-rwa-frozen-note) is not frozen', () => {
