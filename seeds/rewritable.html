@@ -4936,10 +4936,11 @@ async function commitDoc(currentDoc, newDoc, histRecord, assets, orphans) {
     let envelope = histRecord.kind === 'edit_batch'
       ? histRecord.envelope
       : { version: 'rwa-edit/1', doc: newDoc, reason: histRecord.reason };
-    // images-v1: the server applies on the REAL stored doc, so a virtual-form
-    // envelope must be expanded before it leaves the page. (Known v1 limit:
-    // an image-bearing edit then exceeds the server's per-edit cap — hosted
-    // images are deferred; non-image edits expand to themselves.)
+    // images-v1: send the EXPANDED envelope (real data: URIs). The hosted
+    // /modify re-virtualizes it server-side (applyPlan opts.virtualizeEnvelope,
+    // rwa-edit-spec.md §19) so the per-edit cap measures the token text budget,
+    // not image bytes — image inserts commit through the hosted door, bounded by
+    // the server's 10 MB expanded-doc guard. Non-image edits expand to themselves.
     if (assets && Array.isArray(envelope.edits)) {
       envelope = { ...envelope, edits: envelope.edits.map(e => ({
         ...e,

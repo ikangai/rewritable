@@ -62,6 +62,10 @@ export class RwaEditError extends Error {
 // virtualizes — a text budget, never a pixel budget (rwa-edit-spec.md §19).
 const MAX_REPLACE = 8 * 1024;
 const MAX_DOC = 1024 * 1024;
+// Real-bytes whole-document cap for the image paths, where MAX_DOC measures the
+// VIRTUAL (token) form. Mirrors the GUI's container budget (RWA_IMG.FILE_STOP);
+// authoritative server-side on the hosted /modify path (rwa-edit-spec.md §19).
+export const MAX_DOC_EXPANDED = 10 * 1024 * 1024;
 
 // LF canonicalization — mirror of the seed's canonLF. The seed normalizes the
 // doc AND every find/replace to LF before matching, so a CRLF document or a
@@ -148,6 +152,23 @@ export function expandImages(vdoc, assets, orphans) {
     }
     return p + q + uri + q;
   });
+}
+// Tokenize the data:image URIs inside an EXPANDED envelope's find/replace (and
+// the replace_document `doc`), registering each into the shared `assets` map so
+// expansion can resolve them afterward. Used by the hosted /modify path
+// (rwa-edit-spec.md §19, opts.virtualizeEnvelope): the client relays an expanded
+// envelope, the server tokenizes it against a map seeded from the stored doc so
+// the apply runs on the token form (caps = text budget) and new image bytes ride
+// in via the envelope's own URIs. Returns a NEW envelope; the input is untouched.
+export function mapEnvelopeImages(envelope, assets) {
+  const tok = (s) => virtualizeImages(s || '', assets).doc;   // shares + extends `assets`
+  if (Array.isArray(envelope.edits)) {
+    return { ...envelope, edits: envelope.edits.map(e => ({ ...e, find: tok(e.find), replace: tok(e.replace) })) };
+  }
+  if (typeof envelope.doc === 'string') {
+    return { ...envelope, doc: tok(envelope.doc) };
+  }
+  return envelope;
 }
 // No-assets writers must not introduce a NEW rwa-asset token — a token with no
 // bytes behind it is a permanently broken image; committing one silently is the

@@ -607,7 +607,7 @@ Embedded images live in the document as ordinary `<img src="data:image/…">` da
 - All §5 validation — including the §13 size caps (`MAX_REPLACE`, `MAX_DOC`) — runs on the virtual form: the caps are a **text budget**; image bytes never count against them.
 - After validation, every `src="rwa-asset:…"` is expanded from the call's asset map. A token with no mapping → `unknown_asset_reference` (batch rejected, nothing persisted; fed back as a `tool_result` like any §10 failure).
 - *Orphan tolerance:* a token already present in the stored document before virtualization maps to nothing but expands to itself — a pre-broken document stays editable.
-- The committed document and undo frames hold **real bytes**; `rwa_hist` keeps the **virtual** envelope (compact). A hosted commit sink receives the **expanded** envelope (the server applies on real bytes; an image-bearing edit then exceeds the server's per-edit cap — hosted images are a known v1 limitation).
+- The committed document and undo frames hold **real bytes**; `rwa_hist` keeps the **virtual** envelope (compact). A hosted commit sink sends the **expanded** envelope; the hosted `/modify` endpoint re-virtualizes it server-side (the `virtualizeEnvelope` apply mode — it tokenizes the stored doc *and* the incoming envelope into one map, so the per-edit cap measures the token text budget and new image bytes ride in via the envelope's own URIs), then applies and expands. The DoS bound the per-edit byte cap no longer provides for image data is restored by a server-side **expanded-document cap** (`MAX_DOC_EXPANDED`, 10 MB — mirrors the GUI container budget); `target_size_exceeded` `{expanded:true}` over that.
 
 **Raw envelope paths** (piped envelopes, hosted `/modify`, `runtime.applyEnvelope` without assets) are unchanged: real bytes, real caps. One guard is added: a no-assets write that introduces a *new* `rwa-asset:` token (bytes nowhere) is rejected as `unknown_asset_reference` — a broken image must never commit silently. Writers that insert images programmatically pass an asset map (`runtime.applyEnvelope(env, { assets })`) and send the envelope in token form.
 
@@ -619,7 +619,7 @@ The wire version stays `rwa-edit/1`: tokens ride the existing envelope shapes; a
 
 ## Appendix A — Changes from v1.5 to v1.6
 
-- **Image-asset virtualization (§19).** data-URI images stay in the document; agent boundaries see `rwa-asset:<hash8>` tokens; caps measured on the virtual form; expansion post-validation; `unknown_asset_reference` (+ `token` payload field, §10); orphan tolerance; no-assets new-token guard; hist stores virtual envelopes; hosted sink gets expanded envelopes.
+- **Image-asset virtualization (§19).** data-URI images stay in the document; agent boundaries see `rwa-asset:<hash8>` tokens; caps measured on the virtual form; expansion post-validation; `unknown_asset_reference` (+ `token` payload field, §10); orphan tolerance; no-assets new-token guard; hist stores virtual envelopes; hosted sink gets expanded envelopes, re-virtualized server-side (`virtualizeEnvelope` + 10 MB `MAX_DOC_EXPANDED` guard).
 - Wire version unchanged (`rwa-edit/1`).
 
 ## Appendix B — Changes from v1.4 to v1.5

@@ -731,7 +731,13 @@ async function handleHostedModify(id, req, send) {
     }
 
     try {
-      await applyPlan(tmpPath, envelope);
+      // images-v1 (rwa-edit-spec.md §19): the hosted projection relays an
+      // EXPANDED envelope (real data: URIs) from a browser. virtualizeEnvelope
+      // tokenizes it + the stored doc into one map so the per-edit cap measures
+      // the text budget (not image bytes); the expanded-size guard (10 MB) is
+      // the DoS bound. The only caller that sets this — only this surface relays
+      // browser-authored image bytes server-side.
+      await applyPlan(tmpPath, envelope, { virtualizeEnvelope: true });
     } catch (err) {
       try { fs.unlinkSync(tmpPath); } catch { /* best-effort */ }
       if (err instanceof CliError) {
