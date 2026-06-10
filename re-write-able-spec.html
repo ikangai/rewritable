@@ -145,6 +145,11 @@ body{font-family:var(--font-ui);background:var(--bg);color:var(--text);min-heigh
 .rwa-lens-prog-text{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 @keyframes rwa-lens-spin{to{transform:rotate(360deg);}}
 .rwa-lens-toast{position:fixed;bottom:140px;left:50%;transform:translateX(-50%);background:var(--gray-900);color:var(--white);padding:10px 16px;border-radius:8px;z-index:11;font-size:13px;font-family:var(--font-ui);box-shadow:0 8px 24px rgba(0,0,0,0.12);}
+/* images-v1: drop-position indicator (box-shadow, no layout shift) + hover ✕ chip */
+#rwa-doc-mount .rwa-drop-before{box-shadow:0 -3px 0 0 var(--blue);}
+#rwa-doc-mount .rwa-drop-after{box-shadow:0 3px 0 0 var(--blue);}
+#rwa-img-chip{position:absolute;z-index:60;width:24px;height:24px;border-radius:12px;border:1px solid var(--gray-200);background:var(--white);color:var(--gray-900);font-size:12px;line-height:1;cursor:pointer;font-family:var(--font-ui);box-shadow:0 1px 4px rgba(0,0,0,0.12);padding:0;}
+#rwa-img-chip:hover{background:var(--gray-50);}
 #rwa-private-mode-banner{position:fixed;inset:0;background:rgba(255,255,255,0.98);z-index:9999;display:flex;align-items:center;justify-content:center;padding:24px;font-family:var(--font-ui);}
 #rwa-private-mode-banner .rwa-pm-card{max-width:480px;text-align:center;padding:32px;border:1px solid var(--gray-200);border-radius:var(--radius);background:var(--white);box-shadow:0 8px 32px rgba(0,0,0,0.08);}
 #rwa-private-mode-banner h2{font-size:18px;font-weight:600;color:var(--gray-900);margin:0 0 12px;}
@@ -1345,7 +1350,9 @@ async function runtimeUndo() { return undo(); }
 async function runtimeApplyEnvelope(envelope, options) {
   options = options || {};
   if (!envelope || typeof envelope !== 'object') throw new TypeError('runtime.applyEnvelope: envelope is required');
-  return synthesizeAndCommit(envelope, options.surface || 'runtime:apply-envelope', options.instruction || '', options.actor);
+  // images-v1: options.assets (Map token→data URI) lets a writer send its
+  // envelope in token form — see commitCore. Absent → byte-identical path.
+  return synthesizeAndCommit(envelope, options.surface || 'runtime:apply-envelope', options.instruction || '', options.actor, options.assets);
 }
 
 async function getDoc() {
@@ -1456,6 +1463,24 @@ function renderDoc(html) {
   // active view (byte-offset resolution is undefined there).
   m.removeEventListener('dblclick', handleMountDblClick);
   if (!activeView) m.addEventListener('dblclick', handleMountDblClick);
+  // images-v1: drag-drop insert + hover-✕ chip. Same remove-then-add
+  // discipline; inert under a render mode (byte-offset resolution undefined).
+  // The chip/drop-mark reference DOM the innerHTML reset just destroyed.
+  if (typeof clearDropMark === 'function') clearDropMark();
+  const imgChip = document.getElementById('rwa-img-chip');
+  if (imgChip) imgChip.hidden = true;
+  m.removeEventListener('dragover', handleMountDragOver);
+  m.removeEventListener('dragleave', handleMountDragLeave);
+  m.removeEventListener('drop', handleMountDrop);
+  m.removeEventListener('mouseover', handleMountImgOver);
+  m.removeEventListener('mouseout', handleMountImgOut);
+  if (!activeView) {
+    m.addEventListener('dragover', handleMountDragOver);
+    m.addEventListener('dragleave', handleMountDragLeave);
+    m.addEventListener('drop', handleMountDrop);
+    m.addEventListener('mouseover', handleMountImgOver);
+    m.addEventListener('mouseout', handleMountImgOut);
+  }
   // §5.10: post-mount provider seam. render() stays a pure string->string slot;
   // mounted() is the impure slot that restores transient UI state (slide index)
   // after innerHTML + script-rerun + form-restore.
@@ -2090,6 +2115,9 @@ Stable block identifiers (data-rwa-id):
   • Preserve these attributes verbatim when editing. If you replace the surrounding text of a block, copy the existing data-rwa-id into your replace string. They are the stable name of that block; URLs link to them.
   • Never invent new data-rwa-id values. The runtime backfills any block you produce without one. Inventing duplicates would break fragment links to existing blocks.
 
+Embedded images (rwa-asset tokens):
+  • Image src values appear as opaque \`rwa-asset:<id>\` tokens — stable identifiers for images embedded in the file. Move, copy, or delete the whole <img>/<figure> tag freely (quote the token verbatim in find/replace), but never edit a token, invent a new one, or replace one with a URL. An unknown token is rejected as unknown_asset_reference.
+
 Always call a tool. Respond with text-only only when you genuinely need to ask for clarification before editing.`;
 // rwa:extract:end SYSTEM_PROMPT_RULES
 
@@ -2356,6 +2384,83 @@ function containsReservedMarker(s) {
   if (!s) return false;
   for (const m of RWA_EDIT.RESERVED) if (s.includes(m)) return true;
   return false;
+}
+
+// ─── Image-asset virtualization (images-v1) ─────────────────────────
+// The agent never sees image bytes: data:image URIs are swapped for compact
+// rwa-asset:<hash8> tokens at every agent boundary (modify / bridge /
+// anchored command), and expanded back in the apply core after validation —
+// so MAX_DOC/MAX_REPLACE measure the TEXT budget, never pixels. FNV-1a, not
+// crypto: tokens are identity/dedupe within one doc, not integrity. Hash-keyed
+// (not ordinal) so the agent can move/duplicate/delete tags freely.
+function rwaAssetHash8(s) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
+  return h.toString(16).padStart(8, '0');
+}
+const RWA_ASSET_SRC_RE = /(\bsrc\s*=\s*)(["'])(data:image\/[^"']*)\2/g;
+const RWA_ASSET_TOKEN_RE = /(\bsrc\s*=\s*)(["'])(rwa-asset:[0-9a-f]{8,})\2/g;
+function registerImageAsset(assets, uri) {
+  // Collision probe: deterministic re-salt, so two distinct URIs hashing equal
+  // (32-bit birthday, ~1e-6 at 100 images) still get distinct tokens.
+  let n = 1, token;
+  do { token = 'rwa-asset:' + rwaAssetHash8(n === 1 ? uri : uri + '\0' + n); n++; }
+  while (assets.has(token) && assets.get(token) !== uri);
+  assets.set(token, uri);
+  return token;
+}
+function virtualizeImages(doc, assets) {
+  assets = assets || new Map();
+  // Orphans: rwa-asset tokens already present in the RAW doc (user-authored or
+  // pre-broken). They map to nothing; expansion passes them through instead of
+  // throwing, so a pre-broken doc stays editable.
+  const orphans = new Set();
+  let m;
+  RWA_ASSET_TOKEN_RE.lastIndex = 0;
+  while ((m = RWA_ASSET_TOKEN_RE.exec(doc)) !== null) orphans.add(m[3]);
+  const vdoc = doc.replace(RWA_ASSET_SRC_RE, (_, p, q, uri) => p + q + registerImageAsset(assets, uri) + q);
+  return { doc: vdoc, assets, orphans };
+}
+// Apply the URI→token substitution to ANY string (prompt slices, anchored
+// finds, compose commitBase). Plain split/join — URIs are long, quote-free,
+// and regex-hostile, so substring replacement is the safe primitive. A slice
+// of the real doc virtualizes to the corresponding slice of the virtual doc
+// as long as it doesn't cut a URI in half (block slices never do).
+function virtualizeWithMap(s, assets) {
+  if (!s || !assets || assets.size === 0) return s;
+  let out = s;
+  for (const [token, uri] of assets) out = out.split(uri).join(token);
+  return out;
+}
+function expandImages(vdoc, assets, orphans) {
+  return vdoc.replace(RWA_ASSET_TOKEN_RE, (whole, p, q, token) => {
+    const uri = assets ? assets.get(token) : null;
+    if (uri == null) {
+      if (orphans && orphans.has(token)) return whole;
+      throw new RwaEditError('unknown_asset_reference', null, { token });
+    }
+    return p + q + uri + q;
+  });
+}
+// No-assets writers must not introduce a NEW rwa-asset token — a token with
+// no bytes behind it is a permanently broken image, and committing one
+// silently is exactly the failure mode Rule 12 forbids. Tokens already in
+// the current doc stay legal (editing a pre-broken doc must not be bricked).
+function assertNoNewAssetTokens(currentDoc, work) {
+  const seen = new Set();
+  let m;
+  RWA_ASSET_TOKEN_RE.lastIndex = 0;
+  while ((m = RWA_ASSET_TOKEN_RE.exec(currentDoc)) !== null) seen.add(m[3]);
+  RWA_ASSET_TOKEN_RE.lastIndex = 0;
+  while ((m = RWA_ASSET_TOKEN_RE.exec(work)) !== null) {
+    if (!seen.has(m[3])) throw new RwaEditError('unknown_asset_reference', null, { token: m[3] });
+  }
+}
+if (typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent)) {
+  window.__virtualizeImages = virtualizeImages;
+  window.__virtualizeWithMap = virtualizeWithMap;
+  window.__expandImages = expandImages;
+  window.__registerImageAsset = registerImageAsset;
 }
 
 function countOccurrences(haystack, needle) {
@@ -3328,6 +3433,318 @@ if (typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent)) {
   window.__handleMountDblClick = handleMountDblClick;
 }
 
+// ─── Image ingestion (images-v1) ──────────────────────────────────────
+// Deterministic transform, no model (Rule 5). Drag-drop / paste / the /image
+// picker all funnel through ingestImageFile: decode → downscale to ≤1600px
+// long edge → encode WebP q0.82 (JPEG fallback where toBlob/webp is
+// unsupported — Safari <17) → keep the original bytes when re-encoding
+// doesn't help → second pass at 1280px/q0.7 if over the 500 KB budget →
+// refuse loud, never a silent thumbnail. SVG/GIF pass through un-recoded
+// (animation / vector would be destroyed by a raster re-encode).
+const RWA_IMG = {
+  MAX_EDGE: 1600, RETRY_EDGE: 1280, Q: 0.82, RETRY_Q: 0.7,
+  MAX_BYTES: 500 * 1024,                  // per-image budget (post-encode)
+  FILE_WARN: 5 * 1024 * 1024,             // container size: warn
+  FILE_STOP: 10 * 1024 * 1024,            // container size: refuse insert
+};
+function rwaImageTargetDims(w, h, maxEdge) {
+  const cap = maxEdge || RWA_IMG.MAX_EDGE;
+  const edge = Math.max(w, h);
+  if (edge <= cap) return { w, h };
+  const k = cap / edge;
+  return { w: Math.max(1, Math.round(w * k)), h: Math.max(1, Math.round(h * k)) };
+}
+function rwaFileStem(name) {
+  return String(name || 'image').replace(/\.[A-Za-z0-9]+$/, '');
+}
+// escapeHtml doesn't emit quote entities (it never needed to); attribute
+// values do need them, so alt text gets its own escaper.
+function rwaEscapeAttr(s) {
+  return escapeHtml(String(s == null ? '' : s)).replace(/"/g, '&quot;');
+}
+function buildImageFigure(src, alt) {
+  return '<figure><img src="' + src + '" alt="' + rwaEscapeAttr(alt) + '"></figure>';
+}
+function rwaBlobToDataUri(blob) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result);
+    r.onerror = () => reject(r.error || new Error('image read failed'));
+    r.readAsDataURL(blob);
+  });
+}
+async function rwaEncodeBitmap(bitmap, w, h, type, q) {
+  const canvas = document.createElement('canvas');
+  canvas.width = w; canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return null;
+  ctx.drawImage(bitmap, 0, 0, w, h);
+  return new Promise(resolve => canvas.toBlob(resolve, type, q));
+}
+async function ingestImageFile(file) {
+  if (typeof window.__rwaIngestImage === 'function') return window.__rwaIngestImage(file);   // test seam
+  const type = (file && file.type) || '';
+  if (!/^image\//.test(type)) throw new Error('not an image: ' + (type || (file && file.name) || 'unknown file'));
+  if (type === 'image/svg+xml' || type === 'image/gif') {
+    if (file.size > RWA_IMG.MAX_BYTES)
+      throw new Error('image too large (' + Math.round(file.size / 1024) + ' KB) — export a raster version and retry');
+    return { dataUri: await rwaBlobToDataUri(file), bytes: file.size, name: file.name || 'image', resizedFrom: null };
+  }
+  const bitmap = await createImageBitmap(file);
+  let best = null;
+  for (const pass of [{ edge: RWA_IMG.MAX_EDGE, q: RWA_IMG.Q }, { edge: RWA_IMG.RETRY_EDGE, q: RWA_IMG.RETRY_Q }]) {
+    const d = rwaImageTargetDims(bitmap.width, bitmap.height, pass.edge);
+    let blob = await rwaEncodeBitmap(bitmap, d.w, d.h, 'image/webp', pass.q);
+    // toBlob falls back to image/png when the requested type is unsupported.
+    if (!blob || blob.type !== 'image/webp') blob = await rwaEncodeBitmap(bitmap, d.w, d.h, 'image/jpeg', Math.min(pass.q + 0.03, 0.92));
+    if (!blob) throw new Error('image encode failed — the browser could not rasterize this file');
+    best = blob;
+    if (blob.size <= RWA_IMG.MAX_BYTES) break;
+  }
+  // Re-encoding a small, already-fitting original (tiny PNG icon, optimized
+  // JPEG) can grow it — keep the original bytes when they win.
+  let out = best;
+  if (file.size <= best.size && file.size <= RWA_IMG.MAX_BYTES
+      && bitmap.width <= RWA_IMG.MAX_EDGE && bitmap.height <= RWA_IMG.MAX_EDGE) {
+    out = file;
+  }
+  if (out.size > RWA_IMG.MAX_BYTES)
+    throw new Error('image too large even after compression (' + Math.round(out.size / 1024) + ' KB > '
+      + Math.round(RWA_IMG.MAX_BYTES / 1024) + ' KB) — try cropping it');
+  return {
+    dataUri: await rwaBlobToDataUri(out),
+    bytes: out.size,
+    name: file.name || 'image',
+    resizedFrom: out === file ? null : file.size,
+  };
+}
+if (typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent)) {
+  window.__rwaImageTargetDims = rwaImageTargetDims;
+  window.__rwaFileStem = rwaFileStem;
+  window.__buildImageFigure = buildImageFigure;
+  window.__RWA_IMG = RWA_IMG;
+  window.__ingestImageFile = ingestImageFile;
+}
+
+// ─── Image insert surfaces (images-v1) ────────────────────────────────
+// Three doors, one path: drag-drop onto the doc, paste a screenshot, /image
+// in the lens. Each ingests (above), then commits a <figure> through the
+// SAME non-agent path every edit-surface uses (runtimeApplyEnvelope → R5
+// queue → commitCore) — token-form envelope + assets map, one ⌘Z frame,
+// honest actor attribution (user:image-drop / -paste / -picker / -delete).
+// No model call anywhere here (Rule 5).
+
+// Nearest anchorable block for a pointer event; null → caller appends at EOF.
+// Frozen/locked regions are never split — same exclusions as click-to-anchor.
+function findImageDropTarget(e) {
+  const m = document.getElementById('rwa-doc-mount');
+  let el = e.target instanceof Element ? e.target : null;
+  if (!el || !m || !m.contains(el)) return null;
+  if (el.closest('[data-rwa-frozen]') || el.closest('.rwa-locked')) return null;
+  while (el && el !== m && !ANCHORABLE_TAGS.has(el.tagName)) el = el.parentElement;
+  if (!el || el === m) return null;
+  for (const entry of (sourceMap || [])) {
+    if (liveNodeForEntry(entry) === el) {
+      const r = el.getBoundingClientRect();
+      return { entry, el, before: e.clientY < r.top + r.height / 2 };
+    }
+  }
+  return null;
+}
+
+// Build + commit the insert envelope. target = {entry, before} | null (EOF).
+// Returns the asset token on success, null when refused (budget).
+async function insertImageAt(ingested, target, actor) {
+  const cur = canonLF(await getDoc());
+  const projected = cur.length + ingested.dataUri.length;
+  if (projected > RWA_IMG.FILE_STOP) {
+    showAffordance('not added — container would exceed ' + Math.round(RWA_IMG.FILE_STOP / (1024 * 1024)) + ' MB');
+    return null;
+  }
+  const assets = new Map();
+  const token = registerImageAsset(assets, ingested.dataUri);
+  const figure = buildImageFigure(token, rwaFileStem(ingested.name));
+  let envelope = null;
+  if (target && target.entry) {
+    const f = resolveAnchorFind(target.entry);
+    if (f) {
+      const slice = f.find.slice(f.replacePrefix.length, f.find.length - f.replaceSuffix.length);
+      const replace = target.before
+        ? f.replacePrefix + figure + '\n' + slice + f.replaceSuffix
+        : f.replacePrefix + slice + '\n' + figure + f.replaceSuffix;
+      envelope = { version: 'rwa-edit/1', edits: [{ find: f.find, replace, reason: 'image: insert at block' }], reason: 'image insert' };
+    }
+  }
+  if (!envelope) {
+    const eof = resolveEofAnchor();
+    envelope = eof
+      ? { version: 'rwa-edit/1', edits: [{ find: eof.find, replace: eof.find + '\n' + figure, reason: 'image: append' }], reason: 'image insert' }
+      : { version: 'rwa-edit/1', doc: figure, reason: 'image into an empty document' };
+  }
+  await runtimeApplyEnvelope(envelope, { surface: 'image:insert', instruction: 'image: ' + ingested.name, actor, assets });
+  const kb = Math.round(ingested.bytes / 1024);
+  let note = 'added ' + ingested.name + ' — ' + kb + ' KB'
+    + (ingested.resizedFrom ? ' (resized from ' + Math.round(ingested.resizedFrom / 1024) + ' KB)' : '');
+  if (projected > RWA_IMG.FILE_WARN) note += ' · container is ' + (projected / (1024 * 1024)).toFixed(1) + ' MB';
+  showAffordance(note);
+  return token;
+}
+
+// Shared ingest-then-insert for a FileList; errors surface per-file, the rest
+// continue. After the first insert the drop entry is stale (renderDoc rebuilt
+// the map), so later files of a multi-drop append at EOF — acceptable v1.
+async function insertImageFiles(files, target, actor) {
+  for (const f of files) {
+    try {
+      const ingested = await ingestImageFile(f);
+      await insertImageAt(ingested, target, actor);
+    } catch (err) {
+      showAffordance('image: ' + ((err && err.message) || err));
+    }
+    target = null;
+  }
+}
+
+// ── drag-drop ──
+let rwaDropMark = null;
+function clearDropMark() {
+  if (rwaDropMark) rwaDropMark.classList.remove('rwa-drop-before', 'rwa-drop-after');
+  rwaDropMark = null;
+}
+function dragHasFiles(e) {
+  const t = e.dataTransfer;
+  if (!t) return false;
+  if (Array.from(t.items || []).some(i => i.kind === 'file')) return true;
+  return Array.from(t.types || []).includes('Files');
+}
+function handleMountDragOver(e) {
+  if (modifyMutex || !dragHasFiles(e)) return;
+  e.preventDefault();
+  if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+  clearDropMark();
+  const target = findImageDropTarget(e);
+  if (target) {
+    target.el.classList.add(target.before ? 'rwa-drop-before' : 'rwa-drop-after');
+    rwaDropMark = target.el;
+  }
+}
+function handleMountDragLeave(e) {
+  const m = document.getElementById('rwa-doc-mount');
+  if (!m || !e.relatedTarget || !m.contains(e.relatedTarget)) clearDropMark();
+}
+function handleMountDrop(e) {
+  if (!dragHasFiles(e)) return;
+  e.preventDefault();
+  const target = findImageDropTarget(e);
+  clearDropMark();
+  const files = Array.from((e.dataTransfer && e.dataTransfer.files) || []).filter(f => /^image\//.test(f.type || ''));
+  if (files.length === 0) {
+    showAffordance('only image files can be dropped here');
+    return;
+  }
+  insertImageFiles(files, target, 'user:image-drop');
+}
+
+// ── paste (a screenshot is the #1 case) ──
+function handleDocumentImagePaste(e) {
+  if (activeView) return;
+  if (typeof inlineEdit !== 'undefined' && inlineEdit) return;   // hand-edit owns its paste
+  const files = Array.from((e.clipboardData && e.clipboardData.files) || []).filter(f => /^image\//.test(f.type || ''));
+  if (files.length === 0) return;
+  // Pasting an image into a chrome text field (settings, etc.) is not an
+  // insert — except the lens input, where the obvious intent IS insertion.
+  const t = e.target instanceof Element ? e.target : null;
+  if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA') && t.id !== 'rwa-lens-input') return;
+  e.preventDefault();
+  const target = lensState && lensState.anchor ? { entry: lensState.anchor, before: false } : null;
+  insertImageFiles(files, target, 'user:image-paste');
+}
+document.addEventListener('paste', handleDocumentImagePaste);
+
+// ── /image picker ──
+function openImagePicker() {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = 'image/*';
+  input.multiple = true;
+  input.style.display = 'none';
+  document.body.appendChild(input);
+  input.addEventListener('change', () => {
+    const files = Array.from(input.files || []);
+    input.remove();
+    const target = lensState && lensState.anchor ? { entry: lensState.anchor, before: false } : null;
+    insertImageFiles(files, target, 'user:image-picker');
+  });
+  input.click();
+}
+
+// ── hover ✕ chip (figure-wrapped images only — what the inserters create) ──
+let rwaImgChipTarget = null;
+function ensureImgChip() {
+  let chip = document.getElementById('rwa-img-chip');
+  if (chip) return chip;
+  chip = document.createElement('button');
+  chip.id = 'rwa-img-chip';
+  chip.type = 'button';
+  chip.textContent = '✕';
+  chip.title = 'Remove image (⌘Z to undo)';
+  chip.hidden = true;
+  chip.addEventListener('click', onImgChipClick);
+  document.body.appendChild(chip);
+  return chip;
+}
+function handleMountImgOver(e) {
+  if (activeView || modifyMutex) return;
+  const img = e.target instanceof Element ? e.target.closest('img') : null;
+  const m = document.getElementById('rwa-doc-mount');
+  if (!img || !m || !m.contains(img)) return;
+  if (img.closest('[data-rwa-frozen]') || img.closest('.rwa-locked')) return;
+  const fig = img.closest('figure');
+  if (!fig) return;
+  const chip = ensureImgChip();
+  const r = img.getBoundingClientRect();
+  chip.style.top = (window.scrollY + r.top + 6) + 'px';
+  chip.style.left = (window.scrollX + r.right - 30) + 'px';
+  chip.hidden = false;
+  rwaImgChipTarget = fig;
+}
+function handleMountImgOut(e) {
+  const chip = document.getElementById('rwa-img-chip');
+  if (!chip || chip.hidden) return;
+  const to = e.relatedTarget;
+  if (to && (to === chip || (rwaImgChipTarget && rwaImgChipTarget.contains(to)))) return;
+  chip.hidden = true;
+}
+async function onImgChipClick() {
+  const fig = rwaImgChipTarget;
+  const chip = document.getElementById('rwa-img-chip');
+  if (chip) chip.hidden = true;
+  rwaImgChipTarget = null;
+  if (!fig) return;
+  let entry = null;
+  for (const en of (sourceMap || [])) {
+    if (liveNodeForEntry(en) === fig) { entry = en; break; }
+  }
+  const f = entry && resolveAnchorFind(entry);
+  if (!f) { showAffordance('could not resolve the image block'); return; }
+  // Drop one adjoining newline with the block so no blank line is left behind.
+  let pre = f.replacePrefix, suf = f.replaceSuffix;
+  if (pre.endsWith('\n')) pre = pre.slice(0, -1);
+  else if (suf.startsWith('\n')) suf = suf.slice(1);
+  const envelope = { version: 'rwa-edit/1', edits: [{ find: f.find, replace: pre + suf, reason: 'image: remove' }], reason: 'image remove' };
+  try {
+    await runtimeApplyEnvelope(envelope, { surface: 'image:delete', instruction: 'remove image', actor: 'user:image-delete' });
+    showAffordance('image removed — ⌘Z to undo');
+  } catch (err) {
+    showAffordance('image: ' + ((err && err.message) || err));
+  }
+}
+if (typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent)) {
+  window.__insertImageAt = insertImageAt;
+  window.__findImageDropTarget = findImageDropTarget;
+  window.__openImagePicker = openImagePicker;
+}
+
   // ─── Skin runtime: deterministic apply / reset (kepler) ───────────────
   // A skin is ONE <style data-rwa-skin> block inside the document body, so it
   // commits with the doc, ships in the exported file, and ⌘Z reverts it.
@@ -4186,6 +4603,10 @@ async function submitLens(text) {
       } else {
         await applySkinL1(arg);
       }
+    } else if (/^image$/.test(instruction.trim())) {
+      // /image opens the native file picker — the discoverable sibling of
+      // drag-drop and paste (anchored → the insert lands after the anchor).
+      (typeof window.__rwaOpenImagePicker === 'function' ? window.__rwaOpenImagePicker : openImagePicker)();
     } else if (anchored) {
       await runAnchoredCommand(lensState.anchor, instruction);
     } else {
@@ -4439,8 +4860,16 @@ async function runAnchoredCommand(anchor, instruction) {
   setStatus('run', '⌘K running');
   setLensProgress('thinking', 'Thinking…');
   try {
+    // images-v1: anchored prompts and finds are slices of the REAL doc
+    // (currentDocCache), so virtualize the slices with one shared map and run
+    // the apply on the matching virtual doc — the model sees tokens, the
+    // commit expands them, and an invented token rejects instead of landing.
+    const vimg = virtualizeImages(canonLF(await getDoc()));
     const { target, context } = buildAnchoredContextWindow(anchor);
-    const basePrompt = buildAnchoredPrompt(target, context, instruction);
+    const basePrompt = buildAnchoredPrompt(
+      virtualizeWithMap(target, vimg.assets),
+      virtualizeWithMap(context, vimg.assets),
+      instruction);
     let attempts = 0;
     let lastFailure = null;
     while (attempts < 3) {
@@ -4456,8 +4885,8 @@ async function runAnchoredCommand(anchor, instruction) {
       const envelope = {
         version: 'rwa-edit/1',
         edits: [{
-          find: find.find,
-          replace: find.replacePrefix + response + find.replaceSuffix,
+          find: virtualizeWithMap(find.find, vimg.assets),
+          replace: virtualizeWithMap(find.replacePrefix, vimg.assets) + response + virtualizeWithMap(find.replaceSuffix, vimg.assets),
           reason: 'lens: anchored slash command',
         }],
         reason: `lens: ${instruction}`,
@@ -4470,7 +4899,7 @@ async function runAnchoredCommand(anchor, instruction) {
           actor: getActiveActor(),   // audit R2
         };
         setLensProgress('thinking', 'Applying edits…');
-        const result = await applyEdits(envelope, await getDoc(), lensMeta);
+        const result = await applyEdits(envelope, vimg.doc, lensMeta, { assets: vimg.assets, orphans: vimg.orphans });
         renderDoc(result);
         setDirty(true);
         await rwaBumpDirtyCount().catch(() => {});
@@ -4554,7 +4983,7 @@ if (typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent)) {
 // first commit chains cleanly.
 let nonAgentCommitChain = Promise.resolve();
 
-async function synthesizeAndCommit(envelope, surface, instruction, actor) {
+async function synthesizeAndCommit(envelope, surface, instruction, actor, assets) {
   // Test seam preserved (kept 3-arg so existing stubs keep matching; the actor
   // passthrough is exercised via the rwa_hist integration tests, not the seam).
   if (typeof window.__synthesizeAndCommit === 'function') {
@@ -4567,7 +4996,7 @@ async function synthesizeAndCommit(envelope, surface, instruction, actor) {
   // concurrent_modify when an AGENT loop holds the mutex) does not poison the
   // queue for the next writer. Agent-loop exclusivity is unchanged — only
   // non-agent-vs-non-agent races now serialize.
-  const run = () => commitCore(envelope, surface, instruction, actor);
+  const run = () => commitCore(envelope, surface, instruction, actor, undefined, assets);
   const p = nonAgentCommitChain.then(run, run);
   nonAgentCommitChain = p.catch(() => {});
   return p;
@@ -4576,7 +5005,7 @@ async function synthesizeAndCommit(envelope, surface, instruction, actor) {
 // The reentrant commit body. Assumes the queue above serializes it, so the
 // `if (modifyMutex) throw` guard now fires only when an AGENT loop (modify /
 // modifyViaBridge / runAnchoredCommand) holds the mutex — a genuine conflict.
-async function commitCore(envelope, surface, instruction, actor, frozenBypass) {
+async function commitCore(envelope, surface, instruction, actor, frozenBypass, assets) {
   // Acquire modifyMutex around the read+commit window. Without this, two
   // concurrent ⌘Enter submits could race against each other: both read the
   // same currentDoc, both push it onto rwa_undo, and the later commit
@@ -4611,6 +5040,18 @@ async function commitCore(envelope, surface, instruction, actor, frozenBypass) {
       // writer self-attributes in rwa_hist instead of masquerading as the lens.
       actor: actor || 'user:lens',
     };
+    // images-v1: a caller that supplies an assets map (Map token→data URI)
+    // sends its envelope in TOKEN form — a raw 200 KB URI in `replace` would
+    // trip MAX_REPLACE. Virtualize the stored doc ONCE, seeding the map with
+    // the caller's new entries, so existing images and the new ones share one
+    // vocabulary; the apply core expands at commit. Absent → today's path.
+    let baseDoc = await getDoc();
+    let vOpts = null;
+    if (assets) {
+      const vimg = virtualizeImages(canonLF(baseDoc), new Map(assets));
+      baseDoc = vimg.doc;
+      vOpts = { assets: vimg.assets, orphans: vimg.orphans };
+    }
     let result;
     if (!envelope) {
       // Empty doc → first append → use replace_document.
@@ -4620,7 +5061,7 @@ async function commitCore(envelope, surface, instruction, actor, frozenBypass) {
         doc: wrapped,
         reason: 'initial content into an empty document',
       };
-      result = await replaceDocument(repEnv, await getDoc(), lensMeta);
+      result = await replaceDocument(repEnv, baseDoc, lensMeta, null, vOpts);
     } else if (typeof envelope.doc === 'string') {
       // A deterministic replace_document envelope ({version, doc, reason}) from a
       // runtime writer (e.g. runtime.applyEnvelope for a skin insert/reset).
@@ -4631,9 +5072,9 @@ async function commitCore(envelope, surface, instruction, actor, frozenBypass) {
       // replace_document up front (it is not an apply_edits that escalated).
       // frozenBypass is non-null only for a runtimeRegionCommit('frozen') write,
       // scoping the snapshot exception to the region's own id (spec §4.1).
-      result = await replaceDocument(envelope, await getDoc(), lensMeta, frozenBypass);
+      result = await replaceDocument(envelope, baseDoc, lensMeta, frozenBypass, vOpts);
     } else {
-      result = await applyEdits(envelope, await getDoc(), lensMeta);
+      result = await applyEdits(envelope, baseDoc, lensMeta, vOpts);
     }
     // Re-render so the user sees the new content. renderDoc rebuilds sourceMap
     // and (because the lens may sit inside the mount) calls releaseAnchor, so we
@@ -4775,6 +5216,8 @@ async function __setDocForTest(d) {
 // could otherwise call __setDocForTest('') to wipe the doc with no undo.
 if (typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent)) {
   window.__setDocForTest = __setDocForTest;
+  window.__applyEdits = applyEdits;
+  window.__replaceDocument = replaceDocument;
 }
 
 // Token-level balance check for <script> and <style>. The HTML parser
@@ -4942,7 +5385,7 @@ window.injectMissingBlockIds = injectMissingBlockIds; // expose for tests
 // Single IDB transaction across rwa_doc, rwa_undo, rwa_hist. Reads happen
 // before the transaction (modifyMutex prevents concurrent writes). The
 // transaction itself only writes — three put()s, all atomic.
-async function commitDoc(currentDoc, newDoc, histRecord) {
+async function commitDoc(currentDoc, newDoc, histRecord, assets, orphans) {
   // Hosted projection seam: when a commit sink is installed, the SERVER is the
   // authoritative apply path. Reconstruct the rwa-edit/1 envelope, hand it to the
   // sink (which POSTs it and returns the server's canonical new doc), and mirror
@@ -4950,9 +5393,20 @@ async function commitDoc(currentDoc, newDoc, histRecord) {
   // rwa_undo/rwa_hist write — history is server-side in hosted mode. Unset → the
   // existing transaction below runs byte-identically (additive, guarded).
   if (typeof window.__rwaCommitSink === 'function') {
-    const envelope = histRecord.kind === 'edit_batch'
+    let envelope = histRecord.kind === 'edit_batch'
       ? histRecord.envelope
       : { version: 'rwa-edit/1', doc: newDoc, reason: histRecord.reason };
+    // images-v1: the server applies on the REAL stored doc, so a virtual-form
+    // envelope must be expanded before it leaves the page. (Known v1 limit:
+    // an image-bearing edit then exceeds the server's per-edit cap — hosted
+    // images are deferred; non-image edits expand to themselves.)
+    if (assets && Array.isArray(envelope.edits)) {
+      envelope = { ...envelope, edits: envelope.edits.map(e => ({
+        ...e,
+        find: expandImages(e.find || '', assets, orphans),
+        replace: expandImages(e.replace || '', assets, orphans),
+      })) };
+    }
     const serverDoc = await window.__rwaCommitSink(envelope, histRecord, currentDoc);
     await idbPut(RWA.DOC, serverDoc);
     return serverDoc;
@@ -5096,13 +5550,26 @@ async function applyEdits(envelope, currentDocRaw, lensMeta = null, opts = null)
     histRecord.scope = lensMeta.scope;
     if (lensMeta.actor != null) histRecord.actor = lensMeta.actor;   // audit R2
   }
-  return await commitDoc(currentDoc, work, histRecord);
+  // images-v1: with opts.assets the caller passed the VIRTUAL doc — every
+  // validation above (incl. MAX_DOC/MAX_REPLACE: the TEXT budget) ran on the
+  // token form. Expand back to real bytes for persistence: the committed doc
+  // and the undo frame must hold pixels, never tokens. hist keeps the virtual
+  // envelope (compact). expandImages throws unknown_asset_reference on an
+  // invented token — before anything is written.
+  let commitCur = currentDoc, commitWork = work;
+  if (opts && opts.assets) {
+    commitCur = expandImages(currentDoc, opts.assets, opts.orphans);
+    commitWork = expandImages(work, opts.assets, opts.orphans);
+  } else {
+    assertNoNewAssetTokens(currentDoc, work);
+  }
+  return await commitDoc(commitCur, commitWork, histRecord, opts && opts.assets, opts && opts.orphans);
 }
 
 // `frozenBypass` (a Set of frozen-zone ids) is set ONLY by runtimeRegionCommit
 // (rwa-runtime-region-commit/1); the agent's replace_document tool always passes
 // null, so the frozen-zone wall holds for the agent. See the spec §4.1 / §8.
-async function replaceDocument(envelope, currentDocRaw, lensMeta = null, frozenBypass = null) {
+async function replaceDocument(envelope, currentDocRaw, lensMeta = null, frozenBypass = null, opts = null) {
   if (envelope?.version !== 'rwa-edit/1') throw new RwaEditError('version_unsupported');
   if (typeof envelope.doc !== 'string' || typeof envelope.reason !== 'string' || !envelope.reason)
     throw new RwaEditError('malformed_envelope');
@@ -5161,7 +5628,16 @@ async function replaceDocument(envelope, currentDocRaw, lensMeta = null, frozenB
     histRecord.scope = lensMeta.scope;
     if (lensMeta.actor != null) histRecord.actor = lensMeta.actor;   // audit R2
   }
-  return await commitDoc(currentDoc, newDoc, histRecord);
+  // images-v1: mirror of applyEdits' tail — validations ran on the virtual
+  // form; persist real bytes (see the comment there).
+  let commitCur = currentDoc, commitNew = newDoc;
+  if (opts && opts.assets) {
+    commitCur = expandImages(currentDoc, opts.assets, opts.orphans);
+    commitNew = expandImages(newDoc, opts.assets, opts.orphans);
+  } else {
+    assertNoNewAssetTokens(currentDoc, newDoc);
+  }
+  return await commitDoc(commitCur, commitNew, histRecord, opts && opts.assets, opts && opts.orphans);
 }
 
 // ─── apply_dsl_plan compiler (rwa-edit-dsl/1) ──────────────────────
@@ -6219,6 +6695,7 @@ const FAILURE_HINTS = {
   replace_too_large: 'replace exceeds the per-edit size cap. Split the change into smaller anchored edits.',
   empty_find: 'find must be a non-empty string — provide the exact text to anchor on.',
   parse_error_post_apply: 'The result was not well-formed HTML — check that the tags in replace are balanced.',
+  unknown_asset_reference: 'src uses an rwa-asset: token that does not exist in this document. Copy tokens verbatim from existing <img> tags; never invent or edit them.',
 };
 
 function failureToToolResult(err) {
@@ -6276,7 +6753,15 @@ async function modify(instr, lensMeta = null, opts = null) {
   try {
     // compose callers (applySkinL1) may pass an explicit baseDoc — the deterministically
     // de-skinned base the agent should restyle, so a re-skin starts clean. Defaults to getDoc().
-    const cur = canonLF((opts && opts.baseDoc != null) ? opts.baseDoc : await getDoc());
+    const realCur = canonLF((opts && opts.baseDoc != null) ? opts.baseDoc : await getDoc());
+    // images-v1: the agent never sees image bytes. Virtualize ONCE per call;
+    // a compose commitBase is scanned into the SAME map so every string in
+    // this call speaks one token vocabulary. `cur` (and everything derived
+    // from it — prompt, finds, compose output) is the VIRTUAL doc; the apply
+    // core expands back to real bytes at commit (opts.assets).
+    const vimg = virtualizeImages(realCur);
+    if (opts && opts.commitBase != null) virtualizeImages(canonLF(opts.commitBase), vimg.assets);
+    const cur = vimg.doc;
     const frozenZones = extractFrozenZones(cur);
 
     const messages = [
@@ -6355,21 +6840,21 @@ async function modify(instr, lensMeta = null, opts = null) {
       // theme block and commit ONCE after the loop. replace_document is refused
       // here (it would let the agent rewrite the whole doc, bypassing the
       // additive / computeShape guard); the retry steers it back to apply_edits.
-      const editOpts = (opts && opts.compose) ? { noCommit: true } : null;
+      const editOpts = { noCommit: !!(opts && opts.compose), assets: vimg.assets, orphans: vimg.orphans };
       try {
         if (fnName === 'apply_dsl_plan') {
           const compiled = compileDslPlan(envelope, cur);
           if (compiled.tool === 'apply_edits') newDoc = await applyEdits(compiled.envelope, cur, lensMeta, editOpts);
           else if (compiled.tool === 'replace_document') {
-            if (editOpts) throw new RwaEditError('compose_requires_apply_edits');
-            newDoc = await replaceDocument(compiled.envelope, cur, lensMeta);
+            if (editOpts.noCommit) throw new RwaEditError('compose_requires_apply_edits');
+            newDoc = await replaceDocument(compiled.envelope, cur, lensMeta, null, editOpts);
           }
           else throw new RwaEditError('unknown_tool', null, { name: compiled.tool });
         }
         else if (fnName === 'apply_edits') newDoc = await applyEdits(envelope, cur, lensMeta, editOpts);
         else if (fnName === 'replace_document') {
-          if (editOpts) throw new RwaEditError('compose_requires_apply_edits');
-          newDoc = await replaceDocument(envelope, cur, lensMeta);
+          if (editOpts.noCommit) throw new RwaEditError('compose_requires_apply_edits');
+          newDoc = await replaceDocument(envelope, cur, lensMeta, null, editOpts);
         }
         else throw new RwaEditError('unknown_tool', null, { name: fnName });
       } catch (err) {
@@ -6394,9 +6879,13 @@ async function modify(instr, lensMeta = null, opts = null) {
       const finalDoc = opts.compose.transform(base, cur);
       // commitBase = the ORIGINAL (pre-deskin) doc, so one ⌘Z reverts to the prior
       // skin rather than to the deskinned base. Defaults to cur when not overridden.
-      const commitBase = (opts.commitBase != null) ? canonLF(opts.commitBase) : cur;
+      // images-v1: base/finalDoc are VIRTUAL (noCommit returned the token form), so
+      // commitBase joins them in token form via the shared map (seeded above) and
+      // the final commit expands everything back through opts.assets.
+      const commitBase = (opts.commitBase != null) ? virtualizeWithMap(canonLF(opts.commitBase), vimg.assets) : cur;
       newDoc = await replaceDocument(
-        { version: 'rwa-edit/1', doc: finalDoc, reason: opts.compose.reason }, commitBase, lensMeta);
+        { version: 'rwa-edit/1', doc: finalDoc, reason: opts.compose.reason }, commitBase, lensMeta,
+        null, { assets: vimg.assets, orphans: vimg.orphans });
     }
 
     if (newDoc !== null) {
@@ -6456,7 +6945,11 @@ async function modifyViaBridge(instr, lensMeta = null) {
   setLensProgress('thinking', 'Asking claude -p…');
 
   try {
-    const cur = canonLF(await getDoc());
+    // images-v1: bridge speaks the same token vocabulary as modify() — the
+    // claude -p prompt gets the virtual doc, the apply below expands (vOpts).
+    const vimg = virtualizeImages(canonLF(await getDoc()));
+    const cur = vimg.doc;
+    const vOpts = { assets: vimg.assets, orphans: vimg.orphans };
     const frozenZones = extractFrozenZones(cur);
 
     const prompt = SYSTEM_PROMPT + '\n\n' + buildUserPrompt(instr, cur, frozenZones) +
@@ -6499,13 +6992,13 @@ async function modifyViaBridge(instr, lensMeta = null) {
     let newDoc = null;
     if (parsed.tool === 'apply_dsl_plan') {
       const compiled = compileDslPlan(parsed.envelope, cur);
-      if (compiled.tool === 'apply_edits') newDoc = await applyEdits(compiled.envelope, cur, lensMeta);
-      else if (compiled.tool === 'replace_document') newDoc = await replaceDocument(compiled.envelope, cur, lensMeta);
+      if (compiled.tool === 'apply_edits') newDoc = await applyEdits(compiled.envelope, cur, lensMeta, vOpts);
+      else if (compiled.tool === 'replace_document') newDoc = await replaceDocument(compiled.envelope, cur, lensMeta, null, vOpts);
       else throw new RwaEditError('unknown_tool', null, { name: compiled.tool });
     } else if (parsed.tool === 'apply_edits') {
-      newDoc = await applyEdits(parsed.envelope, cur, lensMeta);
+      newDoc = await applyEdits(parsed.envelope, cur, lensMeta, vOpts);
     } else if (parsed.tool === 'replace_document') {
-      newDoc = await replaceDocument(parsed.envelope, cur, lensMeta);
+      newDoc = await replaceDocument(parsed.envelope, cur, lensMeta, null, vOpts);
     } else {
       throw new RwaEditError('unknown_tool', null, { name: parsed.tool });
     }
