@@ -2,7 +2,7 @@
 
 All notable changes to the `rewritable` CLI (`rwa`).
 
-## [Unreleased]
+## [0.5.0] - 2026-06-10
 
 ### Added
 - **`rwa clone --localize-images`** — make a clone self-contained by inlining each
