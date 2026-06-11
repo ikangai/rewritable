@@ -86,9 +86,12 @@ async function boot(body = '<article><h1>Share</h1><p>seed text here</p></articl
 }
 
 const openPanel = async (document) => {
-  document.getElementById('rwa-st-share').click();
-  await waitFor(() => document.getElementById('rwa-share-panel').classList.contains('open'));
-  return document.getElementById('rwa-share-panel');
+  const p = document.getElementById('rwa-share-panel');
+  if (!p.classList.contains('open')) {
+    document.getElementById('rwa-st-share').click();
+    await waitFor(() => p.classList.contains('open'));
+  }
+  return p;
 };
 const closePanel = async (document) => {
   const p = document.getElementById('rwa-share-panel');
@@ -220,6 +223,48 @@ const closePanel = async (document) => {
     check('G1 DELETE to <base>/share/efgh5678', c.url === 'https://rewritable.ikangai.com/share/efgh5678' && c.opts.method === 'DELETE');
     check('G2 carries the Bearer capability', (c.opts.headers || {}).Authorization === 'Bearer tok_two');
     check('G3 panel returns to disconnected', !!document.getElementById('rwa-share-create'));
+  }
+
+  // ── J. Chrome polish: exclusion both ways, clipboard copy, busy state ─────
+  {
+    // J1/J2: the OTHER panel buttons must close an open share panel.
+    let panel = await openPanel(document);
+    document.getElementById('rwa-st-cog').click();
+    check('J1 ⚙ closes the share panel (mutual exclusion, reverse direction)',
+      !panel.classList.contains('open') && document.getElementById('rwa-set-panel').classList.contains('open'));
+    await openPanel(document);
+    document.getElementById('rwa-st-skin').click();
+    await tick();
+    check('J2 ✦ closes the share panel too', !panel.classList.contains('open'));
+    document.getElementById('rwa-st-skin').click();   // close skins again
+
+    // J3: copy link writes the URL to the clipboard and confirms in the panel.
+    const copied = [];
+    Object.defineProperty(window.navigator, 'clipboard', {
+      value: { writeText: async (s) => { copied.push(s); } }, configurable: true,
+    });
+    net.calls.length = 0;
+    net.handler = async () => jres(201, { short: 'qqqq1111', url: 'https://qqqq1111.rewritable.ikangai.com/', token: 'tok_three', kind: 'connected' });
+    await openPanel(document);
+    document.getElementById('rwa-share-create').click();
+    await waitFor(() => !!document.getElementById('rwa-share-copy'));
+    document.getElementById('rwa-share-copy').click();
+    await waitFor(() => copied.length === 1);
+    check('J3 Copy link puts the share URL on the clipboard', copied[0] === 'https://qqqq1111.rewritable.ikangai.com/');
+    await waitFor(() => /link copied/i.test(document.getElementById('rwa-share-panel').textContent));
+    check('J4 …and the panel confirms it', /link copied/i.test(document.getElementById('rwa-share-panel').textContent));
+
+    // J5: while a publish is in flight the action buttons are disabled.
+    let release;
+    net.handler = () => new Promise(r => { release = () => r(jres(200, { short: 'qqqq1111', url: 'https://qqqq1111.rewritable.ikangai.com/', updatedAt: Date.now() })); });
+    document.getElementById('rwa-share-update').click();
+    await waitFor(() => document.getElementById('rwa-share-update') && document.getElementById('rwa-share-update').disabled);
+    check('J5 in-flight publish disables the action buttons',
+      document.getElementById('rwa-share-update').disabled && document.getElementById('rwa-share-stop').disabled);
+    await waitFor(() => typeof release === 'function');
+    release();
+    await waitFor(() => document.getElementById('rwa-share-update') && !document.getElementById('rwa-share-update').disabled);
+    check('J6 buttons re-enable after the request settles', !document.getElementById('rwa-share-update').disabled);
   }
 
   // ── I. Base-URL override (dev/self-hosted service) ─────────────────────────

@@ -88,6 +88,17 @@ body{font-family:var(--font-ui);background:var(--bg);color:var(--text);min-heigh
 #rwa-info-panel .rwa-info-foot{margin-top:12px;padding-top:10px;border-top:1px solid var(--gray-100);font-size:11px;color:var(--gray-500);line-height:1.5;}
 #rwa-info-panel strong{color:var(--gray-900);font-weight:600;}
 #rwa-info-panel code{font-family:var(--font-mono);font-size:11px;background:var(--gray-50);padding:1px 5px;border-radius:4px;color:var(--gray-700);}
+#rwa-share-panel{position:fixed;top:50px;right:12px;background:var(--white);border:1px solid var(--gray-200);border-radius:var(--radius-sm);padding:18px 20px;display:none;max-width:340px;z-index:999;box-shadow:0 4px 16px rgba(0,0,0,0.08);font-family:var(--font-ui);font-size:13px;line-height:1.55;color:var(--gray-700);}
+#rwa-share-panel.open{display:block;}
+#rwa-share-panel h4{margin:0 0 6px;font-size:15px;color:var(--gray-900);font-weight:600;}
+#rwa-share-panel p{margin:0 0 10px;}
+.rwa-share-url{font-family:var(--font-mono);font-size:11px;background:var(--gray-50);border:1px solid var(--gray-100);border-radius:6px;padding:6px 8px;margin:0 0 8px;cursor:pointer;word-break:break-all;color:var(--gray-700);}
+.rwa-share-fresh{font-family:var(--font-mono);font-size:10px;color:var(--gray-500);margin-bottom:10px;}
+.rwa-share-msg{font-size:12px;color:var(--gray-600);background:var(--gray-50);border-radius:6px;padding:6px 8px;margin-bottom:8px;}
+.rwa-share-actions{display:flex;gap:6px;flex-wrap:wrap;}
+.rwa-share-actions button{font:inherit;font-size:12px;padding:5px 10px;border:1px solid var(--gray-300);border-radius:8px;background:var(--white);color:var(--gray-900);cursor:pointer;}
+.rwa-share-actions button:disabled{opacity:.5;cursor:default;}
+#rwa-share-create,#rwa-share-update{background:var(--gray-900);color:var(--white);border-color:var(--gray-900);}
 .rwa-set-hint code{background:var(--gray-100);padding:1px 4px;border-radius:3px;font-size:10px;}
 .rwa-set-hint.ok{color:#15803d;}
 .rwa-set-hint.err{color:#b91c1c;}
@@ -1298,6 +1309,7 @@ function buildUI() {
   document.getElementById('rwa-st-cog').onclick = () => {
     document.getElementById('rwa-info-panel').classList.remove('open');   // panels are mutually exclusive
     document.getElementById('rwa-skin-panel').classList.remove('open');
+    document.getElementById('rwa-share-panel').classList.remove('open');
     document.getElementById('rwa-set-panel').classList.toggle('open');
   };
   // ⓘ "what is this?" — render the rwa-identity/1 bundle as prose on open so it
@@ -1306,6 +1318,7 @@ function buildUI() {
   document.getElementById('rwa-st-info').onclick = () => {
     document.getElementById('rwa-set-panel').classList.remove('open');
     document.getElementById('rwa-skin-panel').classList.remove('open');
+    document.getElementById('rwa-share-panel').classList.remove('open');
     const panel = document.getElementById('rwa-info-panel');
     if (!panel.classList.contains('open')) panel.innerHTML = renderInfoPanel();
     panel.classList.toggle('open');
@@ -4179,6 +4192,7 @@ HARD RULES: colors are hex strings only (e.g. "#c0392b"); fonts are ONE of the f
     if (!panel) return;
     const setP = document.getElementById('rwa-set-panel'); if (setP) setP.classList.remove('open');
     const infoP = document.getElementById('rwa-info-panel'); if (infoP) infoP.classList.remove('open');
+    const shareP = document.getElementById('rwa-share-panel'); if (shareP) shareP.classList.remove('open');
     const active = currentSkinName();
     panel.innerHTML =
       '<div class="rwa-skin-hd"><span>Skins</span><span>' + (active || '—') + '</span></div>'
