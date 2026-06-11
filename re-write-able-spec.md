@@ -314,6 +314,24 @@ runtime.setView(null);                        // return to the default render pa
 
 **Deferred.** This revision specifies only the `view` kind and only its first-party path. The `edit-surface` and `compute` kinds (direct human cell editing, reactive recompute), the installed/third-party provider path (the install surface, permission declaration, persistence), and the write-path ordering that non-agent writers need (flushing uncommitted edits before an agent modify acquires the mutex — not enforceable at the current `modify()` structure) are out of scope here and tracked in `docs/plans/2026-05-29-rwa-affordance-skill-kernel-design.md`.
 
+### 5.11 Connected share
+
+A container can be **connected to a stable share URL**. The chrome's ↗ panel offers three gestures, each one explicit and each mapping to exactly one HTTP request against a share service:
+
+- **Create share link** — `POST /share` with the full current file bytes (the `buildFile` output — exactly the ⌘S artifact, §5.6). The service responds `{short, url, token}`: a stable short code, the public URL, and an **update token** returned exactly once.
+- **Publish this version** — `POST /share/<short>` with fresh file bytes under `Authorization: Bearer <token>`. The URL is stable; its content becomes the new version.
+- **Stop sharing** — `DELETE /share/<short>` under the same Bearer.
+
+**The link shows a published version, not live edits.** This is the framing decision the affordance exists for (`docs/plans/2026-06-11-save-affordance-framings.md` §7c): the local file plus its working state stay canonical, and sharing is the explicit act of posting a version to a reference others can hold. The panel shows freshness — the SHA-256 of the document at last publish against the current document — as "the link shows this version" / "behind your latest edits." The gap between local state and the published version is visible and *expected*, unlike the invisible IDB-vs-file gap it replaces.
+
+**The connection record is machine-local.** `{short, url, token, publishedHash, publishedAt}` lives in `rwa_state` under the key `share_conn` (a reserved store — Invariant 4). The token is a bearer capability: it must never appear in the chrome DOM, and it cannot reach the exported file because a commit only rewrites `INLINE_DOC` (Invariant 1). Moving the file to another machine moves the document, not the update capability.
+
+**Every publish rotates `DOC_UUID`, server-side.** A receiver who once opened an earlier version of a share holds per-UUID IndexedDB state for it (§5.3); if a later version carried the same UUID, their stale local state would silently shadow the update on open (§5.7's isolation, inverted into a trap). Fresh-UUID-per-publish makes every fetched version a distinct container.
+
+**Lifetime is durable-while-active.** A connected share lives until explicitly unshared, with a long-inactivity backstop (90 days without an update or a view in the reference service). An update attempt against a dead or revoked share clears the local record and surfaces "this link can no longer be updated" — the honest state is *not connected*, never a stale claim.
+
+**Network posture.** These three gestures are the only network requests the runtime performs outside the user-configured agent backends (§6.4). Nothing fires at boot, on edit, or on ⌘S; a container that never opens the ↗ panel never touches the network. The service base defaults to the reference deployment and is overridable per-session (`sessionStorage` `rwa_share_base`) for dev or self-hosted services.
+
 ---
 
 ## 6. The Agent Contract
@@ -663,6 +681,8 @@ These properties are load-bearing — every change to the runtime, bootstrap, or
 9. The document the agent receives is derived from the stored document text, never from a render mode's mounted output. Render modes are invisible to the agent.
 
 ---
+
+*Spec version 0.15 — connected share. §5.11 (new) specifies the ↗ chrome affordance: a container connects to a stable share URL by POSTing its full file bytes to a share service (`POST /share` → `{short, url, token}`), re-publishes versions to the same URL under the Bearer update token, and unshares with DELETE. The connection record (`share_conn`, with the token) lives in `rwa_state` — machine-local by construction: Invariant 1 keeps it out of the exported file, Invariant 4 keeps it runtime-only. The link shows a published **version**, not live edits (the local-first framing, `docs/plans/2026-06-11-save-affordance-framings.md` §7c); the panel surfaces freshness via the published-hash. Every publish rotates `DOC_UUID` server-side so a receiver's stale per-UUID IDB can never shadow an update (§5.7). Shares are durable while active (90-day inactivity backstop). These gestures are the only non-agent network the runtime performs — nothing fires at boot or on ⌘S, so offline-first holds. Service: the `/share` route family beside `POST /publish` (unchanged) in `service/server.js`. Verified: `tests/share.mjs` 36/0, `service/tests/share.test.mjs` 8/0, full seed suite + conformance green. References regenerated.*
 
 *Spec version 0.14 — self-description. §7 gains `runtime.describe()`, the live projection of the `self-description/1` contract (`docs/specs/rwa-self-description-spec.md`): the answer to "what is this container, and what can be done with it?" — `kind`, the registered affordance providers (from the live `view`/§5.10 registry, zero-drift), author-declared `frozenZones`, `title`, addressable-block count, and a `baseline` of substrate-universal ops. The static counterpart is `rwa doc --json` (computed from the file bytes by `tools/self-description.mjs`, the shared referee oracle); the two projections agree on every shared field by construction (`source:'live'` vs `'static'`). Honest by construction: it reports only affordances actually present (a base `document` is `[]`; `history` is undo-only — there is no redo, Invariant 7). The change is **additive** — a new query method plus a chrome "ⓘ what is this?" disclosure; no commit-stamp (that would break Invariant 1, so the description is computed live, never written into the file), no `modify`/`commit`/`buildFile` change, bootstrap byte-unchanged (meta tag stays `rwa-bootstrap` 0.9). Verified: `tests/identity.mjs` 42/0 (validates `describe()` against the oracle + live⇔static cross-projection + SD-06 no-leakage), full seed suite + conformance 79/79 green.*
 
