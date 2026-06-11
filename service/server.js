@@ -597,6 +597,58 @@ async function handleShareCreate(req, send) {
   return sendShareJson(send, 201, { short, url: shareUrlFor(req, short), token, kind: 'connected' });
 }
 
+// Read + gate a connected share's metadata for a Bearer-authenticated write.
+// Returns the meta object, or null after having sent the error itself.
+// Unknown short and known-but-ephemeral short are BOTH 404 — an ephemeral
+// /publish snapshot has no update capability, and the distinction would only
+// leak which class a code belongs to.
+function authConnectedShare(req, send, short) {
+  let meta;
+  try { meta = JSON.parse(fs.readFileSync(path.join(DATA_DIR, `${short}.json`), 'utf8')); }
+  catch { sendShareJson(send, 404, { error: 'not_found' }); return null; }
+  if (meta.kind !== 'connected' || typeof meta.capHash !== 'string') {
+    sendShareJson(send, 404, { error: 'not_found' });
+    return null;
+  }
+  const token = bearerToken(req);
+  if (!hosted.verifyToken(token, meta.capHash)) {
+    send(401, { ...JSON_CT, ...SHARE_CORS, 'WWW-Authenticate': 'Bearer' },
+      JSON.stringify({ error: 'unauthorized' }) + '\n');
+    return null;
+  }
+  return meta;
+}
+
+async function handleShareUpdate(req, send, short) {
+  const meta = authConnectedShare(req, send, short);
+  if (!meta) return;
+  // Per-capability write limit (shared limiter map with hosted /modify —
+  // distinct hashes, same policy: a leaked-URL flood can't grind the disk).
+  const rl = checkModifyRateLimit(meta.capHash);
+  if (!rl.ok) {
+    return send(429, { ...JSON_CT, ...SHARE_CORS, 'Retry-After': String(rl.retryAfterSec) },
+      JSON.stringify({ error: 'rate_limited', retryAfterSec: rl.retryAfterSec }) + '\n');
+  }
+  const text = await readShareContainer(req, send);
+  if (text == null) return;
+
+  const newText = text.replace(UUID_RE, `const DOC_UUID = '${crypto.randomUUID()}';`);
+  const now = Date.now();
+  const newMeta = {
+    ...meta,
+    updatedAt: now, lastActivity: now,
+    sizeBytes: Buffer.byteLength(newText, 'utf8'),
+  };
+  try {
+    atomicWriteFile(path.join(DATA_DIR, `${short}.html`), newText);
+    atomicWriteFile(path.join(DATA_DIR, `${short}.json`), JSON.stringify(newMeta));
+  } catch (err) {
+    console.error('share: update write failed', err);
+    return sendShareJson(send, 500, { error: 'storage_failed' });
+  }
+  return sendShareJson(send, 200, { short, url: shareUrlFor(req, short), updatedAt: now });
+}
+
 // POST /r — create a hosted rwa from raw .html bytes. Anonymous (creating).
 async function handleHostedCreate(req, send) {
   let buf;
@@ -1157,6 +1209,14 @@ const server = http.createServer((req, res) => {
     if (req.method === 'POST' && url === '/share') {
       handleShareCreate(req, send).catch(err => {
         console.error('share: create unhandled error', err);
+        if (!res.headersSent) sendShareJson(send, 500, { error: 'internal_error' });
+      });
+      return;
+    }
+    if (req.method === 'POST' && url !== '/share') {
+      const short = url.slice('/share/'.length);
+      handleShareUpdate(req, send, short).catch(err => {
+        console.error('share: update unhandled error', err);
         if (!res.headersSent) sendShareJson(send, 500, { error: 'internal_error' });
       });
       return;

@@ -165,3 +165,97 @@ test('POST /share rejects a non-rewritable with 400 validation_failed (CORS-read
     assert.equal(err.error, 'validation_failed');
   } finally { await srv.stop(); }
 });
+
+// ─── 3. Update (the point of a CONNECTED share: same URL, new version) ──────
+
+test('POST /share/:short with the token re-publishes to the same short', async () => {
+  const srv = await startServer();
+  try {
+    const { short, token } = await (await createShare(srv.base)).json();
+    const v1Html = readFileSync(join(srv.dataDir, `${short}.html`), 'utf8');
+    const metaBefore = JSON.parse(readFileSync(join(srv.dataDir, `${short}.json`), 'utf8'));
+
+    const v2 = makeRewritable('33333333-3333-4333-8333-333333333333',
+      '<article><h1>Share Test Doc</h1><p>Version two body.</p></article>');
+    const res = await fetch(`${srv.base}/share/${short}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/html', Authorization: `Bearer ${token}` },
+      body: v2,
+    });
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get('access-control-allow-origin'), '*');
+    const out = await res.json();
+    assert.equal(out.short, short, 'the short — and so the URL — is stable across updates');
+    assert.equal(typeof out.updatedAt, 'number');
+
+    const v2Html = readFileSync(join(srv.dataDir, `${short}.html`), 'utf8');
+    assert.ok(v2Html.includes('Version two body.'), 'stored bytes are the new version');
+    assert.ok(!v2Html.includes('Version one body.'), 'the old version is fully replaced');
+    assert.notEqual(v2Html, v1Html);
+    // UUID rotates on EVERY publish, and never echoes the poster's.
+    assert.ok(!v2Html.includes('33333333-3333-4333-8333-333333333333'));
+
+    const metaAfter = JSON.parse(readFileSync(join(srv.dataDir, `${short}.json`), 'utf8'));
+    assert.equal(metaAfter.capHash, metaBefore.capHash, 'the capability survives updates');
+    assert.equal(metaAfter.createdAt, metaBefore.createdAt);
+    assert.ok(metaAfter.updatedAt >= metaBefore.updatedAt);
+    assert.ok(metaAfter.lastActivity >= metaBefore.lastActivity);
+  } finally { await srv.stop(); }
+});
+
+test('update auth: 401 missing/wrong token; 404 unknown short; 404 for an ephemeral /publish short', async () => {
+  const srv = await startServer();
+  try {
+    const { short, token } = await (await createShare(srv.base)).json();
+
+    const noAuth = await fetch(`${srv.base}/share/${short}`, {
+      method: 'POST', headers: { 'Content-Type': 'text/html' }, body: CONTAINER,
+    });
+    assert.equal(noAuth.status, 401);
+    assert.equal(noAuth.headers.get('access-control-allow-origin'), '*');
+
+    const wrong = await fetch(`${srv.base}/share/${short}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/html', Authorization: 'Bearer ' + 'x'.repeat(43) },
+      body: CONTAINER,
+    });
+    assert.equal(wrong.status, 401);
+    const v1Html = readFileSync(join(srv.dataDir, `${short}.html`), 'utf8');
+    assert.ok(v1Html.includes('Version one body.'), 'a rejected update must not touch the bytes');
+
+    const unknown = await fetch(`${srv.base}/share/zzzzzzzz`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/html', Authorization: `Bearer ${token}` },
+      body: CONTAINER,
+    });
+    assert.equal(unknown.status, 404);
+
+    // An ephemeral /publish share has no capability — it must not be
+    // updatable even with SOME valid connected-share token in hand.
+    const pub = await (await fetch(srv.base + '/publish', {
+      method: 'POST', headers: { 'Content-Type': 'text/html' }, body: CONTAINER,
+    })).json();
+    const ephem = await fetch(`${srv.base}/share/${pub.short}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/html', Authorization: `Bearer ${token}` },
+      body: CONTAINER,
+    });
+    assert.equal(ephem.status, 404, 'ephemeral shares are not connected — 404, not 401');
+  } finally { await srv.stop(); }
+});
+
+test('update with a garbage body: 400 validation_failed, stored bytes untouched', async () => {
+  const srv = await startServer();
+  try {
+    const { short, token } = await (await createShare(srv.base)).json();
+    const before = readFileSync(join(srv.dataDir, `${short}.html`), 'utf8');
+    const res = await fetch(`${srv.base}/share/${short}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/html', Authorization: `Bearer ${token}` },
+      body: '<html>garbage</html>',
+    });
+    assert.equal(res.status, 400);
+    assert.equal((await res.json()).error, 'validation_failed');
+    assert.equal(readFileSync(join(srv.dataDir, `${short}.html`), 'utf8'), before);
+  } finally { await srv.stop(); }
+});
