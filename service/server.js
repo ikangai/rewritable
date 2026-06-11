@@ -622,6 +622,10 @@ async function handleShareCreate(req, send) {
 // /publish snapshot has no update capability, and the distinction would only
 // leak which class a code belongs to.
 function authConnectedShare(req, send, short) {
+  // The route gate already constrains the shape, but the filename invariant
+  // belongs HERE too — a future caller must not be able to reach the
+  // path.join below with traversal-shaped input.
+  if (!SHORT_RE.test(short)) { sendShareJson(send, 404, { error: 'not_found' }); return null; }
   let meta;
   try { meta = JSON.parse(fs.readFileSync(path.join(DATA_DIR, `${short}.json`), 'utf8')); }
   catch { sendShareJson(send, 404, { error: 'not_found' }); return null; }
