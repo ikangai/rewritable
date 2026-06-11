@@ -244,6 +244,82 @@ test('update auth: 401 missing/wrong token; 404 unknown short; 404 for an epheme
   } finally { await srv.stop(); }
 });
 
+// ─── 4. Unshare ─────────────────────────────────────────────────────────────
+
+test('DELETE /share/:short unshares; wrong token leaves it intact; ephemeral short 404s', async () => {
+  const srv = await startServer();
+  try {
+    const { short, token } = await (await createShare(srv.base)).json();
+
+    const wrong = await fetch(`${srv.base}/share/${short}`, {
+      method: 'DELETE', headers: { Authorization: 'Bearer ' + 'x'.repeat(43) },
+    });
+    assert.equal(wrong.status, 401);
+    assert.ok(existsSync(join(srv.dataDir, `${short}.html`)), 'a rejected delete must not remove the share');
+
+    const del = await fetch(`${srv.base}/share/${short}`, {
+      method: 'DELETE', headers: { Authorization: `Bearer ${token}` },
+    });
+    assert.equal(del.status, 204);
+    assert.ok(!existsSync(join(srv.dataDir, `${short}.html`)));
+    assert.ok(!existsSync(join(srv.dataDir, `${short}.json`)));
+    assert.equal((await fetch(`${srv.base}/s/${short}`)).status, 404, 'an unshared link is gone');
+
+    const pub = await (await fetch(srv.base + '/publish', {
+      method: 'POST', headers: { 'Content-Type': 'text/html' }, body: CONTAINER,
+    })).json();
+    const ephem = await fetch(`${srv.base}/share/${pub.short}`, {
+      method: 'DELETE', headers: { Authorization: `Bearer ${token}` },
+    });
+    assert.equal(ephem.status, 404, 'ephemeral shares have no delete capability');
+  } finally { await srv.stop(); }
+});
+
+// ─── 5. Durable-while-active: two TTL classes, one DATA_DIR ─────────────────
+// Fixtures are planted BEFORE server start so the startup sweep is what's
+// under test (sweepExpired runs once at boot, then hourly).
+
+const DAY = 24 * 60 * 60 * 1000;
+
+function connectedFixture(short, { createdAgo, activeAgo }) {
+  const now = Date.now();
+  return {
+    [`${short}.html`]: makeRewritable(undefined, `<article><p>fixture ${short}</p></article>`),
+    [`${short}.json`]: JSON.stringify({
+      kind: 'connected', capHash: 'a'.repeat(64),
+      createdAt: now - createdAgo, updatedAt: now - activeAgo, lastActivity: now - activeAgo,
+      sizeBytes: 100, ip: 'test',
+    }),
+  };
+}
+
+test('a connected share outlives 24h while active; 90d-inactive connected and 24h ephemeral are swept', async () => {
+  const now = Date.now();
+  const srv = await startServer({
+    seedFiles: {
+      // (a) connected, 3 days old, active yesterday → must survive AND serve.
+      ...connectedFixture('aaaaaaaa', { createdAgo: 3 * DAY, activeAgo: 1 * DAY }),
+      // (b) connected, inactive for 91 days → swept at startup.
+      ...connectedFixture('bbbbbbbb', { createdAgo: 200 * DAY, activeAgo: 91 * DAY }),
+      // (c) ephemeral, 25h old → swept (the existing /publish rule must not regress).
+      'cccccccc.html': makeRewritable(),
+      'cccccccc.json': JSON.stringify({ createdAt: now - 25 * 60 * 60 * 1000, sizeBytes: 100, ip: 'test' }),
+    },
+  });
+  try {
+    assert.ok(existsSync(join(srv.dataDir, 'aaaaaaaa.html')), 'active connected share survives the sweep');
+    assert.ok(!existsSync(join(srv.dataDir, 'bbbbbbbb.html')), '90d-inactive connected share is swept');
+    assert.ok(!existsSync(join(srv.dataDir, 'cccccccc.html')), '25h ephemeral share is swept (regression pin)');
+
+    const got = await fetch(`${srv.base}/s/aaaaaaaa`);
+    assert.equal(got.status, 200, 'a >24h connected share still SERVES (no 410)');
+
+    // Serving counts as activity — the view refreshes the inactivity clock.
+    const meta = JSON.parse(readFileSync(join(srv.dataDir, 'aaaaaaaa.json'), 'utf8'));
+    assert.ok(meta.lastActivity >= now - 60_000, 'GET bumps lastActivity');
+  } finally { await srv.stop(); }
+});
+
 test('update with a garbage body: 400 validation_failed, stored bytes untouched', async () => {
   const srv = await startServer();
   try {

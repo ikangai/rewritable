@@ -321,6 +321,17 @@ function checkModifyRateLimit(capHash) {
   return { ok: true };
 }
 
+// Two TTL classes share DATA_DIR: ephemeral /publish snapshots die 24h after
+// creation (unchanged); kind:'connected' shares are durable while active —
+// they die only after 90 days without an update or a view (NINETY_DAYS_MS
+// from hosted.js, the same constant the /r runtime sweeps on).
+function shareExpired(meta, now) {
+  if (meta && meta.kind === 'connected') {
+    return typeof meta.lastActivity !== 'number' || now - meta.lastActivity > hosted.NINETY_DAYS_MS;
+  }
+  return !meta || typeof meta.createdAt !== 'number' || now - meta.createdAt > EXPIRY_MS;
+}
+
 function sweepExpired() {
   let entries;
   try { entries = fs.readdirSync(DATA_DIR); }
@@ -345,7 +356,7 @@ function sweepExpired() {
     } else {
       try {
         const meta = JSON.parse(fs.readFileSync(path.join(DATA_DIR, files.json), 'utf8'));
-        if (typeof meta.createdAt !== 'number' || now - meta.createdAt > EXPIRY_MS) expired = true;
+        expired = shareExpired(meta, now);
       } catch { expired = true; }
     }
     if (expired) {
@@ -396,7 +407,7 @@ function serveShare(short, send) {
     console.error('share: metadata read failed', err);
     return send(500, { 'Content-Type': 'text/plain' }, 'internal error\n');
   }
-  if (typeof meta.createdAt !== 'number' || Date.now() - meta.createdAt > EXPIRY_MS) {
+  if (shareExpired(meta, Date.now())) {
     return send(410, { 'Content-Type': 'text/plain' }, 'expired\n');
   }
   let body;
@@ -405,6 +416,14 @@ function serveShare(short, send) {
     if (err.code === 'ENOENT') return send(404, { 'Content-Type': 'text/plain' }, 'not found\n');
     console.error('share: bytes read failed', err);
     return send(500, { 'Content-Type': 'text/plain' }, 'internal error\n');
+  }
+  if (meta.kind === 'connected') {
+    // A view refreshes the inactivity clock (durable WHILE ACTIVE). Best
+    // effort: a failed bump must never fail the read.
+    try {
+      atomicWriteFile(path.join(DATA_DIR, `${short}.json`),
+        JSON.stringify({ ...meta, lastActivity: Date.now() }));
+    } catch (err) { console.error('share: lastActivity bump failed', err.message); }
   }
   return send(200, {
     'Content-Type': 'text/html; charset=utf-8',
@@ -617,6 +636,15 @@ function authConnectedShare(req, send, short) {
     return null;
   }
   return meta;
+}
+
+async function handleShareDelete(req, send, short) {
+  const meta = authConnectedShare(req, send, short);
+  if (!meta) return;
+  for (const ext of ['html', 'json']) {
+    try { fs.unlinkSync(path.join(DATA_DIR, `${short}.${ext}`)); } catch {}
+  }
+  return send(204, SHARE_CORS, '');
 }
 
 async function handleShareUpdate(req, send, short) {
@@ -1213,10 +1241,11 @@ const server = http.createServer((req, res) => {
       });
       return;
     }
-    if (req.method === 'POST' && url !== '/share') {
+    if ((req.method === 'POST' || req.method === 'DELETE') && url !== '/share') {
       const short = url.slice('/share/'.length);
-      handleShareUpdate(req, send, short).catch(err => {
-        console.error('share: update unhandled error', err);
+      const handler = req.method === 'POST' ? handleShareUpdate : handleShareDelete;
+      handler(req, send, short).catch(err => {
+        console.error('share: write unhandled error', err);
         if (!res.headersSent) sendShareJson(send, 500, { error: 'internal_error' });
       });
       return;
