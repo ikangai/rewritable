@@ -149,6 +149,16 @@ RWA_SITE_HOST=user@host RWA_SITE_PATH=/var/www/r RWA_SITE_URL=https://example.co
 
 Config is flags-over-env — `RWA_SITE_HOST` / `RWA_SITE_PATH` / `RWA_SITE_URL`, each overridable by `--host` / `--path` / `--url`. Network-bearing, like `rwa clone`.
 
+## Sharing at a stable link (connected share)
+
+A snapshot share (above) is one-shot: a new URL every time, gone in 24h. A **connected share** gives a document a *stable* URL it can publish new versions to. Click **↗** in the file's status bar:
+
+- **Create share link** — publishes the current state to `<short>.rewritable.ikangai.com/` and keeps an update token, machine-local, in the container's private IndexedDB. The token never appears in the page or in the saved file.
+- **Publish this version** — pushes your current state to the *same* URL. The panel always shows where you stand: *"Published 2 h ago · the link shows this version"* or *"behind your latest edits."*
+- **Stop sharing** — deletes it. Otherwise a connected share lives as long as it's being viewed or updated (90-day inactivity expiry), not 24 hours.
+
+The framing is deliberate: **the link shows a published version, not your live edits.** Your working state stays in your browser; the file on disk is your checkpoint (`⌘S`); the URL is the version you chose to post — three artifacts, three explicit gestures, every gap visible. Anyone opening the link gets a full self-contained rewritable (with its own fresh `DOC_UUID`, so their local edits never collide with yours) — they can read it, fork it, save it, or share their own copy. These share gestures are the only network calls the runtime ever makes on its own; a file that never opens the ↗ panel never touches the network. Spec: [`re-write-able-spec.md`](re-write-able-spec.md) §5.11; rationale: [`docs/plans/2026-06-11-save-affordance-framings.md`](docs/plans/2026-06-11-save-affordance-framings.md).
+
 ## Editing at a distance (hosted runtime)
 
 Publishing (above) shares an immutable snapshot. The **hosted runtime** is its writable counterpart: a zero-dep service (`service/`, the `/r/` API) that stores a rewritable's canonical bytes and speaks the operations contract over HTTP, so the file can be edited from a chat, a phone, or the web — without dethroning it. The bytes the server holds *are* a rewritable; `GET /r/:id/export` always hands back the real `.html`, byte-for-byte what `⌘S` would write. Hosting adds a remote door onto *modify*; it does not create a second source of truth.
@@ -168,7 +178,7 @@ The messaging and voice surfaces in `surfaces/` are **adapters onto the one cont
 
 ## The specs
 
-- [`re-write-able-spec.md`](re-write-able-spec.md) — the container spec: architecture, storage model, agent contract, embedding, security, platform behavior. Currently v0.10.
+- [`re-write-able-spec.md`](re-write-able-spec.md) — the container spec: architecture, storage model, agent contract, embedding, security, platform behavior. Currently v0.15.
 - [`rwa-edit-spec.md`](rwa-edit-spec.md) — the anchor-based edit protocol the agent uses to modify documents. Currently rwa-edit/1 (v1.4).
 - [`rwa-edit-dsl-spec.md`](rwa-edit-dsl-spec.md) — the structural-transform DSL layered on rwa-edit/1: a small typed vocabulary (`replace`, `insert`, `delete`, `set_attr`) the runtime compiles to anchor-based edits. Currently rwa-edit-dsl/1 (v0.1).
 - [`docs/specs/rwa-lens-spec.md`](docs/specs/rwa-lens-spec.md) — the lens edit model: a single steerable input with default and anchored states, slash-discriminated content vs. instruction, class-declared locks. Currently rwa-lens/1 (v0.9).
