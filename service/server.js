@@ -321,6 +321,17 @@ function checkModifyRateLimit(capHash) {
   return { ok: true };
 }
 
+// Two TTL classes share DATA_DIR: ephemeral /publish snapshots die 24h after
+// creation (unchanged); kind:'connected' shares are durable while active —
+// they die only after 90 days without an update or a view (NINETY_DAYS_MS
+// from hosted.js, the same constant the /r runtime sweeps on).
+function shareExpired(meta, now) {
+  if (meta && meta.kind === 'connected') {
+    return typeof meta.lastActivity !== 'number' || now - meta.lastActivity > hosted.NINETY_DAYS_MS;
+  }
+  return !meta || typeof meta.createdAt !== 'number' || now - meta.createdAt > EXPIRY_MS;
+}
+
 function sweepExpired() {
   let entries;
   try { entries = fs.readdirSync(DATA_DIR); }
@@ -345,7 +356,7 @@ function sweepExpired() {
     } else {
       try {
         const meta = JSON.parse(fs.readFileSync(path.join(DATA_DIR, files.json), 'utf8'));
-        if (typeof meta.createdAt !== 'number' || now - meta.createdAt > EXPIRY_MS) expired = true;
+        expired = shareExpired(meta, now);
       } catch { expired = true; }
     }
     if (expired) {
@@ -396,7 +407,7 @@ function serveShare(short, send) {
     console.error('share: metadata read failed', err);
     return send(500, { 'Content-Type': 'text/plain' }, 'internal error\n');
   }
-  if (typeof meta.createdAt !== 'number' || Date.now() - meta.createdAt > EXPIRY_MS) {
+  if (shareExpired(meta, Date.now())) {
     return send(410, { 'Content-Type': 'text/plain' }, 'expired\n');
   }
   let body;
@@ -405,6 +416,14 @@ function serveShare(short, send) {
     if (err.code === 'ENOENT') return send(404, { 'Content-Type': 'text/plain' }, 'not found\n');
     console.error('share: bytes read failed', err);
     return send(500, { 'Content-Type': 'text/plain' }, 'internal error\n');
+  }
+  if (meta.kind === 'connected') {
+    // A view refreshes the inactivity clock (durable WHILE ACTIVE). Best
+    // effort: a failed bump must never fail the read.
+    try {
+      atomicWriteFile(path.join(DATA_DIR, `${short}.json`),
+        JSON.stringify({ ...meta, lastActivity: Date.now() }));
+    } catch (err) { console.error('share: lastActivity bump failed', err.message); }
   }
   return send(200, {
     'Content-Type': 'text/html; charset=utf-8',
@@ -500,6 +519,166 @@ function bearerToken(req) {
   if (!h || typeof h !== 'string') return null;
   const m = h.match(/^Bearer\s+(\S+)$/);
   return m ? m[1] : null;
+}
+
+// ─── Connected shares (/share route family) ────────────────────────────────
+// The stable-URL sibling of POST /publish (which stays untouched): create
+// returns an update token; re-publishing to the same short is Bearer-gated.
+// Storage reuses the publish files (DATA_DIR/<short>.{html,json}) with a
+// kind:'connected' metadata class — durable while active, swept after 90 days
+// of inactivity instead of the ephemeral 24h rule.
+// Design: docs/plans/2026-06-11-save-affordance-framings.md §7c.
+//
+// CORS: the consumer is the seed's share chrome running at file:// (null
+// origin), so every /share* response — success, error, and preflight — must
+// carry Access-Control-Allow-Origin. Wide-open is safe here: no cookies, the
+// only credential is the capability token the caller explicitly presents.
+const SHARE_CORS = { 'Access-Control-Allow-Origin': '*' };
+const sendShareJson = (send, status, obj) =>
+  send(status, { ...JSON_CT, ...SHARE_CORS }, JSON.stringify(obj) + '\n');
+
+function handleSharePreflight(send) {
+  return send(204, {
+    ...SHARE_CORS,
+    'Access-Control-Allow-Methods': 'POST, DELETE, OPTIONS',
+    'Access-Control-Allow-Headers': 'authorization, content-type',
+    'Access-Control-Max-Age': '86400',
+  }, '');
+}
+
+// URL shape is identical to /publish: host-keyed per-share origin in
+// production, path-keyed fallback in local dev.
+function shareUrlFor(req, short) {
+  const scheme = (req.headers['x-forwarded-proto'] || 'http').split(',')[0].trim();
+  const host = req.headers.host || 'localhost';
+  return isLocalHost(host) ? `${scheme}://${host}/s/${short}` : `${scheme}://${short}.${host}/`;
+}
+
+// Shared body-read + container validation for create/update. Resolves to the
+// UTF-8 text or null after having sent the error response itself.
+async function readShareContainer(req, send) {
+  let buf;
+  try { buf = await readBody(req, MAX_BODY_BYTES); }
+  catch (err) {
+    if (err && err.code === 'BODY_TOO_LARGE') {
+      sendShareJson(send, 413, { error: 'body_too_large', maxBytes: MAX_BODY_BYTES });
+    } else {
+      sendShareJson(send, 400, { error: 'read_failed', detail: String(err && err.message || err) });
+    }
+    return null;
+  }
+  const text = buf.toString('utf8');
+  const val = validateContainer(text);
+  if (!val.ok) {
+    sendShareJson(send, 400, { error: 'validation_failed', detail: val.detail });
+    return null;
+  }
+  return text;
+}
+
+async function handleShareCreate(req, send) {
+  const ip = clientIp(req);
+  const rl = checkRateLimit(ip);   // shared per-IP bucket with /publish
+  if (!rl.ok) {
+    return send(429, { ...JSON_CT, ...SHARE_CORS, 'Retry-After': String(rl.retryAfterSec) },
+      JSON.stringify({ error: 'rate_limited', retryAfterSec: rl.retryAfterSec }) + '\n');
+  }
+  const text = await readShareContainer(req, send);
+  if (text == null) return;
+
+  // Every publish rotates DOC_UUID — a receiver who once opened an earlier
+  // version of this share must not have their stale per-UUID IDB shadow the
+  // update (the receiver-side inversion, framings doc §7b).
+  const newText = text.replace(UUID_RE, `const DOC_UUID = '${crypto.randomUUID()}';`);
+
+  let short;
+  try { short = generateShort(); }
+  catch (err) {
+    console.error('share: short generation failed', err);
+    return sendShareJson(send, 503, { error: 'collision', detail: err.message });
+  }
+
+  const token = hosted.mintToken();
+  const createdAt = Date.now();
+  const meta = {
+    kind: 'connected',
+    capHash: hosted.hashToken(token),   // the raw token is never at rest
+    createdAt, updatedAt: createdAt, lastActivity: createdAt,
+    sizeBytes: Buffer.byteLength(newText, 'utf8'), ip,
+  };
+  try {
+    atomicWriteFile(path.join(DATA_DIR, `${short}.html`), newText);
+    atomicWriteFile(path.join(DATA_DIR, `${short}.json`), JSON.stringify(meta));
+  } catch (err) {
+    console.error('share: write failed', err);
+    return sendShareJson(send, 500, { error: 'storage_failed' });
+  }
+  return sendShareJson(send, 201, { short, url: shareUrlFor(req, short), token, kind: 'connected' });
+}
+
+// Read + gate a connected share's metadata for a Bearer-authenticated write.
+// Returns the meta object, or null after having sent the error itself.
+// Unknown short and known-but-ephemeral short are BOTH 404 — an ephemeral
+// /publish snapshot has no update capability, and the distinction would only
+// leak which class a code belongs to.
+function authConnectedShare(req, send, short) {
+  // The route gate already constrains the shape, but the filename invariant
+  // belongs HERE too — a future caller must not be able to reach the
+  // path.join below with traversal-shaped input.
+  if (!SHORT_RE.test(short)) { sendShareJson(send, 404, { error: 'not_found' }); return null; }
+  let meta;
+  try { meta = JSON.parse(fs.readFileSync(path.join(DATA_DIR, `${short}.json`), 'utf8')); }
+  catch { sendShareJson(send, 404, { error: 'not_found' }); return null; }
+  if (meta.kind !== 'connected' || typeof meta.capHash !== 'string') {
+    sendShareJson(send, 404, { error: 'not_found' });
+    return null;
+  }
+  const token = bearerToken(req);
+  if (!hosted.verifyToken(token, meta.capHash)) {
+    send(401, { ...JSON_CT, ...SHARE_CORS, 'WWW-Authenticate': 'Bearer' },
+      JSON.stringify({ error: 'unauthorized' }) + '\n');
+    return null;
+  }
+  return meta;
+}
+
+async function handleShareDelete(req, send, short) {
+  const meta = authConnectedShare(req, send, short);
+  if (!meta) return;
+  for (const ext of ['html', 'json']) {
+    try { fs.unlinkSync(path.join(DATA_DIR, `${short}.${ext}`)); } catch {}
+  }
+  return send(204, SHARE_CORS, '');
+}
+
+async function handleShareUpdate(req, send, short) {
+  const meta = authConnectedShare(req, send, short);
+  if (!meta) return;
+  // Per-capability write limit (shared limiter map with hosted /modify —
+  // distinct hashes, same policy: a leaked-URL flood can't grind the disk).
+  const rl = checkModifyRateLimit(meta.capHash);
+  if (!rl.ok) {
+    return send(429, { ...JSON_CT, ...SHARE_CORS, 'Retry-After': String(rl.retryAfterSec) },
+      JSON.stringify({ error: 'rate_limited', retryAfterSec: rl.retryAfterSec }) + '\n');
+  }
+  const text = await readShareContainer(req, send);
+  if (text == null) return;
+
+  const newText = text.replace(UUID_RE, `const DOC_UUID = '${crypto.randomUUID()}';`);
+  const now = Date.now();
+  const newMeta = {
+    ...meta,
+    updatedAt: now, lastActivity: now,
+    sizeBytes: Buffer.byteLength(newText, 'utf8'),
+  };
+  try {
+    atomicWriteFile(path.join(DATA_DIR, `${short}.html`), newText);
+    atomicWriteFile(path.join(DATA_DIR, `${short}.json`), JSON.stringify(newMeta));
+  } catch (err) {
+    console.error('share: update write failed', err);
+    return sendShareJson(send, 500, { error: 'storage_failed' });
+  }
+  return sendShareJson(send, 200, { short, url: shareUrlFor(req, short), updatedAt: now });
 }
 
 // POST /r — create a hosted rwa from raw .html bytes. Anonymous (creating).
@@ -1053,6 +1232,29 @@ const server = http.createServer((req, res) => {
   const reqHost = (req.headers.host || '').toLowerCase();
   const hostShort = reqHost.match(SHORT_HOST_RE);
   const isShareHost = !!hostShort;
+
+  // Connected shares (/share family). Apex-only like /publish (same
+  // wrong-host-URL-minting concern). OPTIONS answers the CORS preflight the
+  // seed's file:// share chrome triggers (Authorization header → preflighted).
+  if (!isShareHost && (url === '/share' || /^\/share\/[0-9a-z]{8}$/.test(url))) {
+    if (req.method === 'OPTIONS') return handleSharePreflight(send);
+    if (req.method === 'POST' && url === '/share') {
+      handleShareCreate(req, send).catch(err => {
+        console.error('share: create unhandled error', err);
+        if (!res.headersSent) sendShareJson(send, 500, { error: 'internal_error' });
+      });
+      return;
+    }
+    if ((req.method === 'POST' || req.method === 'DELETE') && url !== '/share') {
+      const short = url.slice('/share/'.length);
+      const handler = req.method === 'POST' ? handleShareUpdate : handleShareDelete;
+      handler(req, send, short).catch(err => {
+        console.error('share: write unhandled error', err);
+        if (!res.headersSent) sendShareJson(send, 500, { error: 'internal_error' });
+      });
+      return;
+    }
+  }
 
   // POST /publish is the only non-GET endpoint. It lives only on the apex
   // host — a malicious publisher must not be able to bounce /publish off

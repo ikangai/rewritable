@@ -15,7 +15,8 @@
     "test:r5": "node r5-concurrent-commit.mjs",
     "test:region": "node region-commit.mjs",
     "test:kernel": "node affordance-kernel.mjs",
-    "test:session": "node session.mjs"
+    "test:session": "node session.mjs",
+    "test:share": "node share.mjs"
   },
   "dependencies": {
     "fake-indexeddb": "^6.0.0",

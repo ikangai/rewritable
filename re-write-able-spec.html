@@ -88,6 +88,17 @@ body{font-family:var(--font-ui);background:var(--bg);color:var(--text);min-heigh
 #rwa-info-panel .rwa-info-foot{margin-top:12px;padding-top:10px;border-top:1px solid var(--gray-100);font-size:11px;color:var(--gray-500);line-height:1.5;}
 #rwa-info-panel strong{color:var(--gray-900);font-weight:600;}
 #rwa-info-panel code{font-family:var(--font-mono);font-size:11px;background:var(--gray-50);padding:1px 5px;border-radius:4px;color:var(--gray-700);}
+#rwa-share-panel{position:fixed;top:50px;right:12px;background:var(--white);border:1px solid var(--gray-200);border-radius:var(--radius-sm);padding:18px 20px;display:none;max-width:340px;z-index:999;box-shadow:0 4px 16px rgba(0,0,0,0.08);font-family:var(--font-ui);font-size:13px;line-height:1.55;color:var(--gray-700);}
+#rwa-share-panel.open{display:block;}
+#rwa-share-panel h4{margin:0 0 6px;font-size:15px;color:var(--gray-900);font-weight:600;}
+#rwa-share-panel p{margin:0 0 10px;}
+.rwa-share-url{font-family:var(--font-mono);font-size:11px;background:var(--gray-50);border:1px solid var(--gray-100);border-radius:6px;padding:6px 8px;margin:0 0 8px;cursor:pointer;word-break:break-all;color:var(--gray-700);}
+.rwa-share-fresh{font-family:var(--font-mono);font-size:10px;color:var(--gray-500);margin-bottom:10px;}
+.rwa-share-msg{font-size:12px;color:var(--gray-600);background:var(--gray-50);border-radius:6px;padding:6px 8px;margin-bottom:8px;}
+.rwa-share-actions{display:flex;gap:6px;flex-wrap:wrap;}
+.rwa-share-actions button{font:inherit;font-size:12px;padding:5px 10px;border:1px solid var(--gray-300);border-radius:8px;background:var(--white);color:var(--gray-900);cursor:pointer;}
+.rwa-share-actions button:disabled{opacity:.5;cursor:default;}
+#rwa-share-create,#rwa-share-update{background:var(--gray-900);color:var(--white);border-color:var(--gray-900);}
 .rwa-set-hint code{background:var(--gray-100);padding:1px 4px;border-radius:3px;font-size:10px;}
 .rwa-set-hint.ok{color:#15803d;}
 .rwa-set-hint.err{color:#b91c1c;}
@@ -839,6 +850,13 @@ const RWA = {
   // for users with a Claude subscription; the price is a per-call subprocess
   // (~5-10s startup) and a single-shot agent loop (no mid-stream tool_calls).
   BRIDGE_URL:'http://127.0.0.1:8765/run',
+  // Connected-share service (the ↗ panel): a stable share URL the user
+  // explicitly publishes versions to. Network I/O happens ONLY on share
+  // gestures — never at boot, never on ⌘S — so offline-first holds. Dev /
+  // self-hosted services override via sessionStorage rwa_share_base.
+  // Design: docs/plans/2026-06-11-save-affordance-framings.md §7c.
+  SHARE_BASE:'https://rewritable.ikangai.com',
+  K_SHARE_BASE:'rwa_share_base',
 };
 
 // `rwa new -o` / `rwa import -o` can pass first-paint configuration via URL
@@ -1558,6 +1576,7 @@ function buildUI() {
   <button class="rwa-st-btn" id="rwa-st-info" title="what is this?" aria-label="what is this?">ⓘ</button>
   <button class="rwa-st-btn" id="rwa-st-cog">⚙</button>
   <button class="rwa-st-btn" id="rwa-st-skin" title="skins — pick a look" aria-label="skins">✦</button>
+  <button class="rwa-st-btn" id="rwa-st-share" title="share at a link" aria-label="share at a link">↗</button>
   <button class="rwa-st-btn pri" id="rwa-st-commit">⌘S</button>
 </div>
 <div id="rwa-set-panel">
@@ -1571,6 +1590,7 @@ function buildUI() {
 </div>
 <div id="rwa-info-panel"></div>
 <div id="rwa-skin-panel"></div>
+<div id="rwa-share-panel"></div>
 <div id="rwa-pal">
   <div id="rwa-pal-box">
     <div class="rwa-pal-top">
@@ -1752,6 +1772,7 @@ function buildUI() {
   document.getElementById('rwa-st-cog').onclick = () => {
     document.getElementById('rwa-info-panel').classList.remove('open');   // panels are mutually exclusive
     document.getElementById('rwa-skin-panel').classList.remove('open');
+    document.getElementById('rwa-share-panel').classList.remove('open');
     document.getElementById('rwa-set-panel').classList.toggle('open');
   };
   // ⓘ "what is this?" — render the rwa-identity/1 bundle as prose on open so it
@@ -1760,6 +1781,7 @@ function buildUI() {
   document.getElementById('rwa-st-info').onclick = () => {
     document.getElementById('rwa-set-panel').classList.remove('open');
     document.getElementById('rwa-skin-panel').classList.remove('open');
+    document.getElementById('rwa-share-panel').classList.remove('open');
     const panel = document.getElementById('rwa-info-panel');
     if (!panel.classList.contains('open')) panel.innerHTML = renderInfoPanel();
     panel.classList.toggle('open');
@@ -1769,6 +1791,17 @@ function buildUI() {
     const panel = document.getElementById('rwa-skin-panel');
     if (panel && panel.classList.contains('open')) { panel.classList.remove('open'); return; }
     openSkinPanel();
+  };
+  // ↗ connected share — open re-renders from the live record so the panel
+  // always reflects the current connection + freshness. Mutually exclusive
+  // with the other three panels.
+  document.getElementById('rwa-st-share').onclick = () => {
+    const panel = document.getElementById('rwa-share-panel');
+    if (panel.classList.contains('open')) { panel.classList.remove('open'); return; }
+    document.getElementById('rwa-set-panel').classList.remove('open');
+    document.getElementById('rwa-info-panel').classList.remove('open');
+    document.getElementById('rwa-skin-panel').classList.remove('open');
+    renderSharePanel().then(() => panel.classList.add('open'));
   };
   document.getElementById('rwa-st-commit').onclick = commit;
 
@@ -4622,6 +4655,7 @@ HARD RULES: colors are hex strings only (e.g. "#c0392b"); fonts are ONE of the f
     if (!panel) return;
     const setP = document.getElementById('rwa-set-panel'); if (setP) setP.classList.remove('open');
     const infoP = document.getElementById('rwa-info-panel'); if (infoP) infoP.classList.remove('open');
+    const shareP = document.getElementById('rwa-share-panel'); if (shareP) shareP.classList.remove('open');
     const active = currentSkinName();
     panel.innerHTML =
       '<div class="rwa-skin-hd"><span>Skins</span><span>' + (active || '—') + '</span></div>'
@@ -6615,6 +6649,155 @@ function renderInfoPanel() {
     '<ul><li>' + lines.join('</li><li>') + '</li></ul>',
     '<div class="rwa-info-foot">Identity <code>' + esc(String(d.uuid).slice(0, 8)) + '</code> · runs anywhere — email it, host it, open it offline. <strong>The file knows what it is.</strong></div>',
   ].join('');
+}
+
+// ─── Connected share (the ↗ panel) ──────────────────────────────────
+// A rewritable can be CONNECTED to a stable URL: "Create share link" POSTs the
+// full current file bytes (buildFile output — exactly the ⌘S artifact) to the
+// share service; "Publish this version" re-POSTs to the same short under the
+// returned update token. The record {short,url,token,publishedHash,publishedAt}
+// lives in rwa_state — machine-local on purpose: the token is a capability,
+// and buildFile only serializes INLINE_DOC, so neither can ever travel in the
+// file. The copy says VERSION on purpose: the link shows the last published
+// version, not live edits (docs/plans/2026-06-11-save-affordance-framings.md
+// §7c). These are the ONLY fetches the runtime makes outside the agent
+// backends, each behind an explicit user gesture — offline-first holds.
+const shareBaseUrl = () =>
+  (sessionStorage.getItem(RWA.K_SHARE_BASE) || '').trim() || RWA.SHARE_BASE;
+
+// Hash + file bytes from ONE doc read, so publishedHash always describes the
+// exact bytes that went out (no mid-flight-edit skew).
+async function shareSnapshot() {
+  const d = await getDoc();
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(d));
+  const hash = [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('');
+  return { text: buildFile(d), hash };
+}
+async function shareDocHashHex() { return (await shareSnapshot()).hash; }
+
+const getShareConn   = () => idbGet(RWA.STATE, 'share_conn');
+const setShareConn   = v  => idbPut(RWA.STATE, v, 'share_conn');
+const clearShareConn = () => idbDel(RWA.STATE, 'share_conn');
+
+class ShareError extends Error { constructor(code, msg) { super(msg || code); this.code = code; } }
+
+async function shareFetch(path, { method = 'POST', token, body } = {}) {
+  const headers = {};
+  if (body != null) headers['Content-Type'] = 'text/html';
+  if (token) headers.Authorization = 'Bearer ' + token;
+  try {
+    return await fetch(shareBaseUrl() + path, { method, headers, body });
+  } catch (_) {
+    throw new ShareError('share_unreachable', 'Sharing service unreachable — check your connection and try again.');
+  }
+}
+
+async function shareErrDetail(res) {
+  try { return (await res.json()).error || ('http ' + res.status); } catch (_) { return 'http ' + res.status; }
+}
+
+async function shareCreate() {
+  const snap = await shareSnapshot();
+  const res = await shareFetch('/share', { body: snap.text });
+  if (res.status !== 201) throw new ShareError('share_failed', 'Could not create the share link (' + await shareErrDetail(res) + ').');
+  const out = await res.json();
+  const conn = { short: out.short, url: out.url, token: out.token, publishedHash: snap.hash, publishedAt: Date.now() };
+  await setShareConn(conn);
+  return conn;
+}
+
+async function shareUpdate() {
+  const conn = await getShareConn();
+  if (!conn) throw new ShareError('share_not_connected', 'Not connected to a link yet.');
+  const snap = await shareSnapshot();
+  const res = await shareFetch('/share/' + conn.short, { token: conn.token, body: snap.text });
+  if (res.status === 401 || res.status === 404 || res.status === 410) {
+    // The capability is dead (unshared elsewhere, expired, or revoked). Keep
+    // nothing stale around — the honest state is "not connected".
+    await clearShareConn();
+    throw new ShareError('share_connection_lost', 'This link can no longer be updated — create a new one.');
+  }
+  if (res.status !== 200) throw new ShareError('share_failed', 'Could not publish this version (' + await shareErrDetail(res) + ').');
+  const next = { ...conn, publishedHash: snap.hash, publishedAt: Date.now() };
+  await setShareConn(next);
+  return next;
+}
+
+async function shareUnshare() {
+  const conn = await getShareConn();
+  if (!conn) return;
+  // A network failure throws BEFORE the clear — an unreachable service must
+  // not silently orphan a live public link. 401/404 mean the share is already
+  // gone server-side; clearing is the honest state either way.
+  await shareFetch('/share/' + conn.short, { method: 'DELETE', token: conn.token });
+  await clearShareConn();
+}
+
+function shareRelTime(ts) {
+  const m = Math.round((Date.now() - ts) / 60000);
+  if (m < 1) return 'just now';
+  if (m < 60) return m + ' min ago';
+  const h = Math.round(m / 60);
+  if (h < 24) return h + ' h ago';
+  return Math.round(h / 24) + ' d ago';
+}
+
+// One in-flight share action at a time; the panel re-renders disabled while
+// busy and re-enabled (with an error message, if any) after.
+let shareBusy = false;
+async function shareAction(fn) {
+  if (shareBusy) return;
+  shareBusy = true;
+  try { await renderSharePanel(); } catch (_) {}
+  let msg = null;
+  try { await fn(); }
+  catch (e) { msg = (e && e.message) || String(e); }
+  shareBusy = false;
+  await renderSharePanel(msg);
+}
+
+function copyShareUrl(url) {
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(url)
+      .then(() => renderSharePanel('Link copied.'))
+      .catch(() => {});
+  }
+}
+
+async function renderSharePanel(msg) {
+  const panel = document.getElementById('rwa-share-panel');
+  if (!panel) return;
+  const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const note = msg ? '<div class="rwa-share-msg">' + esc(msg) + '</div>' : '';
+  const dis = shareBusy ? ' disabled' : '';
+  const conn = await getShareConn();
+  if (!conn) {
+    panel.innerHTML = [
+      '<h4>Share at a link</h4>',
+      '<p>Anyone with the link sees the version you publish — not your live edits.</p>',
+      note,
+      '<div class="rwa-share-actions"><button type="button" id="rwa-share-create"' + dis + '>Create share link</button></div>',
+    ].join('');
+    document.getElementById('rwa-share-create').onclick = () => shareAction(shareCreate);
+    return;
+  }
+  const current = (await shareDocHashHex()) === conn.publishedHash;
+  panel.innerHTML = [
+    '<h4>Shared at a link</h4>',
+    '<div class="rwa-share-url" id="rwa-share-url" title="click to copy">' + esc(conn.url) + '</div>',
+    '<div class="rwa-share-fresh" id="rwa-share-fresh">Published ' + esc(shareRelTime(conn.publishedAt)) + ' · ' +
+      (current ? 'the link shows this version' : 'behind your latest edits') + '</div>',
+    note,
+    '<div class="rwa-share-actions">',
+    '<button type="button" id="rwa-share-update"' + dis + '>Publish this version</button>',
+    '<button type="button" id="rwa-share-copy">Copy link</button>',
+    '<button type="button" id="rwa-share-stop"' + dis + '>Stop sharing</button>',
+    '</div>',
+  ].join('');
+  document.getElementById('rwa-share-update').onclick = () => shareAction(shareUpdate);
+  document.getElementById('rwa-share-stop').onclick = () => shareAction(shareUnshare);
+  document.getElementById('rwa-share-copy').onclick = () => copyShareUrl(conn.url);
+  document.getElementById('rwa-share-url').onclick = () => copyShareUrl(conn.url);
 }
 
 // ─── First-party 'presentation' view provider (spec §5.10) ──────────
