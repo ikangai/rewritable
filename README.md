@@ -43,7 +43,7 @@ The file is built around an **immutable bootstrap** — a loader, a runtime, and
 
 Under the lens, the agent edits via **anchor-based surgical edits** (rwa-edit/1): it submits `(find, replace)` pairs against unique substrings, and the runtime applies them as exact string substitutions. The 99% of the document the agent did not need to change is byte-identical because the model never re-emitted it. Structural transforms (insert/delete elements, wrap, mass rename, attribute changes) can also be expressed as a small typed DSL (rwa-edit-dsl/1) that the runtime compiles to the same anchor-based form deterministically. For scaffolding or wholesale redesigns, the model can call `replace_document` instead, with a required reason. All three paths validate frozen zones, structural shape (`<script>`/`<style>` counts), and HTML well-formedness before committing atomically.
 
-The agent backend is selectable in the ⚙ settings panel. **OpenRouter** is the default — a hosted model over HTTPS, paid per token. **Ollama** and **LM Studio** are the local options — point the container at `localhost:11434` or `localhost:1234`, pick a tool-capable model (Llama 3.1, Qwen 2.5 Coder, Mistral Nemo, etc.), and the rewrite loop runs on your own machine. Both expose the OpenAI-compatible `/v1/chat/completions` shape so the same multi-turn tool-use loop drives all three. CORS must be allowed on the local server first — `OLLAMA_ORIGINS=*` before `ollama serve`, or LM Studio's Developer → "Enable CORS" toggle. **Bridge** is the fourth alternative — the runtime shells out to a localhost CLI bridge (`POST 127.0.0.1:8765/run`) that spawns `claude -p`, which uses your existing Claude subscription and whichever model your `claude` CLI is configured for. Same edit envelopes either way; the runtime doesn't care which backend produced them.
+The agent backend is selectable in the ⚙ settings panel. **OpenRouter** is the default — a hosted model over HTTPS, paid per token. **Ollama**, **LM Studio**, and **atomic.chat** are the local options — point the container at `localhost:11434`, `localhost:1234`, or `127.0.0.1:1337`, pick a tool-capable model (Llama 3.1, Qwen 2.5 Coder, Mistral Nemo, Gemma on MLX, etc.), and the rewrite loop runs on your own machine. All expose the OpenAI-compatible `/v1/chat/completions` shape so the same multi-turn tool-use loop drives all four. CORS must be allowed on the local server first — `OLLAMA_ORIGINS=*` before `ollama serve`, or LM Studio's Developer → "Enable CORS" toggle; atomic.chat allows http(s) page origins out of the box but not `file://` pages (open the container from a local web server or a hosted projection to use it). **Bridge** is the final alternative — the runtime shells out to a localhost CLI bridge (`POST 127.0.0.1:8765/run`) that spawns `claude -p`, which uses your existing Claude subscription and whichever model your `claude` CLI is configured for. Same edit envelopes either way; the runtime doesn't care which backend produced them.
 
 Send the file by email, put it on a USB stick, commit it to git. The recipient opens it in a browser and it runs.
 
@@ -93,10 +93,10 @@ npx rwa clone https://www.ikangai.com/some-post/   # → ./some-post.html
 `rwa new -o` and `rwa import -o` open the resulting file in the default browser. The bootstrap lifts three optional URL params into `sessionStorage` on first paint, then scrubs them from the URL so the values don't sit in browser history. The CLI populates these from environment / `./.env`:
 
 - `OPENROUTER_API_KEY` → `?key=…` (lifted into `rwa_apikey`)
-- `RWA_BACKEND` → `?backend=…` (one of `openrouter`, `ollama`, `lmstudio`, `bridge`)
+- `RWA_BACKEND` → `?backend=…` (one of `openrouter`, `ollama`, `lmstudio`, `atomic`, `bridge`)
 - `RWA_MODEL` → `?model=…` (model name string, e.g. `llama3.1:latest` or `qwen2.5-coder-7b-instruct`)
 
-So `RWA_BACKEND=ollama RWA_MODEL=llama3.1:latest rwa new -o` opens a fresh container already wired to your local Ollama. (Base URLs default to `localhost:11434` / `localhost:1234`; override in the ⚙ settings panel if needed.)
+So `RWA_BACKEND=ollama RWA_MODEL=llama3.1:latest rwa new -o` opens a fresh container already wired to your local Ollama. (Base URLs default to `localhost:11434` / `localhost:1234` / `127.0.0.1:1337`; override in the ⚙ settings panel if needed.)
 
 ```sh
 # Service — hosted

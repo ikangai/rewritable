@@ -10,7 +10,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveApiKey } from '../src/backend.mjs';
+import { resolveApiKey, envBaseUrl, backendMaxTokens } from '../src/backend.mjs';
 
 test('explicit --api-key flag wins over everything', () => {
   assert.equal(
@@ -44,8 +44,25 @@ test('empty-string env vars are treated as absent (not a usable key)', () => {
   assert.equal(resolveApiKey('openrouter', undefined, { RWA_OPENROUTER_KEY: '', OPENROUTER_API_KEY: '' }), undefined);
 });
 
-test('local backends (ollama/lmstudio) need no key → undefined regardless of env', () => {
+test('local backends (ollama/lmstudio/atomic) need no key → undefined regardless of env', () => {
   const env = { RWA_OPENROUTER_KEY: 'rwa-key', OPENROUTER_API_KEY: 'std-key' };
   assert.equal(resolveApiKey('ollama', undefined, env), undefined);
   assert.equal(resolveApiKey('lmstudio', undefined, env), undefined);
+  assert.equal(resolveApiKey('atomic', undefined, env), undefined);
+});
+
+test('backendMaxTokens: 8192 for atomic (hard KV cap, server 400s past it), 32000 otherwise, RWA_MAX_TOKENS overrides', () => {
+  assert.equal(backendMaxTokens('atomic', {}), 8192);
+  assert.equal(backendMaxTokens('openrouter', {}), 32000);
+  assert.equal(backendMaxTokens('ollama', {}), 32000);
+  assert.equal(backendMaxTokens('atomic', { RWA_MAX_TOKENS: '4096' }), 4096);
+  assert.equal(backendMaxTokens('atomic', { RWA_MAX_TOKENS: 'garbage' }), 8192, 'non-numeric override is ignored');
+});
+
+test('envBaseUrl: atomic defaults to 127.0.0.1:1337/v1, RWA_ATOMIC_URL overrides', () => {
+  // Wrong/missing routing here would silently send `rwa edit --backend atomic`
+  // to openrouter (the seed's resolveBackendConfig has the same trap) — the
+  // base URL IS the privacy boundary for a deliberately-local backend.
+  assert.equal(envBaseUrl('atomic', {}), 'http://127.0.0.1:1337/v1');
+  assert.equal(envBaseUrl('atomic', { RWA_ATOMIC_URL: 'http://10.0.0.5:1337/v1' }), 'http://10.0.0.5:1337/v1');
 });

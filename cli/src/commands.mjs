@@ -85,7 +85,7 @@ async function readEnvKey(name) {
 // than throwing — pre-fill is best-effort; an unknown value just means the
 // user sees the default backend (openrouter) on first paint.
 function validBackend(v) {
-  return ['openrouter', 'ollama', 'lmstudio', 'bridge'].includes(v) ? v : null;
+  return ['openrouter', 'ollama', 'lmstudio', 'atomic', 'bridge'].includes(v) ? v : null;
 }
 
 // Collect URL-param pre-fills from env / ./.env. Returns an object whose keys

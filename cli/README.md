@@ -125,10 +125,10 @@ The agent loop retries up to 3 times when the model emits plain text instead of 
 
 | Flag | Effect |
 |---|---|
-| `--backend <name>` | `openrouter` (default), `ollama`, `lmstudio`. Falls back to `$RWA_BACKEND`. `bridge` is browser-only by design. |
+| `--backend <name>` | `openrouter` (default), `ollama`, `lmstudio`, `atomic`. Falls back to `$RWA_BACKEND`. `bridge` is browser-only by design. |
 | `--model <id>` | model id passed to the backend. Falls back to `$RWA_MODEL`, then `google/gemini-3.5-flash`. |
-| `--base-url <url>` | OpenAI-compatible base URL override. Defaults: `https://openrouter.ai/api/v1`, `http://localhost:11434/v1` (or `$RWA_OLLAMA_URL`), `http://localhost:1234/v1` (or `$RWA_LMSTUDIO_URL`). |
-| `--api-key <key>` | openrouter only; falls back to `$RWA_OPENROUTER_KEY`. ollama / lmstudio run locally without auth. |
+| `--base-url <url>` | OpenAI-compatible base URL override. Defaults: `https://openrouter.ai/api/v1`, `http://localhost:11434/v1` (or `$RWA_OLLAMA_URL`), `http://localhost:1234/v1` (or `$RWA_LMSTUDIO_URL`), `http://127.0.0.1:1337/v1` (or `$RWA_ATOMIC_URL`). |
+| `--api-key <key>` | openrouter only; falls back to `$RWA_OPENROUTER_KEY`. ollama / lmstudio / atomic run locally without auth. |
 
 #### Other edit flags
 

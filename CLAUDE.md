@@ -166,16 +166,17 @@ Extract-marker pairs (`// rwa:extract:begin <NAME>` / `// rwa:extract:end <NAME>
 
 ### Agent backends
 
-Four backends, all routing through the same `modify()` lifecycle:
+Five backends, all routing through the same `modify()` lifecycle:
 
 | Backend | Transport | Multi-turn tool-use? | Setup |
 |---|---|---|---|
 | `openrouter` (default) | `https://openrouter.ai/api/v1/chat/completions` with `Bearer <key>` | yes | API key in settings |
 | `ollama` | `http://localhost:11434/v1/chat/completions` (override-able) | yes | `OLLAMA_ORIGINS=*` |
 | `lmstudio` | `http://localhost:1234/v1/chat/completions` (override-able) | yes | CORS enabled in Developer tab |
+| `atomic` | `http://127.0.0.1:1337/v1/chat/completions` (override-able) | yes | atomic.chat running locally; CORS allows http(s) origins but NOT `file://` (null origin) — serve the container from an origin |
 | `bridge` | `POST http://127.0.0.1:8765/run` shelling out to `claude -p` | no (single-shot envelope) | run web_cli_bridge locally |
 
-The first three share `resolveBackendConfig()` → `openAiCompatChat()`. Base URLs for `ollama`/`lmstudio` are overridable (sessionStorage `rwa_base_url_<backend>`). The settings "Test" button probes `GET <baseUrl>/models` and populates a `<datalist>`. `bridge` runs single-shot: `claude -p` has no mid-stream tool_calls, so the model emits an rwa-edit/1 envelope as text dispatched through the same apply* machinery.
+The first four share `resolveBackendConfig()` → `openAiCompatChat()`. Base URLs for `ollama`/`lmstudio`/`atomic` are overridable (sessionStorage `rwa_base_url_<backend>`). The settings "Test" button probes `GET <baseUrl>/models` and populates a `<datalist>`. `bridge` runs single-shot: `claude -p` has no mid-stream tool_calls, so the model emits an rwa-edit/1 envelope as text dispatched through the same apply* machinery. Backend routing is pinned by `tests/backends.mjs` (an unwired backend name silently falls back to openrouter — the privacy trap that test exists to catch); CLI mirror in `cli/src/backend.mjs` + the allowlists in `cli/bin/rwa.mjs`/`cli/src/commands.mjs`.
 
 ### Commit (`⌘S`)
 

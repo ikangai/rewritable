@@ -843,6 +843,13 @@ const RWA = {
   // not block these requests even when the container is served over HTTPS.
   DEFAULT_OLLAMA_URL:'http://localhost:11434/v1',
   DEFAULT_LMSTUDIO_URL:'http://localhost:1234/v1',
+  // atomic.chat: a local OpenAI-compatible inference server (MLX-backed on
+  // Apple Silicon) with the same /v1/chat/completions + /v1/models shape and
+  // real multi-turn tool_calls. CORS note: it allows http(s) page origins out
+  // of the box but NOT the file:// null origin — serve the container from a
+  // local origin (or a hosted projection) to use it.
+  DEFAULT_ATOMIC_URL:'http://127.0.0.1:1337/v1',
+  K_BASE_URL_ATOMIC:'rwa_base_url_atomic',
   // Optional alternative agent backend: a localhost CLI bridge
   // (https://github.com/martintreiber/web_cli_bridge style) that runs
   // arbitrary shell commands. When the user picks "bridge" in settings, ⌘K
@@ -874,7 +881,7 @@ try {
     qs.delete('key');
   }
   const b = qs.get('backend');
-  if (b && ['openrouter','ollama','lmstudio','bridge','bridge-session'].includes(b)) {
+  if (b && ['openrouter','ollama','lmstudio','atomic','bridge','bridge-session'].includes(b)) {
     sessionStorage.setItem(RWA.K_BACKEND, b);
     qs.delete('backend');
   }
@@ -1580,7 +1587,7 @@ function buildUI() {
   <button class="rwa-st-btn pri" id="rwa-st-commit">⌘S</button>
 </div>
 <div id="rwa-set-panel">
-  <div class="rwa-set-row"><label>Backend</label><select id="rwa-backend"><option value="openrouter">OpenRouter (API key)</option><option value="ollama">Ollama (localhost)</option><option value="lmstudio">LM Studio (localhost)</option><option value="bridge">Bridge (claude -p, localhost)</option><option value="bridge-session">Bridge session (claude, persistent)</option></select></div>
+  <div class="rwa-set-row"><label>Backend</label><select id="rwa-backend"><option value="openrouter">OpenRouter (API key)</option><option value="ollama">Ollama (localhost)</option><option value="lmstudio">LM Studio (localhost)</option><option value="atomic">atomic.chat (localhost)</option><option value="bridge">Bridge (claude -p, localhost)</option><option value="bridge-session">Bridge session (claude, persistent)</option></select></div>
   <div class="rwa-set-row" id="rwa-set-row-key"><label>OpenRouter Key</label><input type="password" id="rwa-key" placeholder="sk-or-..." autocomplete="off"></div>
   <div class="rwa-set-row" id="rwa-set-row-bridge-token" style="display:none;"><label>Bridge Token</label><input type="password" id="rwa-bridge-token" placeholder="WEB_CLI_BRIDGE_TOKEN" autocomplete="off"></div>
   <div class="rwa-set-row" id="rwa-set-row-bridge-cwd" style="display:none;"><label>Session Dir</label><input type="text" id="rwa-bridge-cwd" placeholder="/path/on/bridge/host" autocomplete="off" spellcheck="false"></div>
@@ -1660,6 +1667,12 @@ function buildUI() {
       hintHTML: 'In LM Studio, open the <strong>Developer</strong> tab → enable <code>CORS</code> → click <code>Start Server</code>. Without this, the browser blocks requests from this page.',
       defaultUrl: RWA.DEFAULT_LMSTUDIO_URL,
       storageKey: RWA.K_BASE_URL_LMSTUDIO,
+    },
+    atomic: {
+      showKey: false, showBaseUrl: true, showModel: true, showHint: true,
+      hintHTML: 'atomic.chat serves an OpenAI-compatible API on <code>127.0.0.1:1337</code>, no key needed — use <code>Test</code> to list its models. CORS allows http(s) page origins out of the box but <strong>not <code>file://</code> pages</strong> (the null origin): open this container from a local web server or a hosted projection to use it.',
+      defaultUrl: RWA.DEFAULT_ATOMIC_URL,
+      storageKey: RWA.K_BASE_URL_ATOMIC,
     },
     bridge: {
       showKey: false, showBaseUrl: false, showModel: false, showHint: false,
@@ -4784,6 +4797,18 @@ function resolveBackendConfig() {
       apiKey: null, extraHeaders: {}, requiresKey: false,
     };
   }
+  if (backend === 'atomic') {
+    return {
+      backend, kind:'openai_compat',
+      baseUrl: (sessionStorage.getItem(RWA.K_BASE_URL_ATOMIC) || '').trim() || RWA.DEFAULT_ATOMIC_URL,
+      apiKey: null, extraHeaders: {}, requiresKey: false,
+      // atomic.chat REJECTS (400) requests whose prompt + max generation
+      // exceed its MAX_KV_SIZE (16384 default) rather than clamping like
+      // ollama/lmstudio — half the window for generation, half for the
+      // prompt + document. Callers read cfg.maxTokens || 32000.
+      maxTokens: 8192,
+    };
+  }
   if (backend === 'bridge') {
     return { backend, kind:'bridge' };
   }
@@ -4842,7 +4867,7 @@ async function callAgentSingleShot(prompt) {
   const model = sessionStorage.getItem(RWA.K_MODEL) || RWA.MODEL;
   const data = await openAiCompatChat(cfg, {
     model,
-    max_tokens: 32000,
+    max_tokens: cfg.maxTokens || 32000,
     messages: [{ role:'user', content: prompt }],
   });
   const msg = data.choices?.[0]?.message;
@@ -7041,7 +7066,7 @@ async function modify(instr, lensMeta = null, opts = null) {
       try {
         data = await openAiCompatChat(cfg, {
           model,
-          max_tokens: 32000,
+          max_tokens: cfg.maxTokens || 32000,
           messages,
           tools: TOOL_SCHEMAS,
           tool_choice: 'auto',

@@ -20,7 +20,7 @@ import { runAgentLoop } from './agent-loop.mjs';
 import { applyPlan, CliError } from './edit.mjs';
 import { assertSelfContained } from './self-contained.mjs';
 import { findFrozenZones } from './apply-edits.mjs';
-import { resolveApiKey, envBaseUrl } from './backend.mjs';
+import { resolveApiKey, envBaseUrl, backendMaxTokens } from './backend.mjs';
 import { atomicWrite } from './atomic-write.mjs';
 
 // Hard cap on --data baked into the snapshot. The dataset lands inside INLINE_DOC
@@ -219,6 +219,7 @@ export async function createCmd(parsed, { seedCandidates, cwd = process.cwd(), s
     baseUrl: parsed.backend.baseUrl || envBaseUrl(backendName),
     model:   parsed.backend.model   || process.env.RWA_MODEL || 'google/gemini-3.5-flash',
     apiKey:  resolveApiKey(backendName, parsed.backend.apiKey),
+    maxTokens: backendMaxTokens(backendName),
   };
 
   // Per-kind system prompt + the create-only self-containment directive; the brief

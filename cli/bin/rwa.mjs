@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { newCmd, importCmd, version, KNOWN_KINDS, openWithPrefill, SEED_CANDIDATES } from '../src/commands.mjs';
-import { resolveApiKey } from '../src/backend.mjs';
+import { resolveApiKey, backendMaxTokens } from '../src/backend.mjs';
 import { parseCreateArgs, createCmd } from '../src/create.mjs';
 import { relative } from 'node:path';
 
@@ -101,7 +101,7 @@ Flags:
   --open, -o     open the resulting file in the default app. First-paint
                  sessionStorage is pre-populated from env / ./.env:
                    OPENROUTER_API_KEY → ?key=…    (lifted into rwa_apikey)
-                   RWA_BACKEND        → ?backend= (openrouter|ollama|lmstudio|bridge)
+                   RWA_BACKEND        → ?backend= (openrouter|ollama|lmstudio|atomic|bridge)
                    RWA_MODEL          → ?model=…  (model name string)
                  The bootstrap lifts each into sessionStorage and scrubs the
                  URL bar on first paint, so the values don't sit in history.
@@ -137,8 +137,8 @@ Flags:
                  the raw body; on failure, the \`{code, subcode, details}\`
                  object goes to stderr.
   --backend <n>  (edit instruction path / skin --l1) backend name. One of:
-                 openrouter (default), ollama, lmstudio. Falls back to
-                 \$RWA_BACKEND if unset.
+                 openrouter (default), ollama, lmstudio, atomic. Falls back
+                 to \$RWA_BACKEND if unset.
   --model <id>   (edit instruction path / skin --l1) model id passed to the
                  backend. Falls back to \$RWA_MODEL, then a
                  sensible default for the backend.
@@ -248,6 +248,7 @@ function envBaseUrl(name) {
     case 'openrouter': return 'https://openrouter.ai/api/v1';
     case 'ollama':     return process.env.RWA_OLLAMA_URL || 'http://localhost:11434/v1';
     case 'lmstudio':   return process.env.RWA_LMSTUDIO_URL || 'http://localhost:1234/v1';
+    case 'atomic':     return process.env.RWA_ATOMIC_URL || 'http://127.0.0.1:1337/v1';
     default:           return undefined;
   }
 }
@@ -377,7 +378,7 @@ function detectProductKind(fileText) {
 
         // Reject unknown backends fast. `bridge` is browser-only by design
         // (single-shot via web_cli_bridge); the CLI has no equivalent.
-        if (!['openrouter', 'ollama', 'lmstudio'].includes(backendName)) {
+        if (!['openrouter', 'ollama', 'lmstudio', 'atomic'].includes(backendName)) {
           emitEdit({ code: 'usage_error', subcode: 'unknown_backend', details: { backend: backendName } }, jsonMode);
           process.exitCode = 1;
           return;
@@ -457,7 +458,7 @@ function detectProductKind(fileText) {
             currentDoc: promptDoc,
             instruction,
             frozenZoneNames,
-            backend: { baseUrl, model: modelId, apiKey },
+            backend: { baseUrl, model: modelId, apiKey, maxTokens: backendMaxTokens(backendName) },
             onRetry: r => {
               if (jsonMode) {
                 process.stderr.write(JSON.stringify({ phase: 'retry', attempt: r.attempt, reason: r.reason }) + '\n');
@@ -845,7 +846,7 @@ function detectProductKind(fileText) {
         const baseUrl     = baseUrlFlag.value || envBaseUrl(backendName);
         const apiKey      = resolveApiKey(backendName, apiKeyFlag.value);
 
-        if (!['openrouter', 'ollama', 'lmstudio'].includes(backendName)) {
+        if (!['openrouter', 'ollama', 'lmstudio', 'atomic'].includes(backendName)) {
           emitSkin({ code: 'usage_error', subcode: 'unknown_backend', details: { backend: backendName } });
           process.exitCode = 1; return;
         }
@@ -882,7 +883,7 @@ function detectProductKind(fileText) {
           result = await skinCmdL1(filePath, action, {
             systemPrompt,
             toolSchemas: TOOL_SCHEMAS,
-            backend: { baseUrl, model: modelId, apiKey },
+            backend: { baseUrl, model: modelId, apiKey, maxTokens: backendMaxTokens(backendName) },
             onRetry: r => {
               if (jsonMode) process.stderr.write(JSON.stringify({ phase: 'retry', attempt: r.attempt, reason: r.reason }) + '\n');
               else process.stderr.write(`rwa skin: attempt ${r.attempt}/3 retrying — ${r.reason}\n`);

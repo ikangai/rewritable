@@ -128,12 +128,14 @@ export async function runAgentLoop({
   throw new AgentError('no_envelope_after_retries', { retries: RETRY_BUDGET });
 }
 
-async function callBackend({ baseUrl, model, apiKey }, body) {
+async function callBackend({ baseUrl, model, apiKey, maxTokens }, body) {
   const headers = { 'Content-Type': 'application/json' };
   if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
   const url = baseUrl.replace(/\/+$/, '') + '/chat/completions';
   // Seed parity (seeds/rewritable.html openAiCompatChat caller in modify()):
-  // every request carries max_tokens: 32000 and tool_choice: 'auto'. The
+  // every request carries the backend's max_tokens (32000 historically; 8192
+  // for atomic, whose server REJECTS prompt+generation past MAX_KV_SIZE rather
+  // than clamping — see backendMaxTokens) and tool_choice: 'auto'. The
   // tool_choice default forces the model to call one of the provided tools
   // rather than emitting plain text (which would trip our no_tool_call retry).
   const res = await fetch(url, {
@@ -141,7 +143,7 @@ async function callBackend({ baseUrl, model, apiKey }, body) {
     headers,
     body: JSON.stringify({
       model,
-      max_tokens: 32000,
+      max_tokens: maxTokens || 32000,
       tool_choice: 'auto',
       ...body,
     }),
