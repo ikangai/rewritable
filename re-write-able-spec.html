@@ -1792,9 +1792,21 @@ function workspacePeerKnown(peer, known) {
   return !!(peer && ((peer.uuid && known.has('uuid:' + peer.uuid)) || (peer.file && known.has('file:' + peer.file))));
 }
 
+function safeWorkspaceHref(url) {
+  // peer.url arrives over the public presence bus from another page in the origin,
+  // so it is untrusted. escRuntimeHtml blocks attribute breakout but NOT a
+  // `javascript:`/`data:` scheme, which would execute on click. Resolve and accept
+  // only navigable web/file schemes; fall back to '#' for anything else or unparsable.
+  try {
+    const u = new URL(url, location.href);
+    if (u.protocol === 'http:' || u.protocol === 'https:' || u.protocol === 'file:') return u.href;
+  } catch (_) {}
+  return '#';
+}
+
 function workspacePresenceCard(peer, known) {
   const isKnown = workspacePeerKnown(peer, known);
-  const href = peer.url || '#';
+  const href = safeWorkspaceHref(peer.url);
   const aff = peer.affordances && peer.affordances.length ? peer.affordances.map(a => a.kind).join(', ') : 'baseline';
   return '<a class="rwa-ws-card rwa-ws-live-card" href="' + escRuntimeHtml(href) + '">' +
     '<span class="rwa-ws-kind">' + escRuntimeHtml(peer.kind || 'document') + '</span>' +

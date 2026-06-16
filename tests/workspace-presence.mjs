@@ -98,6 +98,31 @@ check('workspace index discovers open sibling rewritable', /Shared Note/.test(li
 check('live sibling is marked new until workspace sync indexes it', /new since sync/i.test(liveText));
 check('workspace index ignores open rewritable outside its directory', !/Outside Note/.test(liveText));
 
+// ── XSS hardening (security review 2026-06-16): a presence peer's url is untrusted —
+// anyone in the origin can publish to the public 'workspace:presence' topic. The card
+// href must be a scheme-validated, parser-normalized URL, never the raw peer string;
+// escaping blocks attribute breakout but NOT a `javascript:` scheme, which would
+// execute on click. Pins the sink so a future refactor of the dir gate can't reopen it.
+const evilDir = 'https://kb.local/work/';
+sibling.window.runtime.bus.publish('workspace:presence', {
+  schema: 'rwa-presence/1', action: 'hello', uuid: 'evil-newline',
+  kind: 'document', title: 'Injected Peer', file: 'injected.html',
+  url: evilDir + '\njavascript:alert(1)', affordances: [],
+});
+sibling.window.runtime.bus.publish('workspace:presence', {
+  schema: 'rwa-presence/1', action: 'hello', uuid: 'evil-pure',
+  kind: 'document', title: 'Pure JS Peer', file: 'purejs.html',
+  url: 'javascript:alert(1)', affordances: [],
+});
+await waitFor(() => /Injected Peer/.test(index.window.document.querySelector('[data-rwa-workspace-live-grid]')?.textContent || ''));
+const liveCards = [...index.window.document.querySelectorAll('[data-rwa-workspace-live-grid] a.rwa-ws-card')];
+const injected = liveCards.find(a => /Injected Peer/.test(a.textContent || ''));
+check('newline-laced peer url that passes the dir gate still renders (the href sink is exercised)', !!injected);
+const injHref = injected ? injected.getAttribute('href') : '';
+check('presence card href is parser-normalized — no raw control chars echoed from the peer string', !!injHref && !/[\n\r\t]/.test(injHref));
+check('no presence card ever emits a script-executing href (javascript:/data:/vbscript:)',
+  liveCards.length > 0 && liveCards.every(a => !/^\s*(?:javascript|data|vbscript):/i.test(a.getAttribute('href') || '')));
+
 index.window.close();
 sibling.window.close();
 outside.window.close();
