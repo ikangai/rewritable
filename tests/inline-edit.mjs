@@ -1,5 +1,5 @@
 // Tests for inline manual edit — direct, no-LLM block editing in
-// seeds/rewritable.html. Double-click a leaf block -> contenteditable;
+// seeds/rewritable.html. Click a leaf block -> contenteditable;
 // Enter/blur commits via the existing non-agent commit path (no model call).
 //
 // Run from this directory:  node inline-edit.mjs
@@ -56,9 +56,35 @@ await new Promise(r => setTimeout(r, 200));
 const settle = () => new Promise(r => setTimeout(r, 50));
 
 console.log('== Inline-edit harness loaded ==');
+window.runtime.setMode('edit');
+await settle();
 
 const $id = id => document.querySelector(`[data-rwa-id="${id}"]`);
+function ptr(el) { el.dispatchEvent(new window.MouseEvent('pointerdown', { bubbles: true, button: 0 })); }
+function click(el) { el.dispatchEvent(new window.MouseEvent('click', { bubbles: true, button: 0 })); }
 function dbl(el) { el.dispatchEvent(new window.MouseEvent('dblclick', { bubbles: true })); }
+function selectText(el, needle, occurrence = 0) {
+  const walker = document.createTreeWalker(el, window.NodeFilter.SHOW_TEXT);
+  let node, seen = 0;
+  while ((node = walker.nextNode())) {
+    let from = 0, idx = -1;
+    while ((idx = node.nodeValue.indexOf(needle, from)) !== -1) {
+      if (seen === occurrence) {
+        const range = document.createRange();
+        range.setStart(node, idx);
+        range.setEnd(node, idx + needle.length);
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+        window.__refreshSelectionCommandBar();
+        return range;
+      }
+      seen++;
+      from = idx + needle.length;
+    }
+  }
+  throw new Error('needle not found: ' + needle);
+}
 async function readHistTop() {
   const db = await window.openDB();
   return new Promise(res => {
@@ -106,7 +132,81 @@ console.log('\n== S4: flattens styled span ==');
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// Group E — end-to-end: dblclick -> edit -> commit through the real path.
+// Group E — end-to-end: click/dblclick -> edit -> commit through the real path.
+console.log('\n== E0: single click enters WYSIWYG inline edit ==');
+{
+  await window.__setDocForTest('<p data-rwa-id="w1click">Click into me</p>');
+  const el = $id('w1click');
+  check('leaf advertises editable affordance', el.classList.contains('rwa-editable-leaf'));
+  ptr(el);
+  click(el);
+  check('single click entered inline edit', el.getAttribute('contenteditable') === 'true');
+  check('click did not also anchor the lens', !el.hasAttribute('data-rwa-anchored'));
+  el.textContent = 'Typed in place';
+  await window.commitInlineEdit();
+  await settle();
+  const doc = await window.getDoc();
+  check('single-click edit committed through normal path', doc.includes('Typed in place'));
+}
+
+console.log('\n== E0b: keyboard entry opens inline edit ==');
+{
+  await window.__setDocForTest('<p data-rwa-id="w2key">Keyboard editable</p>');
+  const el = $id('w2key');
+  check('leaf is tabbable for keyboard entry', el.getAttribute('tabindex') === '0');
+  el.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+  check('Enter on focused editable leaf entered edit', el.getAttribute('contenteditable') === 'true');
+  window.revertInlineEdit();
+}
+
+console.log('\n== E0c: selection command makes selected text bold ==');
+{
+  await window.__setDocForTest('<p data-rwa-id="w3sel">Make this bold please</p>');
+  const el = $id('w3sel');
+  selectText(el, 'this bold');
+  check('selection toolbar appears for selected text', document.getElementById('rwa-selection-bar').hidden === false);
+  await window.__runSelectionCommand('make it bold');
+  await settle();
+  const doc = await window.getDoc();
+  check('selected text wrapped in strong', doc.includes('Make <strong>this bold</strong> please'));
+  const hist = await readHistTop();
+  check('selection command is attributed as selection-edit', hist.actor === 'user:selection-command' && hist.surface === 'selection-edit');
+}
+
+console.log('\n== E0d: selection command targets the selected duplicate occurrence ==');
+{
+  await window.__setDocForTest('<p data-rwa-id="w4dup">same same same</p>');
+  const el = $id('w4dup');
+  selectText(el, 'same', 1);
+  await window.__runSelectionCommand('make it bold');
+  await settle();
+  const doc = await window.getDoc();
+  check('only the selected second occurrence became bold', doc.includes('<p data-rwa-id="w4dup">same <strong>same</strong> same</p>'));
+}
+
+console.log('\n== E0e: voice command feeds the same selection command path ==');
+{
+  await window.__setDocForTest('<p data-rwa-id="w5voice">voice target text</p>');
+  const el = $id('w5voice');
+  selectText(el, 'target');
+  class FakeSpeechRecognition {
+    start() {
+      if (this.onstart) this.onstart();
+      if (this.onresult) this.onresult({ results: [[{ transcript: 'make it bold' }]] });
+      if (this.onend) this.onend();
+    }
+    abort() {}
+  }
+  window.SpeechRecognition = FakeSpeechRecognition;
+  window.__startSelectionVoice();
+  await settle();
+  const doc = await window.getDoc();
+  check('voice command bolded the selected text', doc.includes('voice <strong>target</strong> text'));
+  const hist = await readHistTop();
+  check('voice command is attributed as user:voice-selection', hist.actor === 'user:voice-selection' && hist.surface === 'selection-edit');
+  delete window.SpeechRecognition;
+}
+
 console.log('\n== E1: data-rwa-id preserved through an edit ==');
 {
   await window.__setDocForTest('<p data-rwa-id="aaaa1111">Hello</p>');

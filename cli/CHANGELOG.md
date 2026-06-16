@@ -2,6 +2,51 @@
 
 All notable changes to the `rewritable` CLI (`rwa`).
 
+## [0.8.0] - 2026-06-16
+
+### Added
+- **`rwa workspace create <dir>` / `rwa workspace sync [dir]`** — a folder-level
+  control center. `create` writes `<dir>/rwa-index.html`, a `workspace`-kind
+  rewritable whose editable body holds durable shared context (workspace memory,
+  guidelines, examples, open questions) and whose frozen `#rwa-workspace` JSON
+  manifest lists the sibling rewritables in that directory. `sync` refreshes the
+  manifest from the current `.html` files on disk (non-recursive; skips the index
+  and non-rewritables) while preserving the edited context block. `create` refuses
+  to overwrite an existing index without `--force`. Intentionally small: no
+  document merging, no automation, no skill-host runtime.
+- **`rwa new --kind workspace`** — scaffold the workspace index directly (prefer
+  `rwa workspace create` so the manifest is filled from the directory inventory).
+
+### Changed
+- **New seed** (shipped with `rwa new`): containers now open in **Document** mode
+  and unlock editing in **Edit** mode (`runtime.mode`/`setMode`/`on('mode')`).
+  Inline manual edit becomes a **single click** on a leaf text block (caret lands
+  where you click; double-click remains a compatibility path); clicking a
+  non-editable container still anchors the lens. New **selection commands** —
+  select text and type or dictate `make it bold` / `italic` / `inline code`,
+  compiled locally with no model call. The `self-description/1` mirror gains the
+  first-party `workspace` kind (`workspace: []`), kept in step across
+  `cli/src/identity.mjs` and the reference oracle.
+
+## [0.7.0] - 2026-06-11
+
+### Added
+- **`atomic` backend** — atomic.chat, a local OpenAI-compatible MLX server on
+  `http://127.0.0.1:1337/v1` (no key, real multi-turn `tool_calls`). Select with
+  `--backend atomic`; `$RWA_ATOMIC_URL` overrides the base URL. A per-backend
+  `max_tokens` was introduced (atomic 8192, others 32000, `$RWA_MAX_TOKENS`
+  overrides) because atomic rejects requests past its `MAX_KV_SIZE` rather than
+  clamping. Backend routing is pinned by `tests/backends.mjs` (an unwired backend
+  name must not silently fall back to OpenRouter).
+
+## [0.6.0] - 2026-06-11
+
+### Added
+- **Connected shares in the seed** — `rwa new` containers carry the ↗ share panel:
+  publish to a stable `<short>.rewritable.ikangai.com/` URL, re-publish a new
+  version under a Bearer token, or stop sharing. The update token is stored only
+  machine-locally (`rwa_state`), never in the DOM or the exported file.
+
 ## [0.5.0] - 2026-06-10
 
 ### Added

@@ -9,13 +9,15 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const seedPath = join(__dirname, '..', '..', 'seeds', 'rewritable.html');
 const seedText = readFileSync(seedPath, 'utf8');
 
-test('extracts SYSTEM_PROMPTS with document + workflow keys', () => {
+test('extracts SYSTEM_PROMPTS with document + workflow + workspace keys', () => {
   const { SYSTEM_PROMPTS } = extractFromSeed(seedText);
   assert.equal(typeof SYSTEM_PROMPTS, 'object');
   assert.ok('document' in SYSTEM_PROMPTS);
   assert.ok('workflow' in SYSTEM_PROMPTS);
+  assert.ok('workspace' in SYSTEM_PROMPTS);
   assert.equal(typeof SYSTEM_PROMPTS.document, 'string');
   assert.ok(SYSTEM_PROMPTS.document.length > 100);
+  assert.match(SYSTEM_PROMPTS.workspace, /workspace index/);
 });
 
 test('extracts TOOL_SCHEMAS as an array of 3 tools', () => {

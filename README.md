@@ -24,10 +24,12 @@ The user-authored content is a **document** — sometimes pure prose, sometimes 
 
 ## How it works
 
-Open the file in a browser. It's a document the moment it opens — no build screen, no agent call, no waiting. The shipped file already contains a snapshot of its own initial state. From that point:
+Open the file in a browser. It opens in **Document mode** — just the rendered document, the moment it opens, no build screen, no agent call, no waiting. The shipped file already contains a snapshot of its own initial state. Flip to **Edit mode** and the editing surfaces below appear; Document mode stays clean for reading, printing, and sharing. From that point:
 
-- **The lens** — a single steerable input docked at the bottom of the viewport. Type prose to append; type a leading `/` to issue a command. Click a block to anchor the lens to it: now prose inserts after that block and `/edit it` rewrites it. The badge on the lens tells you what it's targeting; `Esc` releases. An inline progress chip above the input narrates what the model is doing while an edit runs (*Thinking…* → *Applying edits…* → *Retrying (attempt 2/3)…*), and surfaces structured failure codes inline if the run exhausts its retry budget.
-- **Edit by hand** — double-click any leaf block (paragraph, heading, list item, quote, table cell) to edit its text directly in the page, *no model involved*: `Enter` commits, `Shift+Enter` adds a line break, `Esc` reverts, blurring commits, emptying the block deletes it. Single-click still anchors the lens; the two coexist on the same blocks by click count. This is the offline, no-API-key path — your keyboard driving the same surgical commit pipeline the agent uses (one `⌘Z` per edit, the same frozen-zone and structure guards). Attributed in history as `user:edit-surface`.
+- **Modes** — a rewritable starts in **Document** mode (read-only chrome: the rendered document and any registered view, nothing editable). **Edit** mode unlocks the lens, in-place editing, image insertion, and selection commands. Skill-host and workflow containers add **Skills** and **Actions** modes for their own surfaces. Switching is in-memory only — it never commits or mutates the document by itself — and is refused while an edit is mid-flight.
+- **The lens** — in Edit mode, a single steerable input docked at the bottom of the viewport. Type prose to append; type a leading `/` to issue a command. Click a figure, code block, or table to anchor the lens to it: now prose inserts after that block and `/edit it` rewrites it (clicking a text block edits it in place instead — see below). The badge on the lens tells you what it's targeting; `Esc` releases. An inline progress chip above the input narrates what the model is doing while an edit runs (*Thinking…* → *Applying edits…* → *Retrying (attempt 2/3)…*), and surfaces structured failure codes inline if the run exhausts its retry budget.
+- **Edit by hand** — in Edit mode, click any leaf text block (paragraph, heading, list item, quote, table cell) and edit it directly in the page like ordinary WYSIWYG text, *no model involved*: the caret lands where you clicked, `Enter` commits, `Shift+Enter` adds a line break, `Esc` reverts, blurring commits, emptying the block deletes it (double-click still works as a compatibility path). A leading `/` instead flips that block into *prompt mode* — the typed instruction runs through the same block-scoped agent path as an anchored command, never as content. This is the offline, no-API-key path — your keyboard driving the same surgical commit pipeline the agent uses (one `⌘Z` per edit, the same frozen-zone and structure guards). Attributed in history as `user:edit-surface`.
+- **Select to format — type or speak** — in Edit mode, select text inside a block and a small command bar appears: type (or dictate, via the browser's speech recognition) `make it bold`, `italic`, or `inline code`. These compile locally to the same edit envelope — deterministic, no model call, attributed `user:selection-command` / `user:voice-selection`. An unrecognized command fails visibly rather than guessing or quietly calling a model.
 - **Images** — drag a photo onto the page (an insertion bar shows where it will land), paste a screenshot, or type `/image` for a file picker. The browser downscales and recompresses on ingest (≤1600 px, WebP, 500 KB per-image budget — refused loudly past that, never silently degraded) and embeds the image **in the file itself** as a data URI, so the document stays one self-contained `.html`. The model never sees the pixels: prompts carry compact `rwa-asset:` tokens, so *"move the photo up"* costs ~60 bytes of context, not 600 KB. Hover an image for a small toolbar — S/M/L width presets (deterministic, no model) and one-click remove; click it to anchor the lens for anything else (`/add a caption`). No model call on insert — instant, one `⌘Z`, attributed `user:image-drop` / `-paste` / `-picker`.
 - `Cmd+Z` — undo
 - `Cmd+S` — commit the current state back into the file (write-in-place on Chromium; download elsewhere)
@@ -64,8 +66,21 @@ npx rwa import scan.pdf --claude  # PDF/docx → HTML via local `claude -p` + th
 
 `rwa new <name>` resolves the bare word **template-first, then kind**: a `.html` in
 the current folder labeled `data-rwa-template="<name>"` is cloned (fresh `DOC_UUID`,
-label stripped); otherwise a built-in kind (`document`, `workflow`, `presentation`)
-is scaffolded. `new`/`import` are deterministic and offline.
+label stripped); otherwise a built-in kind (`document`, `workflow`, `presentation`,
+`workspace`, `skill-host`) is scaffolded. `new`/`import` are deterministic and offline.
+
+```sh
+# Workspace — a folder-level control center over sibling rewritables
+npx rwa workspace create notes/   # → notes/rwa-index.html (a workspace-kind rewritable)
+npx rwa workspace sync notes/     # refresh its manifest from the .html files in notes/
+```
+
+`rwa workspace create <dir>` writes a `rwa-index.html` whose editable body holds shared
+context for the folder (workspace memory, guidelines, examples, open questions) and whose
+frozen manifest lists the sibling rewritables in that directory. `sync` refreshes the
+manifest from disk while preserving the edited context; when the index is open it also shows
+same-directory rewritables that are currently open (live presence over the runtime bus),
+marked *new since sync* until the next `sync` writes them into the manifest.
 
 ```sh
 # Intent-driven creation — scaffold AND fill, in one command (calls a model)

@@ -31,6 +31,8 @@ rwa edit notes.html --plan plan.json                # envelope from a file
 
 rwa doc notes.html                                  # print the editable body
 rwa doc notes.html --json                           # read + edit-contract, one call
+rwa workspace create research                       # → research/rwa-index.html
+rwa workspace sync research                         # refresh the index from sibling rewritables
 
 rwa publish notes.html                              # → a hosted 24h share URL
 rwa host notes.html --url https://host.example      # → {id, token, url} (round-trip editing)
@@ -49,6 +51,7 @@ Pass `--kind <name>` to scaffold a different primary stance at first paint:
 - `--kind document` (default) — prose container; lens placeholder *"Write, or describe what you want."*
 - `--kind workflow` — three-stage scaffold (Inbox / In progress / Done); lens placeholder *"Add an item, or describe a stage move."*
 - `--kind presentation` — prose slide deck (split on `h1`/`h2`); the *Present* toggle renders it as slides at view time without changing the stored text (spec §5.10); lens placeholder *"Add a slide, or describe a change."*
+- `--kind workspace` — directory control center scaffold. Prefer `rwa workspace create <dir>` for real workspaces so the generated manifest is filled from the sibling rewritables on disk.
 - `--kind skill-host` — hosts permission-gated skills installed from `.rwa-skill.json` files; ships an empty runtime-owned frozen `#rwa-skills` zone the runtime (never the agent) rewrites on install/uninstall; installed skills are reported via `rwa doc`/`ls` as `tool`/`compute` affordances (`provenance:'installed'`). See `docs/specs/re-write-able-actions-spec-v0.8.md` §2.
 
 The product-kind taxonomy is documented at `docs/specs/rwa-product-types.md` in the main repo. The substrate runtime is unchanged across kinds — only the `INLINE_DOC` body and lens placeholder vary at emit time.
@@ -180,6 +183,23 @@ rwa ls a.html b.html  # …an explicit list
 
 `--json` emits an array of rows for an agent — `{file, status, self}` where `status` is `rewritable` (with the full `self-description/1` object), `not_a_rewritable`, or `error` (with a `reason`). The scan is lenient like its namesake: one bad path among many is a row, not a fatal exit, so a completed scan exits `0`. This is how an agent handed a project learns its whole rewritable inventory — and every container's affordances — in a single call.
 
+### `rwa workspace create <dir>` / `rwa workspace sync [dir]`
+
+Create or refresh a folder-level control center at `<dir>/rwa-index.html`. The index is itself a rewritable of kind `workspace`: it contains editable shared context for the directory (workspace memory, guidelines, examples, open questions), opens as a dashboard of sibling rewritable documents, and carries a frozen `<script id="rwa-workspace" type="application/rwa-workspace+json">` manifest generated from the directory inventory.
+
+```sh
+rwa workspace create notes/
+rwa new notes/project-brief.html
+rwa new notes/research-log.html
+rwa workspace sync notes/
+```
+
+`create` makes the directory if needed and refuses to overwrite an existing `rwa-index.html` unless `--force` is passed. `sync` refreshes an existing index, or creates it if absent, using the current sibling `.html` rewritables in that directory. The scan is non-recursive and skips non-rewritable HTML files plus the index itself. The editable context block is preserved across sync, so notes like blog style guidelines and canonical examples survive inventory refreshes.
+
+This first pass is intentionally simple: it does not merge documents, schedule automations, or expand the skill-host runtime. It gives a directory a portable, editable shared brain plus a truthful machine-readable manifest that other rewritables can use as context.
+
+When the workspace index is open, it also listens on the runtime bus for same-directory rewritables that are currently open. Those live documents appear under **Open now** and are marked `new since sync` until the next `rwa workspace sync` writes them into the durable manifest. This is live presence only: unopened files still require `sync` because a browser page cannot enumerate arbitrary local directories by itself.
+
 ### `rwa publish <path>`
 
 Publish a local rewritable to the hosted share service and get back a URL. A rewritable is already shareable as a file — it's a self-contained `.html` you can email or host anywhere — but `rwa publish` is the one-command path to an *anonymous, hosted* snapshot: create with `rwa new`, edit locally, publish.
@@ -293,7 +313,7 @@ Because the anchors in step 1 are the *same* text step 3 splices against, what t
 |---|---|
 | `--force`, `-f` | overwrite the destination if it exists |
 | `--open`, `-o` | open the resulting file in the default app |
-| `--kind <name>` | (`rwa new` only) starter kind: `document` (default), `workflow`, `presentation`, `skill-host` |
+| `--kind <name>` | (`rwa new` only) starter kind: `document` (default), `workflow`, `presentation`, `workspace`, `skill-host` |
 | `--version` | print version |
 | `--help`, `-h` | usage |
 

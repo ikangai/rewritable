@@ -35,6 +35,7 @@ export const KIND_PROVIDERS = {
   workflow: [],
   // skill-host: no first-party affordances; installed skills (provenance:'installed')
   // come from parseSkillZone (§8), not this table. Explicit [] mirrors the oracle.
+  workspace: [],
   'skill-host': [],
 };
 

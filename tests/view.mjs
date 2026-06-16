@@ -85,6 +85,15 @@ async function waitFor(pred, ms = 2000) {
   check('Present toggle built for presentation kind', !!toggle && toggle.textContent === 'Present');
   check('starts in prose mode (no view class, no slides)',
     !mount.classList.contains('viewmode-presentation') && mount.querySelectorAll('.rwa-slide').length === 0);
+  check('fresh presentation container starts in Document mode', window.runtime.mode === 'document');
+
+  {
+    const block = mount.querySelector('h1, h2, p, li');
+    check('a prose block exists to probe Document-mode inertness', !!block);
+    if (block) block.dispatchEvent(new window.MouseEvent('dblclick', { bubbles: true }));
+    check('inline edit inert in Document mode (block not contenteditable)',
+      !block || block.getAttribute('contenteditable') !== 'true');
+  }
 
   // Activate the render mode.
   window.runtime.setView('presentation');
@@ -127,6 +136,14 @@ async function waitFor(pred, ms = 2000) {
   check('toggle back to prose removes the view class', !mount.classList.contains('viewmode-presentation'));
   check('prose mode renders no slides', mount.querySelectorAll('.rwa-slide').length === 0);
   check('toggle label back to Present', toggle.textContent === 'Present');
+
+  // Edit mode always goes back to the source document view.
+  window.runtime.setView('presentation');
+  await waitFor(() => mount.classList.contains('viewmode-presentation'));
+  window.runtime.setMode('edit');
+  await waitFor(() => !mount.classList.contains('viewmode-presentation'));
+  check('switching to Edit exits the active render view', window.runtime.mode === 'edit' && !mount.classList.contains('viewmode-presentation'));
+  window.runtime.setMode('document');
 
   // setView refuses an unknown view name (defensive).
   let threw = null;

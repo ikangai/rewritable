@@ -47,6 +47,7 @@ export const KIND_PROVIDERS = {
   // INSTALLED skill (provenance:'installed'), emitted by parseSkillZone (§8) from
   // the frozen #rwa-skills zone, not from this table. Explicit [] (not the ||[]
   // fallback) so a missing kind is still distinguishable from "no providers".
+  workspace: [],
   'skill-host': [],
 };
 

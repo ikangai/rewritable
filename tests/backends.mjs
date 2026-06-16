@@ -145,6 +145,32 @@ async function boot({ url = 'https://rwa-backends.local/', session = {} } = {}) 
     check('D4 hint mentions CORS reality', /CORS|origin/i.test(document.getElementById('rwa-backend-hint').textContent));
   }
 
+  // ── E. LM Studio Test fills all discovered model choices + selects one ─────
+  {
+    const { window, document, net } = await boot({ session: { rwa_model: 'openrouter-only-model' } });
+    document.getElementById('rwa-st-cog').click();
+    const sel = document.getElementById('rwa-backend');
+    sel.value = 'lmstudio';
+    sel.dispatchEvent(new window.Event('change', { bubbles: true }));
+    net.handler = async () => ({
+      ok: true,
+      json: async () => ({ data: [{ id: 'local/alpha' }, { id: 'local/beta' }] }),
+    });
+    document.getElementById('rwa-base-url-test').click();
+    await waitFor(() => document.getElementById('rwa-base-url-result').textContent.includes('2 models'));
+    const opts = [...document.getElementById('rwa-model-options').children].map(o => o.value);
+    check('E1 LM Studio Test probes the default /models endpoint',
+      net.calls[0] && net.calls[0].url === 'http://localhost:1234/v1/models');
+    check('E2 LM Studio Test fills every returned model option',
+      JSON.stringify(opts) === JSON.stringify(['local/alpha', 'local/beta']));
+    check('E3 stale non-local model value is replaced with the first LM Studio model',
+      document.getElementById('rwa-model').value === 'local/alpha'
+      && window.sessionStorage.getItem('rwa_model') === 'local/alpha');
+    check('E4 settings panel uses the fixed control width',
+      /#rwa-set-panel\{[^}]*width:340px/.test(document.querySelector('style')?.textContent || '')
+      && /\.rwa-set-row input,\.rwa-set-row select\{[^}]*width:100%/.test(document.querySelector('style')?.textContent || ''));
+  }
+
   console.log(`\n== Summary ==\n${pass} pass, ${fail} fail`);
   process.exit(fail ? 1 : 0);
 })().catch(e => { console.error(e); process.exit(1); });

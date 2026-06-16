@@ -58,6 +58,8 @@ await new Promise(r => setTimeout(r, 200));
 const settle = () => new Promise(r => setTimeout(r, 50));
 
 console.log('== Image-assets harness loaded ==');
+window.runtime.setMode('edit');
+await settle();
 
 // ─── Block A: virtualize/expand core ────────────────────────────────
 

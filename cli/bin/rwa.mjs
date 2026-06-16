@@ -12,7 +12,7 @@ Usage:
   rwa new <name> [path]       a bare <name> resolves template-first: clone a cwd
                               file labeled data-rwa-template="<name>" (fresh UUID,
                               label stripped) if one exists; else, if <name> is a
-                              known kind (document/workflow/presentation/skill-host), create
+                              known kind (document/workflow/presentation/workspace/skill-host), create
                               that built-in kind. So "rwa new presentation" makes a
                               deck, and your own labeled file overrides the builtin.
                               Default out: ./<name>-YYYY-MM-DD.html.
@@ -52,6 +52,12 @@ Usage:
                               to \`rwa doc\`. Non-rewritables are counted, not
                               hidden. With --json, an array of self-description
                               rows. Lenient: a completed scan exits 0.
+  rwa workspace create <dir>  create a folder-level rwa-index.html control
+                              center. The index is a rewritable of kind
+                              workspace, with a frozen manifest generated from
+                              sibling rewritables in that directory.
+  rwa workspace sync [dir]    refresh <dir>/rwa-index.html from the current
+                              sibling rewritable inventory (default: ./).
   rwa publish <path>          publish a local rewritable to the share service
                               and print the hosted URL. POSTs your edited bytes;
                               the hosted snapshot is anonymous, 24h, with a fresh
@@ -84,11 +90,13 @@ Usage:
 
 Flags:
   --kind <name>  (new only) starter kind: document (default), workflow,
-                 presentation, or skill-host. 'document' is the canonical prose
+                 presentation, workspace, or skill-host. 'document' is the canonical prose
                  container. 'workflow' scaffolds three stages (Inbox / In
                  progress / Done). 'presentation' scaffolds a prose deck that the
                  'Present' toggle displays as slides (split on h1/h2) without
-                 changing the stored text. 'skill-host' hosts permission-gated
+                 changing the stored text. 'workspace' scaffolds a directory
+                 control center; prefer \`rwa workspace create\` so the manifest
+                 is filled from disk. 'skill-host' hosts permission-gated
                  skills installed from .rwa-skill.json files (v0.8 actions spec).
                  See docs/specs/rwa-product-types.md.
   --skin <name>  (new only) bake a style preset into the new container:
@@ -603,6 +611,42 @@ function detectProductKind(fileText) {
       const { listRewritables, formatRows } = await import('../src/ls.mjs');
       const rows = await listRewritables(paths);
       process.stdout.write((jsonMode ? JSON.stringify(rows) : formatRows(rows)) + '\n');
+      return;
+    }
+
+    // `rwa workspace create <dir>` / `rwa workspace sync [dir]` — a directory
+    // control center. The generated rwa-index.html is itself a rewritable, but
+    // its manifest is CLI-owned and refreshed from sibling rewritables.
+    if (verb === 'workspace') {
+      const sub = rest.find(a => !a.startsWith('-'));
+      const force = rest.includes('--force') || rest.includes('-f');
+      const open = rest.includes('--open') || rest.includes('-o');
+      const positionals = rest.filter((a) => !a.startsWith('-'));
+      const dirPath = positionals[1] || '.';
+      const emitWorkspace = (msg) => { process.stderr.write('rwa workspace: ' + msg + '\n'); };
+
+      if (!sub || !['create', 'sync'].includes(sub)) {
+        emitWorkspace('usage: rwa workspace create <dir> [--force] [--open] | rwa workspace sync [dir] [--open]');
+        process.exitCode = 1;
+        return;
+      }
+      if (sub === 'create' && !positionals[1]) {
+        emitWorkspace('missing <dir> argument');
+        process.exitCode = 1;
+        return;
+      }
+
+      const { workspaceCreateCmd, workspaceSyncCmd } = await import('../src/workspace.mjs');
+      try {
+        const result = sub === 'create'
+          ? await workspaceCreateCmd({ dirPath, force, seedCandidates: SEED_CANDIDATES })
+          : await workspaceSyncCmd({ dirPath, seedCandidates: SEED_CANDIDATES });
+        console.log(`wrote ${relative(process.cwd(), result.indexPath) || result.indexPath} (${result.docs.length} document${result.docs.length === 1 ? '' : 's'})`);
+        if (open) await openWithPrefill(result.indexPath);
+      } catch (e) {
+        emitWorkspace((e && e.message) || String(e));
+        process.exitCode = (e && e.exitCode) || 1;
+      }
       return;
     }
 

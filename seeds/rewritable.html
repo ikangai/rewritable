@@ -40,7 +40,11 @@
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
 [hidden]{display:none!important;}
 body{font-family:var(--font-ui);background:var(--bg);color:var(--text);min-height:100dvh;padding-bottom:160px;line-height:1.5;-webkit-font-smoothing:antialiased;}
-#rwa-set{position:fixed;top:12px;right:12px;display:flex;gap:6px;z-index:1000;}
+#rwa-set{position:fixed;top:12px;right:12px;display:flex;gap:6px;align-items:center;z-index:1000;}
+#rwa-mode-tabs{display:flex;gap:2px;align-items:center;background:var(--white);border:1px solid var(--gray-200);border-radius:8px;padding:2px;box-shadow:0 1px 4px rgba(0,0,0,0.04);}
+.rwa-mode-tab{background:transparent;border:0;color:var(--gray-500);font-family:var(--font-mono);font-size:10px;padding:5px 8px;border-radius:6px;cursor:pointer;letter-spacing:.4px;text-transform:uppercase;transition:color .15s,background .15s;}
+.rwa-mode-tab:hover{color:var(--gray-900);background:var(--gray-50);}
+.rwa-mode-tab.on{background:var(--gray-900);color:var(--white);}
 .rwa-st-btn{background:var(--white);border:1px solid var(--gray-200);color:var(--gray-500);font-family:var(--font-mono);font-size:10px;padding:6px 10px;border-radius:6px;cursor:pointer;letter-spacing:.5px;text-transform:uppercase;transition:color .15s,background .15s,border-color .15s;}
 .rwa-st-btn:hover{color:var(--gray-900);border-color:var(--gray-300);background:var(--gray-50);}
 .rwa-st-btn.dirty{color:var(--gray-900);border-color:var(--gray-300);background:var(--gray-100);}
@@ -49,16 +53,16 @@ body{font-family:var(--font-ui);background:var(--bg);color:var(--text);min-heigh
 .rwa-st-btn.run{color:var(--gray-700);border-color:var(--gray-300);background:var(--gray-50);}
 .rwa-st-btn.err{color:var(--red);border-color:var(--red);background:var(--white);}
 .rwa-st-btn.ok{color:var(--green);border-color:var(--green);background:var(--white);}
-#rwa-set-panel{position:fixed;top:50px;right:12px;background:var(--white);border:1px solid var(--gray-200);border-radius:var(--radius-sm);padding:14px;display:none;min-width:300px;z-index:999;box-shadow:0 4px 16px rgba(0,0,0,0.08);}
+#rwa-set-panel{position:fixed;top:50px;right:12px;background:var(--white);border:1px solid var(--gray-200);border-radius:var(--radius-sm);padding:14px;display:none;width:340px;max-width:calc(100vw - 24px);z-index:999;box-shadow:0 4px 16px rgba(0,0,0,0.08);}
 #rwa-set-panel.open{display:block;}
 .rwa-set-row{display:flex;flex-direction:column;gap:4px;margin-bottom:10px;}
 .rwa-set-row:last-child{margin-bottom:0;}
 .rwa-set-row label{font-family:var(--font-mono);font-size:9px;letter-spacing:1.5px;text-transform:uppercase;color:var(--gray-500);}
-.rwa-set-row input,.rwa-set-row select{background:var(--white);border:1px solid var(--gray-200);color:var(--gray-900);font-family:var(--font-ui);font-size:13px;padding:8px 10px;outline:none;border-radius:8px;transition:border-color .15s;}
+.rwa-set-row input,.rwa-set-row select{width:100%;background:var(--white);border:1px solid var(--gray-200);color:var(--gray-900);font-family:var(--font-ui);font-size:13px;padding:8px 10px;outline:none;border-radius:8px;transition:border-color .15s;}
 .rwa-set-row input:focus,.rwa-set-row select:focus{border-color:var(--gray-400);}
 .rwa-set-row select{appearance:none;-webkit-appearance:none;cursor:pointer;}
 .rwa-set-base-url-line{display:flex;gap:6px;}
-.rwa-set-base-url-line input{flex:1;}
+.rwa-set-base-url-line input{flex:1;min-width:0;}
 .rwa-set-base-url-line button{background:var(--gray-100);border:1px solid var(--gray-200);border-radius:8px;padding:6px 12px;cursor:pointer;font-family:var(--font-mono);font-size:11px;color:var(--gray-700);}
 .rwa-set-base-url-line button:hover{background:var(--gray-200);}
 .rwa-set-hint{font-family:var(--font-mono);font-size:10px;line-height:1.5;color:var(--gray-500);}
@@ -99,6 +103,28 @@ body{font-family:var(--font-ui);background:var(--bg);color:var(--text);min-heigh
 .rwa-share-actions button{font:inherit;font-size:12px;padding:5px 10px;border:1px solid var(--gray-300);border-radius:8px;background:var(--white);color:var(--gray-900);cursor:pointer;}
 .rwa-share-actions button:disabled{opacity:.5;cursor:default;}
 #rwa-share-create,#rwa-share-update{background:var(--gray-900);color:var(--white);border-color:var(--gray-900);}
+#rwa-mode-panel{position:fixed;top:50px;right:12px;background:var(--white);border:1px solid var(--gray-200);border-radius:var(--radius-sm);padding:18px 20px;display:none;width:min(420px,92vw);max-height:calc(100dvh - 72px);overflow:auto;z-index:999;box-shadow:0 4px 16px rgba(0,0,0,0.08);font-family:var(--font-ui);font-size:13px;line-height:1.5;color:var(--gray-700);}
+#rwa-mode-panel.open{display:block;}
+#rwa-mode-panel h4{margin:0 0 8px;font-size:15px;color:var(--gray-900);font-weight:600;}
+#rwa-mode-panel p{margin:0 0 10px;}
+.rwa-mode-section{border-top:1px solid var(--gray-100);padding-top:12px;margin-top:12px;}
+.rwa-mode-section:first-child{border-top:0;padding-top:0;margin-top:0;}
+.rwa-mode-kicker{font-family:var(--font-mono);font-size:9px;letter-spacing:1.5px;text-transform:uppercase;color:var(--gray-500);margin-bottom:6px;}
+.rwa-mode-empty{color:var(--gray-400);font-style:italic;padding:6px 0;}
+.rwa-mode-actions{display:flex;gap:6px;flex-wrap:wrap;}
+.rwa-mode-actions button,.rwa-mode-row button{font:inherit;font-size:12px;padding:5px 10px;border:1px solid var(--gray-300);border-radius:8px;background:var(--white);color:var(--gray-900);cursor:pointer;}
+.rwa-mode-actions button.pri{background:var(--gray-900);color:var(--white);border-color:var(--gray-900);}
+.rwa-mode-actions button:disabled,.rwa-mode-row button:disabled{opacity:.5;cursor:default;}
+.rwa-mode-row{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;padding:9px 0;border-bottom:1px solid var(--gray-100);}
+.rwa-mode-row:last-child{border-bottom:0;}
+.rwa-mode-title{font-weight:600;color:var(--gray-900);}
+.rwa-mode-meta{font-family:var(--font-mono);font-size:10px;color:var(--gray-500);word-break:break-all;}
+.rwa-mode-invoke{display:flex;gap:6px;margin-top:8px;}
+.rwa-mode-invoke input{flex:1;min-width:0;border:1px solid var(--gray-200);border-radius:8px;padding:6px 8px;font:inherit;font-size:12px;}
+.rwa-mode-result{margin-top:8px;font-family:var(--font-mono);font-size:10px;background:var(--gray-50);border-radius:6px;padding:6px 8px;white-space:pre-wrap;word-break:break-word;color:var(--gray-600);}
+.rwa-mode-hist{padding:8px 0;border-bottom:1px solid var(--gray-100);}
+.rwa-mode-hist:last-child{border-bottom:0;}
+.rwa-mode-hist .rwa-mode-meta{margin-bottom:3px;}
 .rwa-set-hint code{background:var(--gray-100);padding:1px 4px;border-radius:3px;font-size:10px;}
 .rwa-set-hint.ok{color:#15803d;}
 .rwa-set-hint.err{color:#b91c1c;}
@@ -164,6 +190,25 @@ body{font-family:var(--font-ui);background:var(--bg);color:var(--text);min-heigh
 #rwa-img-chip button{width:22px;height:22px;border:0;border-radius:6px;background:transparent;color:var(--gray-900);font-size:11px;line-height:1;cursor:pointer;padding:0;font-family:var(--font-ui);}
 #rwa-img-chip button:hover{background:var(--gray-100);}
 #rwa-img-chip button.on{background:var(--gray-900);color:var(--white);}
+#rwa-selection-bar{position:absolute;z-index:70;display:flex;align-items:center;gap:4px;padding:5px;border-radius:10px;border:1px solid var(--gray-200);background:var(--white);box-shadow:0 8px 24px rgba(0,0,0,0.12);font-family:var(--font-ui);}
+#rwa-selection-bar[hidden]{display:none!important;}
+#rwa-selection-bar button{height:28px;border:0;border-radius:7px;background:transparent;color:var(--gray-700);font:600 12px var(--font-ui);cursor:pointer;padding:0 9px;}
+#rwa-selection-bar button:hover{background:var(--gray-100);color:var(--gray-900);}
+#rwa-selection-bar button.pri{background:var(--gray-900);color:var(--white);}
+#rwa-selection-bar[data-listening="1"] #rwa-selection-voice{background:var(--red);color:var(--white);}
+#rwa-selection-cmd{width:170px;border:1px solid var(--gray-200);border-radius:7px;padding:6px 8px;outline:none;font:12px var(--font-ui);color:var(--gray-900);}
+#rwa-selection-cmd:focus{border-color:var(--gray-400);}
+body:not([data-rwa-mode="edit"]) #rwa-lens,
+body:not([data-rwa-mode="edit"]) #rwa-pal,
+body:not([data-rwa-mode="edit"]) #rwa-set-panel,
+body:not([data-rwa-mode="edit"]) #rwa-skin-panel,
+body:not([data-rwa-mode="edit"]) #rwa-lens-hist-panel,
+body:not([data-rwa-mode="edit"]) #rwa-st-cog,
+body:not([data-rwa-mode="edit"]) #rwa-st-skin,
+body:not([data-rwa-mode="edit"]) #rwa-img-chip,
+body:not([data-rwa-mode="edit"]) #rwa-selection-bar{display:none!important;}
+body:not([data-rwa-mode="document"]) #rwa-view-toggle,
+body:not([data-rwa-mode="document"]) #rwa-view-chrome{display:none!important;}
 /* images-v1: deterministic width presets (set by the toolbar; class lives in the doc) */
 :where(#rwa-doc-mount) figure.rwa-img-sm{max-width:33%;}
 :where(#rwa-doc-mount) figure.rwa-img-md{max-width:66%;}
@@ -176,6 +221,10 @@ body{font-family:var(--font-ui);background:var(--bg);color:var(--text);min-heigh
 .rwa-frag-pulse{animation:rwa-frag-pulse 1.6s ease-out;}
 @keyframes rwa-frag-pulse{0%{background:rgba(59,130,246,0.22);}100%{background:transparent;}}
 [data-rwa-anchored]{outline:2px solid var(--gray-900);outline-offset:2px;border-radius:4px;}
+.rwa-editable-leaf{cursor:text;border-radius:4px;transition:background .12s ease,box-shadow .12s ease,outline-color .12s ease;}
+.rwa-editable-leaf:hover{background:rgba(59,130,246,0.045);box-shadow:0 0 0 3px rgba(59,130,246,0.08);}
+.rwa-editable-leaf:focus-visible{outline:2px solid rgba(59,130,246,0.5);outline-offset:2px;}
+.rwa-editable-leaf[contenteditable="true"]{background:rgba(59,130,246,0.07);box-shadow:0 0 0 2px rgba(59,130,246,0.22);outline:none;caret-color:var(--blue);}
 /* Inline prompt mode — the block's text starts with "/" (addressing the model,
    not writing content). Tint + inset accent bar only: no border/padding so the
    per-keystroke toggle never shifts layout (caret stays put), and no ::before
@@ -851,12 +900,13 @@ async function runtimeFsList(prefix) {
 const runtimeEvents = {
   commit: new Set(),
   modify: new Set(),
+  mode: new Set(),
   status: new Set(),
 };
 
 function runtimeOn(event, callback) {
   if (!Object.prototype.hasOwnProperty.call(runtimeEvents, event)) {
-    throw new Error("unknown event '" + event + "' (use 'commit', 'modify', or 'status')");
+    throw new Error("unknown event '" + event + "' (use 'commit', 'modify', 'mode', or 'status')");
   }
   if (typeof callback !== 'function') throw new TypeError('callback must be a function');
   runtimeEvents[event].add(callback);
@@ -874,6 +924,147 @@ function emitRuntimeEvent(event, payload) {
   for (const cb of [...runtimeEvents[event]]) {
     try { cb(payload); } catch (_) { /* swallow user-cb errors */ }
   }
+}
+
+// === Cross-container bus (workspace-presence subset) ========================
+// BroadcastChannel-backed pub/sub across same-origin rewritables. This is a
+// deliberately small public surface: documents can publish/subscribe to normal
+// topics, while runtime-reserved prefixes stay off-limits. The first concrete
+// consumer is workspace autodiscovery on `workspace:presence`.
+const runtimeBusChannels = new Map();
+
+function assertRuntimeBusTopic(topic) {
+  if (typeof topic !== 'string' || !topic) throw new TypeError('bus topic must be a non-empty string');
+  if (topic.length > 128 || !/^[A-Za-z0-9][A-Za-z0-9:_./-]*$/.test(topic)) {
+    throw new TypeError('bus topic contains unsupported characters');
+  }
+  if (/^(?:rwa[:_]|skills:)/.test(topic)) {
+    throw new RwaReservedError(topic);
+  }
+}
+
+function runtimeBusChannel(topic) {
+  assertRuntimeBusTopic(topic);
+  if (typeof BroadcastChannel === 'undefined') throw new Error('BroadcastChannel is not available');
+  let ch = runtimeBusChannels.get(topic);
+  if (!ch) {
+    ch = new BroadcastChannel('rwa_bus:' + topic);
+    if (typeof ch.unref === 'function') ch.unref();
+    runtimeBusChannels.set(topic, ch);
+  }
+  return ch;
+}
+
+function runtimeBusPublish(topic, message) {
+  const envelope = { topic, from: DOC_UUID, at: Date.now(), message };
+  runtimeBusChannel(topic).postMessage(envelope);
+  return envelope;
+}
+
+function runtimeBusSubscribe(topic, callback) {
+  assertRuntimeBusTopic(topic);
+  if (typeof callback !== 'function') throw new TypeError('callback must be a function');
+  if (typeof BroadcastChannel === 'undefined') throw new Error('BroadcastChannel is not available');
+  const ch = new BroadcastChannel('rwa_bus:' + topic);
+  if (typeof ch.unref === 'function') ch.unref();
+  const handler = (evt) => {
+    const data = evt && evt.data;
+    if (!data || data.from === DOC_UUID) return;
+    try { callback(data); } catch (_) { /* never let a subscriber break delivery */ }
+  };
+  ch.addEventListener('message', handler);
+  return () => { ch.removeEventListener('message', handler); ch.close(); };
+}
+
+// === First-class runtime modes =============================================
+// Modes are page-load local state, deliberately not serialized into INLINE_DOC.
+// Document is the default every time a file opens; Edit is the only mode that
+// attaches WYSIWYG/lens/image editing affordances.
+const RWA_MODES = Object.freeze(['document', 'edit', 'skills', 'actions']);
+let rwaMode = 'document';
+
+function escRuntimeHtml(s) {
+  return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+}
+
+function isRwaSkillHost() {
+  return PRODUCT_KIND === 'skill-host' && !!document.getElementById('rwa-skills');
+}
+
+function closeRuntimePanels() {
+  for (const id of ['rwa-set-panel', 'rwa-info-panel', 'rwa-skin-panel', 'rwa-share-panel', 'rwa-mode-panel']) {
+    const el = document.getElementById(id);
+    if (el) el.classList.remove('open');
+  }
+  const hist = document.getElementById('rwa-lens-hist-panel');
+  if (hist) hist.hidden = true;
+}
+
+function hideEditTransients() {
+  if (typeof exitInlineEdit === 'function') exitInlineEdit();
+  if (typeof releaseAnchor === 'function') releaseAnchor();
+  if (typeof closePal === 'function') closePal();
+  if (typeof clearDropMark === 'function') clearDropMark();
+  if (typeof hideSelectionCommandBar === 'function') hideSelectionCommandBar();
+  const chip = document.getElementById('rwa-img-chip');
+  if (chip) chip.hidden = true;
+  const hist = document.getElementById('rwa-lens-hist-panel');
+  if (hist) hist.hidden = true;
+}
+
+function syncModeChrome() {
+  if (document.body) document.body.dataset.rwaMode = rwaMode;
+  document.querySelectorAll('[data-rwa-mode-target]').forEach(btn => {
+    btn.classList.toggle('on', btn.dataset.rwaModeTarget === rwaMode);
+  });
+  const panel = document.getElementById('rwa-mode-panel');
+  if (!panel) return;
+  if (rwaMode === 'skills' || rwaMode === 'actions') {
+    panel.classList.add('open');
+    renderModePanel().catch(err => {
+      panel.innerHTML = '<h4>' + escRuntimeHtml(rwaMode) + '</h4><p>Could not render this panel: ' + escRuntimeHtml(err?.message || err) + '</p>';
+    });
+  } else {
+    panel.classList.remove('open');
+  }
+  if (typeof syncViewChrome === 'function') syncViewChrome();
+}
+
+function runtimeSetMode(mode) {
+  if (!RWA_MODES.includes(mode)) throw new Error('unknown mode: ' + mode);
+  if (modifyMutex) {
+    setStatus('err', '✗ modify in progress');
+    throw new Error('cannot switch mode during modify');
+  }
+  if (mode === rwaMode) {
+    syncModeChrome();
+    return rwaMode;
+  }
+  if (rwaMode === 'edit' || mode !== 'edit') hideEditTransients();
+  closeRuntimePanels();
+  if (mode === 'edit' && activeView) {
+    activeView = null;
+    try { sessionStorage.setItem(rwaViewKey(), ''); } catch (_) {}
+  }
+  rwaMode = mode;
+  syncModeChrome();
+  emitRuntimeEvent('mode', { mode: rwaMode });
+  getDoc().then(d => renderDoc(canonLF(d))).catch(() => {});
+  return rwaMode;
+}
+
+async function renderModePanel() {
+  const panel = document.getElementById('rwa-mode-panel');
+  if (!panel) return;
+  if (rwaMode === 'skills') return renderSkillsModePanel(panel);
+  if (rwaMode === 'actions') return renderActionsModePanel(panel);
+}
+
+function attachModeTabs() {
+  document.querySelectorAll('[data-rwa-mode-target]').forEach(btn => {
+    btn.addEventListener('click', () => runtimeSetMode(btn.dataset.rwaModeTarget));
+  });
+  syncModeChrome();
 }
 
 // === Status surface (spec §7) ==============================================
@@ -1019,6 +1210,7 @@ function renderDoc(html) {
   // the agent's view of the document is invisible-by-construction to any render mode.
   setSourceMap(html);
   rebuildLockedRanges(html);
+  const editReady = rwaMode === 'edit' && !activeView;
   // rwa-lens/1: click-to-anchor (Task 5.1). renderDoc runs on every commit and
   // on bootstrap; remove first so listeners don't multiply across renders. Same
   // function reference, so removing the previous instance is safe. With a
@@ -1026,12 +1218,22 @@ function renderDoc(html) {
   // listener is removed and not re-added (§5.10). For activeView===null this is
   // byte-identical to the previous behavior.
   m.removeEventListener('click', handleMountClick);
-  if (!activeView) m.addEventListener('click', handleMountClick);
-  // rwa inline-edit: double-click a leaf block to hand-edit it (no LLM). Same
+  if (editReady) m.addEventListener('click', handleMountClick);
+  // rwa inline-edit: leaf text blocks behave like page text in an editor.
+  // Pointer-down starts editing early enough for the browser to place the caret
+  // where the user clicked; dblclick stays registered for old tests/muscle
+  // memory; keydown gives keyboard users a non-pointer entry path. Same
   // remove-then-add discipline as click-to-anchor; not registered under an
   // active view (byte-offset resolution is undefined there).
+  if (typeof refreshInlineEditAffordances === 'function') refreshInlineEditAffordances(m);
+  m.removeEventListener('pointerdown', handleMountPointerDown);
   m.removeEventListener('dblclick', handleMountDblClick);
-  if (!activeView) m.addEventListener('dblclick', handleMountDblClick);
+  m.removeEventListener('keydown', handleMountEditKeydown);
+  if (editReady) {
+    m.addEventListener('pointerdown', handleMountPointerDown);
+    m.addEventListener('dblclick', handleMountDblClick);
+    m.addEventListener('keydown', handleMountEditKeydown);
+  }
   // images-v1: drag-drop insert + hover-✕ chip. Same remove-then-add
   // discipline; inert under a render mode (byte-offset resolution undefined).
   // The chip/drop-mark reference DOM the innerHTML reset just destroyed.
@@ -1043,7 +1245,7 @@ function renderDoc(html) {
   m.removeEventListener('drop', handleMountDrop);
   m.removeEventListener('mouseover', handleMountImgOver);
   m.removeEventListener('mouseout', handleMountImgOut);
-  if (!activeView) {
+  if (editReady) {
     m.addEventListener('dragover', handleMountDragOver);
     m.addEventListener('dragleave', handleMountDragLeave);
     m.addEventListener('drop', handleMountDrop);
@@ -1055,6 +1257,136 @@ function renderDoc(html) {
   // after innerHTML + script-rerun + form-restore.
   if (activeView && typeof activeView.mounted === 'function') {
     activeView.mounted(m, viewCtx());
+  }
+  if (PRODUCT_KIND === 'workspace' && typeof renderWorkspacePresence === 'function') {
+    renderWorkspacePresence();
+  }
+}
+
+// ─── Workspace presence over runtime.bus ─────────────────────────────
+const RWA_WORKSPACE_PRESENCE_TOPIC = 'workspace:presence';
+let workspacePresenceTimer = null;
+let workspacePresenceUnsub = null;
+let workspaceMonitorUnsub = null;
+const workspacePeers = new Map();
+
+function rwaLocationSansHash() {
+  try {
+    const u = new URL(location.href);
+    u.hash = '';
+    return u.href;
+  } catch (_) {
+    return String(location.href || '').split('#')[0];
+  }
+}
+
+function rwaDirectoryHref(href) {
+  try { return new URL('.', href || location.href).href; }
+  catch (_) { return ''; }
+}
+
+function sameWorkspaceDirectory(href) {
+  const mine = rwaDirectoryHref(rwaLocationSansHash());
+  const theirs = rwaDirectoryHref(href);
+  return !!mine && !!theirs && mine === theirs;
+}
+
+function workspacePresencePayload(action) {
+  const d = runtimeDescribe();
+  return {
+    schema: 'rwa-presence/1',
+    action,
+    uuid: DOC_UUID,
+    kind: PRODUCT_KIND,
+    title: d.title || document.title || RWA.FILE,
+    file: RWA.FILE,
+    url: rwaLocationSansHash(),
+    affordances: Array.isArray(d.affordances) ? d.affordances.map(a => ({ kind: a.kind, name: a.name, label: a.label, provenance: a.provenance })) : [],
+  };
+}
+
+function workspaceManifestDocs() {
+  const el = document.getElementById('rwa-workspace');
+  if (!el) return [];
+  try {
+    const parsed = JSON.parse(el.textContent || '{}');
+    return Array.isArray(parsed.documents) ? parsed.documents : [];
+  } catch (_) {
+    return [];
+  }
+}
+
+function workspaceKnownKeys() {
+  const keys = new Set();
+  for (const d of workspaceManifestDocs()) {
+    if (d && d.uuid) keys.add('uuid:' + d.uuid);
+    if (d && d.file) keys.add('file:' + d.file);
+  }
+  return keys;
+}
+
+function workspacePeerKnown(peer, known) {
+  return !!(peer && ((peer.uuid && known.has('uuid:' + peer.uuid)) || (peer.file && known.has('file:' + peer.file))));
+}
+
+function workspacePresenceCard(peer, known) {
+  const isKnown = workspacePeerKnown(peer, known);
+  const href = peer.url || '#';
+  const aff = peer.affordances && peer.affordances.length ? peer.affordances.map(a => a.kind).join(', ') : 'baseline';
+  return '<a class="rwa-ws-card rwa-ws-live-card" href="' + escRuntimeHtml(href) + '">' +
+    '<span class="rwa-ws-kind">' + escRuntimeHtml(peer.kind || 'document') + '</span>' +
+    '<strong>' + escRuntimeHtml(peer.title || peer.file || 'Untitled') + '</strong>' +
+    '<span>' + escRuntimeHtml(peer.file || peer.url || peer.uuid || '') + '</span>' +
+    '<small>' + (isKnown ? 'indexed' : 'new since sync') + ' · open now · ' + escRuntimeHtml(aff) + '</small>' +
+    '</a>';
+}
+
+function renderWorkspacePresence() {
+  if (PRODUCT_KIND !== 'workspace') return;
+  const root = document.querySelector('[data-rwa-workspace-live]');
+  if (!root) return;
+  const grid = root.querySelector('[data-rwa-workspace-live-grid]');
+  if (!grid) return;
+  const cutoff = Date.now() - 45000;
+  const peers = [...workspacePeers.values()]
+    .filter(p => p && p.lastSeen >= cutoff && sameWorkspaceDirectory(p.url))
+    .sort((a, b) => String(a.title || a.file || '').localeCompare(String(b.title || b.file || '')));
+  root.hidden = peers.length === 0;
+  if (!peers.length) { grid.innerHTML = ''; return; }
+  const known = workspaceKnownKeys();
+  grid.innerHTML = peers.map(p => workspacePresenceCard(p, known)).join('');
+}
+
+function handleWorkspacePresence(envelope) {
+  const msg = envelope && envelope.message;
+  if (!msg || msg.schema !== 'rwa-presence/1') return;
+  if (msg.action === 'request') {
+    runtimeBusPublish(RWA_WORKSPACE_PRESENCE_TOPIC, workspacePresencePayload('hello'));
+    return;
+  }
+  if (PRODUCT_KIND !== 'workspace' || msg.action !== 'hello' || !sameWorkspaceDirectory(msg.url)) return;
+  workspacePeers.set(msg.uuid || envelope.from, { ...msg, lastSeen: Date.now() });
+  renderWorkspacePresence();
+}
+
+function startWorkspacePresence() {
+  try {
+    workspacePresenceUnsub = runtimeBusSubscribe(RWA_WORKSPACE_PRESENCE_TOPIC, handleWorkspacePresence);
+    runtimeBusPublish(RWA_WORKSPACE_PRESENCE_TOPIC, workspacePresencePayload('hello'));
+    if (!(typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent || ''))) {
+      workspacePresenceTimer = setInterval(() => {
+        runtimeBusPublish(RWA_WORKSPACE_PRESENCE_TOPIC, workspacePresencePayload('hello'));
+        if (PRODUCT_KIND === 'workspace') renderWorkspacePresence();
+      }, 15000);
+      if (workspacePresenceTimer && typeof workspacePresenceTimer.unref === 'function') workspacePresenceTimer.unref();
+    }
+    if (PRODUCT_KIND === 'workspace') {
+      workspaceMonitorUnsub = () => {};
+      setTimeout(() => runtimeBusPublish(RWA_WORKSPACE_PRESENCE_TOPIC, workspacePresencePayload('request')), 50);
+    }
+  } catch (_) {
+    // BroadcastChannel is unavailable in some constrained contexts. The durable
+    // workspace manifest still works; only live autodiscovery is disabled.
   }
 }
 
@@ -1116,6 +1448,12 @@ function buildFile(doc) {
 function buildUI() {
   document.getElementById('rwa-runtime').innerHTML = `
 <div id="rwa-set">
+  <div id="rwa-mode-tabs" role="tablist" aria-label="runtime mode">
+    <button class="rwa-mode-tab" type="button" data-rwa-mode-target="document">Document</button>
+    <button class="rwa-mode-tab" type="button" data-rwa-mode-target="edit">Edit</button>
+    <button class="rwa-mode-tab" type="button" data-rwa-mode-target="skills">Skills</button>
+    <button class="rwa-mode-tab" type="button" data-rwa-mode-target="actions">Actions</button>
+  </div>
   <button class="rwa-st-btn" id="rwa-st-status">● ready</button>
   <button class="rwa-st-btn" id="rwa-st-info" title="what is this?" aria-label="what is this?">ⓘ</button>
   <button class="rwa-st-btn" id="rwa-st-cog">⚙</button>
@@ -1135,6 +1473,7 @@ function buildUI() {
 <div id="rwa-info-panel"></div>
 <div id="rwa-skin-panel"></div>
 <div id="rwa-share-panel"></div>
+<div id="rwa-mode-panel"></div>
 <div id="rwa-pal">
   <div id="rwa-pal-box">
     <div class="rwa-pal-top">
@@ -1156,6 +1495,12 @@ function buildUI() {
   <div id="rwa-lens-paste-hint" hidden></div>
   <div id="rwa-lens-hint"></div>
 </div>
+<div id="rwa-selection-bar" hidden data-rwa-no-inline-edit>
+  <button type="button" id="rwa-selection-bold" title="Bold selection" aria-label="bold selection"><strong>B</strong></button>
+  <input id="rwa-selection-cmd" placeholder="make it bold" autocomplete="off" spellcheck="false">
+  <button type="button" class="pri" id="rwa-selection-run">Run</button>
+  <button type="button" id="rwa-selection-voice">Mic</button>
+</div>
 <div id="rwa-lens-hist-panel" hidden></div>`;
 
   const k = document.getElementById('rwa-key'), m = document.getElementById('rwa-model');
@@ -1163,6 +1508,7 @@ function buildUI() {
   m.value = sessionStorage.getItem(RWA.K_MODEL) || RWA.MODEL;
   k.oninput = e => sessionStorage.setItem(RWA.K_API, e.target.value.trim());
   m.oninput = e => sessionStorage.setItem(RWA.K_MODEL, e.target.value.trim() || RWA.MODEL);
+  attachModeTabs();
 
   // Bridge SESSION backend config: the bearer token the bridge requires on every
   // /session/* call, and a server-side working dir for the claude session.
@@ -1301,11 +1647,14 @@ function buildUI() {
         opt.value = id;
         modelOptsEl.appendChild(opt);
       }
-      // If no model is set yet (or the current one isn't in the list), suggest the first.
-      const currentModel = (sessionStorage.getItem(RWA.K_MODEL) || '').trim();
+      // For local OpenAI-compatible backends, pick a discovered model when the
+      // current field is empty, still the baked default, or belongs to another
+      // backend. The datalist still carries every returned model for manual choice.
+      const currentModel = (m.value || sessionStorage.getItem(RWA.K_MODEL) || '').trim();
       const isLocal = backendEl.value === 'ollama' || backendEl.value === 'lmstudio';
-      const stuckOnDefault = isLocal && (currentModel === '' || currentModel === RWA.MODEL);
-      if (stuckOnDefault && models.length > 0) {
+      const shouldSuggestLocal = isLocal && models.length > 0
+        && (currentModel === '' || currentModel === RWA.MODEL || !models.includes(currentModel));
+      if (shouldSuggestLocal) {
         m.value = models[0];
         sessionStorage.setItem(RWA.K_MODEL, models[0]);
       }
@@ -1323,6 +1672,7 @@ function buildUI() {
     document.getElementById('rwa-info-panel').classList.remove('open');   // panels are mutually exclusive
     document.getElementById('rwa-skin-panel').classList.remove('open');
     document.getElementById('rwa-share-panel').classList.remove('open');
+    document.getElementById('rwa-mode-panel').classList.remove('open');
     document.getElementById('rwa-set-panel').classList.toggle('open');
   };
   // ⓘ "what is this?" — render the rwa-identity/1 bundle as prose on open so it
@@ -1332,6 +1682,7 @@ function buildUI() {
     document.getElementById('rwa-set-panel').classList.remove('open');
     document.getElementById('rwa-skin-panel').classList.remove('open');
     document.getElementById('rwa-share-panel').classList.remove('open');
+    document.getElementById('rwa-mode-panel').classList.remove('open');
     const panel = document.getElementById('rwa-info-panel');
     if (!panel.classList.contains('open')) panel.innerHTML = renderInfoPanel();
     panel.classList.toggle('open');
@@ -1351,6 +1702,7 @@ function buildUI() {
     document.getElementById('rwa-set-panel').classList.remove('open');
     document.getElementById('rwa-info-panel').classList.remove('open');
     document.getElementById('rwa-skin-panel').classList.remove('open');
+    document.getElementById('rwa-mode-panel').classList.remove('open');
     renderSharePanel().then(() => panel.classList.add('open'));
   };
   document.getElementById('rwa-st-commit').onclick = commit;
@@ -1459,6 +1811,24 @@ function buildUI() {
       histPanel.hidden = false;
     });
   }
+
+  const selCmd = document.getElementById('rwa-selection-cmd');
+  document.getElementById('rwa-selection-bold').addEventListener('click', () => runSelectionCommand('make it bold', { actor: 'user:selection-command' }).catch(() => {}));
+  document.getElementById('rwa-selection-run').addEventListener('click', () => {
+    runSelectionCommand(selCmd.value || '', { actor: 'user:selection-command' }).catch(() => {});
+  });
+  document.getElementById('rwa-selection-voice').addEventListener('click', () => startSelectionVoice());
+  selCmd.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      runSelectionCommand(selCmd.value || '', { actor: 'user:selection-command' }).catch(() => {});
+    } else if (e.key === 'Escape') {
+      hideSelectionCommandBar();
+    }
+  });
+  document.addEventListener('selectionchange', scheduleSelectionCommandRefresh);
+  document.addEventListener('mouseup', scheduleSelectionCommandRefresh);
+  document.addEventListener('keyup', scheduleSelectionCommandRefresh);
 
   // rwa-lens/1: Esc releases the anchor when one is held. Listener is on
   // `window` so Esc anywhere works (including with focus outside the lens
@@ -1651,6 +2021,139 @@ async function renderHistoryPanel(panel) {
   if (closeBtn) closeBtn.addEventListener('click', () => { panel.hidden = true; });
 }
 
+function renderSkillsModePanel(panel) {
+  if (!isRwaSkillHost()) {
+    panel.innerHTML = [
+      '<div class="rwa-mode-section">',
+      '<div class="rwa-mode-kicker">Skills</div>',
+      '<h4>Skill runtime unavailable</h4>',
+      '<p>This file does not include the skill runtime.</p>',
+      '</div>',
+    ].join('');
+    return;
+  }
+  const canInstall = typeof runtimeInstallSkill === 'function' && typeof runtimeUninstallSkill === 'function' && typeof runtimeInvokeSkill === 'function';
+  const skills = runtimeListSkills();
+  const rows = skills.length ? skills.map(s => {
+    const id = escRuntimeHtml(s.skillId);
+    const name = escRuntimeHtml(s.name || s.skillId);
+    const kind = escRuntimeHtml(s.kind || 'skill');
+    const verified = s.verified ? 'verified' : 'unsigned/unverified';
+    return [
+      '<div class="rwa-mode-row" data-skill-id="' + id + '">',
+      '<div style="min-width:0;flex:1">',
+      '<div class="rwa-mode-title">' + name + '</div>',
+      '<div class="rwa-mode-meta">' + kind + ' · ' + escRuntimeHtml(verified) + ' · ' + id + '</div>',
+      canInstall ? '<div class="rwa-mode-invoke"><input data-skill-input="' + id + '" placeholder=\'JSON input, optional\'><button type="button" data-skill-invoke="' + id + '">Invoke</button></div>' : '',
+      '<div class="rwa-mode-result" data-skill-result="' + id + '" hidden></div>',
+      '</div>',
+      canInstall ? '<button type="button" data-skill-uninstall="' + id + '">Uninstall</button>' : '',
+      '</div>',
+    ].join('');
+  }).join('') : '<div class="rwa-mode-empty">No skills installed.</div>';
+  panel.innerHTML = [
+    '<div class="rwa-mode-section">',
+    '<div class="rwa-mode-kicker">Skills</div>',
+    '<h4>Installed skills</h4>',
+    canInstall ? '<div class="rwa-mode-actions"><button type="button" class="pri" id="rwa-skills-install">Install skill...</button></div>' : '<p>Skill install and invoke APIs are not available in this container.</p>',
+    '</div>',
+    '<div class="rwa-mode-section">' + rows + '</div>',
+  ].join('');
+  const install = panel.querySelector('#rwa-skills-install');
+  if (install) install.addEventListener('click', async () => {
+    const out = await runtimePromptInstall();
+    renderSkillsModePanel(panel);
+    if (out && out.ok === false) setStatus('err', '✗ skill install failed');
+  });
+  panel.querySelectorAll('[data-skill-uninstall]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const id = btn.getAttribute('data-skill-uninstall');
+      const out = await runtimeUninstallSkill(id);
+      if (out && out.ok === false) setStatus('err', '✗ skill uninstall failed');
+      renderSkillsModePanel(panel);
+    });
+  });
+  panel.querySelectorAll('[data-skill-invoke]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const id = btn.getAttribute('data-skill-invoke');
+      const row = btn.closest('[data-skill-id]');
+      const inputEl = row && row.querySelector('[data-skill-input]');
+      const resultEl = row && row.querySelector('[data-skill-result]');
+      let input = {};
+      try {
+        const raw = (inputEl && inputEl.value || '').trim();
+        input = raw ? JSON.parse(raw) : {};
+      } catch (e) {
+        if (resultEl) { resultEl.hidden = false; resultEl.textContent = 'Invalid JSON input'; }
+        return;
+      }
+      btn.disabled = true;
+      try {
+        const out = await runtimeInvokeSkill(id, input);
+        if (resultEl) { resultEl.hidden = false; resultEl.textContent = JSON.stringify(out, null, 2); }
+      } catch (e) {
+        if (resultEl) { resultEl.hidden = false; resultEl.textContent = e?.message || String(e); }
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  });
+}
+
+async function renderActionsModePanel(panel) {
+  const d = runtimeDescribe();
+  let entries = [];
+  try { entries = (await idbGet(RWA.HIST)) || []; } catch (_) { entries = []; }
+  if (rwaMode !== 'actions') return;
+  const viewAff = d.affordances.find(a => a.kind === 'view' && a.verified === true);
+  const skillAffs = d.affordances.filter(a => a.provenance === 'installed' && a.skillId);
+  const providerAffs = d.affordances.filter(a => a.provenance !== 'installed');
+  const fmtTs = ts => { try { return new Date(ts).toLocaleString(); } catch (_) { return String(ts); } };
+  const histRows = entries.length ? entries.slice(0, 12).map(e => {
+    const surface = e.surface || e.kind || 'edit';
+    const actor = e.actor ? ' · ' + e.actor : '';
+    const instr = e.instruction || e.reason || '(no instruction recorded)';
+    return '<div class="rwa-mode-hist"><div class="rwa-mode-meta">' + escRuntimeHtml(surface + actor + ' · ' + fmtTs(e.ts)) + '</div><div>' + escRuntimeHtml(instr) + '</div></div>';
+  }).join('') : '<div class="rwa-mode-empty">No runs yet.</div>';
+  const affRows = providerAffs.length ? providerAffs.map(a => {
+    const detail = [a.kind, a.verified ? 'verified' : 'declared'].join(' · ');
+    return '<div class="rwa-mode-row"><div><div class="rwa-mode-title">' + escRuntimeHtml(a.label || a.name) + '</div><div class="rwa-mode-meta">' + escRuntimeHtml(detail + ' · ' + a.name) + '</div></div></div>';
+  }).join('') : '<div class="rwa-mode-empty">No declared live affordances.</div>';
+  const skillRows = skillAffs.length ? skillAffs.map(a =>
+    '<div class="rwa-mode-row"><div><div class="rwa-mode-title">' + escRuntimeHtml(a.name) + '</div><div class="rwa-mode-meta">' + escRuntimeHtml(a.kind || 'skill') + ' · ' + escRuntimeHtml(a.skillId) + '</div></div><button type="button" data-action-skill="' + escRuntimeHtml(a.skillId) + '">Open in Skills</button></div>'
+  ).join('') : '<div class="rwa-mode-empty">No installed skills.</div>';
+  panel.innerHTML = [
+    '<div class="rwa-mode-section">',
+    '<div class="rwa-mode-kicker">Actions</div>',
+    '<h4>Action center</h4>',
+    '<div class="rwa-mode-actions">',
+    '<button type="button" id="rwa-actions-undo">Undo</button>',
+    '<button type="button" class="pri" id="rwa-actions-save">Save / Export</button>',
+    '<button type="button" id="rwa-actions-share">Share</button>',
+    viewAff ? '<button type="button" id="rwa-actions-view">' + escRuntimeHtml(d.activeView === viewAff.name ? 'Exit ' + viewAff.label : viewAff.label) + '</button>' : '',
+    '</div>',
+    '</div>',
+    '<div class="rwa-mode-section"><div class="rwa-mode-kicker">Recent runs</div>' + histRows + '</div>',
+    '<div class="rwa-mode-section"><div class="rwa-mode-kicker">Live affordances</div>' + affRows + '</div>',
+    '<div class="rwa-mode-section"><div class="rwa-mode-kicker">Installed skill actions</div>' + skillRows + '</div>',
+  ].join('');
+  const undoBtn = panel.querySelector('#rwa-actions-undo');
+  if (undoBtn) undoBtn.addEventListener('click', () => runtimeUndo());
+  const saveBtn = panel.querySelector('#rwa-actions-save');
+  if (saveBtn) saveBtn.addEventListener('click', () => runtimeCommit());
+  const shareBtn = panel.querySelector('#rwa-actions-share');
+  if (shareBtn) shareBtn.addEventListener('click', async () => {
+    document.getElementById('rwa-mode-panel')?.classList.remove('open');
+    await renderSharePanel();
+    document.getElementById('rwa-share-panel')?.classList.add('open');
+  });
+  const viewBtn = panel.querySelector('#rwa-actions-view');
+  if (viewBtn && viewAff) viewBtn.addEventListener('click', () => runtimeSetView(d.activeView === viewAff.name ? null : viewAff.name));
+  panel.querySelectorAll('[data-action-skill]').forEach(btn => {
+    btn.addEventListener('click', () => runtimeSetMode('skills'));
+  });
+}
+
 // ─── Agent (rwa-edit/1) ─────────────────────────────────────────────
 // Spec: rwa-edit-spec.md (v1.4). The agent edits the doc via tool calls,
 // not by emitting a full rewritten document. unchanged regions are byte-
@@ -1834,6 +2337,15 @@ The stored document is ordinary prose HTML inside a single <article>: <h1>/<h2> 
 Slide model the user reasons about: a new slide STARTS at each <h1> or <h2>. So "add a slide" = add a new <h2> title followed by its body paragraphs/bullets at the right position. "Split this slide" = add an <h2> in the middle. "Merge two slides" = remove the second slide's heading. "Reorder slides" = move the heading-plus-its-body block. Keep slide bodies concise — a deck slide is a title plus a few short paragraphs or a short list, not an essay.
 
 Preserve every existing data-rwa-id verbatim (the runtime assigns them). Anchor edits on unique text near the heading you mean.
+${SYSTEM_PROMPT_RULES}`,
+
+  workspace: `You are editing a rewritable workspace index. Apply the user's request as a small set of surgical edits via tool calls.
+
+The stored document is a directory control center, normally named rwa-index.html. It summarizes sibling rewritable files from the same folder. The visible <article class="rwa-workspace"> is editable dashboard content; the <script id="rwa-workspace" type="application/rwa-workspace+json"> manifest is generated by the CLI and wrapped in a frozen zone.
+
+Preserve the workspace-style and workspace-manifest frozen zones exactly. Do not invent files that are not already listed unless the user explicitly asks for placeholder planning content. To refresh the real file list, the user should run \`rwa workspace sync\`; you should not manually edit the manifest.
+
+When changing the dashboard, keep links to sibling documents relative, and preserve every existing data-rwa-id verbatim.
 ${SYSTEM_PROMPT_RULES}`,
 };
 // rwa:extract:end SYSTEM_PROMPTS
@@ -2589,6 +3101,10 @@ if (typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent)) {
 // live mount produces the same order via the same outer-wins traversal — so
 // the i-th live anchorable corresponds to map[i].
 function handleMountClick(e) {
+  if (rwaMode !== 'edit' || activeView) return;
+  // Pointer-down may already have opened a WYSIWYG inline edit. In that case
+  // the click belongs to caret placement, not to lens anchoring.
+  if (inlineEdit) return;
   // Audit R3 (scoped): respect the per-kind click-to-anchor flag. When
   // false (e.g. workflow files), all clicks pass through without anchoring
   // — the lens stays in default state and every command runs against the
@@ -2749,10 +3265,11 @@ if (typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent)) {
 }
 
 // ─── Inline manual edit (edit-surface: direct, no-LLM block editing) ──────
-// Double-click a leaf text block to edit its text by hand; Enter or blur
+// Click a leaf text block and type in place; Enter or blur
 // commits through the existing non-agent commit path (runtimeApplyEnvelope,
-// actor 'user:edit-surface') — no model call, works offline. Single-click
-// still anchors the lens (handleMountClick), unchanged. Design:
+// actor 'user:edit-surface') — no model call, works offline. Container clicks
+// still anchor the lens (handleMountClick); leaf text clicks become WYSIWYG
+// edit sessions. Double-click remains a compatibility path. Design:
 // docs/plans/2026-06-08-inline-manual-edit-design.md.
 //
 // Editable set = the leaf-text members of ANCHORABLE_TAGS, so the
@@ -2760,6 +3277,7 @@ if (typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent)) {
 // containers; FIGCAPTION is not independently anchorable (lives in FIGURE).
 const INLINE_EDITABLE = new Set(['P','H1','H2','H3','H4','H5','H6','BLOCKQUOTE','LI','TD']);
 let inlineEdit = null; // { el, entry } while a block is being hand-edited
+const INLINE_EDIT_BYPASS = 'button,input,textarea,select,option,summary,[contenteditable="true"],[data-rwa-no-inline-edit]';
 
 // Controlled serializer: turn an edited contenteditable node into a clean
 // replace string. Emits ONLY escaped text and <br> (the Shift+Enter soft
@@ -2778,6 +3296,270 @@ function serializeLeafSafe(el) {
   return out;
 }
 window.serializeLeafSafe = serializeLeafSafe;
+
+// ─── Selection command surface (typed or voice) ─────────────────────
+// Edit-mode-only layer over a user text selection. Deterministic commands
+// such as "make it bold" compile to rwa-edit/1 locally; voice recognition is
+// only an input method that fills/runs the same command path.
+let selectionCommandState = null; // { el, entry, text, occurrence, range }
+let selectionVoiceRecognizer = null;
+
+function hideSelectionCommandBar() {
+  selectionCommandState = null;
+  const bar = document.getElementById('rwa-selection-bar');
+  if (bar) {
+    bar.hidden = true;
+    delete bar.dataset.listening;
+  }
+}
+
+function nodeElement(n) {
+  return n && (n.nodeType === 1 ? n : n.parentElement);
+}
+
+function closestSelectionLeaf(node, mount) {
+  let el = nodeElement(node);
+  while (el && el !== mount && !INLINE_EDITABLE.has(el.tagName)) el = el.parentElement;
+  return (el && el !== mount) ? el : null;
+}
+
+function countTextOccurrences(haystack, needle) {
+  if (!needle) return 0;
+  let n = 0, i = 0;
+  while ((i = haystack.indexOf(needle, i)) !== -1) { n++; i += needle.length; }
+  return n;
+}
+
+function nthIndexOf(haystack, needle, nth) {
+  let i = -1, from = 0;
+  for (let n = 0; n <= nth; n++) {
+    i = haystack.indexOf(needle, from);
+    if (i < 0) return -1;
+    from = i + needle.length;
+  }
+  return i;
+}
+
+function resolveSelectionCommandTarget() {
+  if (rwaMode !== 'edit' || activeView || modifyMutex) return null;
+  const mount = document.getElementById('rwa-doc-mount');
+  const sel = window.getSelection && window.getSelection();
+  if (!mount || !sel || sel.rangeCount === 0 || sel.isCollapsed) return null;
+  const range = sel.getRangeAt(0);
+  const text = sel.toString();
+  if (!text || !text.trim()) return null;
+  if (!mount.contains(range.commonAncestorContainer)) return null;
+  const startLeaf = closestSelectionLeaf(range.startContainer, mount);
+  const endLeaf = closestSelectionLeaf(range.endContainer, mount);
+  if (!startLeaf || startLeaf !== endLeaf) return null;
+  if (startLeaf.closest('[data-rwa-frozen]') || startLeaf.closest('.rwa-locked')) return null;
+  const ord = anchorableOrdinal(mount, startLeaf);
+  const entry = (ord >= 0 && sourceMap) ? sourceMap[ord] : null;
+  if (!entry || isWithinLockedRange(entry.start, entry.end)) return null;
+  let occurrence = 0;
+  try {
+    const prefix = document.createRange();
+    prefix.selectNodeContents(startLeaf);
+    prefix.setEnd(range.startContainer, range.startOffset);
+    occurrence = countTextOccurrences(prefix.toString(), text);
+  } catch (_) { occurrence = 0; }
+  return { el: startLeaf, entry, text, occurrence, range };
+}
+
+function locateSelectionSource(target) {
+  const block = currentDocCache.slice(target.entry.start, target.entry.end);
+  const tag = target.entry.tag.toLowerCase();
+  const openEnd = block.indexOf('>');
+  const closeRe = new RegExp('</' + tag + '\\s*>\\s*$', 'i');
+  const closeMatch = closeRe.exec(block);
+  if (openEnd < 0 || !closeMatch) return null;
+  const innerStart = openEnd + 1;
+  const innerEnd = closeMatch.index;
+  const inner = block.slice(innerStart, innerEnd);
+  const candidates = [];
+  const plain = escapeHtml(target.text);
+  const br = plain.replace(/\r\n|\r|\n/g, '<br>');
+  candidates.push(br);
+  if (plain !== br) candidates.push(plain);
+  for (const selectedSource of candidates) {
+    const idx = nthIndexOf(inner, selectedSource, target.occurrence || 0);
+    if (idx >= 0) {
+      return {
+        block,
+        selectedSource,
+        start: innerStart + idx,
+        end: innerStart + idx + selectedSource.length,
+      };
+    }
+  }
+  return null;
+}
+
+function parseSelectionCommand(raw) {
+  const t = String(raw || '').trim().toLowerCase();
+  if (!t) return null;
+  if (/\b(bold|strong|emphasize strongly)\b/.test(t)) return { kind: 'wrap', tag: 'strong', label: 'bold' };
+  if (/\b(italic|italics|emphasize)\b/.test(t)) return { kind: 'wrap', tag: 'em', label: 'italic' };
+  if (/\b(code|monospace|inline code)\b/.test(t)) return { kind: 'wrap', tag: 'code', label: 'code' };
+  return null;
+}
+
+async function applySelectionWrap(target, action, actor, instruction) {
+  if (inlineEdit && serializeLeafSafe(inlineEdit.el) !== inlineEdit.original) {
+    showAffordance('finish the current edit first');
+    return { ok: false, reason: 'inline_edit_dirty' };
+  }
+  if (inlineEdit) exitInlineEdit();
+  const loc = locateSelectionSource(target);
+  if (!loc) {
+    showAffordance('selection could not be mapped to source');
+    return { ok: false, reason: 'selection_unmapped' };
+  }
+  const a = resolveAnchorFind(target.entry);
+  if (!a) {
+    showAffordance('selection block is ambiguous');
+    return { ok: false, reason: 'anchor_unresolved' };
+  }
+  const tag = action.tag;
+  const nextBlock = loc.block.slice(0, loc.start) + '<' + tag + '>' + loc.selectedSource + '</' + tag + '>' + loc.block.slice(loc.end);
+  const replace = a.replacePrefix + nextBlock + a.replaceSuffix;
+  await runtimeApplyEnvelope(
+    { version: 'rwa-edit/1', edits: [{ find: a.find, replace, reason: 'selection:' + action.label }] },
+    { surface: 'selection-edit', instruction: instruction || action.label, actor: actor || 'user:selection-command' });
+  try { window.getSelection().removeAllRanges(); } catch (_) {}
+  hideSelectionCommandBar();
+  showAffordance('selection: ' + action.label + ' — ⌘Z to undo');
+  return { ok: true };
+}
+
+async function runSelectionCommand(raw, options) {
+  options = options || {};
+  const target = resolveSelectionCommandTarget() || selectionCommandState;
+  if (!target) {
+    showAffordance('select text in Edit mode first');
+    return { ok: false, reason: 'no_selection' };
+  }
+  const action = parseSelectionCommand(raw);
+  if (!action) {
+    showAffordance('selection command not available yet');
+    return { ok: false, reason: 'unknown_command' };
+  }
+  if (action.kind === 'wrap') return applySelectionWrap(target, action, options.actor, raw);
+  return { ok: false, reason: 'unknown_command' };
+}
+
+function positionSelectionCommandBar(target) {
+  const bar = document.getElementById('rwa-selection-bar');
+  if (!bar || !target || !target.range) return;
+  let rect = null;
+  try { rect = target.range.getBoundingClientRect(); } catch (_) {}
+  if (!rect || (rect.width === 0 && rect.height === 0)) {
+    try { rect = target.el.getBoundingClientRect(); } catch (_) {}
+  }
+  const top = Math.max(8, window.scrollY + (rect ? rect.top : 0) - 42);
+  const left = Math.max(8, Math.min(window.scrollX + (rect ? rect.left : 0), window.scrollX + window.innerWidth - 320));
+  bar.style.top = top + 'px';
+  bar.style.left = left + 'px';
+  bar.hidden = false;
+}
+
+function refreshSelectionCommandBar() {
+  const bar = document.getElementById('rwa-selection-bar');
+  if (bar && bar.contains(document.activeElement)) return;
+  const target = resolveSelectionCommandTarget();
+  if (!target) { hideSelectionCommandBar(); return; }
+  selectionCommandState = target;
+  positionSelectionCommandBar(target);
+}
+
+let selectionRefreshQueued = false;
+function scheduleSelectionCommandRefresh() {
+  if (selectionRefreshQueued) return;
+  selectionRefreshQueued = true;
+  requestAnimationFrame(() => {
+    selectionRefreshQueued = false;
+    refreshSelectionCommandBar();
+  });
+}
+
+function startSelectionVoice() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const bar = document.getElementById('rwa-selection-bar');
+  const input = document.getElementById('rwa-selection-cmd');
+  if (!selectionCommandState && !resolveSelectionCommandTarget()) {
+    showAffordance('select text first');
+    return;
+  }
+  if (!SR) {
+    showAffordance('voice input is not supported in this browser');
+    if (input) input.focus();
+    return;
+  }
+  try {
+    if (selectionVoiceRecognizer) selectionVoiceRecognizer.abort();
+  } catch (_) {}
+  const rec = new SR();
+  selectionVoiceRecognizer = rec;
+  rec.lang = navigator.language || 'en-US';
+  rec.interimResults = false;
+  rec.maxAlternatives = 1;
+  rec.onstart = () => { if (bar) bar.dataset.listening = '1'; };
+  rec.onresult = (e) => {
+    const text = e?.results?.[0]?.[0]?.transcript || '';
+    if (input) input.value = text;
+    runSelectionCommand(text, { actor: 'user:voice-selection' }).catch(err => showAffordance('voice: ' + (err?.message || err)));
+  };
+  rec.onerror = (e) => showAffordance('voice: ' + (e?.error || 'could not hear command'));
+  rec.onend = () => { if (bar) delete bar.dataset.listening; selectionVoiceRecognizer = null; };
+  rec.start();
+}
+
+if (typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent)) {
+  window.__refreshSelectionCommandBar = refreshSelectionCommandBar;
+  window.__runSelectionCommand = runSelectionCommand;
+  window.__startSelectionVoice = startSelectionVoice;
+  window.__parseSelectionCommand = parseSelectionCommand;
+}
+
+function resolveInlineEditTarget(target) {
+  if (rwaMode !== 'edit' || activeView || modifyMutex) return null;
+  const mount = document.getElementById('rwa-doc-mount');
+  if (!mount || !target) return null;
+  if (target.closest && target.closest(INLINE_EDIT_BYPASS)) return null;
+  let el = target;
+  while (el && el !== mount && !INLINE_EDITABLE.has(el.tagName)) el = el.parentNode;
+  if (!el || el === mount) return null;
+  if (el.closest('[data-rwa-frozen]') || el.closest('.rwa-locked')) return null;
+  const ord = anchorableOrdinal(mount, el);
+  const entry = (ord >= 0 && sourceMap) ? sourceMap[ord] : null;
+  // A nested anchorable (an inner <li>, or a <p> inside a <td>) is not recorded
+  // by the outer-wins descent, so ord is -1 and we no-op — consistent with the
+  // lens's anchoring model, which can't target sub-blocks either.
+  if (!entry) return null;
+  if (isWithinLockedRange(entry.start, entry.end)) return null; // marker-form frozen backstop
+  return { el, entry };
+}
+
+function refreshInlineEditAffordances(mount) {
+  if (!mount) return;
+  mount.querySelectorAll('.rwa-editable-leaf').forEach(el => {
+    el.classList.remove('rwa-editable-leaf');
+    if (el.getAttribute('tabindex') === '0' && el.dataset.rwaEditTab === '1') {
+      el.removeAttribute('tabindex');
+      delete el.dataset.rwaEditTab;
+    }
+  });
+  if (rwaMode !== 'edit' || activeView || modifyMutex) return;
+  mount.querySelectorAll(Array.from(INLINE_EDITABLE).map(t => t.toLowerCase()).join(',')).forEach(el => {
+    const hit = resolveInlineEditTarget(el);
+    if (!hit || hit.el !== el) return;
+    el.classList.add('rwa-editable-leaf');
+    if (!el.hasAttribute('tabindex')) {
+      el.setAttribute('tabindex', '0');
+      el.dataset.rwaEditTab = '1';
+    }
+  });
+}
 
 function enterInlineEdit(el, entry) {
   if (inlineEdit) exitInlineEdit();
@@ -2996,34 +3778,39 @@ async function commitInlineEdit() {
 }
 window.commitInlineEdit = commitInlineEdit;
 
-// Double-click a leaf block -> enter hand-edit. Mount-delegated (re-registered
-// each render in renderDoc, so it survives the post-commit re-render). Gated:
-// frozen zones (data-rwa-frozen attribute, marker-form via isWithinLockedRange)
-// and class-locked subtrees are off-limits; under an active view the listener
-// is not registered at all (renderDoc).
+function startInlineEditFromEvent(e) {
+  if (rwaMode !== 'edit' || activeView) return false;
+  if (inlineEdit) return false;
+  const hit = resolveInlineEditTarget(e && e.target);
+  if (!hit) return false;
+  enterInlineEdit(hit.el, hit.entry);
+  return true;
+}
+
+// Pointer-down opens the edit before the browser performs its default caret
+// placement for the ensuing click. This is the WYSIWYG path: click text, type.
+function handleMountPointerDown(e) {
+  if (e.button != null && e.button !== 0) return;
+  if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
+  startInlineEditFromEvent(e);
+}
+
+// Double-click compatibility for existing behavior and tests.
 function handleMountDblClick(e) {
-  if (activeView) return;
-  // An in-flight modify re-renders on commit, wiping any session opened now —
-  // and a session-triggered render would rebuild the sourceMap under the
-  // in-flight anchor. Cheapest correct behavior: don't open the session.
-  if (modifyMutex) return;
-  const mount = document.getElementById('rwa-doc-mount');
-  if (!mount) return;
-  let el = e.target;
-  while (el && el !== mount && !INLINE_EDITABLE.has(el.tagName)) el = el.parentNode;
-  if (!el || el === mount) return;
-  if (el.closest('[data-rwa-frozen]') || el.closest('.rwa-locked')) return;
-  const ord = anchorableOrdinal(mount, el);
-  const entry = (ord >= 0 && sourceMap) ? sourceMap[ord] : null;
-  // A nested anchorable (an inner <li>, or a <p> inside a <td>) is not recorded
-  // by the outer-wins descent, so ord is -1 and we no-op — consistent with the
-  // lens's anchoring model, which can't target sub-blocks either.
-  if (!entry) return;
-  if (isWithinLockedRange(entry.start, entry.end)) return; // marker-form frozen backstop
-  enterInlineEdit(el, entry);
+  startInlineEditFromEvent(e);
+}
+
+function handleMountEditKeydown(e) {
+  if (inlineEdit) return;
+  if (e.key !== 'Enter' && e.key !== 'F2') return;
+  const hit = resolveInlineEditTarget(e.target);
+  if (!hit || hit.el !== e.target) return;
+  e.preventDefault();
+  enterInlineEdit(hit.el, hit.entry);
 }
 if (typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent)) {
   window.__handleMountDblClick = handleMountDblClick;
+  window.__handleMountPointerDown = handleMountPointerDown;
 }
 
 // ─── Image ingestion (images-v1) ──────────────────────────────────────
@@ -3211,7 +3998,7 @@ function dragHasFiles(e) {
   return Array.from(t.types || []).includes('Files');
 }
 function handleMountDragOver(e) {
-  if (modifyMutex || !dragHasFiles(e)) return;
+  if (rwaMode !== 'edit' || activeView || modifyMutex || !dragHasFiles(e)) return;
   e.preventDefault();
   if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
   clearDropMark();
@@ -3226,6 +4013,7 @@ function handleMountDragLeave(e) {
   if (!m || !e.relatedTarget || !m.contains(e.relatedTarget)) clearDropMark();
 }
 function handleMountDrop(e) {
+  if (rwaMode !== 'edit' || activeView || modifyMutex) return;
   if (!dragHasFiles(e)) return;
   e.preventDefault();
   const target = findImageDropTarget(e);
@@ -3240,7 +4028,7 @@ function handleMountDrop(e) {
 
 // ── paste (a screenshot is the #1 case) ──
 function handleDocumentImagePaste(e) {
-  if (activeView) return;
+  if (rwaMode !== 'edit' || activeView) return;
   if (typeof inlineEdit !== 'undefined' && inlineEdit) return;   // hand-edit owns its paste
   const files = Array.from((e.clipboardData && e.clipboardData.files) || []).filter(f => /^image\//.test(f.type || ''));
   if (files.length === 0) return;
@@ -3256,6 +4044,7 @@ document.addEventListener('paste', handleDocumentImagePaste);
 
 // ── /image picker ──
 function openImagePicker() {
+  if (rwaMode !== 'edit' || activeView) return;
   const input = document.createElement('input');
   input.type = 'file';
   input.accept = 'image/*';
@@ -3346,7 +4135,7 @@ function ensureImgChip() {
   return chip;
 }
 function handleMountImgOver(e) {
-  if (activeView || modifyMutex) return;
+  if (rwaMode !== 'edit' || activeView || modifyMutex) return;
   const img = e.target instanceof Element ? e.target.closest('img') : null;
   const m = document.getElementById('rwa-doc-mount');
   if (!img || !m || !m.contains(img)) return;
@@ -4206,6 +4995,7 @@ HARD RULES: colors are hex strings only (e.g. "#c0392b"); fonts are ONE of the f
     const setP = document.getElementById('rwa-set-panel'); if (setP) setP.classList.remove('open');
     const infoP = document.getElementById('rwa-info-panel'); if (infoP) infoP.classList.remove('open');
     const shareP = document.getElementById('rwa-share-panel'); if (shareP) shareP.classList.remove('open');
+    const modeP = document.getElementById('rwa-mode-panel'); if (modeP) modeP.classList.remove('open');
     const active = currentSkinName();
     panel.innerHTML =
       '<div class="rwa-skin-hd"><span>Skins</span><span>' + (active || '—') + '</span></div>'
@@ -5588,9 +6378,16 @@ function runtimeSetView(name) {
     if (!spec || spec.name !== name) throw new Error('no registered view named ' + name);
     validateViewOutput(spec.render(currentDocCache, viewCtx()), spec); // throws → never activates
     releaseAnchor();
+    if (rwaMode !== 'document') {
+      hideEditTransients();
+      closeRuntimePanels();
+      rwaMode = 'document';
+      emitRuntimeEvent('mode', { mode: rwaMode });
+    }
     activeView = spec;
     sessionStorage.setItem(rwaViewKey(), name);
   }
+  if (typeof syncModeChrome === 'function') syncModeChrome();
   if (typeof syncViewChrome === 'function') syncViewChrome();
   getDoc().then(d => renderDoc(canonLF(d)));
 }
@@ -7241,7 +8038,11 @@ async function commit() {
 document.addEventListener('keydown', e => {
   const mod = navigator.platform.includes('Mac') ? e.metaKey : e.ctrlKey;
   if (!mod) return;
-  if (e.key === 'k') { e.preventDefault(); document.getElementById('rwa-pal').classList.contains('open') ? closePal() : openPal(); }
+  if (e.key === 'k') {
+    e.preventDefault();
+    try { if (rwaMode !== 'edit') runtimeSetMode('edit'); } catch (_) { return; }
+    document.getElementById('rwa-pal').classList.contains('open') ? closePal() : openPal();
+  }
   else if (e.key === 'z') { e.preventDefault(); undo(); }
   else if (e.key === 's') { e.preventDefault(); commit(); }
 });
@@ -7326,11 +8127,16 @@ document.addEventListener('keydown', e => {
         del:   runtimeFsDel,
         list:  runtimeFsList,
       },
+      bus: {
+        publish: runtimeBusPublish,
+        subscribe: runtimeBusSubscribe,
+      },
       modify: runtimeModify,
       commit: runtimeCommit,
       undo:   runtimeUndo,
       applyEnvelope: runtimeApplyEnvelope,
       on:     runtimeOn,
+      setMode: runtimeSetMode,
       provide: runtimeProvide,   // spec §5.10 — register a view provider
       setView: runtimeSetView,   // spec §5.10 — activate/deactivate a render mode
       describe: runtimeDescribe, // rwa-identity/1 — what this container is + can do
@@ -7351,6 +8157,12 @@ document.addEventListener('keydown', e => {
       enumerable: true,
       configurable: false,
     });
+    Object.defineProperty(window.runtime, 'mode', {
+      get: () => rwaMode,
+      enumerable: true,
+      configurable: false,
+    });
+    startWorkspacePresence();
     // §5.10: the presentation render mode ships ONLY for presentation
     // containers. For every other kind this block is skipped entirely —
     // activeView stays null, no provider is registered, no chrome is built,

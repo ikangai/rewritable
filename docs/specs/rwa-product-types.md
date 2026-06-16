@@ -139,6 +139,18 @@ The workspace's converged output is typically a document on the
 substrate — workspaces produce artifacts the user reads, with the
 substrate as the convergence target.
 
+The CLI also has a smaller directory-level workspace index:
+`rwa workspace create <dir>` generates `<dir>/rwa-index.html`, a
+rewritable of kind `workspace` whose frozen manifest lists sibling
+rewritables. That index is a control center and context-sharing surface
+for a folder: its editable body can hold workspace memory, guidelines,
+examples, and open questions that member rewritables can refer to. It
+does not implement the full multi-agent skill-layer workspace described
+above. At runtime, open rewritables announce live
+presence over the small public `runtime.bus` topic `workspace:presence`;
+the index filters those announcements to the same directory and shows
+them as live, not-yet-synced documents.
+
 ## What this means for the substrate
 
 The substrate's job is to be **document-default with clean override

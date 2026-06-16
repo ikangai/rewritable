@@ -126,7 +126,7 @@ test('refinement: KIND_PROVIDERS holds only kinds the runtime first-party-provid
   // skill-host is a KNOWN kind with NO first-party affordances ([]) — everything it
   // offers is an installed skill (provenance:'installed'), emitted by parseSkillZone,
   // not this table — so it belongs here with an empty bundle (like document/workflow).
-  assert.deepEqual(Object.keys(KIND_PROVIDERS).sort(), ['document', 'presentation', 'skill-host', 'workflow']);
+  assert.deepEqual(Object.keys(KIND_PROVIDERS).sort(), ['document', 'presentation', 'skill-host', 'workflow', 'workspace']);
 });
 
 test('refinement: a custom kind is not statically guessable; agreement is vacuous', () => {

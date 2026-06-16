@@ -69,6 +69,8 @@ const window = dom.window;
 await new Promise(r => setTimeout(r, 200));
 
 console.log('== Lens harness loaded ==');
+window.runtime.setMode('edit');
+await new Promise(r => setTimeout(r, 50));
 // Tests appended below per phase.
 
 // === Phase 1: source-position map ===

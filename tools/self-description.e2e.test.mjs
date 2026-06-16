@@ -32,6 +32,7 @@ const KINDS = [
   { kind: 'document', affordanceKinds: [], frozen: [] },
   { kind: 'presentation', affordanceKinds: ['view'], frozen: [] },
   { kind: 'workflow', affordanceKinds: [], frozen: ['wf-style', 'runner'] },
+  { kind: 'workspace', affordanceKinds: [], frozen: ['workspace-manifest', 'workspace-style'] },
 ];
 
 function newContainer(dir, kind) {
