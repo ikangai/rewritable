@@ -2,6 +2,10 @@
 
 Notable changes to `re-write-able`. The container format is versioned in `re-write-able-spec.md`; the edit protocol in `rwa-edit-spec.md`; the structural-transform DSL in `rwa-edit-dsl-spec.md`. The CLI follows semver in `cli/package.json`.
 
+## 2026-06-16 — security patch: scheme-validate workspace presence href (cli 0.8.1)
+
+Defense-in-depth follow-up to 0.8.0. The workspace index renders an "Open now" card per peer announced on the public `workspace:presence` runtime-bus topic; `peer.url` is untrusted (any page in the origin can announce presence), and the card placed it in an `href` via HTML-escaping alone — which blocks attribute breakout but not a `javascript:`/`data:` scheme. Not exploitable as shipped (the `sameWorkspaceDirectory()` gate on both the store and render paths requires the URL to resolve into the index's own `file:`/`http(s):` directory, which structurally excludes script schemes), but that left security resting on a subtle invariant in a different function. A new `safeWorkspaceHref()` validates at the sink: it resolves the peer URL and accepts only `http:`/`https:`/`file:`, otherwise falls back to `#`. The CLI workspace generator was already safe (`./` + `encodeURI(filename)`). Pinned by `tests/workspace-presence.mjs` (a newline-laced URL that passes the gate must render a parser-normalized href; no card may emit a script-executing scheme), and verified the regression check fails without the fix. Flagged by automated security review.
+
 ## 2026-06-16 — runtime modes, WYSIWYG inline editing, voice; the workspace kind (cli 0.8.0)
 
 Two features land together in the seed (and so in every fresh `rwa new` container).

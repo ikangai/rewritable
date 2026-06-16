@@ -2,6 +2,19 @@
 
 All notable changes to the `rewritable` CLI (`rwa`).
 
+## [0.8.1] - 2026-06-16
+
+### Security
+- **Workspace presence card href is now scheme-validated** — the new seed renders
+  an "Open now" card per peer announced on the public `workspace:presence` runtime
+  bus topic; `peer.url` is untrusted, and escaping alone does not stop a
+  `javascript:`/`data:` scheme in an `href`. A new `safeWorkspaceHref()` resolves the
+  URL and accepts only `http:`/`https:`/`file:`, falling back to `#`. Not exploitable
+  in 0.8.0 (the same-directory gate already blocked script schemes), but the href is
+  now validated at the sink rather than depending on that gate. The CLI workspace
+  generator was already safe (`./` + `encodeURI(filename)`). Pinned by
+  `tests/workspace-presence.mjs`.
+
 ## [0.8.0] - 2026-06-16
 
 ### Added
