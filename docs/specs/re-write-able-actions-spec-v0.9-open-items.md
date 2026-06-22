@@ -33,7 +33,7 @@ The thirteen items are not independent. The real couplings:
 
 **Suggested sequence:** I10 → I1 → {I3, I4} → {I7, I8} → I5 → I2 → I11 → I6 → I12 → {I9, I13}.
 
-**Build status (2026-06-22).** The P0 tier is shipped: **I10** (`runtimeReviewSkill` update delta + the dialog's added/removed diff and re-affirmation button — seed; jsdom `tests/skill-install.mjs` + Chromium `tests/skill-exec-probe.mjs`) and **I11** (`rwa install` — `cli/src/install.mjs`, `cli/tests/install.test.mjs`, cross-tool browser-verified). Both honor the §0 constraints; neither lifts the Shape B ceiling. The remaining eleven items (I1–I9, I12, I13) are open as specified below.
+**Build status (2026-06-22).** The P0 tier is shipped: **I10** (`runtimeReviewSkill` update delta + the dialog's added/removed diff and re-affirmation button — seed; jsdom `tests/skill-install.mjs` + Chromium `tests/skill-exec-probe.mjs`) and **I11** (`rwa install` — `cli/src/install.mjs`, `cli/tests/install.test.mjs`, cross-tool browser-verified). **I1 is partially built — I1a** (the `bus:` grammar + the Worker *publish* bridge) shipped: grammar/prose/compound mirrored seed↔CLI, `RUNTIME.bus.publish` gated by `_skBusAllowed`, browser-proven (a skill publishes on its declared topic; an undeclared topic is `bus_topic_denied`). **I1b** (skill-side *subscribe*) is deferred — it is only useful within an invoke's lifetime under the spawn→invoke→terminate model (see §5 line 262/283; forward-compat with I2's long-lived workers); publish + the existing document-side subscribe already cover the agent-emits / workspace-listens case. Both honor the §0 constraints; neither lifts the Shape B ceiling. The remaining items (I1b, I2–I9, I12, I13) are open as specified below.
 
 **Priority tiers** (P0 quick-win / P1 capability / P2 frontier):
 
@@ -42,7 +42,7 @@ The thirteen items are not independent. The real couplings:
 | I10 | Update prose-diff + re-affirm UI | **P0 — ✅ BUILT** | M (small) |
 | I11 | CLI `rwa install` verb | **P0 — ✅ BUILT** | M |
 | I5 | Confusables + name_history | **P1** | M |
-| I1 | Bus permission tier | **P1** | M |
+| I1 | Bus permission tier | **P1 — publish ✅ (I1a); subscribe (I1b) pending** | M |
 | I3 | `fsa:` tier | **P1** | M |
 | I4 | `idb:` tier | **P1** | M |
 | I7 | view / edit-surface skills | **P1** | M |
