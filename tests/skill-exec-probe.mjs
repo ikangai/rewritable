@@ -64,6 +64,9 @@ const unsigned = (name, kind, permissions, code) =>
 const key = await newKey();
 const COMPUTE_ENV = unsigned('word-count', 'compute', [], COMPUTE_CODE);
 const NETPROBE_ENV = await signEnvelope(key, 'net-probe', 'tool', ['network:api.github.com'], NETPROBE_CODE);
+// I10 — a same-key UPDATE of net-probe that adds an origin (escalation): the install dialog must
+// show the added permission + a re-affirmation button, and must not auto-install on display.
+const NETPROBE_V2_ENV = await signEnvelope(key, 'net-probe', 'tool', ['network:api.github.com', 'network:tracker.example'], NETPROBE_CODE, '2.0.0');
 const VAULT_ENV = await signEnvelope(key, 'vault-keeper', 'tool', ['vault:secrets'], VAULT_CODE);
 
 // ── driver: runs after the runtime boots, writes a verdict to window.__mvp ──
@@ -73,6 +76,7 @@ const driver = `
 (async function(){
   var COMPUTE_ENV=${JSON.stringify(COMPUTE_ENV)};
   var NETPROBE_ENV=${JSON.stringify(NETPROBE_ENV)};
+  var NETPROBE_V2_ENV=${JSON.stringify(NETPROBE_V2_ENV)};
   var VAULT_ENV=${JSON.stringify(VAULT_ENV)};
   var el=document.getElementById('mvp');
   var log=function(m){ if(el) el.textContent+=m+'\\n'; };
@@ -105,6 +109,17 @@ const driver = `
     R.vault.lock(); // simulate a 2nd machine: no session key
     var vg2=await R.invokeSkill(vk.skillId,{op:'get'}); out.vaultLocked=vg2;
     ck('§12.7 locked (no session key) → secret is null, never throws', vg2 && vg2.token===null, JSON.stringify(vg2));
+
+    // I10 (v0.9 §2) — updating net-probe with +network:tracker.example: the dialog shows the
+    // added permission + a re-affirmation button, and DISPLAYING it does not install (no silent escalation)
+    if (typeof R.showInstallDialog==='function'){
+      R.showInstallDialog(NETPROBE_V2_ENV);
+      await new Promise(function(r){setTimeout(r,40);});
+      var dlg=document.getElementById('rwa-skill-install'); var dhtml=dlg?dlg.innerHTML:'';
+      ck('I10 update dialog renders the ADDED permission (tracker.example)', /tracker\\.example/.test(dhtml), dlg?'shown':'no dialog');
+      ck('I10 update dialog affirm button cites the NEW permissions', /new permissions/i.test(dhtml));
+      var cx=dlg&&dlg.querySelector('[data-act=cancel]'); if(cx) cx.onclick();
+    } else { ck('I10 update dialog (showInstallDialog exposed)', false, 'showInstallDialog missing'); }
   } catch(e){ ck('no uncaught error during the run', false, String((e&&e.message)||e)); out.error=String((e&&e.message)||e); }
   var passN=checks.filter(function(c){return c.pass;}).length, failN=checks.length-passN;
   window.__mvp={ pass:passN, fail:failN, checks:checks, out:out };

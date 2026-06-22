@@ -7168,13 +7168,26 @@ async function runtimeReviewSkill(envelope) {
     const exact = d === 0, near = d >= 1 && d <= 2 && String(skill.name).length >= 4 && String(s.name).length >= 4;
     if (s.manifest && s.manifest.author_pubkey !== skill.author_pubkey && (exact || near)) { lookalike = s.name; break; }
   }
+  // I10 (Shape C) — the update delta. If this skillId is already installed, surface the
+  // permission change (added/removed, order-invariant case-sensitive set ops) so the dialog
+  // can show it and require explicit re-affirmation — no silent permission escalation on update.
+  let update = { isUpdate: false, added: [], removed: [], changed: false };
+  try {
+    const prevS = installedSkills.get(await _skSkillId(skill.name, skill.author_pubkey));
+    if (prevS) {
+      const oldPerms = (prevS.manifest && Array.isArray(prevS.manifest.permissions)) ? prevS.manifest.permissions : [];
+      const oldSet = new Set(oldPerms), newSet = new Set(perms);
+      const added = perms.filter(p => !oldSet.has(p)), removed = oldPerms.filter(p => !newSet.has(p));
+      update = { isUpdate: true, added: added.map(p => ({ perm: p, prose: _skPermProse(p) })), removed: removed.map(p => ({ perm: p, prose: _skPermProse(p) })), changed: added.length > 0 || removed.length > 0 };
+    }
+  } catch (_) { /* a malformed name/id can't match an install → treat as fresh; gates reject it downstream */ }
   return {
     name: skill.name, version: skill.version, kind: skill.kind,
     purpose: skill.description || '(no description provided)',
     author_pubkey: skill.author_pubkey, signed: vr.signed, verified: vr.verified,
     permissions: perms.map(p => ({ perm: p, prose: _skPermProse(p) })),
     compoundRisk: _skCompoundRisk(perms), scanNotes: _skCapabilityScan(skill.code),
-    lookalike, gates: _skValidateInstall(skill, vr),
+    lookalike, gates: _skValidateInstall(skill, vr), update,
   };
 }
 // §7 — serialize the registry into the frozen #rwa-skills zone. CANONICAL: sorted by
@@ -7252,11 +7265,25 @@ function showSkillInstallDialog(envelope) {
     const authorHtml = rv.signed
       ? (rv.verified ? 'Signed by key <code>' + _skEsc(String(rv.author_pubkey).slice(0, 12)) + '…</code>' : '⚠ Signature does NOT verify — the code may have been modified.')
       : '⚠ Unsigned — the runtime can\'t verify the author or that the code is unmodified.';
+    // I10 (Shape C) — on an update whose permissions changed, surface the delta and make the
+    // affirm button explicitly about the NEW permissions. No silent escalation: the install
+    // call still fires only on the click below.
+    const upd = rv.update || { isUpdate: false, changed: false, added: [], removed: [] };
+    const updHtml = (upd.isUpdate && upd.changed)
+      ? '<div style="background:#fef3c7;border-radius:8px;padding:10px 12px;margin:.8em 0"><strong>You already installed this skill. This version changes what it can do:</strong>'
+        + (upd.added.length ? '<p style="margin:.6em 0 .2em;color:#b45309"><strong>+ Newly requested permissions</strong></p><ul style="margin:.2em 0;padding-left:1.2em">' + upd.added.map(p => '<li>' + _skEsc(p.prose) + '</li>').join('') + '</ul>' : '')
+        + (upd.removed.length ? '<p style="margin:.6em 0 .2em;color:#6b7280"><strong>− No longer requested</strong></p><ul style="margin:.2em 0;padding-left:1.2em;color:#6b7280">' + upd.removed.map(p => '<li>' + _skEsc(p.prose) + '</li>').join('') + '</ul>' : '')
+        + '</div>'
+      : '';
+    const affirmText = (upd.isUpdate && upd.changed) ? 'I have reviewed the new permissions and want to update this skill'
+      : upd.isUpdate ? 'Update this skill'
+      : 'I have reviewed this skill and want to install it';
     card.innerHTML =
       '<h2 style="margin:0 0 .2em;font-size:1.25rem">Install ' + _skEsc(rv.name) + '?</h2>' +
       '<p style="margin:.2em 0 1em;color:#444"><strong>What it claims to do:</strong> ' + _skEsc(rv.purpose) + '</p>' +
       '<p style="margin:.2em 0"><strong>Author.</strong> ' + authorHtml + '</p>' +
       (rv.lookalike ? '<p style="background:#fef3c7;border-radius:8px;padding:8px 10px;margin:.6em 0">⚠ This name closely matches <strong>' + _skEsc(rv.lookalike) + '</strong>, which you installed from a DIFFERENT key. The author is identified by the key, not the name.</p>' : '') +
+      updHtml +
       '<p style="margin:1em 0 .2em"><strong>What it can do on your machine</strong></p>' + permsHtml +
       (rv.compoundRisk ? '<p style="background:#fee2e2;border-radius:8px;padding:8px 10px;margin:.6em 0">⚠ ' + _skEsc(rv.compoundRisk) + '</p>' : '') +
       (rv.scanNotes.length ? '<p style="margin:1em 0 .2em"><strong>Notes from the runtime\'s code review</strong></p><ul style="margin:.2em 0;padding-left:1.2em;color:#555">' + rv.scanNotes.map(n => '<li>' + _skEsc(n) + '</li>').join('') + '</ul>' : '') +
@@ -7264,7 +7291,7 @@ function showSkillInstallDialog(envelope) {
       (rv.gates.ok ? '' : '<p style="background:#fee2e2;border-radius:8px;padding:8px 10px;margin:.6em 0">Cannot install: ' + _skEsc(rv.gates.errors.join(', ')) + '</p>') +
       '<div style="display:flex;gap:10px;margin-top:1.2em;justify-content:flex-end">' +
         '<button data-act="cancel" style="padding:9px 16px;border:1px solid #ccc;border-radius:10px;background:#fff;cursor:pointer">Cancel</button>' +
-        (rv.gates.ok ? '<button data-act="install" style="padding:9px 16px;border:none;border-radius:10px;background:var(--gray-900,#111);color:#fff;cursor:pointer">I have reviewed this skill and want to install it</button>' : '') +
+        (rv.gates.ok ? '<button data-act="install" style="padding:9px 16px;border:none;border-radius:10px;background:var(--gray-900,#111);color:#fff;cursor:pointer">' + _skEsc(affirmText) + '</button>' : '') +
       '</div>';
     overlay.appendChild(card); document.body.appendChild(overlay);
     const close = (r) => { overlay.remove(); resolve(r); };
