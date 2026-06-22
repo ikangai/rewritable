@@ -58,12 +58,44 @@ test('parsePermission accepts left-anchored network wildcards but rejects left-u
 
 test('parsePermission rejects an unshipped/unknown tier', () => {
   assert.throws(() => parsePermission('fsa:read:docs'), /unknown_permission_tier/);
-  assert.throws(() => parsePermission('bus:topic:read'), /unknown_permission_tier/);
+  assert.throws(() => parsePermission('idb:cache'), /unknown_permission_tier/);
 });
 
 test('parsePermission enforces the vault namespace charset', () => {
   assert.throws(() => parsePermission('vault:GitHub-Prod'), /invalid/i); // uppercase not allowed
   assert.throws(() => parsePermission('vault:has space'), /invalid/i);
+});
+
+// I1 (v0.9 §5) — the bus: permission tier. Topic grammar + reserved-prefix guard.
+test('parsePermission accepts a valid bus topic', () => {
+  assert.deepEqual(parsePermission('bus:agent:pings'), { tier: 'bus', value: 'agent:pings' });
+  assert.equal(parsePermission('agent/pings/v2'.replace(/^/, 'bus:')).tier, 'bus');
+});
+test('parsePermission rejects reserved bus topic prefixes', () => {
+  assert.throws(() => parsePermission('bus:rwa_admin'), /invalid bus topic/);
+  assert.throws(() => parsePermission('bus:skills:x'), /invalid bus topic/);
+  assert.throws(() => parsePermission('bus:workspace:presence'), /invalid bus topic/);
+});
+test('parsePermission rejects a malformed bus topic (charset, empty, leading punctuation)', () => {
+  assert.throws(() => parsePermission('bus:has space'), /invalid bus topic/);
+  assert.throws(() => parsePermission('bus:'), /invalid bus topic/);
+  assert.throws(() => parsePermission('bus::leading'), /invalid bus topic/); // must start alphanumeric
+});
+test('validateInstall accepts a signed+verified bus tool and rejects an unsigned one', () => {
+  const env = { skill: { name: 'echo', kind: 'tool', permissions: ['bus:agent:pings'] } };
+  assert.equal(validateInstall(env, { signed: true, verified: true }).ok, true);
+  assert.ok(validateInstall(env, { signed: false, verified: false }).errors.includes('unsigned_with_permissions'));
+});
+test('compoundRisk fires when bus: co-occurs with network: or vault:', async () => {
+  const { compoundRisk } = await import('../src/skill-manifest.mjs');
+  assert.ok(compoundRisk(['bus:agent:pings', 'network:api.github.com']));
+  assert.ok(compoundRisk(['bus:agent:pings', 'vault:secrets']));
+  assert.equal(compoundRisk(['bus:agent:pings']), null); // bus alone is not compound
+});
+test('permissionToProse renders a bus permission', async () => {
+  const { permissionToProse } = await import('../src/skill-manifest.mjs');
+  assert.match(permissionToProse('bus:agent:pings'), /agent:pings/);
+  assert.match(permissionToProse('bus:agent:pings'), /channel|message/i);
 });
 
 // §3.4 install gates

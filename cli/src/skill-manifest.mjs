@@ -60,6 +60,13 @@ export function parsePermission(p) {
     if (value.length > 64 || !VAULT_NS.test(value)) throw new Error(`invalid vault namespace: ${value}`);
     return { tier, value };
   }
+  if (tier === 'bus') {
+    // §5 (I1): topic 1–96 chars, must start alphanumeric, charset [A-Za-z0-9:_./%-], and NOT
+    // a runtime-reserved prefix (rwa_/rwa:/skills:/workspace: are the substrate's own channels).
+    if (!value || value.length > 96 || !/^[A-Za-z0-9][A-Za-z0-9:_./%-]*$/.test(value) || /^(?:rwa[:_]|skills:|workspace:)/.test(value))
+      throw new Error(`invalid bus topic: ${value}`);
+    return { tier, value };
+  }
   throw new Error(`unknown_permission_tier: ${tier}`);
 }
 
@@ -103,6 +110,9 @@ export function permissionToProse(perm) {
     if (v === '*') return 'Read and write credentials stored under ANY vault namespace — every credential you have stored. Use only for vault administration.';
     return `Read and write credentials stored under \`${v}\`.`;
   }
+  if (s.startsWith('bus:')) {
+    return `Send and receive messages on the \`${s.slice(4)}\` channel shared with other rewritables on this machine.`;
+  }
   return s;
 }
 
@@ -111,7 +121,9 @@ export function compoundRisk(permissions) {
   const perms = Array.isArray(permissions) ? permissions : [];
   const hasVault = perms.some(p => String(p).startsWith('vault:'));
   const hasNetwork = perms.some(p => String(p).startsWith('network:'));
+  const hasBus = perms.some(p => String(p).startsWith('bus:'));
   if (hasVault && hasNetwork) return 'This skill can both read your stored credentials AND make network requests. A skill with this combination can send credentials to its allowed destination — intentionally or by mistake. Install only if you fully trust this author.';
+  if (hasBus && (hasVault || hasNetwork)) return `This skill can message other rewritables on this machine AND ${hasVault ? 'read your stored credentials' : 'make network requests'}. Together these let it coordinate a multi-step action across your workspace — intentionally or by mistake. Install only if you fully trust this author.`;
   return null;
 }
 

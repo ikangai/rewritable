@@ -48,6 +48,12 @@ const VAULT_CODE =
   'if(input&&input.op==="get"){return {token:await r.vault.get("secrets","token")};}' +
   'return {noop:true};}';
 
+const BUS_CODE =
+  'async function run(input,r){var res={};' +
+  'try{await r.bus.publish("agent:pings",{hi:(input&&input.tag)});res.published=true;}catch(e){res.published=String(e.message);}' +
+  'try{await r.bus.publish("undeclared:topic",{x:1});res.denied="REACHED";}catch(e){res.denied=String(e.message);}' +
+  'return res;}';
+
 async function newKey() {
   const kp = await webcrypto.subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify']);
   const pub = b64(new Uint8Array(await webcrypto.subtle.exportKey('raw', kp.publicKey)));
@@ -68,6 +74,7 @@ const NETPROBE_ENV = await signEnvelope(key, 'net-probe', 'tool', ['network:api.
 // show the added permission + a re-affirmation button, and must not auto-install on display.
 const NETPROBE_V2_ENV = await signEnvelope(key, 'net-probe', 'tool', ['network:api.github.com', 'network:tracker.example'], NETPROBE_CODE, '2.0.0');
 const VAULT_ENV = await signEnvelope(key, 'vault-keeper', 'tool', ['vault:secrets'], VAULT_CODE);
+const BUS_ENV = await signEnvelope(key, 'bus-pinger', 'tool', ['bus:agent:pings'], BUS_CODE);
 
 // ── driver: runs after the runtime boots, writes a verdict to window.__mvp ──
 const driver = `
@@ -78,6 +85,7 @@ const driver = `
   var NETPROBE_ENV=${JSON.stringify(NETPROBE_ENV)};
   var NETPROBE_V2_ENV=${JSON.stringify(NETPROBE_V2_ENV)};
   var VAULT_ENV=${JSON.stringify(VAULT_ENV)};
+  var BUS_ENV=${JSON.stringify(BUS_ENV)};
   var el=document.getElementById('mvp');
   var log=function(m){ if(el) el.textContent+=m+'\\n'; };
   var checks=[]; var ck=function(name,cond,detail){ checks.push({name:name,pass:!!cond,detail:detail||''}); log((cond?'OK   ':'FAIL ')+name+(detail!==undefined?'  ['+detail+']':'')); };
@@ -120,6 +128,19 @@ const driver = `
       ck('I10 update dialog affirm button cites the NEW permissions', /new permissions/i.test(dhtml));
       var cx=dlg&&dlg.querySelector('[data-act=cancel]'); if(cx) cx.onclick();
     } else { ck('I10 update dialog (showInstallDialog exposed)', false, 'showInstallDialog missing'); }
+
+    // I1 (v0.9 §5) — a signed bus tool publishes on its DECLARED topic (a raw BroadcastChannel
+    // receives it; the bus is cross-container, so a raw channel has no self-filter) and is DENIED
+    // an undeclared topic. Proves the bridge:bus:publish gate end-to-end in a real Worker.
+    var bz=await R.installSkill(BUS_ENV);
+    ck('install bus-pinger (tool, signed → verified:true)', bz.ok && nameVerified('bus-pinger')===true);
+    var busRx=[]; var bc=new BroadcastChannel('rwa_bus:agent:pings'); bc.onmessage=function(e){ busRx.push(e.data); };
+    var br=await R.invokeSkill(bz.skillId,{tag:'abc'}); out.bus=br;
+    await new Promise(function(r){setTimeout(r,80);});
+    ck('§5 bus: skill PUBLISHES on its declared topic', br && br.published===true, JSON.stringify(br&&br.published));
+    ck('§5 bus: an UNDECLARED topic is DENIED (bus_topic_denied)', br && br.denied==='bus_topic_denied', JSON.stringify(br&&br.denied));
+    ck('§5 bus: the published message actually reached the channel', busRx.some(function(m){return m&&m.topic==='agent:pings'&&m.message&&m.message.hi==='abc';}), JSON.stringify(busRx).slice(0,140));
+    try{bc.close();}catch(_e){}
   } catch(e){ ck('no uncaught error during the run', false, String((e&&e.message)||e)); out.error=String((e&&e.message)||e); }
   var passN=checks.filter(function(c){return c.pass;}).length, failN=checks.length-passN;
   window.__mvp={ pass:passN, fail:failN, checks:checks, out:out };

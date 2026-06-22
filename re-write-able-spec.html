@@ -7058,6 +7058,11 @@ function _skVaultAllowed(skill, ns) {
   const perms = (skill.manifest && Array.isArray(skill.manifest.permissions)) ? skill.manifest.permissions : [];
   return perms.indexOf('vault:' + ns) !== -1;
 }
+// §5 (I1) — the bridge's per-call bus gate: exact-string bus:<topic> match, no wildcards.
+function _skBusAllowed(skill, topic) {
+  const perms = (skill.manifest && Array.isArray(skill.manifest.permissions)) ? skill.manifest.permissions : [];
+  return perms.indexOf('bus:' + topic) !== -1;
+}
 
 // ─── Install dialog (shannon, v0.8 §1) — the trust anchor. Mirrors of the cli
 // consent helpers (permissionToProse/compoundRisk/capabilityScan/levenshtein). ──────
@@ -7076,12 +7081,20 @@ function _skPermProse(perm) {
     if (v === '*') return 'Read and write credentials stored under ANY vault namespace — every credential you have stored. Use only for vault administration.';
     return 'Read and write credentials stored under ' + v + '.';
   }
+  if (s.startsWith('bus:')) {
+    return 'Send and receive messages on the "' + s.slice(4) + '" channel shared with other rewritables on this machine.';
+  }
   return s;
 }
 function _skCompoundRisk(perms) {
   perms = Array.isArray(perms) ? perms : [];
-  if (perms.some(p => String(p).startsWith('vault:')) && perms.some(p => String(p).startsWith('network:')))
+  const hasVault = perms.some(p => String(p).startsWith('vault:'));
+  const hasNetwork = perms.some(p => String(p).startsWith('network:'));
+  const hasBus = perms.some(p => String(p).startsWith('bus:'));
+  if (hasVault && hasNetwork)
     return 'This skill can both read your stored credentials AND make network requests. A skill with this combination can send credentials to its allowed destination — intentionally or by mistake. Install only if you fully trust this author.';
+  if (hasBus && (hasVault || hasNetwork))
+    return 'This skill can message other rewritables on this machine AND ' + (hasVault ? 'read your stored credentials' : 'make network requests') + '. Together these let it coordinate a multi-step action across your workspace — intentionally or by mistake. Install only if you fully trust this author.';
   return null;
 }
 function _skCapabilityScan(code) {
@@ -7131,6 +7144,13 @@ function _skParsePermission(p) {
   }
   if (tier === 'vault') {
     if (value.length > 64 || !_SK_VAULT_NS.test(value)) throw new Error(`invalid vault namespace: ${value}`);
+    return { tier, value };
+  }
+  if (tier === 'bus') {
+    // §5 (I1): topic 1–96 chars, start alphanumeric, charset [A-Za-z0-9:_./%-], NOT a
+    // runtime-reserved prefix (rwa_/rwa:/skills:/workspace:). Mirror of cli parsePermission.
+    if (!value || value.length > 96 || !/^[A-Za-z0-9][A-Za-z0-9:_./%-]*$/.test(value) || /^(?:rwa[:_]|skills:|workspace:)/.test(value))
+      throw new Error(`invalid bus topic: ${value}`);
     return { tier, value };
   }
   throw new Error(`unknown_permission_tier: ${tier}`);
@@ -7341,6 +7361,7 @@ const SKILL_WORKER_PROLOGUE = `(function(){
   function _installBridge(){
     RUNTIME.fetch=function(url,opts){ return _bridge('bridge:fetch',{ url:String(url), opts:_serializeOpts(opts) }); };
     RUNTIME.vault={ get:function(ns,k){ return _bridge('bridge:vault',{op:'get',ns:ns,key:k}); }, set:function(ns,k,v){ return _bridge('bridge:vault',{op:'set',ns:ns,key:k,val:v}); }, has:function(ns,k){ return _bridge('bridge:vault',{op:'has',ns:ns,key:k}); } };
+    RUNTIME.bus={ publish:function(topic,message){ return _bridge('bridge:bus:publish',{ topic:String(topic), message:message }); } };
   }
   self.onmessage=function(e){
     var msg=e.data; if(!msg) return;
@@ -7412,6 +7433,17 @@ function runtimeInvokeSkill(skillId, input) {
           else if (pl.op === 'set') { await runtimeVaultSet(pl.ns, pl.key, pl.val); reply(msg.id, true, { result: true }); }
           else reply(msg.id, false, { error: 'invalid_argument' });
         } catch (e) { reply(msg.id, false, { error: String(e && e.message || 'vault_error') }); }
+        return;
+      }
+      if (msg.type === 'bridge:bus:publish') {
+        const pl = msg.payload || {};
+        if (!_skBusAllowed(skill, pl.topic)) { reply(msg.id, false, { error: 'bus_topic_denied' }); return; } // §5 per-call gate
+        // Inv 23: bound the payload (structured-clone-safe + ≤65536 bytes via the JSON proxy)
+        // so a skill can't flood subscribers. A non-serializable payload fails closed.
+        let enc; try { enc = JSON.stringify(pl.message); } catch (_) { reply(msg.id, false, { error: 'bus_error' }); return; }
+        if (enc != null && enc.length > 65536) { reply(msg.id, false, { error: 'bus_error' }); return; }
+        try { runtimeBusPublish(pl.topic, pl.message); reply(msg.id, true, { result: true }); }
+        catch (_) { reply(msg.id, false, { error: 'bus_error' }); }
         return;
       }
     };

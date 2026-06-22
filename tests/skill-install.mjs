@@ -166,5 +166,21 @@ check('F9: rejects a non-array permissions field (no silent coerce to [])',
 check('F8: rejects a NUL byte in the skill name (skillId ambiguity)',
   w._skValidateInstall({ name: 'a b', kind: 'compute', permissions: [] }, { signed: false, verified: false }).errors.includes('invalid_skill_id'));
 
+// I1 (v0.9 §5) — the bus: permission tier as it surfaces through reviewSkill / _skValidateInstall
+// (grammar + prose + gates + compound). The Worker publish bridge is browser-proven separately
+// (tests/skill-exec-probe.mjs — jsdom has no Workers/BroadcastChannel delivery).
+console.log('\n== I1: bus permission tier ==');
+{
+  const rv = await w.runtime.reviewSkill(await makeSigned('echo-agent', 'tool', ['bus:agent:pings'], 'async function run(i,r){return 1}'));
+  check('I1: a signed bus tool passes the install gates', rv.gates.ok === true);
+  check('I1: a bus permission renders human prose (channel)', rv.permissions.some(p => p.perm === 'bus:agent:pings' && /channel/i.test(p.prose)));
+  check('I1: an unsigned bus skill is rejected (unsigned_with_permissions)',
+    w._skValidateInstall(unsigned('echo', 'tool', ['bus:agent:pings'], 'x').skill, { signed: false, verified: false }).errors.includes('unsigned_with_permissions'));
+  check('I1: a reserved bus topic (workspace:) is invalid_permission',
+    w._skValidateInstall({ name: 'x', kind: 'tool', permissions: ['bus:workspace:presence'] }, { signed: true, verified: true }).errors.includes('invalid_permission'));
+  const comp = await w.runtime.reviewSkill(await makeSigned('coord', 'tool', ['bus:agent:pings', 'network:api.github.com'], 'async function run(i,r){return 1}'));
+  check('I1: bus + network triggers the compound-risk callout', typeof comp.compoundRisk === 'string' && /coordinate|workspace/i.test(comp.compoundRisk));
+}
+
 console.log(`\n== ${pass} pass, ${fail} fail ==`);
 process.exit(fail ? 1 : 0);
