@@ -6600,6 +6600,20 @@ function _skBusAllowed(skill, topic) {
   const perms = (skill.manifest && Array.isArray(skill.manifest.permissions)) ? skill.manifest.permissions : [];
   return perms.indexOf('bus:' + topic) !== -1;
 }
+// §6 (I3) — the bridge's per-call fs gate: the (already traversal-checked) path must fall under
+// a declared fsa:<scope> subtree (left-anchored prefix, no wildcards).
+function _skFsAllowed(skill, path) {
+  const perms = (skill.manifest && Array.isArray(skill.manifest.permissions)) ? skill.manifest.permissions : [];
+  for (const p of perms) {
+    if (String(p).startsWith('fsa:')) { const scope = String(p).slice(4); if (path === scope || path.startsWith(scope + '/')) return true; }
+  }
+  return false;
+}
+// §7 (I4) — the bridge's per-call idb gate: exact-string idb:<store> match, no wildcards.
+function _skIdbAllowed(skill, store) {
+  const perms = (skill.manifest && Array.isArray(skill.manifest.permissions)) ? skill.manifest.permissions : [];
+  return perms.indexOf('idb:' + store) !== -1;
+}
 
 // ─── Install dialog (shannon, v0.8 §1) — the trust anchor. Mirrors of the cli
 // consent helpers (permissionToProse/compoundRisk/capabilityScan/levenshtein). ──────
@@ -6621,17 +6635,24 @@ function _skPermProse(perm) {
   if (s.startsWith('bus:')) {
     return 'Send and receive messages on the "' + s.slice(4) + '" channel shared with other rewritables on this machine.';
   }
+  if (s.startsWith('fsa:')) {
+    return 'Read and write files under "' + s.slice(4) + '" in this document\'s private storage.';
+  }
+  if (s.startsWith('idb:')) {
+    return 'Read and write the "' + s.slice(4) + '" data store in this document\'s database.';
+  }
   return s;
 }
 function _skCompoundRisk(perms) {
   perms = Array.isArray(perms) ? perms : [];
-  const hasVault = perms.some(p => String(p).startsWith('vault:'));
-  const hasNetwork = perms.some(p => String(p).startsWith('network:'));
-  const hasBus = perms.some(p => String(p).startsWith('bus:'));
+  const has = (t) => perms.some(p => String(p).startsWith(t + ':'));
+  const hasVault = has('vault'), hasNetwork = has('network'), hasBus = has('bus'), hasFsa = has('fsa'), hasIdb = has('idb');
   if (hasVault && hasNetwork)
     return 'This skill can both read your stored credentials AND make network requests. A skill with this combination can send credentials to its allowed destination — intentionally or by mistake. Install only if you fully trust this author.';
   if (hasBus && (hasVault || hasNetwork))
     return 'This skill can message other rewritables on this machine AND ' + (hasVault ? 'read your stored credentials' : 'make network requests') + '. Together these let it coordinate a multi-step action across your workspace — intentionally or by mistake. Install only if you fully trust this author.';
+  if ((hasFsa || hasIdb) && (hasNetwork || hasVault || hasBus))
+    return 'This skill can ' + (hasFsa ? 'read and write files in this document' : 'read and write this document\'s stored data') + ' AND ' + (hasNetwork ? 'make network requests' : hasVault ? 'read your stored credentials' : 'message other rewritables on this machine') + '. Together these let it move your local data off this document — intentionally or by mistake. Install only if you fully trust this author.';
   return null;
 }
 function _skCapabilityScan(code) {
@@ -6690,6 +6711,20 @@ function _skParsePermission(p) {
       throw new Error(`invalid bus topic: ${value}`);
     return { tier, value };
   }
+  if (tier === 'fsa') {
+    // §6 (I3): relative OPFS scope — lowercase [a-z0-9_/-], start+end alphanumeric/underscore,
+    // ≤128 chars, no '.'/'..' (excluded by charset), not _rwa/-prefixed. Mirror of cli.
+    if (!value || value.length > 128 || /^_rwa(?:\/|$)/.test(value) || !/^[a-z0-9_](?:[a-z0-9_/-]*[a-z0-9_])?$/.test(value))
+      throw new Error(`invalid fsa scope: ${value}`);
+    return { tier, value };
+  }
+  if (tier === 'idb') {
+    // §7 (I4): store ^[A-Za-z0-9_][A-Za-z0-9_-]{0,62}$ (≤64 octets, no wildcards); never rwa_*
+    // (reserved) or rwa_vault — distinct subcodes so the dialog can explain. Mirror of cli.
+    if (/^rwa_/.test(value)) throw new Error(value === 'rwa_vault' ? 'idb_vault_store_forbidden' : 'idb_reserved_store');
+    if (!/^[A-Za-z0-9_][A-Za-z0-9_-]{0,62}$/.test(value)) throw new Error(`invalid idb store: ${value}`);
+    return { tier, value };
+  }
   throw new Error(`unknown_permission_tier: ${tier}`);
 }
 function _skValidateInstall(skill, vr) {
@@ -6704,7 +6739,12 @@ function _skValidateInstall(skill, vr) {
   // F7: validate each permission's VALUE via the grammar, not just the tier.
   for (const p of perms) {
     try { _skParsePermission(p); }
-    catch (e) { errors.push(/unknown_permission_tier/.test(e.message) ? 'unknown_permission_tier' : 'invalid_permission'); }
+    catch (e) {
+      const m = e.message;
+      if (/unknown_permission_tier/.test(m)) errors.push('unknown_permission_tier');
+      else if (m === 'idb_reserved_store' || m === 'idb_vault_store_forbidden') errors.push(m); // §7 distinct subcodes
+      else errors.push('invalid_permission');
+    }
   }
   if (skill.kind === 'compute' && perms.length > 0) errors.push('compute_with_permissions');
   if (!vr.signed && perms.length > 0) errors.push('unsigned_with_permissions');
@@ -6899,6 +6939,8 @@ const SKILL_WORKER_PROLOGUE = `(function(){
     RUNTIME.fetch=function(url,opts){ return _bridge('bridge:fetch',{ url:String(url), opts:_serializeOpts(opts) }); };
     RUNTIME.vault={ get:function(ns,k){ return _bridge('bridge:vault',{op:'get',ns:ns,key:k}); }, set:function(ns,k,v){ return _bridge('bridge:vault',{op:'set',ns:ns,key:k,val:v}); }, has:function(ns,k){ return _bridge('bridge:vault',{op:'has',ns:ns,key:k}); } };
     RUNTIME.bus={ publish:function(topic,message){ return _bridge('bridge:bus:publish',{ topic:String(topic), message:message }); } };
+    RUNTIME.fs={ read:function(p){ return _bridge('bridge:fs',{op:'read',path:String(p)}); }, write:function(p,d){ return _bridge('bridge:fs',{op:'write',path:String(p),data:d}); }, del:function(p){ return _bridge('bridge:fs',{op:'del',path:String(p)}); }, list:function(p){ return _bridge('bridge:fs',{op:'list',path:String(p)}); } };
+    RUNTIME.db={ get:function(s,k){ return _bridge('bridge:idb',{op:'get',store:String(s),key:k}); }, put:function(s,k,v){ return _bridge('bridge:idb',{op:'put',store:String(s),key:k,value:v}); }, del:function(s,k){ return _bridge('bridge:idb',{op:'del',store:String(s),key:k}); }, all:function(s){ return _bridge('bridge:idb',{op:'all',store:String(s)}); } };
   }
   self.onmessage=function(e){
     var msg=e.data; if(!msg) return;
@@ -6981,6 +7023,44 @@ function runtimeInvokeSkill(skillId, input) {
         if (enc != null && enc.length > 65536) { reply(msg.id, false, { error: 'bus_error' }); return; }
         try { runtimeBusPublish(pl.topic, pl.message); reply(msg.id, true, { result: true }); }
         catch (_) { reply(msg.id, false, { error: 'bus_error' }); }
+        return;
+      }
+      if (msg.type === 'bridge:fs') {
+        const pl = msg.payload || {}, op = pl.op, p = pl.path;
+        // Reject traversal/invalid paths BEFORE the scope check (mirror of assertUserFsPath); a
+        // declared scope is a left-anchored prefix, so a '..'-free path is safe to literal-match.
+        if (typeof p !== 'string' || !p || p.startsWith('/') || p.startsWith('_rwa/') || p.split('/').some(s => s === '.' || s === '..')) { reply(msg.id, false, { error: 'fs_path_denied' }); return; }
+        if (!_skFsAllowed(skill, p)) { reply(msg.id, false, { error: 'fs_permission_denied' }); return; } // §6 per-call gate
+        try {
+          let result;
+          if (op === 'read') result = await runtimeFsRead(p);
+          else if (op === 'write') { await runtimeFsWrite(p, pl.data); result = true; }
+          else if (op === 'del') { await runtimeFsDel(p); result = true; }
+          else if (op === 'list') result = await runtimeFsList(p);
+          else { reply(msg.id, false, { error: 'fs_path_invalid' }); return; }
+          reply(msg.id, true, { result });
+        } catch (e) {
+          const m = String(e && e.message || ''), nm = e && e.name;
+          const code = (nm === 'QuotaExceededError' || /quota/i.test(m)) ? 'fs_quota_exceeded'
+            : (nm === 'SecurityError' || /OPFS is not available|not supported/i.test(m)) ? 'fs_unsupported'
+            : (nm === 'NotFoundError' || /no file at/i.test(m)) ? 'fs_path_not_found'
+            : 'fs_write_failed';
+          reply(msg.id, false, { error: code });
+        }
+        return;
+      }
+      if (msg.type === 'bridge:idb') {
+        const pl = msg.payload || {}, op = pl.op, store = pl.store;
+        if (!_skIdbAllowed(skill, store)) { reply(msg.id, false, { error: 'idb_store_denied' }); return; } // §7 per-call gate
+        try {
+          let result;
+          if (op === 'get') result = await runtimeDbGet(store, pl.key);
+          else if (op === 'put') { await runtimeDbPut(store, pl.key, pl.value); result = true; }
+          else if (op === 'del') { await runtimeDbDel(store, pl.key); result = true; }
+          else if (op === 'all') result = await runtimeDbAll(store);
+          else { reply(msg.id, false, { error: 'invalid_argument' }); return; }
+          reply(msg.id, true, { result });
+        } catch (e) { reply(msg.id, false, { error: String(e && e.message || 'idb_error') }); }
         return;
       }
     };

@@ -54,6 +54,20 @@ const BUS_CODE =
   'try{await r.bus.publish("undeclared:topic",{x:1});res.denied="REACHED";}catch(e){res.denied=String(e.message);}' +
   'return res;}';
 
+const IDB_CODE =
+  'async function run(input,r){var res={};' +
+  'try{await r.db.put("cache","k",{v:(input&&input.v)});res.put=true;}catch(e){res.put=String(e.message);}' +
+  'try{var g=await r.db.get("cache","k");res.got=g&&g.v;}catch(e){res.got=String(e.message);}' +
+  'try{await r.db.put("other","k",1);res.denied="REACHED";}catch(e){res.denied=String(e.message);}' +
+  'return res;}';
+
+const FSA_CODE =
+  'async function run(input,r){var res={};' +
+  'try{await r.fs.write("data/probe.txt","hello");var f=await r.fs.read("data/probe.txt");res.roundtrip=(f&&f.text)?await f.text():String(f);}catch(e){res.roundtrip=String(e.message);}' +
+  'try{await r.fs.read("other/x");res.undeclared="REACHED";}catch(e){res.undeclared=String(e.message);}' +
+  'try{await r.fs.read("../secret");res.traversal="REACHED";}catch(e){res.traversal=String(e.message);}' +
+  'return res;}';
+
 async function newKey() {
   const kp = await webcrypto.subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify']);
   const pub = b64(new Uint8Array(await webcrypto.subtle.exportKey('raw', kp.publicKey)));
@@ -75,6 +89,8 @@ const NETPROBE_ENV = await signEnvelope(key, 'net-probe', 'tool', ['network:api.
 const NETPROBE_V2_ENV = await signEnvelope(key, 'net-probe', 'tool', ['network:api.github.com', 'network:tracker.example'], NETPROBE_CODE, '2.0.0');
 const VAULT_ENV = await signEnvelope(key, 'vault-keeper', 'tool', ['vault:secrets'], VAULT_CODE);
 const BUS_ENV = await signEnvelope(key, 'bus-pinger', 'tool', ['bus:agent:pings'], BUS_CODE);
+const IDB_ENV = await signEnvelope(key, 'idb-cacher', 'tool', ['idb:cache'], IDB_CODE);
+const FSA_ENV = await signEnvelope(key, 'fsa-indexer', 'tool', ['fsa:data'], FSA_CODE);
 
 // ── driver: runs after the runtime boots, writes a verdict to window.__mvp ──
 const driver = `
@@ -86,6 +102,8 @@ const driver = `
   var NETPROBE_V2_ENV=${JSON.stringify(NETPROBE_V2_ENV)};
   var VAULT_ENV=${JSON.stringify(VAULT_ENV)};
   var BUS_ENV=${JSON.stringify(BUS_ENV)};
+  var IDB_ENV=${JSON.stringify(IDB_ENV)};
+  var FSA_ENV=${JSON.stringify(FSA_ENV)};
   var el=document.getElementById('mvp');
   var log=function(m){ if(el) el.textContent+=m+'\\n'; };
   var checks=[]; var ck=function(name,cond,detail){ checks.push({name:name,pass:!!cond,detail:detail||''}); log((cond?'OK   ':'FAIL ')+name+(detail!==undefined?'  ['+detail+']':'')); };
@@ -141,6 +159,24 @@ const driver = `
     ck('§5 bus: an UNDECLARED topic is DENIED (bus_topic_denied)', br && br.denied==='bus_topic_denied', JSON.stringify(br&&br.denied));
     ck('§5 bus: the published message actually reached the channel', busRx.some(function(m){return m&&m.topic==='agent:pings'&&m.message&&m.message.hi==='abc';}), JSON.stringify(busRx).slice(0,140));
     try{bc.close();}catch(_e){}
+
+    // I4 (v0.9 §7) — idb: bridge (IndexedDB works at file://). A declared store round-trips;
+    // an undeclared store is gated. Open the store first (no auto-create, Inv 23).
+    await R.db.open('cache').catch(function(){});
+    var iz=await R.installSkill(IDB_ENV);
+    ck('install idb-cacher (tool, signed → verified:true)', iz.ok && nameVerified('idb-cacher')===true);
+    var ir=await R.invokeSkill(iz.skillId,{v:'hello'}); out.idb=ir;
+    ck('§7 idb: a DECLARED store put+get round-trips', ir && ir.put===true && ir.got==='hello', JSON.stringify(ir));
+    ck('§7 idb: an UNDECLARED store is DENIED (idb_store_denied)', ir && ir.denied==='idb_store_denied', JSON.stringify(ir&&ir.denied));
+
+    // I3 (v0.9 §6) — fsa: bridge. OPFS is unavailable at file:// (→ fs_unsupported, which still
+    // proves the op reached OPFS past the gate); a real round-trip needs an http(s) secure context.
+    var fz=await R.installSkill(FSA_ENV);
+    ck('install fsa-indexer (tool, signed → verified:true)', fz.ok && nameVerified('fsa-indexer')===true);
+    var fr=await R.invokeSkill(fz.skillId,{}); out.fsa=fr;
+    ck('§6 fsa: declared scope reaches OPFS (round-trips on http; fs_unsupported at file://)', fr && (fr.roundtrip==='hello' || fr.roundtrip==='fs_unsupported'), JSON.stringify(fr&&fr.roundtrip));
+    ck('§6 fsa: an UNDECLARED scope is DENIED (fs_permission_denied)', fr && fr.undeclared==='fs_permission_denied', JSON.stringify(fr&&fr.undeclared));
+    ck('§6 fsa: a TRAVERSAL path is DENIED (fs_path_denied)', fr && fr.traversal==='fs_path_denied', JSON.stringify(fr&&fr.traversal));
   } catch(e){ ck('no uncaught error during the run', false, String((e&&e.message)||e)); out.error=String((e&&e.message)||e); }
   var passN=checks.filter(function(c){return c.pass;}).length, failN=checks.length-passN;
   window.__mvp={ pass:passN, fail:failN, checks:checks, out:out };

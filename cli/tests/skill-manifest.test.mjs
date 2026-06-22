@@ -57,8 +57,8 @@ test('parsePermission accepts left-anchored network wildcards but rejects left-u
 });
 
 test('parsePermission rejects an unshipped/unknown tier', () => {
-  assert.throws(() => parsePermission('fsa:read:docs'), /unknown_permission_tier/);
-  assert.throws(() => parsePermission('idb:cache'), /unknown_permission_tier/);
+  assert.throws(() => parsePermission('hook:on-commit'), /unknown_permission_tier/);
+  assert.throws(() => parsePermission('clipboard:read'), /unknown_permission_tier/);
 });
 
 test('parsePermission enforces the vault namespace charset', () => {
@@ -98,6 +98,49 @@ test('permissionToProse renders a bus permission', async () => {
   assert.match(permissionToProse('bus:agent:pings'), /channel|message/i);
 });
 
+// I3 (v0.9 §6) — the fsa: permission tier (scoped OPFS access).
+test('parsePermission accepts a valid fsa scope and rejects traversal/reserved/uppercase', () => {
+  assert.deepEqual(parsePermission('fsa:data'), { tier: 'fsa', value: 'data' });
+  assert.equal(parsePermission('fsa:reports/generated').tier, 'fsa');
+  assert.throws(() => parsePermission('fsa:..'), /invalid fsa scope/);
+  assert.throws(() => parsePermission('fsa:_rwa/cache'), /invalid fsa scope/);
+  assert.throws(() => parsePermission('fsa:/abs'), /invalid fsa scope/);
+  assert.throws(() => parsePermission('fsa:DATA'), /invalid fsa scope/); // lowercase only
+  assert.throws(() => parsePermission('fsa:'), /invalid fsa scope/);
+});
+test('validateInstall: signed fsa tool ok; compute+fsa and unsigned+fsa rejected', () => {
+  assert.equal(validateInstall({ skill: { name: 'f', kind: 'tool', permissions: ['fsa:data'] } }, { signed: true, verified: true }).ok, true);
+  assert.ok(validateInstall({ skill: { name: 'f', kind: 'compute', permissions: ['fsa:data'] } }, { signed: true, verified: true }).errors.includes('compute_with_permissions'));
+  assert.ok(validateInstall({ skill: { name: 'f', kind: 'tool', permissions: ['fsa:data'] } }, { signed: false, verified: false }).errors.includes('unsigned_capability'));
+});
+
+// I4 (v0.9 §7) — the idb: permission tier (scoped IndexedDB store access).
+test('parsePermission accepts a valid idb store and rejects wildcards/reserved/oversize', () => {
+  assert.deepEqual(parsePermission('idb:cache'), { tier: 'idb', value: 'cache' });
+  assert.equal(parsePermission('idb:user_data').tier, 'idb');
+  assert.equal(parsePermission('idb:session-state').tier, 'idb');
+  assert.throws(() => parsePermission('idb:*'), /invalid idb store/);
+  assert.throws(() => parsePermission('idb:' + 'x'.repeat(64)), /invalid idb store/); // 64 chars > 63 max
+});
+test('parsePermission rejects reserved idb stores with distinct codes', () => {
+  assert.throws(() => parsePermission('idb:rwa_reserved'), /idb_reserved_store/);
+  assert.throws(() => parsePermission('idb:rwa_vault'), /idb_vault_store_forbidden/);
+});
+test('validateInstall surfaces idb reserved-store subcodes (not generic invalid_permission)', () => {
+  assert.ok(validateInstall({ skill: { name: 'd', kind: 'tool', permissions: ['idb:rwa_reserved'] } }, { signed: true, verified: true }).errors.includes('idb_reserved_store'));
+  assert.ok(validateInstall({ skill: { name: 'd', kind: 'tool', permissions: ['idb:rwa_vault'] } }, { signed: true, verified: true }).errors.includes('idb_vault_store_forbidden'));
+  assert.ok(validateInstall({ skill: { name: 'd', kind: 'tool', permissions: ['idb:*'] } }, { signed: true, verified: true }).errors.includes('invalid_permission'));
+});
+test('compoundRisk fires for fsa/idb co-occurring with a sink; prose renders both', async () => {
+  const { compoundRisk, permissionToProse } = await import('../src/skill-manifest.mjs');
+  assert.ok(compoundRisk(['fsa:data', 'network:api.github.com']));
+  assert.ok(compoundRisk(['idb:cache', 'vault:secrets']));
+  assert.equal(compoundRisk(['fsa:data']), null);
+  assert.equal(compoundRisk(['idb:cache', 'fsa:data']), null); // two local stores, no sink
+  assert.match(permissionToProse('fsa:data'), /data/);
+  assert.match(permissionToProse('idb:cache'), /cache/);
+});
+
 // §3.4 install gates
 test('validateInstall rejects a compute skill that declares permissions', () => {
   const env = { skill: { name: 'c', kind: 'compute', permissions: ['network:api.x'], author_pubkey: PK_A } };
@@ -120,7 +163,7 @@ test('validateInstall rejects an unsigned/unverified capability (tool) skill', (
 });
 
 test('validateInstall rejects an unknown permission tier', () => {
-  const env = { skill: { name: 't', kind: 'tool', permissions: ['fsa:read:x'], author_pubkey: PK_A } };
+  const env = { skill: { name: 't', kind: 'tool', permissions: ['hook:on-commit'], author_pubkey: PK_A } };
   const r = validateInstall(env, { signed: true, verified: true });
   assert.equal(r.ok, false);
   assert.ok(r.errors.includes('unknown_permission_tier'));

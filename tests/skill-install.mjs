@@ -133,8 +133,8 @@ console.log('\n== I10: update prose-diff + re-affirmation ==');
 
   // an update ADDING an unknown permission tier (fsa:) is gate-rejected — forward-compat: an
   // unknown v0.9 tier must fail cleanly at install, not slip through on an otherwise-valid update.
-  const rvUnknown = await w.runtime.reviewSkill(await signv(['network:api.github.com', 'fsa:state'], CODE, '5.0.0'));
-  check('I10: an update adding an UNKNOWN tier (fsa:) is gate-rejected (unknown_permission_tier)', rvUnknown.gates.ok === false && rvUnknown.gates.errors.includes('unknown_permission_tier'));
+  const rvUnknown = await w.runtime.reviewSkill(await signv(['network:api.github.com', 'hook:on-commit'], CODE, '5.0.0'));
+  check('I10: an update adding an UNKNOWN tier (hook:) is gate-rejected (unknown_permission_tier)', rvUnknown.gates.ok === false && rvUnknown.gates.errors.includes('unknown_permission_tier'));
 
   // a MIXED update (one perm added, one removed) surfaces BOTH sides of the diff
   const rvMix = await w.runtime.reviewSkill(await signv(['network:tracker.y'], CODE, '6.0.0'));
@@ -180,6 +180,23 @@ console.log('\n== I1: bus permission tier ==');
     w._skValidateInstall({ name: 'x', kind: 'tool', permissions: ['bus:workspace:presence'] }, { signed: true, verified: true }).errors.includes('invalid_permission'));
   const comp = await w.runtime.reviewSkill(await makeSigned('coord', 'tool', ['bus:agent:pings', 'network:api.github.com'], 'async function run(i,r){return 1}'));
   check('I1: bus + network triggers the compound-risk callout', typeof comp.compoundRisk === 'string' && /coordinate|workspace/i.test(comp.compoundRisk));
+}
+
+// I3/I4 (v0.9 §6/§7) — fsa:/idb: tiers as they surface through reviewSkill / _skValidateInstall.
+// The Worker fs/idb bridges are browser-proven separately (tests/skill-exec-probe.mjs).
+console.log('\n== I3/I4: fsa: + idb: permission tiers ==');
+{
+  const rvFs = await w.runtime.reviewSkill(await makeSigned('indexer', 'tool', ['fsa:data'], 'async function run(i,r){return 1}'));
+  check('I3: a signed fsa tool passes the gates + prose mentions files', rvFs.gates.ok === true && rvFs.permissions.some(p => p.perm === 'fsa:data' && /file/i.test(p.prose)));
+  check('I3: a traversal fsa scope is invalid_permission', w._skValidateInstall({ name: 'x', kind: 'tool', permissions: ['fsa:..'] }, { signed: true, verified: true }).errors.includes('invalid_permission'));
+  check('I3: compute + fsa is compute_with_permissions', w._skValidateInstall({ name: 'x', kind: 'compute', permissions: ['fsa:data'] }, { signed: true, verified: true }).errors.includes('compute_with_permissions'));
+  const rvDb = await w.runtime.reviewSkill(await makeSigned('cacher', 'tool', ['idb:cache'], 'async function run(i,r){return 1}'));
+  check('I4: a signed idb tool passes the gates + prose mentions the store', rvDb.gates.ok === true && rvDb.permissions.some(p => p.perm === 'idb:cache' && /store|data/i.test(p.prose)));
+  check('I4: a reserved idb store surfaces idb_reserved_store', w._skValidateInstall({ name: 'x', kind: 'tool', permissions: ['idb:rwa_x'] }, { signed: true, verified: true }).errors.includes('idb_reserved_store'));
+  check('I4: the vault store is idb_vault_store_forbidden', w._skValidateInstall({ name: 'x', kind: 'tool', permissions: ['idb:rwa_vault'] }, { signed: true, verified: true }).errors.includes('idb_vault_store_forbidden'));
+  check('I4: a wildcard idb store is invalid_permission', w._skValidateInstall({ name: 'x', kind: 'tool', permissions: ['idb:*'] }, { signed: true, verified: true }).errors.includes('invalid_permission'));
+  const comp = await w.runtime.reviewSkill(await makeSigned('exfil', 'tool', ['fsa:data', 'network:api.github.com'], 'async function run(i,r){return 1}'));
+  check('I3/I4: storage + a sink triggers the compound-risk callout', typeof comp.compoundRisk === 'string' && /local data/i.test(comp.compoundRisk));
 }
 
 console.log(`\n== ${pass} pass, ${fail} fail ==`);

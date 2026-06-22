@@ -67,6 +67,20 @@ export function parsePermission(p) {
       throw new Error(`invalid bus topic: ${value}`);
     return { tier, value };
   }
+  if (tier === 'fsa') {
+    // §6 (I3): relative OPFS scope — lowercase [a-z0-9_/-], start+end alphanumeric/underscore,
+    // ≤128 chars, no leading/trailing slash, no '.'/'..' (excluded by charset), not _rwa/-prefixed.
+    if (!value || value.length > 128 || /^_rwa(?:\/|$)/.test(value) || !/^[a-z0-9_](?:[a-z0-9_/-]*[a-z0-9_])?$/.test(value))
+      throw new Error(`invalid fsa scope: ${value}`);
+    return { tier, value };
+  }
+  if (tier === 'idb') {
+    // §7 (I4): store name ^[A-Za-z0-9_][A-Za-z0-9_-]{0,62}$ (≤64 octets, no wildcards); never a
+    // reserved rwa_* store, and never the vault store — distinct subcodes so the dialog can explain.
+    if (/^rwa_/.test(value)) throw new Error(value === 'rwa_vault' ? 'idb_vault_store_forbidden' : 'idb_reserved_store');
+    if (!/^[A-Za-z0-9_][A-Za-z0-9_-]{0,62}$/.test(value)) throw new Error(`invalid idb store: ${value}`);
+    return { tier, value };
+  }
   throw new Error(`unknown_permission_tier: ${tier}`);
 }
 
@@ -113,17 +127,27 @@ export function permissionToProse(perm) {
   if (s.startsWith('bus:')) {
     return `Send and receive messages on the \`${s.slice(4)}\` channel shared with other rewritables on this machine.`;
   }
+  if (s.startsWith('fsa:')) {
+    return `Read and write files under \`${s.slice(4)}\` in this document's private storage.`;
+  }
+  if (s.startsWith('idb:')) {
+    return `Read and write the \`${s.slice(4)}\` data store in this document's database.`;
+  }
   return s;
 }
 
 /** §3.7/E — the compound-risk callout when vault + network co-occur, else null. */
 export function compoundRisk(permissions) {
   const perms = Array.isArray(permissions) ? permissions : [];
-  const hasVault = perms.some(p => String(p).startsWith('vault:'));
-  const hasNetwork = perms.some(p => String(p).startsWith('network:'));
-  const hasBus = perms.some(p => String(p).startsWith('bus:'));
+  const has = (t) => perms.some(p => String(p).startsWith(t + ':'));
+  const hasVault = has('vault'), hasNetwork = has('network'), hasBus = has('bus'), hasFsa = has('fsa'), hasIdb = has('idb');
   if (hasVault && hasNetwork) return 'This skill can both read your stored credentials AND make network requests. A skill with this combination can send credentials to its allowed destination — intentionally or by mistake. Install only if you fully trust this author.';
   if (hasBus && (hasVault || hasNetwork)) return `This skill can message other rewritables on this machine AND ${hasVault ? 'read your stored credentials' : 'make network requests'}. Together these let it coordinate a multi-step action across your workspace — intentionally or by mistake. Install only if you fully trust this author.`;
+  if ((hasFsa || hasIdb) && (hasNetwork || hasVault || hasBus)) {
+    const store = hasFsa ? 'read and write files in this document' : 'read and write this document\'s stored data';
+    const sink = hasNetwork ? 'make network requests' : hasVault ? 'read your stored credentials' : 'message other rewritables on this machine';
+    return `This skill can ${store} AND ${sink}. Together these let it move your local data off this document — intentionally or by mistake. Install only if you fully trust this author.`;
+  }
   return null;
 }
 
@@ -165,7 +189,12 @@ export function validateInstall(envelope, { signed, verified } = {}) {
   if (/\0/.test(String(skill.name == null ? '' : skill.name))) errors.push('invalid_skill_id');
   for (const p of perms) {
     try { parsePermission(p); }
-    catch (e) { errors.push(/unknown_permission_tier/.test(e.message) ? 'unknown_permission_tier' : 'invalid_permission'); }
+    catch (e) {
+      const m = e.message;
+      if (/unknown_permission_tier/.test(m)) errors.push('unknown_permission_tier');
+      else if (m === 'idb_reserved_store' || m === 'idb_vault_store_forbidden') errors.push(m); // §7 distinct subcodes
+      else errors.push('invalid_permission');
+    }
   }
   if (skill.kind === 'compute' && perms.length > 0) errors.push('compute_with_permissions');
   if (!signed && perms.length > 0) errors.push('unsigned_with_permissions');
