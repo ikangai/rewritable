@@ -33,12 +33,14 @@ The thirteen items are not independent. The real couplings:
 
 **Suggested sequence:** I10 → I1 → {I3, I4} → {I7, I8} → I5 → I2 → I11 → I6 → I12 → {I9, I13}.
 
+**Build status (2026-06-22).** The P0 tier is shipped: **I10** (`runtimeReviewSkill` update delta + the dialog's added/removed diff and re-affirmation button — seed; jsdom `tests/skill-install.mjs` + Chromium `tests/skill-exec-probe.mjs`) and **I11** (`rwa install` — `cli/src/install.mjs`, `cli/tests/install.test.mjs`, cross-tool browser-verified). Both honor the §0 constraints; neither lifts the Shape B ceiling. The remaining eleven items (I1–I9, I12, I13) are open as specified below.
+
 **Priority tiers** (P0 quick-win / P1 capability / P2 frontier):
 
 | Item | Title | Tier | Effort |
 |---|---|---|---|
-| I10 | Update prose-diff + re-affirm UI | **P0** | M (small) |
-| I11 | CLI `rwa install` verb | **P0** | M |
+| I10 | Update prose-diff + re-affirm UI | **P0 — ✅ BUILT** | M (small) |
+| I11 | CLI `rwa install` verb | **P0 — ✅ BUILT** | M |
 | I5 | Confusables + name_history | **P1** | M |
 | I1 | Bus permission tier | **P1** | M |
 | I3 | `fsa:` tier | **P1** | M |
