@@ -5,7 +5,10 @@
 //
 // §12 steps 3 (Worker bridge allow/deny), 4 (bridgeless isolation / globals removed), and 7
 // (vault null on a 2nd machine) require real Workers + a real reload and are BROWSER-PROVEN
-// (chrome-devtools), not reproducible in jsdom (no Workers). The full 7-step run, recorded:
+// (chrome-devtools), not reproducible in jsdom (no Workers). Those three ARE now
+// reproducible in-repo: `node tests/skill-exec-probe.mjs` emits a real skill-host
+// container from the live seed; open it in Chromium → 10/10 (compute-in-Worker +
+// Inv-18 isolation, bridge deny/allow, vault set/get + locked→null). Full 7-step run:
 //   1 install word-count (unsigned compute) ✓   2 install gh-stars (signed tool) ✓
 //   3 invoke gh-stars → api.github.com 200, evil.com permission_denied ✓ (browser)
 //   4 invoke word-count bridgeless → {words:N} ✓ (browser; Invariant 18 isolation proven incr 6)
@@ -90,5 +93,5 @@ const after = w2.runtime.listSkills().map(s => s.name);
 check('§12.6 after uninstall + RELOAD: gh-stars gone, word-count survives', !after.includes('gh-stars') && after.includes('word-count'));
 
 console.log(`\n== ${pass} pass, ${fail} fail ==`);
-console.log('(§12.3 bridge allow/deny, §12.4 bridgeless isolation, §12.7 vault-null-on-2nd-machine: browser-proven — see commit)');
+console.log('(§12.3 bridge allow/deny, §12.4 bridgeless isolation, §12.7 vault-null-on-2nd-machine: browser-proven — reproduce: node tests/skill-exec-probe.mjs → Chromium, 10/10)');
 process.exit(fail ? 1 : 0);
