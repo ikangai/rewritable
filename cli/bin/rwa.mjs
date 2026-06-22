@@ -71,6 +71,12 @@ Usage:
                               editing — the returned url carries the capability
                               token in its #k= fragment. Target: --url >
                               \$RWA_HOST_URL. --json emits {id,token,url}.
+  rwa install <skill> <host>  install a signed .rwa-skill.json into a skill-host
+                              container, offline. Verifies the signature + runs the
+                              same trust gates as the in-app dialog, then splices the
+                              skill into the frozen #rwa-skills zone. Requires --yes
+                              (no dialog to consent in); gate failures are final.
+                              --json emits {skillId,name,kind,verified,status}.
   rwa skin <path> <name>      apply a named style preset to a rewritable in
                               place (deterministic, offline, model-free). Names:
                               notion-clean, linear-dark, editorial-serif,
@@ -821,6 +827,56 @@ function detectProductKind(fileText) {
           `  token: ${result.token}\n` +
           `  url:   ${result.url}\n` +
           '  Note:  the url carries your capability token in its #k= fragment — keep it to keep editing.\n',
+        );
+      }
+      return;
+    }
+
+    // `rwa install <skill.rwa-skill.json> <skill-host.html> [--yes|--trust] [--json]` (v0.9 §3 / I11).
+    // The offline, headless counterpart of the seed's install dialog: verify the Ed25519
+    // signature, run the SAME gates (unsigned-capability / compute-with-perms / permission
+    // grammar / dynamic-import reject), then splice the envelope into the frozen #rwa-skills
+    // zone and write atomically. No dialog to consent in → an explicit --yes/--trust is
+    // required, and gate failures (exit 3) are FINAL — --yes cannot override them. Exit codes:
+    // 1 usage, 2 file, 3 envelope/gate (reuses codeName — no verb-specific exit-4 class). See
+    // src/install.mjs. The CLI is the sole audited exception to runtime-sole-writer (Inv 39).
+    if (verb === 'install') {
+      const jsonMode = rest.includes('--json');
+      const consent = rest.includes('--yes') || rest.includes('--trust');
+      const [envPath, hostPath] = rest.filter((a) => !a.startsWith('-'));
+      const emitInstall = (payload) => {
+        if (jsonMode) { process.stderr.write(JSON.stringify(payload) + '\n'); return; }
+        const parts = [payload.code, payload.subcode].filter(Boolean);
+        let line = 'rwa install: ' + parts.join('/');
+        if (payload.details && Object.keys(payload.details).length) line += ' ' + JSON.stringify(payload.details);
+        process.stderr.write(line + '\n');
+      };
+      if (!envPath || !hostPath) {
+        emitInstall({ code: 'usage_error', subcode: 'missing_file_args', details: { usage: 'rwa install <skill.rwa-skill.json> <skill-host.html> [--yes] [--json]' } });
+        process.exitCode = 1;
+        return;
+      }
+      const { installSkillFile } = await import('../src/install.mjs');
+      let result;
+      try {
+        result = await installSkillFile(envPath, hostPath, { consent });
+      } catch (e) {
+        if (e && typeof e.exitCode === 'number') {
+          emitInstall({ code: codeName(e.exitCode), subcode: e.subcode, details: e.details });
+          process.exitCode = e.exitCode;
+          return;
+        }
+        throw e;
+      }
+      if (jsonMode) {
+        process.stdout.write(JSON.stringify(result) + '\n');
+      } else {
+        const label = result.status === 'updated' ? 'Updated' : result.status === 'already_installed' ? 'Already installed' : 'Installed';
+        process.stdout.write(
+          '✓ ' + label + ' ' + result.name + ' (' + result.kind + ', ' + (result.verified ? 'verified' : 'UNVERIFIED') + ')\n' +
+          '  skillId: ' + result.skillId + '\n' +
+          (result.update && result.update.added.length ? '  + added: ' + result.update.added.join(', ') + '\n' : '') +
+          (result.update && result.update.removed.length ? '  − removed: ' + result.update.removed.join(', ') + '\n' : ''),
         );
       }
       return;
