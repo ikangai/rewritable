@@ -131,6 +131,15 @@ console.log('\n== I10: update prose-diff + re-affirmation ==');
   const rvSame = await w.runtime.reviewSkill(await signv(['network:api.github.com'], 'async function run(i,r){return 2}', '4.0.0'));
   check('I10: a same-permissions update reports changed=false', rvSame.update.isUpdate === true && rvSame.update.changed === false);
 
+  // an update ADDING an unknown permission tier (fsa:) is gate-rejected — forward-compat: an
+  // unknown v0.9 tier must fail cleanly at install, not slip through on an otherwise-valid update.
+  const rvUnknown = await w.runtime.reviewSkill(await signv(['network:api.github.com', 'fsa:state'], CODE, '5.0.0'));
+  check('I10: an update adding an UNKNOWN tier (fsa:) is gate-rejected (unknown_permission_tier)', rvUnknown.gates.ok === false && rvUnknown.gates.errors.includes('unknown_permission_tier'));
+
+  // a MIXED update (one perm added, one removed) surfaces BOTH sides of the diff
+  const rvMix = await w.runtime.reviewSkill(await signv(['network:tracker.y'], CODE, '6.0.0'));
+  check('I10: a mixed update surfaces BOTH the added and the removed permission', rvMix.update.added.some(p => p.perm === 'network:tracker.y') && rvMix.update.removed.some(p => p.perm === 'network:api.github.com'));
+
   // the DIALOG renders the diff + escalation button, and showing it does NOT auto-install
   const v2env = await signv(['network:api.github.com', 'network:tracker.y'], CODE, '2.0.0');
   w.runtime.showInstallDialog(v2env);

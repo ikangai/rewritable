@@ -21,8 +21,9 @@
 // mirror discipline as cli/src/apply-edits.mjs mirrors the seed apply path.
 
 import { readFile } from 'node:fs/promises';
-import { skillId, verifyEnvelope, validateInstall, parseSkillZone } from './skill-manifest.mjs';
+import { skillId, verifyEnvelope, validateInstall, parseSkillZone, levenshtein } from './skill-manifest.mjs';
 import { extractInlineDoc, replaceInlineDoc } from './seed.mjs';
+import { tagHasFrozenAttr } from './apply-edits.mjs';
 import { CliError } from './edit.mjs';
 import { atomicWrite } from './atomic-write.mjs';
 
@@ -48,10 +49,14 @@ export function buildSkillZone(envelopes) {
 }
 
 /** Locate the frozen #rwa-skills zone — mirror of the seed's _skSkillsRegion.select():
- *  base64 content has no '<', so the first </div> after the open tag is the real close. */
+ *  base64 content has no '<', so the first </div> after the open tag is the real close.
+ *  STRICT data-rwa-frozen attribute-NAME check (mirror of the trust-read extractRwaSkillsZone):
+ *  refuse to write into an editable lookalike `<div id="rwa-skills">` BEFORE any write, so the
+ *  caller gets a clean no_skill_zone (exit 2) instead of a stray inert splice + a later
+ *  durability throw. The kind gate already restricts to skill-host; this is defence in depth. */
 function locateZone(doc) {
   const open = /<div\b[^>]*\bid="rwa-skills"[^>]*>/i.exec(doc);
-  if (!open) return null;
+  if (!open || !tagHasFrozenAttr(open[0])) return null;
   const close = doc.indexOf('</div>', open.index + open[0].length);
   if (close < 0) return null;
   return { start: open.index, innerStart: open.index + open[0].length, innerEnd: close, end: close + 6 };
@@ -67,6 +72,21 @@ function zoneEnvelopes(doc) {
     try { out.push(JSON.parse(Buffer.from(m[1].trim(), 'base64').toString('utf8'))); } catch { /* skip */ }
   }
   return out;
+}
+
+/** Non-blocking lookalike scan — mirror of the seed runtimeReviewSkill (seeds/rewritable.html
+ *  ~6700-6706): a DIFFERENT author key bearing an exact (d===0) or near (Levenshtein 1-2, both
+ *  names ≥4 chars) name is impersonation. The trust anchor is the KEY, not the name (Invariant
+ *  10), so this only WARNS — install still proceeds (Invariant 23, non-blocking). */
+function scanLookalike(existing, skill) {
+  for (const e of existing) {
+    const es = e.skill || {};
+    const d = levenshtein(es.name, skill.name);
+    const exact = d === 0;
+    const near = d >= 1 && d <= 2 && String(skill.name).length >= 4 && String(es.name).length >= 4;
+    if (es.author_pubkey !== skill.author_pubkey && (exact || near)) return es.name;
+  }
+  return null;
 }
 
 /**
@@ -93,12 +113,13 @@ export function installEnvelopeIntoDoc(inlineDoc, envelope, { consent } = {}) {
   const existing = zoneEnvelopes(inlineDoc);
   if (existing === null) throw new CliError(2, 'no_skill_zone', {}); // not a skill-host body
   const id = skillId(skill.name, skill.author_pubkey);
+  const lookalike = scanLookalike(existing, skill); // non-blocking warning (Inv 10/23)
   const prevIdx = existing.findIndex((e) => skillId(e.skill.name, e.skill.author_pubkey) === id);
   const prev = prevIdx >= 0 ? existing[prevIdx] : null;
 
   // Same id + byte-identical envelope → already installed, no write.
   if (prev && JSON.stringify(prev) === JSON.stringify(envelope)) {
-    return { newDoc: inlineDoc, changed: false, result: { skillId: id, name: skill.name, kind: skill.kind, verified, provenance: 'installed', status: 'already_installed' } };
+    return { newDoc: inlineDoc, changed: false, result: { skillId: id, name: skill.name, kind: skill.kind, verified, provenance: 'installed', status: 'already_installed', lookalike } };
   }
 
   const merged = prev ? existing.map((e, i) => (i === prevIdx ? envelope : e)) : existing.concat([envelope]);
@@ -112,7 +133,7 @@ export function installEnvelopeIntoDoc(inlineDoc, envelope, { consent } = {}) {
     const oS = new Set(oldP), nS = new Set(newP);
     update = { isUpdate: true, added: newP.filter((p) => !oS.has(p)), removed: oldP.filter((p) => !nS.has(p)) };
   }
-  return { newDoc, changed: true, result: { skillId: id, name: skill.name, kind: skill.kind, verified, provenance: 'installed', status: prev ? 'updated' : 'installed', ...(update ? { update } : {}) } };
+  return { newDoc, changed: true, result: { skillId: id, name: skill.name, kind: skill.kind, verified, provenance: 'installed', status: prev ? 'updated' : 'installed', lookalike, ...(update ? { update } : {}) } };
 }
 
 /**

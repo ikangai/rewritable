@@ -868,6 +868,11 @@ function detectProductKind(fileText) {
         }
         throw e;
       }
+      // Non-blocking lookalike warning (spec §3 / Inv 23) → always to stderr; --json also
+      // carries result.lookalike in the stdout object. The install already succeeded.
+      if (result.lookalike) {
+        process.stderr.write('⚠ rwa install: the name "' + result.name + '" closely matches "' + result.lookalike + '", installed from a DIFFERENT key. The author is identified by the key, not the name — review before trusting.\n');
+      }
       if (jsonMode) {
         process.stdout.write(JSON.stringify(result) + '\n');
       } else {

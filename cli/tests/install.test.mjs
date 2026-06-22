@@ -14,7 +14,7 @@ import { webcrypto } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { applySeedSubs, kindOverrides, replaceInlineDoc, extractInlineDoc } from '../src/seed.mjs';
 import { signingMessage, parseSkillZone, skillId } from '../src/skill-manifest.mjs';
-import { installSkillFile, buildSkillZone } from '../src/install.mjs';
+import { installSkillFile, buildSkillZone, installEnvelopeIntoDoc } from '../src/install.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SEED = path.join(__dirname, '..', '..', 'seeds', 'rewritable.html');
@@ -126,4 +126,72 @@ test('buildSkillZone is deterministic — skillId-sorted, install-order-independ
   const b = await signed(k2, 'zzz', 'compute', [], CODE);
   assert.equal(buildSkillZone([a, b]), buildSkillZone([b, a]), 'zone bytes are order-independent');
   assert.ok(/^<div data-rwa-frozen id="rwa-skills">/.test(buildSkillZone([a, b])), 'zone is the frozen div form');
+});
+
+// I11 §3 — non-blocking lookalike warning (Levenshtein ≤2 OR exact, DIFFERENT key). Mirrors the
+// seed's runtimeReviewSkill lookalike scan; the trust anchor is the key, not the name.
+test('a lookalike name from a DIFFERENT key warns but does NOT block install (exit 0)', async () => {
+  const k1 = await newKey(), k2 = await newKey();
+  const host = makeHostFile();
+  await installSkillFile(writeEnv(await signed(k1, 'github-helper', 'compute', [], CODE)), host, { consent: true });
+  const near = await installSkillFile(writeEnv(await signed(k2, 'github-helpr', 'compute', [], CODE)), host, { consent: true }); // distance 1, diff key
+  assert.equal(near.provenance, 'installed', 'the lookalike still installs (warning is non-blocking)');
+  assert.equal(near.lookalike, 'github-helper', 'the impersonated name is surfaced for the warning');
+  const exact = await installSkillFile(writeEnv(await signed(k2, 'github-helper', 'compute', [], CODE)), host, { consent: true }); // exact name, diff key
+  assert.equal(exact.lookalike, 'github-helper', 'an exact-name spoof from a different key is the strongest lookalike');
+});
+
+test('a same-key update does NOT false-fire as a lookalike', async () => {
+  const k = await newKey();
+  const host = makeHostFile();
+  await installSkillFile(writeEnv(await signed(k, 'gh', 'tool', ['network:api.github.com'], CODE)), host, { consent: true });
+  const up = await installSkillFile(writeEnv(await signed(k, 'gh', 'tool', ['network:api.github.com', 'network:x.com'], CODE, '2.0.0')), host, { consent: true });
+  assert.equal(up.lookalike, null, 'a genuine same-key update is not impersonation');
+});
+
+// locate-zone safety — only a real data-rwa-frozen #rwa-skills zone is a write target; an editable
+// lookalike div is refused cleanly BEFORE any write (no stray inert block left behind).
+test('a non-frozen #rwa-skills div is refused (no_skill_zone) — no stray write', () => {
+  const env = { format: 'rwa-skill/1', skill: { name: 'x', version: '1.0.0', kind: 'compute', permissions: [], author_pubkey: 'AAAA', code: CODE } };
+  assert.throws(() => installEnvelopeIntoDoc('<article>x</article><div id="rwa-skills"></div>', env, { consent: true }), (e) => e.exitCode === 2 && e.subcode === 'no_skill_zone');
+  const ok = installEnvelopeIntoDoc('<article>x</article><div data-rwa-frozen id="rwa-skills"></div>', env, { consent: true });
+  assert.equal(ok.changed, true, 'a genuine frozen zone is accepted');
+});
+
+// spec §3 acceptance gaps (regression pins over already-correct behavior).
+test('re-installing the identical envelope is a no-op (already_installed, file unchanged)', async () => {
+  const k = await newKey();
+  const host = makeHostFile();
+  const envP = writeEnv(await signed(k, 'gh', 'tool', ['network:api.github.com'], CODE));
+  await installSkillFile(envP, host, { consent: true });
+  const after1 = fs.readFileSync(host, 'utf8');
+  const r2 = await installSkillFile(envP, host, { consent: true });
+  assert.equal(r2.status, 'already_installed');
+  assert.equal(fs.readFileSync(host, 'utf8'), after1, 'an idempotent re-install does not rewrite the file');
+});
+
+test('a tampered signature is refused (exit 3) and the host file is untouched', async () => {
+  const k = await newKey();
+  const host = makeHostFile();
+  const env = await signed(k, 'gh', 'tool', ['network:api.github.com'], CODE);
+  env.signature = (env.signature[0] === 'A' ? 'B' : 'A') + env.signature.slice(1); // flip one base64 char
+  const before = fs.readFileSync(host, 'utf8');
+  const envP = writeEnv(env);
+  await expectExit(() => installSkillFile(envP, host, { consent: true }), 3, 'unsigned_capability');
+  assert.equal(fs.readFileSync(host, 'utf8'), before);
+});
+
+test('a compute UPDATE that adds permissions is refused (compute_with_permissions)', async () => {
+  const k = await newKey();
+  const host = makeHostFile();
+  await installSkillFile(writeEnv(await signed(k, 'c', 'compute', [], CODE)), host, { consent: true });
+  const envP = writeEnv(await signed(k, 'c', 'compute', ['network:x.com'], CODE, '2.0.0'));
+  await expectExit(() => installSkillFile(envP, host, { consent: true }), 3, 'compute_with_permissions');
+});
+
+test('a malformed envelope JSON is refused (exit 3 invalid_json)', async () => {
+  const host = makeHostFile();
+  const p = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'rwa-env-')), 'bad.json');
+  fs.writeFileSync(p, '{ not valid json');
+  await expectExit(() => installSkillFile(p, host, { consent: true }), 3, 'invalid_json');
 });
