@@ -62,6 +62,10 @@ check('runtime exposes agents.{list,active,setActive,install,uninstall}',
   const res = await w.runtime.agents.install(await signAgent(k));
   check('install: a signed agent returns ok + agentId', res.ok === true && typeof res.agentId === 'string');
   check('install: list() reports the agent verified:true', w.runtime.agents.list().some(a => a.role === 'reviewer' && a.verified === true));
+  // SD-04 — the LIVE self-description surfaces the installed agent as an affordance (kind:'agent')
+  const desc = w.runtime.describe();
+  check('SD-04: describe() surfaces the installed agent (kind:agent, name:role, provenance:installed)',
+    Array.isArray(desc.affordances) && desc.affordances.some(a => a.kind === 'agent' && a.name === 'reviewer' && a.provenance === 'installed' && a.verified === true));
   check('install: no agent is active by default', w.runtime.agents.active() === null);
   // setActive switches roles
   w.runtime.agents.setActive('reviewer');
@@ -142,6 +146,31 @@ console.log('\n== I12 phase B: role binding ==');
   check('B agents.message: builds {type,id,from_role,to_role,payload} from the active role',
     reqMsg.type === 'request' && reqMsg.from_role === 'editor' && reqMsg.to_role === 'reviewer' && typeof reqMsg.id === 'string' && reqMsg.id.length > 0 && reqMsg.payload.task === 'check');
   w.runtime.agents.setActive(null);
+}
+
+// ── PHASE C2 — the agent install dialog (SHOULD): role + author key + vault namespaces + a
+// system-prompt preview; install offered only for a VERIFIED, gate-passing record.
+console.log('\n== I12 phase C2: agent install dialog ==');
+{
+  const k = await newKey();
+  w.runtime.agents.showInstallDialog(await signAgent(k, { role: 'summarizer', system_prompt: 'You summarize sections concisely and never invent facts.', vault_namespace_set: ['vault:summary-cache'] }));
+  await new Promise(r => setTimeout(r, 30));
+  const card = w.document.getElementById('rwa-agent-install');
+  const html = card ? card.innerHTML : '';
+  check('C2 dialog: shows the role', /summarizer/.test(html));
+  check('C2 dialog: shows the vault namespaces', /summary-cache/.test(html));
+  check('C2 dialog: shows a system-prompt preview', /summarize sections concisely/.test(html));
+  check('C2 dialog: a verified agent offers an install button', !!card && !!card.querySelector('[data-act=install]'));
+  const cx = card && card.querySelector('[data-act=cancel]'); if (cx) cx.onclick();
+  // a tampered (unverified) record: no install button, the reason is shown
+  const env = await signAgent(k, { role: 'tampered-ui' });
+  const bad = { ...env, agent: { ...env.agent, system_prompt: 'changed after signing' } };
+  w.runtime.agents.showInstallDialog(bad);
+  await new Promise(r => setTimeout(r, 30));
+  const card2 = w.document.getElementById('rwa-agent-install');
+  check('C2 dialog: an unverified (tampered) agent suppresses the install button', !!card2 && !card2.querySelector('[data-act=install]'));
+  check('C2 dialog: the tampered record explains the signature does not verify', card2 && /does NOT verify/i.test(card2.innerHTML));
+  const cx2 = card2 && card2.querySelector('[data-act=cancel]'); if (cx2) cx2.onclick();
 }
 
 console.log(`\n== ${pass} pass, ${fail} fail ==`);

@@ -405,3 +405,22 @@ test('agentMessage builds a valid envelope and echoes the correlation id', async
   assert.equal(validateAgentMessage(m).ok, true);
   assert.throws(() => agentMessage('bogus', 'writer', 'reviewer', {}, 'id'), /invalid_agent_message/);
 });
+
+// ── I12 (v0.9 §12) — SD-04: parseAgentZone surfaces installed agents in the self-description,
+// mirroring parseSkillZone. Each agent becomes an affordance {agentId, kind:'agent', name:role,
+// verified, provenance:'installed'} from the frozen #rwa-agents zone (re-verified per signature).
+test('parseAgentZone extracts installed agents from the frozen #rwa-agents zone (verified)', async () => {
+  const { parseAgentZone } = await import('../src/skill-manifest.mjs');
+  const k = await newAgentKey();
+  const env = await signAgent(k, baseAgent(k.pub, { role: 'reviewer' }));
+  const blob = Buffer.from(JSON.stringify(env)).toString('base64');
+  const doc = '<article><div data-rwa-frozen id="rwa-agents"><script type="application/rwa-agent+json">' + blob + '</script></div></article>';
+  const out = parseAgentZone(doc);
+  assert.equal(out.length, 1);
+  assert.deepEqual(out[0], { agentId: agentId('reviewer', k.pub), kind: 'agent', name: 'reviewer', verified: true, provenance: 'installed' });
+});
+test('parseAgentZone returns [] with no zone, and ignores a non-frozen lookalike div', async () => {
+  const { parseAgentZone } = await import('../src/skill-manifest.mjs');
+  assert.deepEqual(parseAgentZone('<article>no zone</article>'), []);
+  assert.deepEqual(parseAgentZone('<div id="rwa-agents"><script type="application/rwa-agent+json">eyJ9</script></div>'), []); // not data-rwa-frozen
+});

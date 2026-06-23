@@ -17,10 +17,10 @@ import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { extractInlineDoc } from '../cli/src/seed.mjs';
 import { findFrozenZones, tagHasFrozenAttr } from '../cli/src/apply-edits.mjs';
-import { parseSkillZone } from '../cli/src/skill-manifest.mjs';
+import { parseSkillZone, parseAgentZone } from '../cli/src/skill-manifest.mjs';
 
 export const SCHEMA_TAG = 'self-description/1';
-export const AFFORDANCE_KINDS = ['view', 'edit-surface', 'tool', 'compute', 'hook'];
+export const AFFORDANCE_KINDS = ['view', 'edit-surface', 'tool', 'compute', 'hook', 'agent'];
 export const PROVENANCES = ['first-party', 'installed'];
 export const SOURCES = ['static', 'live', 'declared'];
 
@@ -112,6 +112,7 @@ export function computeSelfDescription(fileText) {
   const affordances = [
     ...(KIND_PROVIDERS[kind] || []).map((p) => ({ ...p, provenance: 'first-party' })),
     ...parseSkillZone(doc),
+    ...parseAgentZone(doc), // I12/SD-04 — installed agents (kind:'agent', name:role)
   ];
   // frozenZones: same call cli/src/doc.mjs makes, so static and CLI agree (SD-04).
   const frozenZones = findFrozenZones(doc).map((z) => z.name);

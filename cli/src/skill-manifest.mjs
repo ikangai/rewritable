@@ -403,3 +403,38 @@ export function parseSkillZone(doc) {
   }
   return out;
 }
+
+/** Locate the frozen `<div data-rwa-frozen id="rwa-agents">` zone (mirrors extractRwaSkillsZone). */
+function extractRwaAgentsZone(doc) {
+  const open = /<div\b[^>]*\bid="rwa-agents"[^>]*>/i.exec(String(doc || ''));
+  if (!open || !tagHasFrozenAttr(open[0])) return null;
+  const start = open.index + open[0].length;
+  const end = doc.indexOf('</div>', start);
+  return end < 0 ? null : doc.slice(start, end);
+}
+
+/** §12 / SD-04: parse installed agents from the frozen zone, re-verify each signature. Returns
+ *  [{agentId, kind:'agent', name:role, verified, provenance:'installed'}] — an installed agent is
+ *  an affordance the container offers (a role you can act under), mirroring parseSkillZone. */
+export function parseAgentZone(doc) {
+  const zone = extractRwaAgentsZone(doc);
+  if (!zone) return [];
+  const blocks = [...zone.matchAll(/<script\s+type="application\/rwa-agent\+json">([\s\S]*?)<\/script>/g)];
+  const out = [];
+  for (const m of blocks) {
+    let envelope;
+    try { envelope = JSON.parse(Buffer.from(m[1].trim(), 'base64').toString('utf8')); }
+    catch { continue; } // malformed block → skip (never blocks siblings)
+    const agent = envelope && envelope.agent;
+    if (!agent || typeof agent.role !== 'string') continue;
+    const { verified } = verifyAgentEnvelope(envelope);
+    out.push({
+      agentId: agentId(agent.role, agent.author_pubkey),
+      kind: 'agent',
+      name: agent.role,
+      verified,
+      provenance: 'installed',
+    });
+  }
+  return out;
+}

@@ -7199,10 +7199,49 @@ function showSkillInstallDialog(envelope) {
     const ib = card.querySelector('[data-act=install]'); if (ib) ib.onclick = async () => close(await runtimeInstallSkill(envelope));
   }));
 }
-// §1.3 — install trigger: pick a .rwa-skill.json, parse, show the dialog.
+// I12 (v0.9 §12) — the AGENT install dialog (SHOULD): role + author key + vault namespaces +
+// a system-prompt preview (≤200 chars). The install button is offered only for a VERIFIED agent
+// whose record passes the gates; a tampered (unverified) or gate-failing record shows the reason
+// and suppresses install. The trust anchor is the key, not the role.
+function showAgentInstallDialog(envelope) {
+  const agent = (envelope && envelope.agent) || {};
+  const signed = !!(envelope && envelope.signature);
+  return Promise.resolve(_agVerify(envelope)).then(verified => new Promise(resolve => {
+    const gates = _agValidateInstall(agent, signed);
+    const prev = document.getElementById('rwa-agent-install'); if (prev) prev.remove();
+    const overlay = document.createElement('div'); overlay.id = 'rwa-agent-install';
+    overlay.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;';
+    const card = document.createElement('div');
+    card.style.cssText = 'background:#fff;max-width:560px;width:92%;max-height:86vh;overflow:auto;border-radius:18px;padding:26px 28px;font:14px/1.5 var(--font-ui,system-ui);box-shadow:0 12px 48px rgba(0,0,0,.28);';
+    const nsSet = Array.isArray(agent.vault_namespace_set) ? agent.vault_namespace_set : [];
+    const nsHtml = nsSet.length ? '<ul style="margin:.4em 0;padding-left:1.2em">' + nsSet.map(n => '<li>' + _skEsc(n) + '</li>').join('') + '</ul>' : '<p style="color:#666">No credential namespaces — this role reads/writes no vault entries.</p>';
+    const promptPreview = String(agent.system_prompt == null ? '' : agent.system_prompt).slice(0, 200);
+    const authorHtml = signed
+      ? (verified ? 'Signed by key <code>' + _skEsc(String(agent.author_pubkey).slice(0, 12)) + '…</code>' : '⚠ Signature does NOT verify — this record was modified. It cannot be activated.')
+      : '⚠ Unsigned — agents must be signed; this cannot be installed.';
+    const canInstall = gates.ok && verified;
+    card.innerHTML =
+      '<h2 style="margin:0 0 .2em;font-size:1.25rem">Install agent role “' + _skEsc(agent.role) + '”?</h2>' +
+      '<p style="margin:.2em 0 1em;color:#444"><strong>Purpose.</strong> ' + _skEsc(agent.description || '(no description provided)') + '</p>' +
+      '<p style="margin:.2em 0"><strong>Author.</strong> ' + authorHtml + ' <em>The author is identified by the key, not the role name.</em></p>' +
+      '<p style="margin:1em 0 .2em"><strong>Credentials this role can reach</strong></p>' + nsHtml +
+      '<p style="margin:1em 0 .2em"><strong>Role instructions (preview)</strong></p><pre style="white-space:pre-wrap;background:#f6f6f6;border-radius:8px;padding:8px 10px;margin:.2em 0;color:#333;font:12px/1.5 var(--font-mono,monospace)">' + _skEsc(promptPreview) + (String(agent.system_prompt || '').length > 200 ? '…' : '') + '</pre>' +
+      '<p style="margin:1.2em 0 .4em;color:#444"><strong>An active role drives edits with its own instructions and reaches only its declared credentials.</strong> The runtime shows you what the role <em>can</em> do, not whether it <em>should</em>.</p>' +
+      (gates.ok ? '' : '<p style="background:#fee2e2;border-radius:8px;padding:8px 10px;margin:.6em 0">Cannot install: ' + _skEsc(gates.errors.join(', ')) + '</p>') +
+      '<div style="display:flex;gap:10px;margin-top:1.2em;justify-content:flex-end">' +
+        '<button data-act="cancel" style="padding:9px 16px;border:1px solid #ccc;border-radius:10px;background:#fff;cursor:pointer">Cancel</button>' +
+        (canInstall ? '<button data-act="install" style="padding:9px 16px;border:none;border-radius:10px;background:var(--gray-900,#111);color:#fff;cursor:pointer">I have reviewed this role and want to install it</button>' : '') +
+      '</div>';
+    overlay.appendChild(card); document.body.appendChild(overlay);
+    const close = (r) => { overlay.remove(); resolve(r); };
+    card.querySelector('[data-act=cancel]').onclick = () => close({ ok: false, errors: ['cancelled'] });
+    const ib = card.querySelector('[data-act=install]'); if (ib) ib.onclick = async () => close(await runtimeInstallAgent(envelope));
+  }));
+}
+// §1.3 / §12 — install trigger: pick a .rwa-skill.json OR .rwa-agent.json, parse, dispatch by format.
 function runtimePromptInstall() {
-  const inp = document.createElement('input'); inp.type = 'file'; inp.accept = '.rwa-skill.json,application/json,.json';
-  inp.onchange = () => { const f = inp.files && inp.files[0]; if (!f) return; const rd = new FileReader(); rd.onload = () => { let env; try { env = JSON.parse(rd.result); } catch (_) { setStatus && setStatus('err', 'invalid .rwa-skill.json'); return; } showSkillInstallDialog(env); }; rd.readAsText(f); };
+  const inp = document.createElement('input'); inp.type = 'file'; inp.accept = '.rwa-skill.json,.rwa-agent.json,application/json,.json';
+  inp.onchange = () => { const f = inp.files && inp.files[0]; if (!f) return; const rd = new FileReader(); rd.onload = () => { let env; try { env = JSON.parse(rd.result); } catch (_) { setStatus && setStatus('err', 'invalid skill/agent JSON'); return; } if (env && env.format === 'rwa-agent/1') showAgentInstallDialog(env); else showSkillInstallDialog(env); }; rd.readAsText(f); };
   inp.click();
 }
 
@@ -7422,6 +7461,15 @@ function runtimeDescribe() {
     const key = s.kind + '\0' + s.name;
     if (seen.has(key)) continue;
     affordances.push({ kind: s.kind, name: s.name, skillId: s.skillId, provenance: 'installed', verified: s.verified || false });
+    seen.add(key);
+  }
+  // I12/SD-04 — union INSTALLED agents (kind:'agent', name:role). Same shape as the static
+  // parseAgentZone projection so live == static (cross-surface affordance convergence).
+  for (const a of installedAgents.values()) {
+    if (!a || typeof a.role !== 'string') continue;
+    const key = 'agent\0' + a.role;
+    if (seen.has(key)) continue;
+    affordances.push({ kind: 'agent', name: a.role, agentId: a.agentId, provenance: 'installed', verified: a.verified || false });
     seen.add(key);
   }
   return {
@@ -8622,7 +8670,7 @@ document.addEventListener('keydown', e => {
       showInstallDialog: showSkillInstallDialog, // v0.8 §1 — render the consent dialog for an envelope → resolves with the choice
       promptInstall: runtimePromptInstall, // v0.8 §1.3 — pick a .rwa-skill.json → show the dialog
       vault: { get: runtimeVaultGet, set: runtimeVaultSet, has: runtimeVaultHas, namespaces: runtimeVaultNamespaces, unlock: runtimeVaultUnlock, lock: runtimeVaultLock, isLocked: runtimeVaultIsLocked }, // v0.8 §6
-      agents: { list: runtimeListAgents, active: runtimeAgentActive, setActive: runtimeSetActiveAgent, install: runtimeInstallAgent, uninstall: runtimeUninstallAgent, message: runtimeAgentMessage }, // v0.9 §12 — multi-agent roles
+      agents: { list: runtimeListAgents, active: runtimeAgentActive, setActive: runtimeSetActiveAgent, install: runtimeInstallAgent, uninstall: runtimeUninstallAgent, message: runtimeAgentMessage, showInstallDialog: showAgentInstallDialog }, // v0.9 §12 — multi-agent roles
     };
     // `status` is a getter so each read returns a fresh snapshot of
     // dirty/fsa/storage; an enumerable data prop would let stale references
