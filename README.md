@@ -184,6 +184,19 @@ Publishing (above) shares an immutable snapshot. The **hosted runtime** is its w
 
 This is the foundation under remote-edit surfaces (a Telegram bot, a phone line). Self-host it like the share service — serve `/r/:id` per-subdomain (as `/s/` shares are) so each hosted doc's browser storage is origin-isolated. Design + build notes: [`docs/plans/2026-06-07-hosted-edit-foundation-design.md`](docs/plans/2026-06-07-hosted-edit-foundation-design.md).
 
+## Installing skills (the actions layer)
+
+A **skill-host** rewritable (`rwa new skill-host`) can install **skills** — small, permission-gated programs that run inside it. Each ships as a signed `.rwa-skill.json` envelope; installing one opens a **consent dialog** that is the trust anchor: it shows the author's key fingerprint, the exact capabilities requested in plain English, a compound-risk callout, and the code itself. Nothing runs until you affirm.
+
+- **Isolation** — every skill runs in its own Web Worker with capability globals removed (`fetch`, `eval`, `Function`, `indexedDB`, `WebAssembly`, …) and a worker-scoped CSP that blocks remote `import()`. A skill reaches the outside world only through a narrow, per-call-gated bridge.
+- **Permission tiers** — a skill declares exactly what it needs: `network:<host>` (origin-scoped fetch), `vault:<ns>` (machine-local encrypted credentials, never in the file), `bus:<topic>` (messages to other rewritables on the machine), `fsa:<scope>` (scoped OPFS files), `idb:<store>` (a scoped data store). The runtime enforces each on every call — an undeclared destination is denied, not waved through.
+- **Kinds** — `compute` (pure, no bridge), `tool` (bridged, signed), and `hook` (event-triggered: a signed, compute-only skill that fires `on-commit` / `on-open` / `on-mode-change`, fire-and-forget, written to an audit log).
+- **Identity is the key, not the name** — skills are Ed25519-signed; the dialog flags an exact- or near-name match from a *different* author, and a Unicode-homoglyph of a trusted name (cyrillic `а` for latin `a`) is hard-blocked.
+- **Multi-agent roles** — a skill-host can install signed **agents**: named roles (reviewer, writer) each with their own system prompt and scoped credentials, so a workspace can hand work between roles, each reaching only what its role permits.
+- **CLI** — `rwa install <skill.rwa-skill.json> <host.html>` stages a skill into a skill-host offline, gated identically to the browser.
+
+The honest boundary: the runtime shows you what a skill *can* do; it cannot tell you whether it *should*. Within its granted permissions, the skill's code decides what to do — so the human install review is the real trust anchor. Spec: [`docs/specs/re-write-able-actions-spec-v0.8.md`](docs/specs/re-write-able-actions-spec-v0.8.md) (built); the v0.9 additions (more tiers, agents, hooks, confusable detection) are tracked in [`docs/specs/re-write-able-actions-spec-v0.9-open-items.md`](docs/specs/re-write-able-actions-spec-v0.9-open-items.md).
+
 ## Talking to it from a chat or a phone
 
 The messaging and voice surfaces in `surfaces/` are **adapters onto the one contract** — they reimplement no rewritable logic, they shell out to the `rwa` CLI and (for editing) the hosted runtime above. The file stays canonical; each surface is just another door onto *bootstrap / import / modify / describe / publish*.
@@ -198,6 +211,7 @@ The messaging and voice surfaces in `surfaces/` are **adapters onto the one cont
 - [`rwa-edit-dsl-spec.md`](rwa-edit-dsl-spec.md) — the structural-transform DSL layered on rwa-edit/1: a small typed vocabulary (`replace`, `insert`, `delete`, `set_attr`) the runtime compiles to anchor-based edits. Currently rwa-edit-dsl/1 (v0.1).
 - [`docs/specs/rwa-lens-spec.md`](docs/specs/rwa-lens-spec.md) — the lens edit model: a single steerable input with default and anchored states, slash-discriminated content vs. instruction, class-declared locks. Currently rwa-lens/1 (v0.9).
 - [`docs/specs/rwa-operations-api.md`](docs/specs/rwa-operations-api.md) — the surface-agnostic operations contract: the five verbs every surface speaks (`bootstrap / import / modify / describe / publish`) and the three shared wire strings (`rwa-edit/1`, `rwa-edit-dsl/1`, `self-description/1`). The routing index that ties CLI, lens, service, hosted runtime, skill, and the messaging/voice adapters to one contract. Currently v0.1 (draft).
+- [`docs/specs/re-write-able-actions-spec-v0.8.md`](docs/specs/re-write-able-actions-spec-v0.8.md) — the actions/skill layer: signed skills, the permission tiers, the install-consent trust anchor, Worker isolation, the vault. v0.8 (built); v0.9 additions (agents, hooks, `bus:`/`fsa:`/`idb:` tiers, confusable detection) are specified in [`re-write-able-actions-spec-v0.9-open-items.md`](docs/specs/re-write-able-actions-spec-v0.9-open-items.md) (draft).
 - [`CHANGELOG.md`](CHANGELOG.md) — release notes.
 
 ## Related

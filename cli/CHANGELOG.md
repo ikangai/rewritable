@@ -2,6 +2,42 @@
 
 All notable changes to the `rewritable` CLI (`rwa`).
 
+## [0.9.0] - 2026-06-23
+
+### Added
+- **`rwa install <skill.rwa-skill.json> <host.html>`** (v0.9 I11) — the offline,
+  headless counterpart of the browser's install-consent dialog: stage a signed
+  skill into a `skill-host` rewritable. Gates identically to the seed (Ed25519
+  verify, `validateInstall`, dynamic-`import()` reject), requires `--yes` (the
+  offline review signal), splices the verified envelope into the frozen
+  `#rwa-skills` zone (skillId-sorted, atomic write, re-parsed for durability),
+  and warns (non-blocking) on a different-key lookalike. Exit codes 0/1/2/3.
+- **Three new permission tiers in the manifest grammar** (`parsePermission`,
+  `validateInstall`, `permissionToProse`, mirrored from the seed): `bus:<topic>`
+  (I1a), `fsa:<scope>` (I3), `idb:<store>` (I4) — value-validated, with the seed's
+  exact subcodes (`idb_reserved_store`, `idb_vault_store_forbidden`, …).
+- **The `hook` kind** (I8) — `hook:<event>` grammar (`on-commit`/`on-open`/
+  `on-mode-change`, exact enum); a hook is compute-only (non-hook perm →
+  `compute_with_permissions`) and must be signed (`unsigned_capability`).
+- **Unicode-confusable detection** (I5) — `normalizeName` / `skeleton` /
+  `skeletonDistance` (NFKC + a curated cross-script confusables table). `rwa
+  install` hard-blocks a signed homoglyph of a different author's installed skill
+  (`lookalike_skeleton_blocked`) and surfaces a same-key rename (registry-derived
+  `priorNames`).
+- **Agent identity** (I12) — `canonicalAgent` / `agentSigningMessage` / `agentId`
+  / `verifyAgentEnvelope` / `validateAgentInstall` (the `rwa-agent/1` signing
+  canon) + `parseAgentZone` (installed agents surface in `rwa doc`/`rwa ls`
+  self-description as `kind:'agent'` affordances) + the inter-agent
+  `agentMessage` / `validateAgentMessage` bus shape.
+- **Install-dialog update delta** (I10) — `reviewSkill`'s added/removed
+  permission diff against the installed version (consumed by the seed dialog).
+
+### Notes
+- All skill-manifest logic stays byte-mirrored with `seeds/rewritable.html` and
+  pinned by `cli/tests/skill-manifest.test.mjs` + `cli/tests/install.test.mjs`.
+  Self-description additions (`parseAgentZone`, `AFFORDANCE_KINDS += 'agent'`)
+  hold the deep-equal pins in `cli/tests/identity.test.mjs` + `doc.test.mjs`.
+
 ## [0.8.1] - 2026-06-16
 
 ### Security
