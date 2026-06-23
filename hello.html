@@ -6426,21 +6426,58 @@ function runtimeSetView(name) {
     sessionStorage.setItem(rwaViewKey(), '');
   } else {
     const spec = providers.view;
-    if (!spec || spec.name !== name) throw new Error('no registered view named ' + name);
-    validateViewOutput(spec.render(currentDocCache, viewCtx()), spec); // throws → never activates
-    releaseAnchor();
-    if (rwaMode !== 'document') {
-      hideEditTransients();
-      closeRuntimePanels();
-      rwaMode = 'document';
-      emitRuntimeEvent('mode', { mode: rwaMode });
+    if (spec && spec.name === name) {
+      validateViewOutput(spec.render(currentDocCache, viewCtx()), spec); // throws → never activates
+      releaseAnchor();
+      if (rwaMode !== 'document') {
+        hideEditTransients();
+        closeRuntimePanels();
+        rwaMode = 'document';
+        emitRuntimeEvent('mode', { mode: rwaMode });
+      }
+      activeView = spec;
+      sessionStorage.setItem(rwaViewKey(), name);
+    } else {
+      // I7 (v0.9 §8) — an INSTALLED view skill (by skillId or name). Resolve SYNCHRONOUSLY so an
+      // unknown name still throws (unchanged behavior); only a genuine installed view goes async.
+      // Its render() runs in a Worker, so we invoke once, validate the returned HTML main-side (same
+      // contract as a first-party view — no <script>, no reserved ids), and activate a SNAPSHOT
+      // overlay whose sync render() returns the cached HTML. A view never commits (read-only);
+      // re-activate to refresh (auto-refresh-on-change is the deferred `observe` opt-in).
+      const rec = installedSkills.get(name) || Array.from(installedSkills.values()).find(s => s.name === name && s.kind === 'view');
+      if (!rec || rec.kind !== 'view' || !(rec.manifest && rec.manifest.output && rec.manifest.output.kind === 'html-render')) throw new Error('no registered view named ' + name);
+      runtimeActivateInstalledView(rec);
+      return;
     }
-    activeView = spec;
-    sessionStorage.setItem(rwaViewKey(), name);
   }
   if (typeof syncModeChrome === 'function') syncModeChrome();
   if (typeof syncViewChrome === 'function') syncViewChrome();
   getDoc().then(d => renderDoc(canonLF(d)));
+}
+async function runtimeActivateInstalledView(rec) {
+  try {
+    const d = canonLF(await getDoc());
+    const html = String(await runtimeInvokeSkill(rec.skillId, { doc: d, ctx: viewCtx() }));
+    validateViewOutput(html, { name: rec.name }); // throws → never activates (fail-loud, same as first-party)
+    releaseAnchor();
+    if (rwaMode !== 'document') { hideEditTransients(); closeRuntimePanels(); rwaMode = 'document'; emitRuntimeEvent('mode', { mode: rwaMode }); }
+    activeView = { name: rec.name, label: rec.name, skillId: rec.skillId, __provenance: 'installed', __html: html, render() { return this.__html; } };
+    if (typeof syncModeChrome === 'function') syncModeChrome();
+    if (typeof syncViewChrome === 'function') syncViewChrome();
+    renderDoc(d);
+  } catch (e) {
+    setStatus('err', '✗ ' + ((e && e.message) || 'view failed'));
+  }
+}
+// I7 (v0.9 §8) — invoke an INSTALLED edit-surface skill: its run() returns an rwa-edit/1 envelope
+// (a deterministic, model-free transform), which is applied through the SAME validated commit path
+// the agent/lens use (frozen-zone + structural-shape guards, one ⌘Z), attributed to the skill.
+async function runtimeInvokeEditSurface(skillId, input) {
+  const rec = installedSkills.get(skillId);
+  if (!rec || rec.kind !== 'edit-surface') throw new Error('not an edit-surface skill');
+  const envelope = await runtimeInvokeSkill(skillId, input || {});
+  if (!envelope || typeof envelope !== 'object' || envelope.version !== 'rwa-edit/1') throw new Error('invalid_transform_output');
+  return runtimeApplyEnvelope(envelope, { surface: 'skill:edit-surface', actor: 'skill:transform:' + String(skillId).slice(0, 8) });
 }
 function rwaViewKey() { return 'rwa_view_active_' + DOC_UUID; }
 function rwaSlideKey() { return 'rwa_view_slide_' + DOC_UUID; }
@@ -6955,6 +6992,13 @@ function _skValidateInstall(skill, vr) {
   if (skill.kind === 'compute' && perms.length > 0) errors.push('compute_with_permissions');
   // §9 (I8): a hook is compute-only — only hook:<event> perms; any other tier → compute_with_permissions.
   if (skill.kind === 'hook' && perms.some(p => { try { return _skParsePermission(p).tier !== 'hook'; } catch (_) { return false; } })) errors.push('compute_with_permissions');
+  // §8 (I7): view/edit-surface are zero-capability DOM authors — reject any permission + require a
+  // matching typed output contract (view → html-render, edit-surface → dom-transform).
+  if (skill.kind === 'view' || skill.kind === 'edit-surface') {
+    if (perms.length > 0) errors.push('output_skill_with_permissions');
+    const want = skill.kind === 'view' ? 'html-render' : 'dom-transform';
+    if (!skill.output || skill.output.kind !== want) errors.push('invalid_output_kind');
+  }
   if (!vr.signed && perms.length > 0) errors.push('unsigned_with_permissions');
   // Tools AND hooks carry capability (a hook runs autonomously) → must be signed+verified.
   if ((skill.kind === 'tool' || skill.kind === 'hook') && !vr.verified) errors.push('unsigned_capability');
@@ -8741,6 +8785,7 @@ document.addEventListener('keydown', e => {
       describe: runtimeDescribe, // rwa-identity/1 — what this container is + can do
       listSkills: runtimeListSkills, // v0.8 §8 — installed skills (provenance:'installed')
       invokeSkill: runtimeInvokeSkill, // v0.8 §5a — run a skill in an isolated Worker
+      invokeEditSurface: runtimeInvokeEditSurface, // v0.9 §8 (I7) — run an edit-surface skill → apply its rwa-edit/1 transform
       reviewSkill: runtimeReviewSkill, // v0.8 §1 — structured trust info for the install dialog
       installSkill: runtimeInstallSkill, // v0.8 §1/§7 — gates + verify + register + persist to the frozen zone (survives reload)
       uninstallSkill: runtimeUninstallSkill, // v0.8 §7 — remove + persist

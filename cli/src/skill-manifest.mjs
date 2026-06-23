@@ -348,6 +348,13 @@ export function validateInstall(envelope, { signed, verified } = {}) {
   // §9 (I8): a hook is compute-only — only hook:<event> perms are allowed; any other tier (a real
   // capability) is rejected as compute_with_permissions (no network/vault/escalation in a hook).
   if (skill.kind === 'hook' && perms.some((p) => { try { return parsePermission(p).tier !== 'hook'; } catch { return false; } })) errors.push('compute_with_permissions');
+  // §8 (I7): view/edit-surface are zero-capability DOM authors — any permission is rejected (no
+  // render→fetch encoding loop), and they MUST carry a matching typed output contract.
+  if (skill.kind === 'view' || skill.kind === 'edit-surface') {
+    if (perms.length > 0) errors.push('output_skill_with_permissions');
+    const want = skill.kind === 'view' ? 'html-render' : 'dom-transform';
+    if (!skill.output || skill.output.kind !== want) errors.push('invalid_output_kind');
+  }
   if (!signed && perms.length > 0) errors.push('unsigned_with_permissions');
   // Tools AND hooks carry capability (a hook runs autonomously on events) → must be signed+verified.
   if ((skill.kind === 'tool' || skill.kind === 'hook') && !verified) errors.push('unsigned_capability');

@@ -454,3 +454,29 @@ test('validateInstall: an unknown hook event surfaces unknown_permission_tier', 
   const env = { skill: { name: 'h', kind: 'hook', permissions: ['hook:on-render'], author_pubkey: PK_A } };
   assert.ok(validateInstall(env, { signed: true, verified: true }).errors.includes('unknown_permission_tier'));
 });
+
+// ── I7 (v0.9 §8) — installable view / edit-surface (DOM-authoring) skills. New kinds {view,
+// edit-surface}: zero-capability (permissions MUST be empty — no render→fetch loops) with a typed
+// output contract (view → html-render, edit-surface → dom-transform). Unsigned is OK (like compute).
+test('validateInstall accepts a zero-capability view skill (unsigned OK) with output.kind html-render', () => {
+  const env = { skill: { name: 'grid', kind: 'view', permissions: [], output: { kind: 'html-render' }, author_pubkey: PK_A } };
+  assert.equal(validateInstall(env, { signed: false, verified: false }).ok, true);
+});
+test('validateInstall accepts a signed edit-surface with output.kind dom-transform', () => {
+  const env = { skill: { name: 'annotate', kind: 'edit-surface', permissions: [], output: { kind: 'dom-transform', transform_schema: {} }, author_pubkey: PK_A } };
+  assert.equal(validateInstall(env, { signed: true, verified: true }).ok, true);
+});
+test('validateInstall rejects a view/edit-surface that declares any permission (zero-capability)', () => {
+  const v = { skill: { name: 'leaky', kind: 'view', permissions: ['network:api.x.com'], output: { kind: 'html-render' }, author_pubkey: PK_A } };
+  assert.ok(validateInstall(v, { signed: true, verified: true }).errors.includes('output_skill_with_permissions'));
+  const e = { skill: { name: 'leaky2', kind: 'edit-surface', permissions: ['vault:secrets'], output: { kind: 'dom-transform' }, author_pubkey: PK_A } };
+  assert.ok(validateInstall(e, { signed: true, verified: true }).errors.includes('output_skill_with_permissions'));
+});
+test('validateInstall rejects a missing/mismatched output.kind (invalid_output_kind)', () => {
+  const noOut = { skill: { name: 'v', kind: 'view', permissions: [], author_pubkey: PK_A } };
+  assert.ok(validateInstall(noOut, { signed: true, verified: true }).errors.includes('invalid_output_kind'));
+  const mismatch = { skill: { name: 'v2', kind: 'edit-surface', permissions: [], output: { kind: 'html-render' }, author_pubkey: PK_A } };
+  assert.ok(validateInstall(mismatch, { signed: true, verified: true }).errors.includes('invalid_output_kind'));
+  const bogus = { skill: { name: 'v3', kind: 'view', permissions: [], output: { kind: 'paint' }, author_pubkey: PK_A } };
+  assert.ok(validateInstall(bogus, { signed: true, verified: true }).errors.includes('invalid_output_kind'));
+});

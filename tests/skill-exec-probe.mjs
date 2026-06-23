@@ -72,6 +72,12 @@ const FSA_CODE =
 const HOOK_CODE =
   'async function run(input){return {saw:input&&input.event, hasFetch:typeof fetch};}';
 
+// I7 — a view skill returns HTML (rendered in a Worker, validated + applied main-side); compute-only.
+const VIEW_CODE =
+  'async function run(input){return "<div id=probe-view>VIEW-OK fetch:"+typeof fetch+" chars:"+((input&&input.doc&&input.doc.length)||0)+"</div>";}';
+// I7 — an edit-surface skill returns an rwa-edit/1 envelope; a malformed return is rejected.
+const EDIT_BAD_CODE = 'async function run(input){return {not:"an envelope"};}';
+
 // I12 — a skill that does vault ops on input.ns; invoked under a role, the AGENT's
 // vault_namespace_set is the gate (the role NARROWS the skill's own perms).
 const AGENT_VAULT_CODE =
@@ -126,6 +132,9 @@ const AGENT_VAULT_SKILL_ENV = await signEnvelope(agentKey, 'curator-vault', 'too
 // I8 — a signed hook:on-mode-change. setMode fires it in a real Worker (compute-only); the result
 // lands in rwa_hook_log proving firing + execution + the audit trail end-to-end.
 const HOOK_ENV = await signEnvelope(await newKey(), 'mode-auditor', 'hook', ['hook:on-mode-change'], HOOK_CODE);
+// I7 — view (unsigned OK) renders HTML in a Worker; edit-surface returns an rwa-edit/1 envelope.
+const VIEW_ENV = { format: 'rwa-skill/1', skill: { name: 'grid-view', version: '1.0.0', kind: 'view', permissions: [], output: { kind: 'html-render' }, author_pubkey: 'AAAA', code: VIEW_CODE } };
+const EDIT_BAD_ENV = { format: 'rwa-skill/1', skill: { name: 'bad-transform', version: '1.0.0', kind: 'edit-surface', permissions: [], output: { kind: 'dom-transform', transform_schema: {} }, author_pubkey: 'AAAA', code: EDIT_BAD_CODE } };
 
 // ── driver: runs after the runtime boots, writes a verdict to window.__mvp ──
 const driver = `
@@ -145,6 +154,8 @@ const driver = `
   var CURATOR_AGENT_ENV=${JSON.stringify(CURATOR_AGENT_ENV)};
   var AGENT_VAULT_SKILL_ENV=${JSON.stringify(AGENT_VAULT_SKILL_ENV)};
   var HOOK_ENV=${JSON.stringify(HOOK_ENV)};
+  var VIEW_ENV=${JSON.stringify(VIEW_ENV)};
+  var EDIT_BAD_ENV=${JSON.stringify(EDIT_BAD_ENV)};
   var el=document.getElementById('mvp');
   var log=function(m){ if(el) el.textContent+=m+'\\n'; };
   var checks=[]; var ck=function(name,cond,detail){ checks.push({name:name,pass:!!cond,detail:detail||''}); log((cond?'OK   ':'FAIL ')+name+(detail!==undefined?'  ['+detail+']':'')); };
@@ -259,6 +270,24 @@ const driver = `
       ck('§9 hook FIRES + RUNS in a real Worker → result logged to rwa_hook_log', he && he.result && he.result.saw==='on-mode-change', JSON.stringify(he&&he.result));
       ck('§9 hook is COMPUTE-ONLY (no bridge: fetch removed in-Worker)', he && he.result && he.result.hasFetch==='undefined', JSON.stringify(he&&he.result));
     } else { ck('§9 runtime.hookLog exposed', false, 'runtime.hookLog missing'); }
+
+    // I7 (v0.9 §8) — a VIEW skill renders HTML in a real Worker; the runtime validates it main-side
+    // and applies it to #rwa-doc-mount. An EDIT-SURFACE skill returning a non-envelope is rejected.
+    if (typeof R.invokeEditSurface==='function') {
+      var vi=await R.installSkill(VIEW_ENV);
+      ck('install grid-view (view, unsigned → verified:false)', vi.ok && R.listSkills().some(function(s){return s.name==='grid-view'&&s.kind==='view';}));
+      await R.setView(vi.skillId); // async: invoke in Worker → validate → render snapshot
+      var vt=Date.now(), mount;
+      while(Date.now()-vt<4000){ mount=document.getElementById('rwa-doc-mount'); if(mount&&/VIEW-OK/.test(mount.innerHTML)) break; await new Promise(function(r){setTimeout(r,50);}); }
+      out.view=(mount&&mount.innerHTML||'').slice(0,80);
+      ck('§8 view: a view skill RENDERS in a real Worker → HTML applied to the mount', mount&&/VIEW-OK/.test(mount.innerHTML), out.view);
+      ck('§8 view: the view is compute-only (no bridge: fetch undefined in-Worker)', mount&&/fetch:undefined/.test(mount.innerHTML), out.view);
+      R.setView(null);
+      var eb=await R.installSkill(EDIT_BAD_ENV);
+      ck('install bad-transform (edit-surface, unsigned)', eb.ok && R.listSkills().some(function(s){return s.name==='bad-transform'&&s.kind==='edit-surface';}));
+      var esErr=null; try { await R.invokeEditSurface(eb.skillId,{}); } catch(e){ esErr=String(e&&e.message||e); }
+      ck('§8 edit-surface: a non-rwa-edit/1 return is rejected (invalid_transform_output) after a real Worker invoke', esErr&&/invalid_transform_output/.test(esErr), esErr);
+    } else { ck('§8 runtime.invokeEditSurface exposed', false, 'missing'); }
   } catch(e){ ck('no uncaught error during the run', false, String((e&&e.message)||e)); out.error=String((e&&e.message)||e); }
   var passN=checks.filter(function(c){return c.pass;}).length, failN=checks.length-passN;
   window.__mvp={ pass:passN, fail:failN, checks:checks, out:out };

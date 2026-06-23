@@ -316,5 +316,26 @@ console.log('\n== I8: hook kind grammar + install ==');
   check('I8: an installed hook self-describes (kind:hook, provenance:installed)', w.runtime.describe().affordances.some(a => a.kind === 'hook' && a.name === 'auditor' && a.provenance === 'installed'));
 }
 
+// I7 (v0.9 §8) — view / edit-surface (DOM-authoring) skills: new kinds, zero-capability (no perms),
+// typed output contract. They install like skills and self-describe; EXECUTION (render in a Worker,
+// transform → applyEnvelope) is browser-proven (tests/skill-exec-probe.mjs). Unsigned is OK.
+console.log('\n== I7: view / edit-surface kinds ==');
+{
+  const CODE = 'async function run(i,r){return "<p>view</p>";}';
+  const rvView = await w.runtime.reviewSkill(unsigned('grid', 'view', [], CODE));
+  check('I7: an unsigned view skill (output html-render, no perms) passes the gates',
+    w._skValidateInstall({ name: 'grid', kind: 'view', permissions: [], output: { kind: 'html-render' } }, { signed: false, verified: false }).ok === true);
+  check('I7: a view/edit-surface with ANY permission is rejected (output_skill_with_permissions)',
+    w._skValidateInstall({ name: 'leaky', kind: 'view', permissions: ['network:x'], output: { kind: 'html-render' } }, { signed: true, verified: true }).errors.includes('output_skill_with_permissions'));
+  check('I7: a missing/mismatched output.kind is rejected (invalid_output_kind)',
+    w._skValidateInstall({ name: 'v', kind: 'edit-surface', permissions: [], output: { kind: 'html-render' } }, { signed: true, verified: true }).errors.includes('invalid_output_kind'));
+  // install + self-describe (kind surfaces via parseSkillZone; AFFORDANCE_KINDS already has view/edit-surface)
+  const env = { format: 'rwa-skill/1', skill: { name: 'grid', version: '1.0.0', kind: 'view', permissions: [], output: { kind: 'html-render' }, author_pubkey: 'AAAA', code: CODE } };
+  const ins = await w.runtime.installSkill(env);
+  check('I7: a view skill installs + lists as kind:view (unsigned, verified:false)', ins.ok === true && w.runtime.listSkills().some(s => s.name === 'grid' && s.kind === 'view'));
+  check('I7: an installed view self-describes (kind:view, provenance:installed)', w.runtime.describe().affordances.some(a => a.kind === 'view' && a.name === 'grid' && a.provenance === 'installed'));
+  check('I7: runtime exposes invokeEditSurface', typeof w.runtime.invokeEditSurface === 'function');
+}
+
 console.log(`\n== ${pass} pass, ${fail} fail ==`);
 process.exit(fail ? 1 : 0);
