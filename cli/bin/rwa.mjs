@@ -77,6 +77,10 @@ Usage:
                               skill into the frozen #rwa-skills zone. Requires --yes
                               (no dialog to consent in); gate failures are final.
                               --json emits {skillId,name,kind,verified,status}.
+  rwa skill publish <file>    publish a SIGNED .rwa-skill.json to the marketplace
+                              index (POST /skills/publish). The envelope is already
+                              signed — no key needed. Online; --url overrides the
+                              service, --json emits {skillId,registryUrl,verified}.
   rwa skin <path> <name>      apply a named style preset to a rewritable in
                               place (deterministic, offline, model-free). Names:
                               notion-clean, linear-dark, editorial-serif,
@@ -716,6 +720,60 @@ function detectProductKind(fileText) {
           `  URL:     ${result.url}\n` +
           '  Expires: in 24 hours (anonymous share)\n' +
           '  Note:    the hosted copy gets a fresh DOC_UUID (distinct container)\n',
+        );
+      }
+      return;
+    }
+
+    // `rwa skill publish <file.rwa-skill.json> [--url base] [--json]` — publish a SIGNED skill
+    // envelope to the marketplace index (POST /skills/publish, I6 §11). The envelope is already
+    // signed (no key needed). Online by design; exit 4 labeled `publish_error` (like `publish`).
+    if (verb === 'skill') {
+      const sub = rest[0];
+      const subRest = rest.slice(1);
+      if (sub !== 'publish') {
+        process.stderr.write("rwa skill: unknown subcommand '" + (sub || '') + "' (try: rwa skill publish <file>)\n");
+        process.exitCode = 1;
+        return;
+      }
+      const jsonMode = subRest.includes('--json');
+      const urlFlag = getFlag('--url', subRest);
+      const urlIdx = subRest.indexOf('--url');
+      const skip = urlIdx >= 0 ? urlIdx + 1 : -1;
+      const filePath = subRest.find((a, i) => !a.startsWith('-') && i !== skip);
+      const emitSP = (payload) => {
+        if (jsonMode) { process.stderr.write(JSON.stringify(payload) + '\n'); return; }
+        const parts = [payload.code, payload.subcode].filter(Boolean);
+        let line = 'rwa skill publish: ' + parts.join('/');
+        if (payload.details && Object.keys(payload.details).length) line += ' ' + JSON.stringify(payload.details);
+        process.stderr.write(line + '\n');
+      };
+      if (!filePath) { emitSP({ code: 'usage_error', subcode: 'missing_file_arg' }); process.exitCode = 1; return; }
+      if (urlFlag.present && (urlFlag.value === undefined || urlFlag.value.startsWith('-'))) {
+        emitSP({ code: 'usage_error', subcode: 'missing_flag_value', details: { flag: '--url' } }); process.exitCode = 1; return;
+      }
+      const baseUrl = urlFlag.value || process.env.RWA_PUBLISH_URL || undefined;
+      const { skillPublishCmd } = await import('../src/skill-publish.mjs');
+      let result;
+      try {
+        result = await skillPublishCmd(filePath, { baseUrl });
+      } catch (e) {
+        if (e && typeof e.exitCode === 'number') {
+          const code = e.exitCode === 4 ? 'publish_error' : codeName(e.exitCode);
+          emitSP({ code, subcode: e.subcode, details: e.details });
+          process.exitCode = e.exitCode;
+          return;
+        }
+        throw e;
+      }
+      if (jsonMode) {
+        process.stdout.write(JSON.stringify(result) + '\n');
+      } else {
+        process.stdout.write(
+          '✓ Published skill to the index!\n' +
+          `  skillId:  ${result.skillId}\n` +
+          `  URL:      ${result.registryUrl}\n` +
+          `  verified: ${result.verified}\n`,
         );
       }
       return;
