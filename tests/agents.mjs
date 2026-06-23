@@ -135,6 +135,13 @@ console.log('\n== I12 phase B: role binding ==');
   const noop = await w.runtime.installSkill({ format: 'rwa-skill/1', skill: { name: 'noop', version: '1.0.0', kind: 'compute', permissions: [], author_pubkey: 'AAAA', code: 'async function run(i){return 1}' } });
   let e1 = null; try { await w.runtime.invokeSkill(noop.skillId, {}, { agentRole: 'ghost' }); } catch (e) { e1 = e; }
   check('B invokeSkill: an unknown agentRole rejects (agent_not_found) before spawning a Worker', e1 && /agent_not_found/.test(String(e1.message || e1)));
+  // I12 — the inter-agent bus message shape (data-model). runtime.agents.message stamps the active
+  // role as from_role + a fresh correlation id for a request.
+  w.runtime.agents.setActive('editor');
+  const reqMsg = w.runtime.agents.message('request', 'reviewer', { task: 'check' });
+  check('B agents.message: builds {type,id,from_role,to_role,payload} from the active role',
+    reqMsg.type === 'request' && reqMsg.from_role === 'editor' && reqMsg.to_role === 'reviewer' && typeof reqMsg.id === 'string' && reqMsg.id.length > 0 && reqMsg.payload.task === 'check');
+  w.runtime.agents.setActive(null);
 }
 
 console.log(`\n== ${pass} pass, ${fail} fail ==`);

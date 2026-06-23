@@ -6544,6 +6544,30 @@ function _agValidateInstall(agent, signed) {
   if (!signed) errors.push('unsigned_agent');
   return { ok: errors.length === 0, errors };
 }
+// §12 inter-agent bus message shape (mirror of cli validateAgentMessage/agentMessage). Data-model
+// only; the request→response choreography is the conductor's job, correlated by id.
+function _agValidateMessage(m) {
+  m = m || {}; const errors = [];
+  if (m.type !== 'request' && m.type !== 'response') errors.push('invalid_type');
+  if (typeof m.id !== 'string' || !m.id) errors.push('invalid_id');
+  if (typeof m.from_role !== 'string' || !_AG_ROLE_RE.test(m.from_role)) errors.push('invalid_from_role');
+  if (typeof m.to_role !== 'string' || !_AG_ROLE_RE.test(m.to_role)) errors.push('invalid_to_role');
+  if (!('payload' in m)) errors.push('missing_payload');
+  return { ok: errors.length === 0, errors };
+}
+function _agBuildMessage(type, fromRole, toRole, payload, id) {
+  const m = { type, id, from_role: fromRole, to_role: toRole, payload };
+  const v = _agValidateMessage(m);
+  if (!v.ok) throw new RwaEditError('invalid_agent_message', null, { errors: v.errors });
+  return m;
+}
+// runtime.agents.message — convenience builder from the ACTIVE role. A request mints a fresh
+// correlation id; a response echoes the request's id (pass it as `id`). The caller publishes it
+// over the bus (a conductor skill with bus:agents:* permission), per §12.
+function runtimeAgentMessage(type, toRole, payload, id) {
+  if (!activeAgentRole) throw new RwaEditError('no_active_agent', null, {});
+  return _agBuildMessage(type, activeAgentRole, toRole, payload, id || (type === 'request' ? crypto.randomUUID() : undefined));
+}
 // Locate the inner HTML of the agent-unreachable <div data-rwa-frozen id="rwa-skills">
 // in the DOC TEXT (boot has the doc string before render). Only the frozen zone is
 // trusted; base64 envelopes contain no </div> so a flat scan is safe.
@@ -8598,7 +8622,7 @@ document.addEventListener('keydown', e => {
       showInstallDialog: showSkillInstallDialog, // v0.8 §1 — render the consent dialog for an envelope → resolves with the choice
       promptInstall: runtimePromptInstall, // v0.8 §1.3 — pick a .rwa-skill.json → show the dialog
       vault: { get: runtimeVaultGet, set: runtimeVaultSet, has: runtimeVaultHas, namespaces: runtimeVaultNamespaces, unlock: runtimeVaultUnlock, lock: runtimeVaultLock, isLocked: runtimeVaultIsLocked }, // v0.8 §6
-      agents: { list: runtimeListAgents, active: runtimeAgentActive, setActive: runtimeSetActiveAgent, install: runtimeInstallAgent, uninstall: runtimeUninstallAgent }, // v0.9 §12 — multi-agent roles
+      agents: { list: runtimeListAgents, active: runtimeAgentActive, setActive: runtimeSetActiveAgent, install: runtimeInstallAgent, uninstall: runtimeUninstallAgent, message: runtimeAgentMessage }, // v0.9 §12 — multi-agent roles
     };
     // `status` is a getter so each read returns a fresh snapshot of
     // dirty/fsa/storage; an enumerable data prop would let stale references

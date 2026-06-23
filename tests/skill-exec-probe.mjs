@@ -21,7 +21,7 @@ import path from 'node:path';
 import { webcrypto } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { applySeedSubs, kindOverrides, replaceInlineDoc } from '../cli/src/seed.mjs';
-import { signingMessage } from '../cli/src/skill-manifest.mjs';
+import { signingMessage, agentSigningMessage } from '../cli/src/skill-manifest.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SEED = path.join(__dirname, '..', 'seeds', 'rewritable.html');
@@ -68,10 +68,23 @@ const FSA_CODE =
   'try{await r.fs.read("../secret");res.traversal="REACHED";}catch(e){res.traversal=String(e.message);}' +
   'return res;}';
 
+// I12 — a skill that does vault ops on input.ns; invoked under a role, the AGENT's
+// vault_namespace_set is the gate (the role NARROWS the skill's own perms).
+const AGENT_VAULT_CODE =
+  'async function run(input,r){var res={};' +
+  'try{await r.vault.set(input.ns,"k","v-"+input.ns);res.set=true;}catch(e){res.set=String(e.message);}' +
+  'try{res.got=await r.vault.get(input.ns,"k");}catch(e){res.got=String(e.message);}' +
+  'return res;}';
+
 async function newKey() {
   const kp = await webcrypto.subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify']);
   const pub = b64(new Uint8Array(await webcrypto.subtle.exportKey('raw', kp.publicKey)));
   return { kp, pub };
+}
+async function signAgentEnvelope(key, over = {}) {
+  const agent = { role: 'curator', version: '1.0.0', system_prompt: 'You curate.', vault_namespace_set: ['vault:curated'], description: 'Curator', author_pubkey: key.pub, ...over };
+  const sig = new Uint8Array(await webcrypto.subtle.sign({ name: 'Ed25519' }, key.kp.privateKey, agentSigningMessage(agent)));
+  return { format: 'rwa-agent/1', agent, signature: b64(sig) };
 }
 async function signEnvelope(key, name, kind, permissions, code, version = '1.0.0') {
   const manifest = { name, version, kind, permissions, author_pubkey: key.pub };
@@ -100,6 +113,12 @@ const HOMO_ENV = await signEnvelope(homoKey, 'nеt-prоbе', 'tool', ['network:e
 const renameKey = await newKey();
 const RENAME_A_ENV = await signEnvelope(renameKey, 'doc-helper', 'tool', ['network:api.github.com'], NETPROBE_CODE);
 const RENAME_B_ENV = await signEnvelope(renameKey, 'doc-assistant', 'tool', ['network:api.github.com'], NETPROBE_CODE);
+// I12 — a signed agent (role 'curator', vault set ['vault:curated']) + a tool that vaults on
+// input.ns. Invoked under {agentRole:'curator'}: 'curated' (in the role set) round-trips; 'wider'
+// (in the SKILL's perms but NOT the role set) is denied — the role NARROWS the skill.
+const agentKey = await newKey();
+const CURATOR_AGENT_ENV = await signAgentEnvelope(agentKey);
+const AGENT_VAULT_SKILL_ENV = await signEnvelope(agentKey, 'curator-vault', 'tool', ['vault:curated', 'vault:wider'], AGENT_VAULT_CODE);
 
 // ── driver: runs after the runtime boots, writes a verdict to window.__mvp ──
 const driver = `
@@ -116,6 +135,8 @@ const driver = `
   var HOMO_ENV=${JSON.stringify(HOMO_ENV)};
   var RENAME_A_ENV=${JSON.stringify(RENAME_A_ENV)};
   var RENAME_B_ENV=${JSON.stringify(RENAME_B_ENV)};
+  var CURATOR_AGENT_ENV=${JSON.stringify(CURATOR_AGENT_ENV)};
+  var AGENT_VAULT_SKILL_ENV=${JSON.stringify(AGENT_VAULT_SKILL_ENV)};
   var el=document.getElementById('mvp');
   var log=function(m){ if(el) el.textContent+=m+'\\n'; };
   var checks=[]; var ck=function(name,cond,detail){ checks.push({name:name,pass:!!cond,detail:detail||''}); log((cond?'OK   ':'FAIL ')+name+(detail!==undefined?'  ['+detail+']':'')); };
@@ -197,6 +218,24 @@ const driver = `
     var ra=await R.installSkill(RENAME_A_ENV); ck('install doc-helper (rename baseline)', ra.ok===true);
     var rvRen=await R.reviewSkill(RENAME_B_ENV); out.rename=rvRen&&rvRen.priorNames;
     ck('§4 I5: name_history (real IndexedDB) surfaces the same-key prior name on a rename', rvRen && Array.isArray(rvRen.priorNames) && rvRen.priorNames.some(function(p){return p.name==='doc-helper';}), JSON.stringify(rvRen&&rvRen.priorNames));
+
+    // I12 (v0.9 §12) — multi-agent registry + ROLE-SCOPED VAULT through the real Worker bridge.
+    if (R.agents && typeof R.agents.install==='function') {
+      var ai=await R.agents.install(CURATOR_AGENT_ENV);
+      ck('§12 agent install: a signed agent registers verified:true', ai.ok===true && R.agents.list().some(function(a){return a.role==='curator'&&a.verified===true;}), JSON.stringify(ai));
+      R.agents.setActive('curator');
+      ck('§12 agents.active(): setActive switches the role', (R.agents.active()||{}).role==='curator');
+      var avs=await R.installSkill(AGENT_VAULT_SKILL_ENV);
+      ck('install curator-vault (tool, signed → verified:true)', avs.ok && nameVerified('curator-vault')===true);
+      await R.vault.unlock('probe-pass'); // the §6 test locked it; re-unlock for the role-scoped round-trip
+      // In-set namespace round-trips through the role-scoped gate.
+      var inset=await R.invokeSkill(avs.skillId,{ns:'curated'},{agentRole:'curator'}); out.agentVaultInset=inset;
+      ck('§12 role-scoped vault: an IN-SET namespace round-trips in a real Worker', inset && inset.set===true && inset.got==='v-curated', JSON.stringify(inset));
+      // 'wider' is in the SKILL's perms but NOT the agent's set → the role narrows it → denied.
+      var outset=await R.invokeSkill(avs.skillId,{ns:'wider'},{agentRole:'curator'}); out.agentVaultOutset=outset;
+      ck('§12 role-scoped vault: a namespace OUTSIDE the role set is denied (vault_namespace_denied), even though the skill declares it', outset && outset.set==='vault_namespace_denied', JSON.stringify(outset));
+      R.agents.setActive(null);
+    } else { ck('§12 runtime.agents exposed', false, 'runtime.agents missing'); }
   } catch(e){ ck('no uncaught error during the run', false, String((e&&e.message)||e)); out.error=String((e&&e.message)||e); }
   var passN=checks.filter(function(c){return c.pass;}).length, failN=checks.length-passN;
   window.__mvp={ pass:passN, fail:failN, checks:checks, out:out };

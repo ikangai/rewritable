@@ -386,3 +386,22 @@ test('validateAgentInstall: vault_namespace_set is vault-only; a network entry i
   const unk = await signAgent(k, baseAgent(k.pub, { vault_namespace_set: ['hook:on-commit'] }));
   assert.ok(validateAgentInstall(unk, { signed: true, verified: true }).errors.includes('unknown_permission_tier'));
 });
+
+// ── I12 (v0.9 §12) — inter-agent bus message shape (data-model only; choreography is the
+// conductor's job). A message is {type:'request'|'response', id, from_role, to_role, payload} on
+// agents:* bus topics; correlation by id (requester UUID echoed by responder).
+test('validateAgentMessage accepts a well-formed request/response and rejects malformed', async () => {
+  const { validateAgentMessage } = await import('../src/skill-manifest.mjs');
+  assert.equal(validateAgentMessage({ type: 'request', id: 'u1', from_role: 'writer', to_role: 'reviewer', payload: { x: 1 } }).ok, true);
+  assert.equal(validateAgentMessage({ type: 'response', id: 'u1', from_role: 'reviewer', to_role: 'writer', payload: null }).ok, true);
+  assert.ok(!validateAgentMessage({ type: 'gossip', id: 'u1', from_role: 'a', to_role: 'b', payload: 1 }).ok); // bad type
+  assert.ok(!validateAgentMessage({ type: 'request', id: '', from_role: 'a', to_role: 'b', payload: 1 }).ok); // empty id
+  assert.ok(!validateAgentMessage({ type: 'request', id: 'u1', from_role: 'Bad Role!', to_role: 'b', payload: 1 }).ok); // bad role
+});
+test('agentMessage builds a valid envelope and echoes the correlation id', async () => {
+  const { agentMessage, validateAgentMessage } = await import('../src/skill-manifest.mjs');
+  const m = agentMessage('request', 'writer', 'reviewer', { task: 'check' }, 'corr-123');
+  assert.deepEqual(m, { type: 'request', id: 'corr-123', from_role: 'writer', to_role: 'reviewer', payload: { task: 'check' } });
+  assert.equal(validateAgentMessage(m).ok, true);
+  assert.throws(() => agentMessage('bogus', 'writer', 'reviewer', {}, 'id'), /invalid_agent_message/);
+});

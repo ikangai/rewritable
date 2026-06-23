@@ -290,6 +290,30 @@ export function validateAgentInstall(envelope, { signed, verified } = {}) {
   return { ok: errors.length === 0, errors };
 }
 
+// §12 inter-agent bus message: {type:'request'|'response', id, from_role, to_role, payload} on
+// agents:* topics. Data-model only — the request→response choreography (wait/timeout) is the
+// conductor's responsibility, correlated by `id` (the requester's UUID, echoed by the responder).
+export function validateAgentMessage(m) {
+  const errors = [];
+  m = m || {};
+  if (m.type !== 'request' && m.type !== 'response') errors.push('invalid_type');
+  if (typeof m.id !== 'string' || !m.id) errors.push('invalid_id');
+  if (typeof m.from_role !== 'string' || !ROLE_RE.test(m.from_role)) errors.push('invalid_from_role');
+  if (typeof m.to_role !== 'string' || !ROLE_RE.test(m.to_role)) errors.push('invalid_to_role');
+  if (!('payload' in m)) errors.push('missing_payload');
+  return { ok: errors.length === 0, errors };
+}
+
+/** Build (and validate) an inter-agent bus message envelope. Throws invalid_agent_message if the
+ *  shape is bad. The caller supplies the correlation id (a fresh UUID for a request; the request's
+ *  id echoed for a response). */
+export function agentMessage(type, fromRole, toRole, payload, id) {
+  const m = { type, id, from_role: fromRole, to_role: toRole, payload };
+  const v = validateAgentMessage(m);
+  if (!v.ok) throw new Error('invalid_agent_message: ' + v.errors.join(','));
+  return m;
+}
+
 /** §3.4 install gates. Pure; takes the verification result so it stays synchronous. */
 export function validateInstall(envelope, { signed, verified } = {}) {
   const skill = (envelope && envelope.skill) || {};
