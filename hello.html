@@ -407,7 +407,7 @@ window.ANCHORABLE_TAGS = ANCHORABLE_TAGS; // expose for tests
 // ─── Storage ────────────────────────────────────────────────────────
 const RWA = {
   DB:'rwa_'+DOC_UUID, KEY:'self',
-  DOC:'rwa_doc', UNDO:'rwa_undo', HIST:'rwa_hist', FSA:'rwa_fsa', STATE:'rwa_state', VAULT:'rwa_vault',
+  DOC:'rwa_doc', UNDO:'rwa_undo', HIST:'rwa_hist', FSA:'rwa_fsa', STATE:'rwa_state', VAULT:'rwa_vault', SOURCES:'rwa_sources',
   UNDO_CAP:10, HIST_CAP:1000, NUDGE_THRESHOLD:5,
   K_API:'rwa_apikey', K_MODEL:'rwa_model', K_BACKEND:'rwa_backend',
   // Per-backend base-URL overrides for local OpenAI-compatible servers.
@@ -486,7 +486,7 @@ try {
 const canonLF = s => s == null ? '' : String(s).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
 
 let _db;
-const REQUIRED_STORES = [RWA.DOC, RWA.UNDO, RWA.HIST, RWA.FSA, RWA.STATE, RWA.VAULT];
+const REQUIRED_STORES = [RWA.DOC, RWA.UNDO, RWA.HIST, RWA.FSA, RWA.STATE, RWA.VAULT, RWA.SOURCES];
 // User-declared store registry. Persisted to RWA.STATE so declarations survive
 // reload. The openDB() upgrade handler creates declared stores on every bump.
 // Populated at bootstrap via loadUserStoreDecls(); mutated by runtime.db.open.
@@ -6522,6 +6522,60 @@ async function readTrustworthySkills(doc) {
   }
   return out;
 }
+// I5 (v0.9 §4) — per-author source index (rwa_sources, keyed by public key):
+//   { pubkey, count, first_seen, name_history:[{ name, first_seen_at_name }] }
+// name_history is APPEND-ONLY and holds one entry per DISTINCT name a key has published, in first-
+// seen order (Invariant 22). It anchors author identity across renames: the install dialog shows a
+// same-key name change ("previously published [old]"). DATES are best-effort — the frozen-zone bytes
+// carry no timestamps (determinism), so a cleared-IDB reload reconciles names from the in-file
+// manifests with the reconcile time as first_seen_at_name. Identity itself is always the key.
+async function _skSourceGet(pubkey) {
+  if (!pubkey) return null;
+  try { return (await idbGet(RWA.SOURCES, pubkey)) || null; } catch (_) { return null; }
+}
+// Append (name, now) for a key, creating the record if absent. Idempotent per distinct name.
+async function _skSourceRecord(pubkey, name, at) {
+  if (!pubkey || !name) return;
+  const now = at || Date.now();
+  let rec = await _skSourceGet(pubkey);
+  if (!rec) rec = { pubkey, count: 0, first_seen: now, name_history: [] };
+  if (!Array.isArray(rec.name_history)) rec.name_history = [];
+  if (!rec.name_history.some(e => e.name === name)) rec.name_history.push({ name, first_seen_at_name: now });
+  rec.count = (rec.count | 0) + 1;
+  try { await idbPut(RWA.SOURCES, rec, pubkey); } catch (_) { /* best-effort; never blocks an install */ }
+}
+// Boot reconcile: ensure every (pubkey, name) present in the live registry has a name_history entry.
+// Rebuilds from the in-file manifests so an IDB-cleared reload still knows the recorded renames.
+async function runtimeBuildSourceIndex() {
+  const now = Date.now(), byKey = new Map();
+  for (const s of installedSkills.values()) {
+    const pk = s.manifest && s.manifest.author_pubkey;
+    if (!pk || !s.name) continue;
+    if (!byKey.has(pk)) byKey.set(pk, new Set());
+    byKey.get(pk).add(s.name);
+  }
+  for (const [pk, names] of byKey) {
+    let rec = await _skSourceGet(pk);
+    if (!rec) rec = { pubkey: pk, count: 0, first_seen: now, name_history: [] };
+    if (!Array.isArray(rec.name_history)) rec.name_history = [];
+    const known = new Set(rec.name_history.map(e => e.name));
+    let changed = false;
+    for (const nm of names) if (!known.has(nm)) { rec.name_history.push({ name: nm, first_seen_at_name: now }); changed = true; }
+    if ((rec.count | 0) < names.size) { rec.count = names.size; changed = true; }
+    if (changed) { try { await idbPut(RWA.SOURCES, rec, pk); } catch (_) {} }
+  }
+}
+// What prior names has this author (key) published, other than the incoming one? Returns the prior
+// names (newest-first) + the most-recent prior, for the dialog's rename note. A rename surfaces only
+// when the incoming name is genuinely NEW for the key (so a same-name re-install / I10 update is not
+// a "rename").
+async function _skNameChange(pubkey, name) {
+  const rec = await _skSourceGet(pubkey);
+  const hist = (rec && Array.isArray(rec.name_history)) ? rec.name_history : [];
+  const priorNames = hist.filter(e => e.name !== name).map(e => ({ name: e.name, date: e.first_seen_at_name })).reverse();
+  const isRename = priorNames.length > 0 && !hist.some(e => e.name === name);
+  return { priorNames, nameChange: isRename ? { prev: priorNames[0] } : null };
+}
 function runtimeListSkills() {
   return Array.from(installedSkills.values()).map(s => ({ skillId: s.skillId, kind: s.kind, name: s.name, verified: s.verified }));
 }
@@ -6813,13 +6867,17 @@ async function runtimeReviewSkill(envelope) {
       update = { isUpdate: true, added: added.map(p => ({ perm: p, prose: _skPermProse(p) })), removed: removed.map(p => ({ perm: p, prose: _skPermProse(p) })), changed: added.length > 0 || removed.length > 0 };
     }
   } catch (_) { /* a malformed name/id can't match an install → treat as fresh; gates reject it downstream */ }
+  // I5 — per-author name_history: surface a same-key rename so identity reads across name changes.
+  const nameInfo = await _skNameChange(skill.author_pubkey, skill.name);
   return {
     name: skill.name, version: skill.version, kind: skill.kind,
     purpose: skill.description || '(no description provided)',
     author_pubkey: skill.author_pubkey, signed: vr.signed, verified: vr.verified,
     permissions: perms.map(p => ({ perm: p, prose: _skPermProse(p) })),
     compoundRisk: _skCompoundRisk(perms), scanNotes: _skCapabilityScan(skill.code),
-    lookalike, lookalikeKind, lookalikeBlock, gates: _skValidateInstall(skill, vr), update,
+    lookalike, lookalikeKind, lookalikeBlock,
+    priorNames: nameInfo.priorNames, nameChange: nameInfo.nameChange,
+    gates: _skValidateInstall(skill, vr), update,
   };
 }
 // §7 — serialize the registry into the frozen #rwa-skills zone. CANONICAL: sorted by
@@ -6874,6 +6932,9 @@ async function runtimeInstallSkill(envelope) {
     if (prev) installedSkills.set(id, prev); else installedSkills.delete(id);
     return { ok: false, errors: [(e && e.code) || (e && e.message) || 'persist_failed'] };
   }
+  // I5 — record this (key, name) in the per-author name_history (best-effort; never fails the
+  // install). On a same-key rename the new name is appended; identity stays anchored on the key.
+  await _skSourceRecord(skill.author_pubkey, skill.name);
   return { ok: true, skillId: id };
 }
 // §7 — remove a skill + persist the emptied/updated zone (same rollback discipline).
@@ -6924,12 +6985,21 @@ function showSkillInstallDialog(envelope) {
       : rv.lookalike
       ? '<p style="background:#fef3c7;border-radius:8px;padding:8px 10px;margin:.6em 0">⚠ This name closely matches <strong>' + _skEsc(rv.lookalike) + '</strong>, which you installed from a DIFFERENT key. The author is identified by the key, not the name.</p>'
       : '';
+    // I5 — same-key rename note (informational, non-permission). Suppressed under a homoglyph block
+    // (impersonation supersedes). Anchors identity on the key: "the author is identified by the key".
+    const nc = rv.nameChange;
+    const nameChangeHtml = (nc && nc.prev && !rv.lookalikeBlock)
+      ? '<p style="background:#eff6ff;border-radius:8px;padding:8px 10px;margin:.6em 0">ℹ️ This author previously published a skill named <strong>' + _skEsc(nc.prev.name) + '</strong>'
+        + (typeof nc.prev.date === 'number' ? ' on ' + _skEsc(new Date(nc.prev.date).toLocaleDateString()) : '')
+        + '. The current name is <strong>' + _skEsc(rv.name) + '</strong>. The author is identified by the key, not the name.</p>'
+      : '';
     const canInstall = rv.gates.ok && !rv.lookalikeBlock;
     card.innerHTML =
       '<h2 style="margin:0 0 .2em;font-size:1.25rem">Install ' + _skEsc(rv.name) + '?</h2>' +
       '<p style="margin:.2em 0 1em;color:#444"><strong>What it claims to do:</strong> ' + _skEsc(rv.purpose) + '</p>' +
       '<p style="margin:.2em 0"><strong>Author.</strong> ' + authorHtml + '</p>' +
       lookalikeHtml +
+      nameChangeHtml +
       updHtml +
       '<p style="margin:1em 0 .2em"><strong>What it can do on your machine</strong></p>' + permsHtml +
       (rv.compoundRisk ? '<p style="background:#fee2e2;border-radius:8px;padding:8px 10px;margin:.6em 0">⚠ ' + _skEsc(rv.compoundRisk) + '</p>' : '') +
@@ -8306,6 +8376,9 @@ document.addEventListener('keydown', e => {
       const skMap = await readTrustworthySkills(doc);
       installedSkills.clear();
       skMap.forEach((v, k) => installedSkills.set(k, v));
+      // I5 — reconcile the per-author name_history (rwa_sources) from the in-file manifests, so a
+      // fresh load (or an IDB-cleared one) still knows the renames recorded in the frozen zone.
+      await runtimeBuildSourceIndex();
     } catch (_) { /* no installed skills */ }
     await _vaultReimportSession().catch(() => {}); // v0.8 §6 — restore an unlocked vault within the tab session
     // Spec §7: expose the public runtime API. Only constructed on the success

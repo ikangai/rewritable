@@ -873,6 +873,11 @@ function detectProductKind(fileText) {
       if (result.lookalike) {
         process.stderr.write('⚠ rwa install: the name "' + result.name + '" closely matches "' + result.lookalike + '", installed from a DIFFERENT key. The author is identified by the key, not the name — review before trusting.\n');
       }
+      // I5 — same-key rename heads-up (non-blocking, registry-derived). This author published other
+      // names in this host; surfaced so a rename reads as continuity, not a new author.
+      if (Array.isArray(result.priorNames) && result.priorNames.length) {
+        process.stderr.write('note: rwa install: this author (same key) previously published: ' + result.priorNames.join(', ') + '. The current name is "' + result.name + '" — identity is the key, not the name.\n');
+      }
       if (jsonMode) {
         process.stdout.write(JSON.stringify(result) + '\n');
       } else {

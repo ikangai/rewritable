@@ -243,3 +243,21 @@ test('I5: same-author rebrand homoglyph neither blocks nor warns', async () => {
   assert.equal(res.changed, true);
   assert.equal(res.result.lookalike, null, 'same author → no impersonation warning');
 });
+
+// I5 (v0.9 §4) — name_history, CLI mirror. The CLI is stateless (no persistent IDB), so it derives
+// an author's prior names from the host's existing zone (same pubkey, different name). Dateless by
+// design — honest, since the CLI has nowhere to persist first-seen dates. Surfaced for the rename
+// heads-up; identity stays the key.
+test('I5 name_history: a same-key rename surfaces the prior name (registry-derived, dateless)', async () => {
+  const k = await newKey();
+  const host = extractInlineDoc(fs.readFileSync(makeHostFile(), 'utf8'));
+  const s1 = installEnvelopeIntoDoc(host, await signed(k, 'gh-sync', 'tool', ['network:api.github.com'], CODE), { consent: true });
+  const s2 = installEnvelopeIntoDoc(s1.newDoc, await signed(k, 'github-sync', 'tool', ['network:api.github.com'], CODE), { consent: true });
+  assert.ok(Array.isArray(s2.result.priorNames) && s2.result.priorNames.includes('gh-sync'), 'prior name surfaced');
+});
+test('I5 name_history: a brand-new author has no prior names', async () => {
+  const k = await newKey();
+  const host = extractInlineDoc(fs.readFileSync(makeHostFile(), 'utf8'));
+  const s = installEnvelopeIntoDoc(host, await signed(k, 'fresh', 'tool', ['network:x.com'], CODE), { consent: true });
+  assert.deepEqual(s.result.priorNames || [], []);
+});

@@ -138,12 +138,17 @@ export function installEnvelopeIntoDoc(inlineDoc, envelope, { consent } = {}) {
   const skeletonMatch = scanSkeleton(existing, skill);
   if (skeletonMatch && signed) throw new CliError(3, 'lookalike_skeleton_blocked', { match: skeletonMatch });
   const lookalike = scanLookalike(existing, skill) || skeletonMatch; // non-blocking warning (Inv 10/23)
+  // I5 — name_history (CLI: registry-derived, dateless). Names this author (same pubkey) has already
+  // published in the host's zone, other than the incoming one — surfaces a same-key rename heads-up.
+  const priorNames = [...new Set(existing
+    .filter((e) => (e.skill || {}).author_pubkey === skill.author_pubkey && (e.skill || {}).name !== skill.name)
+    .map((e) => e.skill.name))];
   const prevIdx = existing.findIndex((e) => skillId(e.skill.name, e.skill.author_pubkey) === id);
   const prev = prevIdx >= 0 ? existing[prevIdx] : null;
 
   // Same id + byte-identical envelope → already installed, no write.
   if (prev && JSON.stringify(prev) === JSON.stringify(envelope)) {
-    return { newDoc: inlineDoc, changed: false, result: { skillId: id, name: skill.name, kind: skill.kind, verified, provenance: 'installed', status: 'already_installed', lookalike } };
+    return { newDoc: inlineDoc, changed: false, result: { skillId: id, name: skill.name, kind: skill.kind, verified, provenance: 'installed', status: 'already_installed', lookalike, priorNames } };
   }
 
   const merged = prev ? existing.map((e, i) => (i === prevIdx ? envelope : e)) : existing.concat([envelope]);
@@ -157,7 +162,7 @@ export function installEnvelopeIntoDoc(inlineDoc, envelope, { consent } = {}) {
     const oS = new Set(oldP), nS = new Set(newP);
     update = { isUpdate: true, added: newP.filter((p) => !oS.has(p)), removed: oldP.filter((p) => !nS.has(p)) };
   }
-  return { newDoc, changed: true, result: { skillId: id, name: skill.name, kind: skill.kind, verified, provenance: 'installed', status: prev ? 'updated' : 'installed', lookalike, ...(update ? { update } : {}) } };
+  return { newDoc, changed: true, result: { skillId: id, name: skill.name, kind: skill.kind, verified, provenance: 'installed', status: prev ? 'updated' : 'installed', lookalike, priorNames, ...(update ? { update } : {}) } };
 }
 
 /**

@@ -26,6 +26,15 @@ async function makeSigned(name, kind, permissions, code) {
   return { format: 'rwa-skill/1', skill: { ...manifest, code }, signature: Buffer.from(sig).toString('base64') };
 }
 const unsigned = (name, kind, permissions, code) => ({ format: 'rwa-skill/1', skill: { name, version: '1.0.0', kind, permissions, author_pubkey: 'AAAA', code } });
+// Raw-IDB store clear — to simulate an IDB-cleared reload for the name_history rebuild test.
+// Uses the same fake-indexeddb instance the seed runs on (set via beforeParse), keyed by DOC_UUID.
+function clearStore(w, store) {
+  return new Promise((res, rej) => {
+    const req = indexedDB.open('rwa_' + w.runtime.id);
+    req.onsuccess = () => { const db = req.result; const tx = db.transaction(store, 'readwrite'); tx.objectStore(store).clear(); tx.oncomplete = () => { db.close(); res(); }; tx.onerror = () => rej(tx.error); };
+    req.onerror = () => rej(req.error);
+  });
+}
 
 async function boot() {
   const ov = kindOverrides('skill-host');
@@ -248,6 +257,46 @@ console.log('\n== I5: Unicode-confusable skeleton block ==');
   const rvSame = await w.runtime.reviewSkill(await signSame('dаta-sync')); // Cyrillic а, SAME key
   check('I5: a same-author rebrand homoglyph neither blocks nor warns',
     rvSame.lookalikeBlock === false && rvSame.lookalike === null);
+}
+
+// I5 (v0.9 §4) — per-author name_history. An append-only record, per public key, of the names this
+// author has published (IDB rwa_sources), reconciled at boot from the frozen-zone manifests. Lets
+// the install dialog surface a same-key RENAME — anchoring identity on the key across name changes
+// (lowers friction for legit updates; the homoglyph block above is what handles impersonation).
+console.log('\n== I5: per-author name_history ==');
+{
+  const CODE = 'async function run(i,r){return 1}';
+  const k = await webcrypto.subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify']);
+  const pub = Buffer.from(new Uint8Array(await webcrypto.subtle.exportKey('raw', k.publicKey))).toString('base64');
+  const sign = async (name) => {
+    const m = { name, version: '1.0.0', kind: 'tool', permissions: ['network:api.github.com'], author_pubkey: pub };
+    const sig = new Uint8Array(await webcrypto.subtle.sign({ name: 'Ed25519' }, k.privateKey, signingMessage(m, CODE)));
+    return { format: 'rwa-skill/1', skill: { ...m, code: CODE }, signature: Buffer.from(sig).toString('base64') };
+  };
+  const insA = await w.runtime.installSkill(await sign('gh-sync'));
+  check('I5 name_history: baseline install ok', insA.ok === true);
+  const rvFreshKey = await w.runtime.reviewSkill(await makeSigned('totally-new', 'tool', ['network:x.com'], CODE));
+  check('I5 name_history: a brand-new author has no prior names and no rename note',
+    Array.isArray(rvFreshKey.priorNames) && rvFreshKey.priorNames.length === 0 && !rvFreshKey.nameChange);
+  const rvRename = await w.runtime.reviewSkill(await sign('github-sync')); // SAME key, NEW name
+  check('I5 name_history: a same-key rename surfaces the prior name', rvRename.priorNames.some(p => p.name === 'gh-sync'));
+  check('I5 name_history: the rename note names the previous skill + carries a date',
+    rvRename.nameChange && rvRename.nameChange.prev && rvRename.nameChange.prev.name === 'gh-sync' && typeof rvRename.nameChange.prev.date === 'number');
+  w.runtime.showInstallDialog(await sign('github-sync'));
+  await new Promise(r => setTimeout(r, 30));
+  const card = w.document.getElementById('rwa-skill-install');
+  const html = card ? card.innerHTML : '';
+  check('I5 name_history dialog: the rename note appears ("previously published" + old name)',
+    /previously published/i.test(html) && /gh-sync/.test(html));
+  const cancelNh = card && card.querySelector('[data-act=cancel]'); if (cancelNh) cancelNh.onclick();
+  const insB = await w.runtime.installSkill(await sign('github-sync'));
+  check('I5 name_history: installing the rename succeeds', insB.ok === true);
+  // boot reconcile: an IDB-cleared reload restores name_history from the in-file manifests
+  await clearStore(w, 'rwa_sources');
+  await w.runtimeBuildSourceIndex();
+  const rvAfterRebuild = await w.runtime.reviewSkill(await sign('gh-sync-v3'));
+  check('I5 name_history: runtimeBuildSourceIndex restores prior names from the in-file manifests',
+    rvAfterRebuild.priorNames.some(p => p.name === 'gh-sync') && rvAfterRebuild.priorNames.some(p => p.name === 'github-sync'));
 }
 
 console.log(`\n== ${pass} pass, ${fail} fail ==`);
