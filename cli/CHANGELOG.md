@@ -2,6 +2,30 @@
 
 All notable changes to the `rewritable` CLI (`rwa`).
 
+## [0.10.0] - 2026-06-23
+
+### Added
+- **`rwa skill publish <file.rwa-skill.json>`** (v0.9 I6) — publish a SIGNED
+  skill envelope to the marketplace index (`POST /skills/publish`). The
+  envelope is already signed (no key needed); local fail-fast gate
+  (verifyEnvelope + validateInstall) before the POST. Online; `--url` overrides
+  the service, `--json` emits `{skillId, registryUrl, verified}`. Exit 2
+  file_error, 3 gate failure, 4 publish_error.
+- **view / edit-surface manifest validation** (v0.9 I7) — `validateInstall`
+  now accepts `kind ∈ {view, edit-surface}` (zero-capability DOM authors):
+  rejects any permission (`output_skill_with_permissions`) and requires a
+  matching `output.kind` (`html-render` / `dom-transform`, else
+  `invalid_output_kind`). Mirrored from the seed.
+
+### Notes
+- `cli/src/skill-manifest.mjs` stays byte-mirrored with the seed (the source of
+  this batch's view/edit-surface gate). `service/lib/{skill-manifest,identity,
+  seed}.mjs` re-vendored to `cli/src` (the cmp gate in
+  `service/tests/vendored-apply.test.mjs` caught a `seed.mjs` drift since 0.8.0).
+- The marketplace's service routes + the seed's discover/TOFU/install-from-index
+  ship in `service/` and `seeds/rewritable.html`; this is the CLI's slice (the
+  `rwa skill publish` client + the manifest grammar).
+
 ## [0.9.0] - 2026-06-23
 
 ### Added
