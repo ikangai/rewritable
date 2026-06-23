@@ -72,6 +72,12 @@ const FSA_CODE =
 const HOOK_CODE =
   'async function run(input){return {saw:input&&input.event, hasFetch:typeof fetch};}';
 
+// I2 — pool: a per-Worker random id (closure) + a per-Worker invoke counter (global). Reuse keeps
+// both; a fresh Worker resets both. Proves warm reuse vs cold spawn.
+const POOL_CODE = 'var wid=Math.random(); async function run(i){ self.__n=(self.__n||0)+1; return {wid:wid, n:self.__n, hasFetch:typeof fetch}; }';
+const POOL_V2_CODE = 'var wid=Math.random(); async function run(i){ self.__n=(self.__n||0)+1; return {wid:wid, n:self.__n, v:2}; }';
+const TOOL_POOL_CODE = 'async function run(i,r){ self.__n=(self.__n||0)+1; return {n:self.__n}; }';
+
 // I7 — a view skill returns HTML (rendered in a Worker, validated + applied main-side); compute-only.
 const VIEW_CODE =
   'async function run(input){return "<div id=probe-view>VIEW-OK fetch:"+typeof fetch+" chars:"+((input&&input.doc&&input.doc.length)||0)+"</div>";}';
@@ -133,6 +139,9 @@ const AGENT_VAULT_SKILL_ENV = await signEnvelope(agentKey, 'curator-vault', 'too
 // lands in rwa_hook_log proving firing + execution + the audit trail end-to-end.
 const HOOK_ENV = await signEnvelope(await newKey(), 'mode-auditor', 'hook', ['hook:on-mode-change'], HOOK_CODE);
 // I7 — view (unsigned OK) renders HTML in a Worker; edit-surface returns an rwa-edit/1 envelope.
+const POOL_ENV = { format: 'rwa-skill/1', skill: { name: 'pool-counter', version: '1.0.0', kind: 'compute', permissions: [], author_pubkey: 'AAAA', code: POOL_CODE } };
+const POOL_V2_ENV = { format: 'rwa-skill/1', skill: { name: 'pool-counter', version: '2.0.0', kind: 'compute', permissions: [], author_pubkey: 'AAAA', code: POOL_V2_CODE } };
+const TOOL_POOL_ENV = await signEnvelope(await newKey(), 'tool-pool', 'tool', [], TOOL_POOL_CODE);
 const VIEW_ENV = { format: 'rwa-skill/1', skill: { name: 'grid-view', version: '1.0.0', kind: 'view', permissions: [], output: { kind: 'html-render' }, author_pubkey: 'AAAA', code: VIEW_CODE } };
 const EDIT_BAD_ENV = { format: 'rwa-skill/1', skill: { name: 'bad-transform', version: '1.0.0', kind: 'edit-surface', permissions: [], output: { kind: 'dom-transform', transform_schema: {} }, author_pubkey: 'AAAA', code: EDIT_BAD_CODE } };
 
@@ -156,6 +165,9 @@ const driver = `
   var HOOK_ENV=${JSON.stringify(HOOK_ENV)};
   var VIEW_ENV=${JSON.stringify(VIEW_ENV)};
   var EDIT_BAD_ENV=${JSON.stringify(EDIT_BAD_ENV)};
+  var POOL_ENV=${JSON.stringify(POOL_ENV)};
+  var POOL_V2_ENV=${JSON.stringify(POOL_V2_ENV)};
+  var TOOL_POOL_ENV=${JSON.stringify(TOOL_POOL_ENV)};
   var el=document.getElementById('mvp');
   var log=function(m){ if(el) el.textContent+=m+'\\n'; };
   var checks=[]; var ck=function(name,cond,detail){ checks.push({name:name,pass:!!cond,detail:detail||''}); log((cond?'OK   ':'FAIL ')+name+(detail!==undefined?'  ['+detail+']':'')); };
@@ -288,6 +300,29 @@ const driver = `
       var esErr=null; try { await R.invokeEditSurface(eb.skillId,{}); } catch(e){ esErr=String(e&&e.message||e); }
       ck('§8 edit-surface: a non-rwa-edit/1 return is rejected (invalid_transform_output) after a real Worker invoke', esErr&&/invalid_transform_output/.test(esErr), esErr);
     } else { ck('§8 runtime.invokeEditSurface exposed', false, 'missing'); }
+
+    // I2 (v0.9 §10) — compute-Worker POOL (opt-in). Reuse, compute-only, disabled-by-default,
+    // code-hash invalidation, tool-never-pooled, shutdown drain — all against real Workers.
+    if (typeof R.poolStats==='function') {
+      var pz=await R.installSkill(POOL_ENV);
+      ck('install pool-counter (compute, unsigned)', pz.ok===true);
+      var p1=await R.invokeSkill(pz.skillId,{},{pooling:'enabled'});
+      var p2=await R.invokeSkill(pz.skillId,{},{pooling:'enabled'}); out.pool={p1:p1,p2:p2};
+      ck('§10 pool: a pooled compute Worker is REUSED (same wid, n increments 1→2)', p1&&p2&&p1.wid===p2.wid&&p1.n===1&&p2.n===2, JSON.stringify([p1,p2]));
+      ck('§10 pool: a pooled Worker is compute-only (fetch undefined)', p1&&p1.hasFetch==='undefined');
+      ck('§10 pool: poolStats reports the live pooled Worker', R.poolStats().live===1, JSON.stringify(R.poolStats()));
+      var d1=await R.invokeSkill(pz.skillId,{}); var d2=await R.invokeSkill(pz.skillId,{});
+      ck('§10 pool: DISABLED BY DEFAULT — no hint → fresh Worker each (n stays 1)', d1&&d2&&d1.n===1&&d2.n===1, JSON.stringify([d1,d2]));
+      await R.installSkill(POOL_V2_ENV); // same skillId, new code → pool evicted
+      var c1=await R.invokeSkill(pz.skillId,{},{pooling:'enabled'});
+      ck('§10 pool: a code change EVICTS the pool → next pooled invoke is fresh (n=1, v=2)', c1&&c1.n===1&&c1.v===2, JSON.stringify(c1));
+      var tp=await R.installSkill(TOOL_POOL_ENV);
+      var t1=await R.invokeSkill(tp.skillId,{},{pooling:'enabled'}); var t2=await R.invokeSkill(tp.skillId,{},{pooling:'enabled'});
+      ck('§10 pool: a TOOL is NEVER pooled (compute-only) — fresh each (n=1)', t1&&t2&&t1.n===1&&t2.n===1, JSON.stringify([t1,t2]));
+      window.dispatchEvent(new Event('pagehide')); // → _skPoolShutdown (drain + 500ms grace)
+      var ds=Date.now(); while(Date.now()-ds<1800){ if(R.poolStats().live===0) break; await new Promise(function(r){setTimeout(r,50);}); }
+      ck('§10 pool: shutdown (pagehide) DRAINS the pool (live→0)', R.poolStats().live===0, JSON.stringify(R.poolStats()));
+    } else { ck('§10 runtime.poolStats exposed', false, 'missing'); }
   } catch(e){ ck('no uncaught error during the run', false, String((e&&e.message)||e)); out.error=String((e&&e.message)||e); }
   var passN=checks.filter(function(c){return c.pass;}).length, failN=checks.length-passN;
   window.__mvp={ pass:passN, fail:failN, checks:checks, out:out };

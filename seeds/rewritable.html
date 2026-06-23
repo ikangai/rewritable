@@ -7114,6 +7114,7 @@ async function runtimeInstallSkill(envelope) {
   // I5 — record this (key, name) in the per-author name_history (best-effort; never fails the
   // install). On a same-key rename the new name is appended; identity stays anchored on the key.
   await _skSourceRecord(skill.author_pubkey, skill.name);
+  _skEvictPool(id); // I2 — an install/update may change the code → drop any stale pooled Workers
   return { ok: true, skillId: id };
 }
 // §7 — remove a skill + persist the emptied/updated zone (same rollback discipline).
@@ -7121,6 +7122,7 @@ async function runtimeUninstallSkill(skillId) {
   const prev = installedSkills.get(skillId);
   if (!prev) return { ok: false, errors: ['not_installed'] };
   installedSkills.delete(skillId);
+  _skEvictPool(skillId); // I2 — drop any pooled Workers for the removed skill
   try {
     await runtimeRegionCommit({ regions: [_skSkillsRegion()], actor: 'skill:uninstall', reachability: 'frozen' });
   } catch (e) {
@@ -7410,10 +7412,84 @@ const SKILL_WORKER_PROLOGUE = `(function(){
         .catch(function(err){ self.postMessage({ type:'result', id:msg.id, identity_tag:IDENTITY, ok:false, error:String(err&&err.message||err) }); });
       return;
     }
+    if(msg.type==='shutdown'){ try{ self.postMessage({ type:'shutdown_ack', identity_tag:null }); }catch(_e){} return; } // I2 — pool drain handshake
   };
 })();
 `;
 
+// ── I2 (v0.9 §10) — optional compute-Worker POOL. DISABLED BY DEFAULT: only an explicit
+// poolingHint {pooling:'enabled'} on a COMPUTE skill (no role) takes this path; every other invoke
+// (tools, agent-role, no-hint) rides the byte-unchanged spawn→invoke→terminate path below. Pooled
+// Workers are compute-only (bridgeless, same worker-scoped CSP), keyed by skillId+code-hash (a code
+// change evicts the pool), bounded by an idle timeout + a hard cap, and drained on shutdown. Per-
+// invocation isolation is unchanged: each invoke re-inits a fresh identity_tag and races the 5s
+// timeout; a timeout/error terminates the Worker (never returns it to the pool). Statelessness is
+// the author's responsibility (Inv 25; no global reset between invokes — documented "pool only if pure").
+const SKILL_POOLS = new Map(); // skillId → { codeHash, idle:[Worker], lastUsed:Map<Worker,ts> }
+const SKILL_POOL_CAP = Math.min(4, (typeof navigator !== 'undefined' && navigator.hardwareConcurrency) || 1);
+let SKILL_POOL_IDLE_MS = 60000; // mutable so the browser proof can shorten it
+async function _skCodeHash(skillId, code) {
+  return _skB64url(await _skSha256(_skConcat(_skUtf8(String(skillId)), _skNUL, _skUtf8(String(code || '')))));
+}
+function _skSpawnComputeWorker(skill) {
+  const blob = new Blob([SKILL_WORKER_PROLOGUE + '\n' + String(skill.code || '')], { type: 'text/javascript' });
+  const url = URL.createObjectURL(blob);
+  const w = new Worker(url); w.__rwaUrl = url; return w;
+}
+function _skKillWorker(w) { try { w.terminate(); } catch (_) {} try { URL.revokeObjectURL(w.__rwaUrl); } catch (_) {} }
+function _skEnforcePoolCap(pool) {
+  while (pool.idle.length > SKILL_POOL_CAP) {
+    let oi = 0; for (let i = 1; i < pool.idle.length; i++) if ((pool.lastUsed.get(pool.idle[i]) || 0) < (pool.lastUsed.get(pool.idle[oi]) || 0)) oi = i;
+    const [w] = pool.idle.splice(oi, 1); pool.lastUsed.delete(w); _skKillWorker(w); // evict oldest-idle
+  }
+}
+function _skEvictPool(skillId) { // code-hash may change on install/update/uninstall → drop stale Workers
+  const pool = SKILL_POOLS.get(skillId);
+  if (pool) { pool.idle.forEach(_skKillWorker); SKILL_POOLS.delete(skillId); }
+}
+function _skPoolEvictIdle() { // background sweep: terminate Workers idle ≥ SKILL_POOL_IDLE_MS
+  const now = Date.now();
+  for (const pool of SKILL_POOLS.values())
+    pool.idle = pool.idle.filter(w => { if (now - (pool.lastUsed.get(w) || 0) >= SKILL_POOL_IDLE_MS) { pool.lastUsed.delete(w); _skKillWorker(w); return false; } return true; });
+}
+async function _skPoolShutdown() { // send shutdown, 500ms grace, terminate (idempotent)
+  const all = [];
+  for (const pool of SKILL_POOLS.values()) for (const w of pool.idle) all.push(w);
+  for (const w of all) { try { w.postMessage({ type: 'shutdown', identity_tag: null }); } catch (_) {} }
+  await new Promise(r => setTimeout(r, 500));
+  for (const w of all) _skKillWorker(w);
+  SKILL_POOLS.clear();
+}
+function runtimePoolStats() {
+  const pools = {}; let live = 0;
+  for (const [id, pool] of SKILL_POOLS) { pools[id] = pool.idle.length; live += pool.idle.length; }
+  return { live, cap: SKILL_POOL_CAP, idleMs: SKILL_POOL_IDLE_MS, pools };
+}
+// Run ONE invocation on a pooled compute Worker (reuse-or-spawn). Success → return to pool; timeout
+// or error → terminate (never pool). Compute skills have no bridge, so a pooled Worker only ever
+// emits `result` — the onmessage here is the full message contract for the pooled path.
+async function _skPooledInvoke(skillId, skill, input) {
+  const codeHash = await _skCodeHash(skillId, skill.code);
+  let pool = SKILL_POOLS.get(skillId);
+  if (pool && pool.codeHash !== codeHash) { _skEvictPool(skillId); pool = null; }
+  if (!pool) { pool = { codeHash, idle: [], lastUsed: new Map() }; SKILL_POOLS.set(skillId, pool); }
+  const w = pool.idle.pop() || _skSpawnComputeWorker(skill);
+  const tag = crypto.randomUUID();
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const done = (fn, arg, keep) => {
+      if (settled) return; settled = true; clearTimeout(timer); w.onmessage = null; w.onerror = null;
+      if (keep) { pool.lastUsed.set(w, Date.now()); pool.idle.push(w); _skEnforcePoolCap(pool); }
+      else { pool.lastUsed.delete(w); _skKillWorker(w); }
+      fn(arg);
+    };
+    const timer = setTimeout(() => done(reject, new Error('timeout'), false), 5000); // per-invocation, not per-tenure
+    w.onmessage = (e) => { const m = e.data; if (!m || m.identity_tag !== tag) return; if (m.type === 'result') m.ok ? done(resolve, m.result, true) : done(reject, new Error(m.error || 'runtime_error'), false); };
+    w.onerror = () => done(reject, new Error('runtime_error'), false);
+    w.postMessage({ type: 'init', identity_tag: tag, bridged: false }); // re-init each invoke: fresh tag, never bridged
+    w.postMessage({ type: 'invoke', id: 1, input });
+  });
+}
 // §5a — invoke an installed skill in an isolated Worker. compute = bridgeless; tool =
 // bridged fetch/vault with per-call origin/namespace enforcement on THIS (main) thread.
 // Per-invocation identity_tag binds responses; 5s timeout; spawn -> invoke -> terminate.
@@ -7441,6 +7517,9 @@ function runtimeInvokeSkill(skillId, input, opts) {
   // skills (which never passed through runtimeInstallSkill's gate), every kind.
   const forbidden = _skCodeForbidden(skill.code);
   if (forbidden) return Promise.reject(new Error(forbidden));
+  // I2 — opt-in compute-Worker pool. Only a compute skill with an explicit pooling hint and no
+  // agent-role takes the warm path; everything else falls through to the byte-unchanged fresh spawn.
+  if (opts && opts.pooling === 'enabled' && skill.kind === 'compute' && !agentRole) return _skPooledInvoke(skillId, skill, input);
   const identity_tag = crypto.randomUUID();
   const blob = new Blob([SKILL_WORKER_PROLOGUE + '\n' + String(skill.code || '')], { type: 'text/javascript' });
   const url = URL.createObjectURL(blob);
@@ -8786,6 +8865,7 @@ document.addEventListener('keydown', e => {
       listSkills: runtimeListSkills, // v0.8 §8 — installed skills (provenance:'installed')
       invokeSkill: runtimeInvokeSkill, // v0.8 §5a — run a skill in an isolated Worker
       invokeEditSurface: runtimeInvokeEditSurface, // v0.9 §8 (I7) — run an edit-surface skill → apply its rwa-edit/1 transform
+      poolStats: runtimePoolStats, // v0.9 §10 (I2) — compute-Worker pool observability {live,cap,idleMs,pools}
       reviewSkill: runtimeReviewSkill, // v0.8 §1 — structured trust info for the install dialog
       installSkill: runtimeInstallSkill, // v0.8 §1/§7 — gates + verify + register + persist to the frozen zone (survives reload)
       uninstallSkill: runtimeUninstallSkill, // v0.8 §7 — remove + persist
@@ -8809,6 +8889,10 @@ document.addEventListener('keydown', e => {
       configurable: false,
     });
     startWorkspacePresence();
+    // I2 (v0.9 §10) — background idle eviction (every 30s, terminate compute Workers idle ≥ idleMs)
+    // + drain the pool on unload (shutdown handshake + 500ms grace). No-op until a pooled invoke runs.
+    setInterval(_skPoolEvictIdle, 30000);
+    window.addEventListener('pagehide', () => { _skPoolShutdown(); });
     // §5.10: the presentation render mode ships ONLY for presentation
     // containers. For every other kind this block is skipped entirely —
     // activeView stays null, no provider is registered, no chrome is built,

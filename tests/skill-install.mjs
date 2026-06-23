@@ -337,5 +337,22 @@ console.log('\n== I7: view / edit-surface kinds ==');
   check('I7: runtime exposes invokeEditSurface', typeof w.runtime.invokeEditSurface === 'function');
 }
 
+// I2 (v0.9 §10) — compute-Worker pool. jsdom can't run Workers, so this pins the seed-level API:
+// the pool starts empty, the code-hash key is deterministic + code-sensitive, and pooling is OFF by
+// default. Reuse / cap / idle-eviction / shutdown are browser-proven (tests/skill-exec-probe.mjs).
+console.log('\n== I2: compute-Worker pool (seed-level API) ==');
+{
+  check('I2: runtime exposes poolStats', typeof w.runtime.poolStats === 'function');
+  const st = w.runtime.poolStats();
+  check('I2: the pool starts empty (live:0) with a hardware-bounded cap', st.live === 0 && st.cap >= 1 && st.cap <= 4 && typeof st.pools === 'object');
+  const h1 = await w._skCodeHash('sk1', 'async function run(i){return 1}');
+  const h1b = await w._skCodeHash('sk1', 'async function run(i){return 1}');
+  const h2 = await w._skCodeHash('sk1', 'async function run(i){return 2}'); // code changed
+  const h3 = await w._skCodeHash('sk2', 'async function run(i){return 1}'); // skillId changed
+  check('I2: code-hash is deterministic for the same skillId+code', h1 === h1b);
+  check('I2: code-hash changes when the code changes (pool invalidation key)', h1 !== h2);
+  check('I2: code-hash changes when the skillId changes', h1 !== h3);
+}
+
 console.log(`\n== ${pass} pass, ${fail} fail ==`);
 process.exit(fail ? 1 : 0);
