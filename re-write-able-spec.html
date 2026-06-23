@@ -7276,6 +7276,9 @@ function _skBusAllowed(skill, topic) {
   const perms = (skill.manifest && Array.isArray(skill.manifest.permissions)) ? skill.manifest.permissions : [];
   return perms.indexOf('bus:' + topic) !== -1;
 }
+// §5 (I1b) — per-message subscribe filter. true for all today; I12 wires a peer-allowlist here
+// (defense-in-depth — a declared bus: perm can't be further runtime-restricted; Shape B holds).
+function _skBusMessageAllowed(_skill, _envelope) { return true; }
 // §6 (I3) — the bridge's per-call fs gate: the (already traversal-checked) path must fall under
 // a declared fsa:<scope> subtree (left-anchored prefix, no wildcards).
 function _skFsAllowed(skill, path) {
@@ -7855,13 +7858,13 @@ const SKILL_WORKER_PROLOGUE = `(function(){
   'use strict';
   var REMOVE = ['importScripts','Worker','SharedWorker','ServiceWorkerContainer','XMLHttpRequest','WebSocket','EventSource','indexedDB','eval','Function','fetch','WebAssembly'];
   for (var i=0;i<REMOVE.length;i++){ try { Object.defineProperty(self, REMOVE[i], { value: undefined, writable: false, configurable: false }); } catch(_e){} }
-  var IDENTITY=null, BRIDGED=false, _seq=0, _pending=new Map(), RUNTIME={};
+  var IDENTITY=null, BRIDGED=false, _seq=0, _pending=new Map(), RUNTIME={}, _subs={};
   function _bridge(type, payload){ return new Promise(function(res,rej){ var id=++_seq; _pending.set(id,{res:res,rej:rej}); self.postMessage({ type:type, id:id, identity_tag:IDENTITY, payload:payload }); }); }
   function _serializeOpts(o){ if(!o||typeof o!=='object') return undefined; var out={}; if(o.method) out.method=String(o.method); if(typeof o.body==='string') out.body=o.body; if(o.headers&&typeof o.headers==='object') out.headers=o.headers; return out; }
   function _installBridge(){
     RUNTIME.fetch=function(url,opts){ return _bridge('bridge:fetch',{ url:String(url), opts:_serializeOpts(opts) }); };
     RUNTIME.vault={ get:function(ns,k){ return _bridge('bridge:vault',{op:'get',ns:ns,key:k}); }, set:function(ns,k,v){ return _bridge('bridge:vault',{op:'set',ns:ns,key:k,val:v}); }, has:function(ns,k){ return _bridge('bridge:vault',{op:'has',ns:ns,key:k}); } };
-    RUNTIME.bus={ publish:function(topic,message){ return _bridge('bridge:bus:publish',{ topic:String(topic), message:message }); } };
+    RUNTIME.bus={ publish:function(topic,message){ return _bridge('bridge:bus:publish',{ topic:String(topic), message:message }); }, subscribe:function(topic,cb){ var t=String(topic); return _bridge('bridge:bus:subscribe',{ topic:t }).then(function(){ (_subs[t]=_subs[t]||[]).push(cb); return function(){ var a=_subs[t]||[], i=a.indexOf(cb); if(i>=0) a.splice(i,1); try{ _bridge('bridge:bus:unsubscribe',{ topic:t }); }catch(_e){} }; }); } };
     RUNTIME.fs={ read:function(p){ return _bridge('bridge:fs',{op:'read',path:String(p)}); }, write:function(p,d){ return _bridge('bridge:fs',{op:'write',path:String(p),data:d}); }, del:function(p){ return _bridge('bridge:fs',{op:'del',path:String(p)}); }, list:function(p){ return _bridge('bridge:fs',{op:'list',path:String(p)}); } };
     RUNTIME.db={ get:function(s,k){ return _bridge('bridge:idb',{op:'get',store:String(s),key:k}); }, put:function(s,k,v){ return _bridge('bridge:idb',{op:'put',store:String(s),key:k,value:v}); }, del:function(s,k){ return _bridge('bridge:idb',{op:'del',store:String(s),key:k}); }, all:function(s){ return _bridge('bridge:idb',{op:'all',store:String(s)}); } };
   }
@@ -7875,6 +7878,7 @@ const SKILL_WORKER_PROLOGUE = `(function(){
         .catch(function(err){ self.postMessage({ type:'result', id:msg.id, identity_tag:IDENTITY, ok:false, error:String(err&&err.message||err) }); });
       return;
     }
+    if(msg.type==='bus:message'){ var env=msg.envelope||{}, subs=_subs[env.topic]||[]; for(var i=0;i<subs.length;i++){ try{ subs[i](env); }catch(_e){} } return; } // I1b — deliver to skill-side subscribers
     if(msg.type==='shutdown'){ try{ self.postMessage({ type:'shutdown_ack', identity_tag:null }); }catch(_e){} return; } // I2 — pool drain handshake
   };
 })();
@@ -7991,8 +7995,9 @@ function runtimeInvokeSkill(skillId, input, opts) {
   // F6: cancel an in-flight bridge fetch when the 5s timeout (or any settle)
   // fires, so a slow request doesn't keep running after the skill is finished.
   const _skAc = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+  const busSubs = []; // I1b — active bus subscriptions for THIS invoke; torn down on settle
   return new Promise((resolve, reject) => {
-    const finish = (fn, arg) => { if (settled) return; settled = true; clearTimeout(timer); if (_skAc) { try { _skAc.abort(); } catch (_) {} } try { w.terminate(); } catch (_) {} URL.revokeObjectURL(url); fn(arg); };
+    const finish = (fn, arg) => { if (settled) return; settled = true; clearTimeout(timer); if (_skAc) { try { _skAc.abort(); } catch (_) {} } for (const u of busSubs) { try { u(); } catch (_) {} } try { w.terminate(); } catch (_) {} URL.revokeObjectURL(url); fn(arg); };
     const timer = setTimeout(() => finish(reject, new Error('timeout')), 5000);
     const reply = (id, ok, extra) => w.postMessage(Object.assign({ type: 'bridge:response', id, identity_tag, ok }, extra));
     w.onmessage = async (e) => {
@@ -8037,6 +8042,22 @@ function runtimeInvokeSkill(skillId, input, opts) {
         catch (_) { reply(msg.id, false, { error: 'bus_error' }); }
         return;
       }
+      if (msg.type === 'bridge:bus:subscribe') {
+        const pl = msg.payload || {};
+        if (!_skBusAllowed(skill, pl.topic)) { reply(msg.id, false, { error: 'bus_topic_denied' }); return; } // §5 per-call gate
+        // I1b — forward each allowed envelope to the Worker until it settles (finish() tears these
+        // down). The 5s timeout bounds the subscribe CALL (the ok reply), not the subscription.
+        try {
+          const unsub = runtimeBusSubscribe(pl.topic, (env) => {
+            if (!_skBusMessageAllowed(skill, env)) return;
+            try { w.postMessage({ type: 'bus:message', id: msg.id, identity_tag, envelope: { topic: env.topic, from: env.from, at: env.at, message: env.message } }); } catch (_) {}
+          });
+          busSubs.push(unsub);
+          reply(msg.id, true, { result: true });
+        } catch (_) { reply(msg.id, false, { error: 'bus_error' }); }
+        return;
+      }
+      if (msg.type === 'bridge:bus:unsubscribe') { reply(msg.id, true, { result: true }); return; } // MVP: precise teardown deferred; finish() unsubscribes all on settle
       if (msg.type === 'bridge:fs') {
         const pl = msg.payload || {}, op = pl.op, p = pl.path;
         // Reject traversal/invalid paths BEFORE the scope check (mirror of assertUserFsPath); a

@@ -78,6 +78,17 @@ const POOL_CODE = 'var wid=Math.random(); async function run(i){ self.__n=(self.
 const POOL_V2_CODE = 'var wid=Math.random(); async function run(i){ self.__n=(self.__n||0)+1; return {wid:wid, n:self.__n, v:2}; }';
 const TOOL_POOL_CODE = 'async function run(i,r){ self.__n=(self.__n||0)+1; return {n:self.__n}; }';
 
+// I1b — a tool subscribes to its declared bus topic, receives a foreign message during its invoke,
+// and proves an UNDECLARED topic is denied. The 5s timeout bounds the call; the wait keeps run()
+// alive long enough for the driver's foreign publish to arrive.
+const SUB_CODE =
+  'async function run(i,r){ var res={got:null};' +
+  'var unsub=await r.bus.subscribe("agent:pings", function(env){ res.got=env.message; });' +
+  'res.subbed=(typeof unsub==="function");' +
+  'try{ await r.bus.subscribe("undeclared:topic", function(){}); res.undeclaredSub="REACHED"; }catch(e){ res.undeclaredSub=String(e&&e.message||e); }' +
+  'await new Promise(function(rs){ setTimeout(rs, (i&&i.wait)||600); });' +
+  'return res; }';
+
 // I7 — a view skill returns HTML (rendered in a Worker, validated + applied main-side); compute-only.
 const VIEW_CODE =
   'async function run(input){return "<div id=probe-view>VIEW-OK fetch:"+typeof fetch+" chars:"+((input&&input.doc&&input.doc.length)||0)+"</div>";}';
@@ -142,6 +153,7 @@ const HOOK_ENV = await signEnvelope(await newKey(), 'mode-auditor', 'hook', ['ho
 const POOL_ENV = { format: 'rwa-skill/1', skill: { name: 'pool-counter', version: '1.0.0', kind: 'compute', permissions: [], author_pubkey: 'AAAA', code: POOL_CODE } };
 const POOL_V2_ENV = { format: 'rwa-skill/1', skill: { name: 'pool-counter', version: '2.0.0', kind: 'compute', permissions: [], author_pubkey: 'AAAA', code: POOL_V2_CODE } };
 const TOOL_POOL_ENV = await signEnvelope(await newKey(), 'tool-pool', 'tool', [], TOOL_POOL_CODE);
+const SUB_ENV = await signEnvelope(await newKey(), 'bus-subscriber', 'tool', ['bus:agent:pings'], SUB_CODE);
 const VIEW_ENV = { format: 'rwa-skill/1', skill: { name: 'grid-view', version: '1.0.0', kind: 'view', permissions: [], output: { kind: 'html-render' }, author_pubkey: 'AAAA', code: VIEW_CODE } };
 const EDIT_BAD_ENV = { format: 'rwa-skill/1', skill: { name: 'bad-transform', version: '1.0.0', kind: 'edit-surface', permissions: [], output: { kind: 'dom-transform', transform_schema: {} }, author_pubkey: 'AAAA', code: EDIT_BAD_CODE } };
 
@@ -168,6 +180,7 @@ const driver = `
   var POOL_ENV=${JSON.stringify(POOL_ENV)};
   var POOL_V2_ENV=${JSON.stringify(POOL_V2_ENV)};
   var TOOL_POOL_ENV=${JSON.stringify(TOOL_POOL_ENV)};
+  var SUB_ENV=${JSON.stringify(SUB_ENV)};
   var el=document.getElementById('mvp');
   var log=function(m){ if(el) el.textContent+=m+'\\n'; };
   var checks=[]; var ck=function(name,cond,detail){ checks.push({name:name,pass:!!cond,detail:detail||''}); log((cond?'OK   ':'FAIL ')+name+(detail!==undefined?'  ['+detail+']':'')); };
@@ -223,6 +236,19 @@ const driver = `
     ck('§5 bus: an UNDECLARED topic is DENIED (bus_topic_denied)', br && br.denied==='bus_topic_denied', JSON.stringify(br&&br.denied));
     ck('§5 bus: the published message actually reached the channel', busRx.some(function(m){return m&&m.topic==='agent:pings'&&m.message&&m.message.hi==='abc';}), JSON.stringify(busRx).slice(0,140));
     try{bc.close();}catch(_e){}
+
+    // I1b (v0.9 §5) — a skill SUBSCRIBES to its declared topic and receives a FOREIGN message during
+    // its invoke; an undeclared topic is denied. (Foreign sender so the bus self-filter delivers it.)
+    var sb=await R.installSkill(SUB_ENV);
+    ck('install bus-subscriber (tool, signed → verified:true)', sb.ok && nameVerified('bus-subscriber')===true);
+    var subPr=R.invokeSkill(sb.skillId,{wait:700}); // run() subscribes, then waits for the push
+    await new Promise(function(r){setTimeout(r,180);}); // let the subscribe round-trip establish
+    var bc3=new BroadcastChannel('rwa_bus:agent:pings');
+    bc3.postMessage({topic:'agent:pings', from:'FOREIGN-CONTAINER', at:Date.now(), message:{hi:'pushed'}});
+    var sres=await subPr; out.sub=sres;
+    ck('§5 bus SUBSCRIBE: a skill receives a foreign message on its declared topic in a real Worker', sres&&sres.got&&sres.got.hi==='pushed', JSON.stringify(sres));
+    ck('§5 bus SUBSCRIBE: an UNDECLARED topic is denied (bus_topic_denied)', sres&&/bus_topic_denied/.test(sres.undeclaredSub||''), JSON.stringify(sres&&sres.undeclaredSub));
+    try{bc3.close();}catch(_e){}
 
     // I4 (v0.9 §7) — idb: bridge (IndexedDB works at file://). A declared store round-trips;
     // an undeclared store is gated. Open the store first (no auto-create, Inv 23).
