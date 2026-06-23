@@ -7144,6 +7144,26 @@ function _skLevenshtein(a, b) {
   for (let i = 1; i <= m; i++) { const cur = [i]; for (let j = 1; j <= n; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)); prev = cur; }
   return prev[n];
 }
+// I5 (v0.9 §4) — Unicode-confusable skeleton. NFKC + toLowerCase fold case, fullwidth forms,
+// ligatures, and mathematical-alphanumeric letters to ASCII; this baked table folds the
+// CROSS-SCRIPT homoglyphs NFKC leaves alone (Cyrillic, Greek, Armenian, a few Latin-extended).
+// CURATED, not the full UTS #39 confusables.txt: every entry maps a non-ASCII glyph that renders
+// ~identically to an ASCII letter. ASCII→ASCII is NEVER folded (legit "tool"/"toml" stay distinct).
+// Byte-mirror of cli/src/skill-manifest.mjs CONFUSABLES. Keys are post-NFKC-lowercase codepoints.
+const _SK_CONFUSABLES = {
+  'а': 'a', 'е': 'e', 'о': 'o', 'р': 'p', 'с': 'c',
+  'у': 'y', 'х': 'x', 'к': 'k', 'ѕ': 's', 'і': 'i',
+  'ј': 'j', 'ԁ': 'd', 'һ': 'h', 'ԛ': 'q', 'ԝ': 'w',
+  'ѵ': 'v', 'ӏ': 'l', 'ɠ': 'g',
+  'α': 'a', 'ο': 'o', 'ρ': 'p', 'ε': 'e', 'ι': 'i',
+  'κ': 'k', 'ν': 'v', 'υ': 'u', 'χ': 'x', 'τ': 't',
+  'ϲ': 'c', 'ϳ': 'j',
+  'օ': 'o', 'ո': 'n',
+  'ı': 'i', 'ɑ': 'a', 'ɡ': 'g',
+};
+function _skNormalize(s) { return String(s == null ? '' : s).normalize('NFKC').toLowerCase(); }
+function _skSkeleton(s) { let out = ''; for (const ch of _skNormalize(s)) out += (_SK_CONFUSABLES[ch] || ch); return out; }
+function _skSkeletonDistance(a, b) { return _skLevenshtein(_skSkeleton(a), _skSkeleton(b)); }
 // §3.4 install gates (mirror cli validateInstall).
 const _SK_VAULT_NS = /^[a-z0-9_](?:[a-z0-9_-]{0,62}[a-z0-9_])?$/;
 // §4 permission grammar (mirror cli parsePermission) — validates the VALUE, not
@@ -7219,15 +7239,30 @@ async function runtimeReviewSkill(envelope) {
   const skill = (envelope && envelope.skill) || {};
   const perms = Array.isArray(skill.permissions) ? skill.permissions : [];
   const vr = { signed: !!(envelope && envelope.signature), verified: await _skVerify(envelope) };
-  let lookalike = null;
+  let levMatch = null, skelMatch = null;
   for (const s of installedSkills.values()) {
+    if (!s.manifest || s.manifest.author_pubkey === skill.author_pubkey) continue; // same author ≠ impersonation
     const d = _skLevenshtein(s.name, skill.name);
     // A DIFFERENT key with the same/near name is impersonation. Exact-name (d===0) ALWAYS fires —
     // it's the strongest spoof and the §3.3 case lookalike is responsible for; a near miss (1–2 edits)
     // fires only when both names are long enough that 1–2 edits is "similar", not "unrelated".
     const exact = d === 0, near = d >= 1 && d <= 2 && String(skill.name).length >= 4 && String(s.name).length >= 4;
-    if (s.manifest && s.manifest.author_pubkey !== skill.author_pubkey && (exact || near)) { lookalike = s.name; break; }
+    if (!levMatch && (exact || near)) levMatch = s.name;
+    // I5 — Unicode-confusable (skeleton) match. Fires only when confusable folding COLLAPSED a real
+    // byte difference (sd < normalized-Levenshtein) — i.e. a cross-script homoglyph that renders
+    // identically — NOT on an honest ASCII near-miss (where sd === ld). That distinction is what lets
+    // an exact ASCII name from a different key WARN (Invariant 10) while a homoglyph BLOCKS.
+    if (!skelMatch) {
+      const sd = _skSkeletonDistance(s.name, skill.name);
+      const ld = _skLevenshtein(_skNormalize(s.name), _skNormalize(skill.name));
+      if (sd <= 1 && sd < ld) skelMatch = s.name;
+    }
   }
+  // skeleton (homoglyph) takes precedence over a plain Levenshtein warn; a signed skeleton match is
+  // a hard BLOCK (the skill carries capability to escalate), an unsigned one only warns.
+  const lookalike = skelMatch || levMatch;
+  const lookalikeKind = skelMatch ? 'skeleton' : (levMatch ? 'levenshtein' : null);
+  const lookalikeBlock = !!(skelMatch && vr.signed);
   // I10 (Shape C) — the update delta. If this skillId is already installed, surface the
   // permission change (added/removed, order-invariant case-sensitive set ops) so the dialog
   // can show it and require explicit re-affirmation — no silent permission escalation on update.
@@ -7247,7 +7282,7 @@ async function runtimeReviewSkill(envelope) {
     author_pubkey: skill.author_pubkey, signed: vr.signed, verified: vr.verified,
     permissions: perms.map(p => ({ perm: p, prose: _skPermProse(p) })),
     compoundRisk: _skCompoundRisk(perms), scanNotes: _skCapabilityScan(skill.code),
-    lookalike, gates: _skValidateInstall(skill, vr), update,
+    lookalike, lookalikeKind, lookalikeBlock, gates: _skValidateInstall(skill, vr), update,
   };
 }
 // §7 — serialize the registry into the frozen #rwa-skills zone. CANONICAL: sorted by
@@ -7287,6 +7322,10 @@ function _skSkillsRegion() {
 async function runtimeInstallSkill(envelope) {
   const review = await runtimeReviewSkill(envelope);
   if (!review.gates.ok) return { ok: false, errors: review.gates.errors };
+  // I5 — a signed skill whose name skeleton-folds to a DIFFERENT author's installed skill is a
+  // homoglyph impersonation: refuse before any code is registered (Invariant 21). Unsigned skills
+  // can't escalate, so review.lookalikeBlock is false for them — they only warn in the dialog.
+  if (review.lookalikeBlock) return { ok: false, errors: ['lookalike_skeleton_blocked'] };
   const forbidden = _skCodeForbidden((envelope.skill || {}).code);
   if (forbidden) return { ok: false, errors: [forbidden] };
   const skill = envelope.skill, id = await _skSkillId(skill.name, skill.author_pubkey);
@@ -7338,11 +7377,22 @@ function showSkillInstallDialog(envelope) {
     const affirmText = (upd.isUpdate && upd.changed) ? 'I have reviewed the new permissions and want to update this skill'
       : upd.isUpdate ? 'Update this skill'
       : 'I have reviewed this skill and want to install it';
+    // I5 — tiered lookalike notice. A signed homoglyph (lookalikeBlock) is a hard impersonation
+    // block (red, install suppressed); an unsigned homoglyph (kind:'skeleton') is a severe warning;
+    // an honest ASCII near-miss (kind:'levenshtein') is the existing amber name-collision warning.
+    const lookalikeHtml = rv.lookalikeBlock
+      ? '<p style="background:#fee2e2;border:1px solid #ef4444;border-radius:8px;padding:8px 10px;margin:.6em 0">⚠️ This name uses characters that look identical to <strong>' + _skEsc(rv.lookalike) + '</strong> from a DIFFERENT author. This is a known impersonation pattern, so installation is blocked. Identity is the key, not the name.</p>'
+      : rv.lookalikeKind === 'skeleton'
+      ? '<p style="background:#fef3c7;border-radius:8px;padding:8px 10px;margin:.6em 0">⚠️ This name uses characters that look identical to <strong>' + _skEsc(rv.lookalike) + '</strong>, which you installed from a DIFFERENT key. Review the key carefully — identity is the key, not the name.</p>'
+      : rv.lookalike
+      ? '<p style="background:#fef3c7;border-radius:8px;padding:8px 10px;margin:.6em 0">⚠ This name closely matches <strong>' + _skEsc(rv.lookalike) + '</strong>, which you installed from a DIFFERENT key. The author is identified by the key, not the name.</p>'
+      : '';
+    const canInstall = rv.gates.ok && !rv.lookalikeBlock;
     card.innerHTML =
       '<h2 style="margin:0 0 .2em;font-size:1.25rem">Install ' + _skEsc(rv.name) + '?</h2>' +
       '<p style="margin:.2em 0 1em;color:#444"><strong>What it claims to do:</strong> ' + _skEsc(rv.purpose) + '</p>' +
       '<p style="margin:.2em 0"><strong>Author.</strong> ' + authorHtml + '</p>' +
-      (rv.lookalike ? '<p style="background:#fef3c7;border-radius:8px;padding:8px 10px;margin:.6em 0">⚠ This name closely matches <strong>' + _skEsc(rv.lookalike) + '</strong>, which you installed from a DIFFERENT key. The author is identified by the key, not the name.</p>' : '') +
+      lookalikeHtml +
       updHtml +
       '<p style="margin:1em 0 .2em"><strong>What it can do on your machine</strong></p>' + permsHtml +
       (rv.compoundRisk ? '<p style="background:#fee2e2;border-radius:8px;padding:8px 10px;margin:.6em 0">⚠ ' + _skEsc(rv.compoundRisk) + '</p>' : '') +
@@ -7351,7 +7401,7 @@ function showSkillInstallDialog(envelope) {
       (rv.gates.ok ? '' : '<p style="background:#fee2e2;border-radius:8px;padding:8px 10px;margin:.6em 0">Cannot install: ' + _skEsc(rv.gates.errors.join(', ')) + '</p>') +
       '<div style="display:flex;gap:10px;margin-top:1.2em;justify-content:flex-end">' +
         '<button data-act="cancel" style="padding:9px 16px;border:1px solid #ccc;border-radius:10px;background:#fff;cursor:pointer">Cancel</button>' +
-        (rv.gates.ok ? '<button data-act="install" style="padding:9px 16px;border:none;border-radius:10px;background:var(--gray-900,#111);color:#fff;cursor:pointer">' + _skEsc(affirmText) + '</button>' : '') +
+        (canInstall ? '<button data-act="install" style="padding:9px 16px;border:none;border-radius:10px;background:var(--gray-900,#111);color:#fff;cursor:pointer">' + _skEsc(affirmText) + '</button>' : '') +
       '</div>';
     overlay.appendChild(card); document.body.appendChild(overlay);
     const close = (r) => { overlay.remove(); resolve(r); };

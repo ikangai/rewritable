@@ -177,6 +177,47 @@ export function levenshtein(a, b) {
   return prev[n];
 }
 
+// I5 (v0.9 §4) — Unicode-confusable skeleton. NFKC + toLowerCase fold case, fullwidth forms,
+// ligatures, and mathematical-alphanumeric letters to ASCII; this baked table folds the
+// CROSS-SCRIPT homoglyphs NFKC leaves alone (Cyrillic, Greek, Armenian, a few Latin-extended).
+// Deliberately CURATED, not the full UTS #39 confusables.txt: every entry maps a non-ASCII
+// glyph that renders ~identically to an ASCII letter. ASCII→ASCII is NEVER folded (so legit
+// distinct names like "tool"/"toml" stay distinct — no false collisions). Extensible: add a row.
+// Keys are post-NFKC-lowercase codepoints. Mirror of the seed's _SK_CONFUSABLES.
+const CONFUSABLES = {
+  // Cyrillic → Latin
+  'а': 'a', 'е': 'e', 'о': 'o', 'р': 'p', 'с': 'c',
+  'у': 'y', 'х': 'x', 'к': 'k', 'ѕ': 's', 'і': 'i',
+  'ј': 'j', 'ԁ': 'd', 'һ': 'h', 'ԛ': 'q', 'ԝ': 'w',
+  'ѵ': 'v', 'ӏ': 'l', 'ɠ': 'g',
+  // Greek → Latin
+  'α': 'a', 'ο': 'o', 'ρ': 'p', 'ε': 'e', 'ι': 'i',
+  'κ': 'k', 'ν': 'v', 'υ': 'u', 'χ': 'x', 'τ': 't',
+  'ϲ': 'c', 'ϳ': 'j',
+  // Armenian → Latin
+  'օ': 'o', 'ո': 'n',
+  // Latin-extended / IPA homoglyphs NFKC leaves alone
+  'ı': 'i', 'ɑ': 'a', 'ɡ': 'g',
+};
+
+/** NFKC-fold + lowercase a name before any lookalike comparison (UTS #36). */
+export function normalizeName(s) {
+  return String(s == null ? '' : s).normalize('NFKC').toLowerCase();
+}
+
+/** Confusable skeleton: normalize, then map each homoglyph to its ASCII prototype.
+ *  Two names with an equal skeleton render identically to a human (the trust-anchor risk). */
+export function skeleton(s) {
+  let out = '';
+  for (const ch of normalizeName(s)) out += (CONFUSABLES[ch] || ch);
+  return out;
+}
+
+/** Edit distance between two names' skeletons. 0 = perfect homoglyph; ≤1 = homoglyph + one typo. */
+export function skeletonDistance(a, b) {
+  return levenshtein(skeleton(a), skeleton(b));
+}
+
 /** §3.4 install gates. Pure; takes the verification result so it stays synchronous. */
 export function validateInstall(envelope, { signed, verified } = {}) {
   const skill = (envelope && envelope.skill) || {};

@@ -21,7 +21,7 @@
 // mirror discipline as cli/src/apply-edits.mjs mirrors the seed apply path.
 
 import { readFile } from 'node:fs/promises';
-import { skillId, verifyEnvelope, validateInstall, parseSkillZone, levenshtein } from './skill-manifest.mjs';
+import { skillId, verifyEnvelope, validateInstall, parseSkillZone, levenshtein, skeletonDistance, normalizeName } from './skill-manifest.mjs';
 import { extractInlineDoc, replaceInlineDoc } from './seed.mjs';
 import { tagHasFrozenAttr } from './apply-edits.mjs';
 import { CliError } from './edit.mjs';
@@ -89,6 +89,25 @@ function scanLookalike(existing, skill) {
   return null;
 }
 
+/** I5 (v0.9 §4) — Unicode-confusable (skeleton) scan. Catches homoglyph squatting that ASCII
+ *  Levenshtein misses: a name whose RFC 7954 skeleton folds (≤1 edit) to a DIFFERENT author's
+ *  installed name renders identically to a human. Returns the matched installed name or null.
+ *  The discriminator is `skeleton < normalized-Levenshtein`: confusable folding must have
+ *  COLLAPSED a real byte difference (cross-script glyphs). An honest ASCII near-miss (skeleton ==
+ *  Levenshtein) is NOT a homoglyph — it stays the non-blocking Levenshtein warning (Invariant 10,
+ *  and the I5 acceptance: "ASCII exact name, diff key → warning, install allowed"). Same author
+ *  (a rebrand) never matches — restyling your own name is not impersonation. */
+function scanSkeleton(existing, skill) {
+  for (const e of existing) {
+    const es = e.skill || {};
+    if (es.author_pubkey === skill.author_pubkey) continue;
+    const sd = skeletonDistance(es.name, skill.name);
+    const ld = levenshtein(normalizeName(es.name), normalizeName(skill.name));
+    if (sd <= 1 && sd < ld) return es.name; // folding made them confusable → impersonation
+  }
+  return null;
+}
+
 /**
  * Pure core: gate an envelope, merge it into the host's INLINE_DOC zone, return the new doc body.
  * No file I/O — installSkillFile owns that.
@@ -113,7 +132,12 @@ export function installEnvelopeIntoDoc(inlineDoc, envelope, { consent } = {}) {
   const existing = zoneEnvelopes(inlineDoc);
   if (existing === null) throw new CliError(2, 'no_skill_zone', {}); // not a skill-host body
   const id = skillId(skill.name, skill.author_pubkey);
-  const lookalike = scanLookalike(existing, skill); // non-blocking warning (Inv 10/23)
+  // I5 (v0.9 §4) — Unicode-confusable HARD block. A signed skill (it carries capability to
+  // escalate) whose name skeleton-folds to a DIFFERENT author's installed skill is impersonation:
+  // refuse before any code is registered. Unsigned skills can't escalate → warn only (below).
+  const skeletonMatch = scanSkeleton(existing, skill);
+  if (skeletonMatch && signed) throw new CliError(3, 'lookalike_skeleton_blocked', { match: skeletonMatch });
+  const lookalike = scanLookalike(existing, skill) || skeletonMatch; // non-blocking warning (Inv 10/23)
   const prevIdx = existing.findIndex((e) => skillId(e.skill.name, e.skill.author_pubkey) === id);
   const prev = prevIdx >= 0 ? existing[prevIdx] : null;
 

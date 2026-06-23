@@ -199,5 +199,56 @@ console.log('\n== I3/I4: fsa: + idb: permission tiers ==');
   check('I3/I4: storage + a sink triggers the compound-risk callout', typeof comp.compoundRisk === 'string' && /local data/i.test(comp.compoundRisk));
 }
 
+// I5 (v0.9 §4) — Unicode-confusable (skeleton) install BLOCK. ASCII Levenshtein misses homoglyph
+// squatting (Cyrillic а→a) that renders identically but differs in bytes. A SIGNED skill (carries
+// capability) whose skeleton folds to a DIFFERENT author's installed name is impersonation → hard
+// block (lookalike_skeleton_blocked) before any code is registered. Honest ASCII near-misses still
+// only WARN (Invariant 10); unsigned homoglyphs can't escalate → warn only; same-author rebrands
+// neither block nor warn. Discriminator: skeleton < normalized-Levenshtein (folding collapsed a
+// real cross-script difference) — so it never false-fires on a plain ASCII edit.
+console.log('\n== I5: Unicode-confusable skeleton block ==');
+{
+  const CODE = 'async function run(i,r){return 1}';
+  await w.runtime.installSkill(await makeSigned('analytics', 'tool', ['network:api.x.com'], CODE));
+  const HOMO = 'аnаlуtіcѕ'; // "analytics" w/ Cyrillic а а у і ѕ — Levenshtein 5 (evades near≤2), skeleton 0
+  const rv = await w.runtime.reviewSkill(await makeSigned(HOMO, 'tool', ['network:evil.com'], CODE));
+  check('I5: review flags a signed homoglyph as a BLOCKING skeleton lookalike',
+    rv.lookalikeBlock === true && rv.lookalikeKind === 'skeleton' && rv.lookalike === 'analytics');
+  const insB = await w.runtime.installSkill(await makeSigned(HOMO, 'tool', ['network:evil.com'], CODE));
+  check('I5: installSkill BLOCKS the signed homoglyph (lookalike_skeleton_blocked)',
+    insB.ok === false && Array.isArray(insB.errors) && insB.errors.includes('lookalike_skeleton_blocked'));
+  check('I5: the blocked homoglyph is NOT registered', !w.runtime.listSkills().some(s => s.name === HOMO));
+  // the dialog must SHOW the homoglyph block (not silently refuse) and suppress the install button
+  w.runtime.showInstallDialog(await makeSigned(HOMO, 'tool', ['network:evil.com'], CODE));
+  await new Promise(r => setTimeout(r, 30));
+  const card = w.document.getElementById('rwa-skill-install');
+  const html = card ? card.innerHTML : '';
+  check('I5 dialog: a signed homoglyph shows a "look identical" impersonation notice naming the trusted skill',
+    /look identical/i.test(html) && /analytics/.test(html));
+  check('I5 dialog: the install button is suppressed for a blocked homoglyph',
+    !!card && !card.querySelector('[data-act=install]'));
+  const cancelBtn = card && card.querySelector('[data-act=cancel]'); if (cancelBtn) cancelBtn.onclick();
+  const rvAscii = await w.runtime.reviewSkill(await makeSigned('analytic', 'tool', ['network:x.com'], CODE));
+  check('I5: an honest ASCII near-miss is NOT skeleton-blocked, only warns (Levenshtein)',
+    rvAscii.lookalikeBlock === false && rvAscii.lookalikeKind === 'levenshtein' && rvAscii.lookalike === 'analytics');
+  const rvUns = await w.runtime.reviewSkill(unsigned(HOMO, 'compute', [], CODE));
+  check('I5: an unsigned homoglyph warns but is NOT blocked (no capability to escalate)',
+    rvUns.lookalikeBlock === false && rvUns.lookalike === 'analytics');
+  const insUns = await w.runtime.installSkill(unsigned(HOMO, 'compute', [], CODE));
+  check('I5: the unsigned homoglyph still installs (non-blocking warning)', insUns.ok === true);
+  // same-author rebrand homoglyph: SAME key publishes a Cyrillic restyle → not impersonation
+  const k = await webcrypto.subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify']);
+  const pub = Buffer.from(new Uint8Array(await webcrypto.subtle.exportKey('raw', k.publicKey))).toString('base64');
+  const signSame = async (name) => {
+    const m = { name, version: '1.0.0', kind: 'tool', permissions: ['network:api.x.com'], author_pubkey: pub };
+    const sig = new Uint8Array(await webcrypto.subtle.sign({ name: 'Ed25519' }, k.privateKey, signingMessage(m, CODE)));
+    return { format: 'rwa-skill/1', skill: { ...m, code: CODE }, signature: Buffer.from(sig).toString('base64') };
+  };
+  await w.runtime.installSkill(await signSame('data-sync'));
+  const rvSame = await w.runtime.reviewSkill(await signSame('dаta-sync')); // Cyrillic а, SAME key
+  check('I5: a same-author rebrand homoglyph neither blocks nor warns',
+    rvSame.lookalikeBlock === false && rvSame.lookalike === null);
+}
+
 console.log(`\n== ${pass} pass, ${fail} fail ==`);
 process.exit(fail ? 1 : 0);

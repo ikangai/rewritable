@@ -7,6 +7,7 @@ import { webcrypto } from 'node:crypto';
 import {
   skillId, canonicalManifest, signingMessage,
   parsePermission, validateInstall, verifyEnvelope,
+  normalizeName, skeleton, skeletonDistance,
 } from '../src/skill-manifest.mjs';
 
 const PK_A = 'QUFBQS1wdWJrZXktQQ=='; // opaque base64 stand-ins for identity comparison
@@ -283,4 +284,38 @@ test('F8: validateInstall rejects a NUL byte in the skill name (skillId ambiguit
 test('F7: validateInstall rejects an invalid permission VALUE, not just the tier', () => {
   const r = validateInstall({ skill: { name: 'x', kind: 'tool', permissions: ['network:*evil.com'] } }, { signed: true, verified: true });
   assert.ok(!r.ok && r.errors.includes('invalid_permission'));
+});
+
+// ── I5 (v0.9) — Unicode-confusable skeleton (RFC 7954 / UTS #39 style). ASCII Levenshtein
+// misses homoglyph squatting (Cyrillic а→a, Greek ο→o) that renders identically but differs in
+// bytes. NFKC folds case + compatibility forms (fullwidth, ligatures, math letters); the baked
+// confusables table folds the cross-script homoglyphs NFKC leaves alone. skeleton-equal names
+// look identical to a human (the install-dialog trust anchor).
+test('normalizeName folds case + NFKC compatibility forms to ASCII', () => {
+  assert.equal(normalizeName('GH-Sync'), 'gh-sync');           // case
+  assert.equal(normalizeName('ｇｈ-ｓｙｎｃ'), 'gh-sync');          // fullwidth (NFKC)
+  assert.equal(normalizeName('ﬂow'), 'flow');                  // ﬂ ligature (NFKC)
+});
+test('skeleton folds Cyrillic homoglyphs to their Latin prototype', () => {
+  // "gh-sync" with Cyrillic с (U+0441) and у (U+0443) — renders identically to the Latin name.
+  const cyr = 'gh-sуnс'; // g h - s у n с  (у,с Cyrillic)
+  assert.equal(skeleton(cyr), skeleton('gh-sync'));
+});
+test('skeleton folds Greek homoglyphs to their Latin prototype', () => {
+  // "logo" with Greek ο (U+03BF) twice.
+  assert.equal(skeleton('lοgο'), skeleton('logo'));
+});
+test('skeleton leaves distinct plain-ASCII names distinct (no false folding)', () => {
+  assert.notEqual(skeleton('tool'), skeleton('toml'));
+  assert.notEqual(skeleton('note'), skeleton('node'));
+  assert.equal(skeleton('gh-sync'), 'gh-sync'); // pure ASCII passes through unchanged
+});
+test('skeletonDistance is 0 for a perfect homoglyph and ≤1 for homoglyph+1 typo', () => {
+  // perfect Cyrillic homoglyph of "tool-b": о→o twice
+  assert.equal(skeletonDistance('tооl-b', 'tool-b'), 0);
+  // homoglyph + one extra char
+  assert.equal(skeletonDistance('tооls-b', 'tool-b'), 1);
+});
+test('skeletonDistance is large for unrelated names', () => {
+  assert.ok(skeletonDistance('gh-sync', 'word-count') > 2);
 });
