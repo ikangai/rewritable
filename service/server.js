@@ -439,6 +439,9 @@ const SKILLS_DIR = path.join(DATA_DIR, 'skills');
 fs.mkdirSync(SKILLS_DIR, { recursive: true });
 const ED25519_SPKI_PREFIX = Buffer.from('302a300506032b6570032100', 'hex');
 const SKILL_ID_RE = /^[A-Za-z0-9_-]{1,64}$/; // base64url skillId; also the path-traversal guard
+// Index/detail are PUBLIC read-only data → CORS-open so the seed's discover chrome can fetch from
+// file:// (null origin) or any host; safe because there's no per-user data (counters are aggregates).
+const SKILL_READ_HEADERS = { 'X-Content-Type-Options': 'nosniff', 'Cache-Control': 'max-age=300', 'Access-Control-Allow-Origin': '*' };
 function sendSkillJson(send, status, obj, extra) {
   send(status, Object.assign({ 'Content-Type': 'application/json; charset=utf-8' }, extra || {}), JSON.stringify(obj) + '\n');
 }
@@ -500,14 +503,14 @@ function handleSkillIndex(rawUrl, send) {
   if (search) recs = recs.filter(r => String(r.envelope.skill.name).toLowerCase().includes(search));
   recs.sort((a, b) => { const A = a.envelope.skill, B = b.envelope.skill; return (A.name < B.name ? -1 : A.name > B.name ? 1 : 0) || (String(A.version) < String(B.version) ? -1 : String(A.version) > String(B.version) ? 1 : 0) || (A.author_pubkey < B.author_pubkey ? -1 : A.author_pubkey > B.author_pubkey ? 1 : 0); });
   const total = recs.length, entries = recs.slice((page - 1) * limit, (page - 1) * limit + limit).map(indexEntry);
-  return sendSkillJson(send, 200, { entries, total, page, limit }, { 'X-Content-Type-Options': 'nosniff', 'Cache-Control': 'max-age=300' });
+  return sendSkillJson(send, 200, { entries, total, page, limit }, SKILL_READ_HEADERS);
 }
 function handleSkillDetail(id, send) {
-  if (!SKILL_ID_RE.test(id)) return sendSkillJson(send, 404, { error: 'not_found' });
+  if (!SKILL_ID_RE.test(id)) return sendSkillJson(send, 404, { error: 'not_found' }, SKILL_READ_HEADERS);
   const rec = readSkillRecord(id);
-  if (!rec) return sendSkillJson(send, 404, { error: 'not_found' });
-  if (rec.metadata && rec.metadata.revoked_at) return sendSkillJson(send, 410, { error: 'revoked', revoked_at: rec.metadata.revoked_at });
-  return sendSkillJson(send, 200, { envelope: rec.envelope, metadata: rec.metadata }, { 'X-Content-Type-Options': 'nosniff', 'Cache-Control': 'max-age=300' });
+  if (!rec) return sendSkillJson(send, 404, { error: 'not_found' }, SKILL_READ_HEADERS);
+  if (rec.metadata && rec.metadata.revoked_at) return sendSkillJson(send, 410, { error: 'revoked', revoked_at: rec.metadata.revoked_at }, SKILL_READ_HEADERS);
+  return sendSkillJson(send, 200, { envelope: rec.envelope, metadata: rec.metadata }, SKILL_READ_HEADERS);
 }
 async function handleSkillRevoke(req, id, send) {
   if (!SKILL_ID_RE.test(id)) return sendSkillJson(send, 404, { error: 'not_found' });

@@ -21,7 +21,7 @@ import path from 'node:path';
 import { webcrypto } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { applySeedSubs, kindOverrides, replaceInlineDoc } from '../cli/src/seed.mjs';
-import { signingMessage, agentSigningMessage } from '../cli/src/skill-manifest.mjs';
+import { signingMessage, agentSigningMessage, skillId } from '../cli/src/skill-manifest.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SEED = path.join(__dirname, '..', 'seeds', 'rewritable.html');
@@ -154,6 +154,10 @@ const POOL_ENV = { format: 'rwa-skill/1', skill: { name: 'pool-counter', version
 const POOL_V2_ENV = { format: 'rwa-skill/1', skill: { name: 'pool-counter', version: '2.0.0', kind: 'compute', permissions: [], author_pubkey: 'AAAA', code: POOL_V2_CODE } };
 const TOOL_POOL_ENV = await signEnvelope(await newKey(), 'tool-pool', 'tool', [], TOOL_POOL_CODE);
 const SUB_ENV = await signEnvelope(await newKey(), 'bus-subscriber', 'tool', ['bus:agent:pings'], SUB_CODE);
+// I6 — a signed skill the (stubbed) marketplace serves; the seed fetches + verifies it client-side.
+const DISCOVER_KEY = await newKey();
+const DISCOVER_ENV = await signEnvelope(DISCOVER_KEY, 'market-skill', 'compute', [], 'async function run(i){return {ok:true};}');
+const DISCOVER_ID = skillId('market-skill', DISCOVER_KEY.pub);
 const VIEW_ENV = { format: 'rwa-skill/1', skill: { name: 'grid-view', version: '1.0.0', kind: 'view', permissions: [], output: { kind: 'html-render' }, author_pubkey: 'AAAA', code: VIEW_CODE } };
 const EDIT_BAD_ENV = { format: 'rwa-skill/1', skill: { name: 'bad-transform', version: '1.0.0', kind: 'edit-surface', permissions: [], output: { kind: 'dom-transform', transform_schema: {} }, author_pubkey: 'AAAA', code: EDIT_BAD_CODE } };
 
@@ -181,6 +185,8 @@ const driver = `
   var POOL_V2_ENV=${JSON.stringify(POOL_V2_ENV)};
   var TOOL_POOL_ENV=${JSON.stringify(TOOL_POOL_ENV)};
   var SUB_ENV=${JSON.stringify(SUB_ENV)};
+  var DISCOVER_ENV=${JSON.stringify(DISCOVER_ENV)};
+  var DISCOVER_ID=${JSON.stringify(DISCOVER_ID)};
   var el=document.getElementById('mvp');
   var log=function(m){ if(el) el.textContent+=m+'\\n'; };
   var checks=[]; var ck=function(name,cond,detail){ checks.push({name:name,pass:!!cond,detail:detail||''}); log((cond?'OK   ':'FAIL ')+name+(detail!==undefined?'  ['+detail+']':'')); };
@@ -349,6 +355,25 @@ const driver = `
       var ds=Date.now(); while(Date.now()-ds<1800){ if(R.poolStats().live===0) break; await new Promise(function(r){setTimeout(r,50);}); }
       ck('§10 pool: shutdown (pagehide) DRAINS the pool (live→0)', R.poolStats().live===0, JSON.stringify(R.poolStats()));
     } else { ck('§10 runtime.poolStats exposed', false, 'missing'); }
+
+    // I6 (v0.9 §11) — marketplace CONSUMER: discover → fetch → CLIENT-SIDE verify → install-from-index.
+    // Transport is stubbed (the service routes are proven in service/tests/skills.test.mjs); the
+    // WebCrypto signature verify + the install into the frozen zone are REAL.
+    if (typeof R.discoverSkills==='function') {
+      var realFetch=window.fetch;
+      window.fetch=function(u){ var s=String(u);
+        if (s.indexOf('/skills/index/')>=0) return Promise.resolve(new Response(JSON.stringify({envelope:DISCOVER_ENV, metadata:{author_fingerprint:'abc0123456789def'}}), {status:200, headers:{'Content-Type':'application/json'}}));
+        if (s.indexOf('/skills/index')>=0) return Promise.resolve(new Response(JSON.stringify({entries:[{skillId:DISCOVER_ID, name:'market-skill', kind:'compute', verified:true}], total:1, page:1, limit:50}), {status:200, headers:{'Content-Type':'application/json'}}));
+        return realFetch.apply(window, arguments); };
+      try {
+        var disc=await R.discoverSkills({baseUrl:'http://svc.test'}); out.discover={total:disc&&disc.total};
+        ck('§11 discover: GET /skills/index returns entries', disc && disc.total===1 && disc.entries[0].name==='market-skill', JSON.stringify(out.discover));
+        var fx=await R.fetchSkillFromIndex(DISCOVER_ID,{baseUrl:'http://svc.test'}); out.fetched={verified:fx&&fx.verified};
+        ck('§11 fetch: an indexed envelope is VERIFIED client-side (real WebCrypto Ed25519)', fx && fx.verified===true && fx.envelope.skill.name==='market-skill', JSON.stringify(out.fetched));
+        var mi=await R.installSkill(fx.envelope);
+        ck('§11 install-from-index: the fetched+verified skill installs to the frozen zone', mi.ok===true && R.listSkills().some(function(s){return s.name==='market-skill';}), JSON.stringify(mi));
+      } finally { window.fetch=realFetch; }
+    } else { ck('§11 runtime.discoverSkills exposed', false, 'missing'); }
   } catch(e){ ck('no uncaught error during the run', false, String((e&&e.message)||e)); out.error=String((e&&e.message)||e); }
   var passN=checks.filter(function(c){return c.pass;}).length, failN=checks.length-passN;
   window.__mvp={ pass:passN, fail:failN, checks:checks, out:out };

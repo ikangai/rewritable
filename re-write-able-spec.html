@@ -7155,6 +7155,43 @@ async function _skSourceGet(pubkey) {
   if (!pubkey) return null;
   try { return (await idbGet(RWA.SOURCES, pubkey)) || null; } catch (_) { return null; }
 }
+// I6 (v0.9 §11) — TOFU author identity. Fingerprint = sha256(pubkey).hex[:16] (mirrors the
+// service's skillFingerprint). The per-author install count + first_seen come from rwa_sources (I5),
+// so the dialog can say "first time seeing this author" vs "trusted, N installs".
+async function _skFingerprint(pubkey) {
+  const h = await _skSha256(_skUtf8(String(pubkey)));
+  let s = ''; for (const b of h) s += b.toString(16).padStart(2, '0');
+  return s.slice(0, 16);
+}
+async function _skTofu(pubkey) {
+  const rec = await _skSourceGet(pubkey);
+  const installs = (rec && rec.count) || 0;
+  return { fingerprint: await _skFingerprint(pubkey), firstTime: installs === 0, installs };
+}
+// I6 (v0.9 §11) — marketplace discovery (opt-in network, like the ↗ share panel). discover →
+// GET /skills/index (paginated/filterable). fetch → GET /skills/index/:id → the full envelope,
+// VERIFIED client-side (WebCrypto Ed25519 via _skVerify) before any install; a revoked skill returns
+// {revoked:true}. The index only informs — install still runs the dialog + gates (the trust anchor).
+const SKILLS_INDEX_DEFAULT = 'https://rewritable.ikangai.com';
+async function runtimeDiscoverSkills(opts) {
+  opts = opts || {};
+  const base = (opts.baseUrl || SKILLS_INDEX_DEFAULT).replace(/\/+$/, '');
+  const qs = new URLSearchParams();
+  for (const k of ['kind', 'author', 'search', 'verified_only', 'page', 'limit']) if (opts[k] != null) qs.set(k, String(opts[k]));
+  const res = await fetch(base + '/skills/index' + (qs.toString() ? '?' + qs.toString() : ''));
+  if (!res.ok) throw new Error('discover_failed:' + res.status);
+  return res.json(); // { entries, total, page, limit }
+}
+async function runtimeFetchSkillFromIndex(skillId, opts) {
+  opts = opts || {};
+  const base = (opts.baseUrl || SKILLS_INDEX_DEFAULT).replace(/\/+$/, '');
+  const res = await fetch(base + '/skills/index/' + encodeURIComponent(skillId));
+  if (res.status === 410) return { revoked: true, envelope: null, verified: false };
+  if (!res.ok) throw new Error('fetch_failed:' + res.status);
+  const data = await res.json();
+  const verified = await _skVerify(data.envelope); // client-side: never trust the index's `verified`
+  return { envelope: data.envelope, metadata: data.metadata, verified, revoked: false };
+}
 // Append (name, now) for a key, creating the record if absent. Idempotent per distinct name.
 async function _skSourceRecord(pubkey, name, at) {
   if (!pubkey || !name) return;
@@ -7514,6 +7551,8 @@ async function runtimeReviewSkill(envelope) {
   } catch (_) { /* a malformed name/id can't match an install → treat as fresh; gates reject it downstream */ }
   // I5 — per-author name_history: surface a same-key rename so identity reads across name changes.
   const nameInfo = await _skNameChange(skill.author_pubkey, skill.name);
+  // I6 — TOFU author identity (fingerprint + per-author install count) for the install dialog.
+  const tofu = await _skTofu(skill.author_pubkey);
   return {
     name: skill.name, version: skill.version, kind: skill.kind,
     purpose: skill.description || '(no description provided)',
@@ -7521,7 +7560,7 @@ async function runtimeReviewSkill(envelope) {
     permissions: perms.map(p => ({ perm: p, prose: _skPermProse(p) })),
     compoundRisk: _skCompoundRisk(perms), scanNotes: _skCapabilityScan(skill.code),
     lookalike, lookalikeKind, lookalikeBlock,
-    priorNames: nameInfo.priorNames, nameChange: nameInfo.nameChange,
+    priorNames: nameInfo.priorNames, nameChange: nameInfo.nameChange, tofu,
     gates: _skValidateInstall(skill, vr), update,
   };
 }
@@ -7765,6 +7804,8 @@ function showSkillInstallDialog(envelope) {
       '<h2 style="margin:0 0 .2em;font-size:1.25rem">Install ' + _skEsc(rv.name) + '?</h2>' +
       '<p style="margin:.2em 0 1em;color:#444"><strong>What it claims to do:</strong> ' + _skEsc(rv.purpose) + '</p>' +
       '<p style="margin:.2em 0"><strong>Author.</strong> ' + authorHtml + '</p>' +
+      // I6 — TOFU author identity: the key fingerprint + whether you've installed from this author before.
+      (rv.tofu ? '<p style="margin:.2em 0;color:#555">🔑 Author fingerprint: <code>' + _skEsc(rv.tofu.fingerprint) + '</code>. ' + (rv.tofu.firstTime ? 'First time seeing this author.' : 'Trusted — ' + rv.tofu.installs + ' previous install' + (rv.tofu.installs === 1 ? '' : 's') + '.') + '</p>' : '') +
       lookalikeHtml +
       nameChangeHtml +
       updHtml +
@@ -9355,6 +9396,8 @@ document.addEventListener('keydown', e => {
       uninstallSkill: runtimeUninstallSkill, // v0.8 §7 — remove + persist
       showInstallDialog: showSkillInstallDialog, // v0.8 §1 — render the consent dialog for an envelope → resolves with the choice
       promptInstall: runtimePromptInstall, // v0.8 §1.3 — pick a .rwa-skill.json → show the dialog
+      discoverSkills: runtimeDiscoverSkills, // v0.9 §11 (I6) — GET the marketplace index (opt-in network)
+      fetchSkillFromIndex: runtimeFetchSkillFromIndex, // v0.9 §11 (I6) — fetch + client-side-verify an indexed skill
       vault: { get: runtimeVaultGet, set: runtimeVaultSet, has: runtimeVaultHas, namespaces: runtimeVaultNamespaces, unlock: runtimeVaultUnlock, lock: runtimeVaultLock, isLocked: runtimeVaultIsLocked }, // v0.8 §6
       agents: { list: runtimeListAgents, active: runtimeAgentActive, setActive: runtimeSetActiveAgent, install: runtimeInstallAgent, uninstall: runtimeUninstallAgent, message: runtimeAgentMessage, showInstallDialog: showAgentInstallDialog }, // v0.9 §12 — multi-agent roles
       hookLog: runtimeHookLog, // v0.9 §9 — the hook audit trail (rwa_hook_log)

@@ -354,5 +354,36 @@ console.log('\n== I2: compute-Worker pool (seed-level API) ==');
   check('I2: code-hash changes when the skillId changes', h1 !== h3);
 }
 
+// I6 (v0.9 §11) — marketplace: TOFU author identity in the install dialog (reusing I5's rwa_sources
+// install count) + the discover/fetch API surface. The seed VERIFIES a fetched envelope client-side
+// before install; the index never decides trust. (The discover/fetch network round-trip is
+// browser-proven in tests/skill-exec-probe.mjs; here we pin the TOFU logic + the dialog prose.)
+console.log('\n== I6: marketplace TOFU + discover API ==');
+{
+  const CODE = 'async function run(i,r){return 1}';
+  check('I6: runtime exposes discoverSkills + fetchSkillFromIndex', typeof w.runtime.discoverSkills === 'function' && typeof w.runtime.fetchSkillFromIndex === 'function');
+  const fp1 = await w._skFingerprint('SOME-PUBKEY-AAAA');
+  const fp1b = await w._skFingerprint('SOME-PUBKEY-AAAA');
+  check('I6: fingerprint is 16 hex chars + deterministic', /^[0-9a-f]{16}$/.test(fp1) && fp1 === fp1b);
+  check('I6: fingerprint differs by key', (await w._skFingerprint('OTHER-KEY')) !== fp1);
+  // a brand-new author → TOFU first-time
+  const fresh = await makeSigned('tofu-fresh', 'compute', [], CODE);
+  const rvFresh = await w.runtime.reviewSkill(fresh);
+  check('I6: reviewSkill carries TOFU {fingerprint, firstTime:true, installs:0} for a new author',
+    rvFresh.tofu && /^[0-9a-f]{16}$/.test(rvFresh.tofu.fingerprint) && rvFresh.tofu.firstTime === true && rvFresh.tofu.installs === 0);
+  // install it → the author's install count is now ≥1 → next review is "trusted, N installs"
+  await w.runtime.installSkill(fresh);
+  const rvAgain = await w.runtime.reviewSkill(fresh);
+  check('I6: after an install, the same author reads as trusted (firstTime:false, installs≥1)',
+    rvAgain.tofu.firstTime === false && rvAgain.tofu.installs >= 1);
+  // the dialog renders the fingerprint + the first-time/trusted line
+  w.runtime.showInstallDialog(await makeSigned('tofu-dialog', 'compute', [], CODE));
+  await new Promise(r => setTimeout(r, 30));
+  const card = w.document.getElementById('rwa-skill-install');
+  const html = card ? card.innerHTML : '';
+  check('I6 dialog: shows the author fingerprint + a first-time TOFU line', /Author fingerprint/.test(html) && /First time seeing this author/.test(html));
+  const cx = card && card.querySelector('[data-act=cancel]'); if (cx) cx.onclick();
+}
+
 console.log(`\n== ${pass} pass, ${fail} fail ==`);
 process.exit(fail ? 1 : 0);
