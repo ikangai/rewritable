@@ -81,6 +81,12 @@ export function parsePermission(p) {
     if (!/^[A-Za-z0-9_][A-Za-z0-9_-]{0,62}$/.test(value)) throw new Error(`invalid idb store: ${value}`);
     return { tier, value };
   }
+  if (tier === 'hook') {
+    // §9 (I8): lifecycle event, exact-match enum, no wildcards. An UNKNOWN event is treated as an
+    // unknown tier (unknown_permission_tier) per the spec, so install rejects it the same way.
+    if (value === 'on-commit' || value === 'on-open' || value === 'on-mode-change') return { tier, value };
+    throw new Error(`unknown_permission_tier: hook event ${value}`);
+  }
   throw new Error(`unknown_permission_tier: ${tier}`);
 }
 
@@ -132,6 +138,11 @@ export function permissionToProse(perm) {
   }
   if (s.startsWith('idb:')) {
     return `Read and write the \`${s.slice(4)}\` data store in this document's database.`;
+  }
+  if (s.startsWith('hook:')) {
+    const ev = s.slice(5);
+    const when = ev === 'on-commit' ? 'every time the document is saved' : ev === 'on-open' ? 'every time the document opens' : ev === 'on-mode-change' ? 'every time you switch modes' : ev;
+    return `Run automatically ${when} (no network or credential access).`;
   }
   return s;
 }
@@ -334,8 +345,12 @@ export function validateInstall(envelope, { signed, verified } = {}) {
     }
   }
   if (skill.kind === 'compute' && perms.length > 0) errors.push('compute_with_permissions');
+  // §9 (I8): a hook is compute-only — only hook:<event> perms are allowed; any other tier (a real
+  // capability) is rejected as compute_with_permissions (no network/vault/escalation in a hook).
+  if (skill.kind === 'hook' && perms.some((p) => { try { return parsePermission(p).tier !== 'hook'; } catch { return false; } })) errors.push('compute_with_permissions');
   if (!signed && perms.length > 0) errors.push('unsigned_with_permissions');
-  if (skill.kind === 'tool' && !verified) errors.push('unsigned_capability');
+  // Tools AND hooks carry capability (a hook runs autonomously on events) → must be signed+verified.
+  if ((skill.kind === 'tool' || skill.kind === 'hook') && !verified) errors.push('unsigned_capability');
   return { ok: errors.length === 0, errors };
 }
 

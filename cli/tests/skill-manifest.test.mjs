@@ -59,7 +59,7 @@ test('parsePermission accepts left-anchored network wildcards but rejects left-u
 });
 
 test('parsePermission rejects an unshipped/unknown tier', () => {
-  assert.throws(() => parsePermission('hook:on-commit'), /unknown_permission_tier/);
+  assert.throws(() => parsePermission('webcam:capture'), /unknown_permission_tier/);
   assert.throws(() => parsePermission('clipboard:read'), /unknown_permission_tier/);
 });
 
@@ -165,7 +165,7 @@ test('validateInstall rejects an unsigned/unverified capability (tool) skill', (
 });
 
 test('validateInstall rejects an unknown permission tier', () => {
-  const env = { skill: { name: 't', kind: 'tool', permissions: ['hook:on-commit'], author_pubkey: PK_A } };
+  const env = { skill: { name: 't', kind: 'tool', permissions: ['webcam:capture'], author_pubkey: PK_A } };
   const r = validateInstall(env, { signed: true, verified: true });
   assert.equal(r.ok, false);
   assert.ok(r.errors.includes('unknown_permission_tier'));
@@ -383,7 +383,7 @@ test('validateAgentInstall: vault_namespace_set is vault-only; a network entry i
   const k = await newAgentKey();
   const net = await signAgent(k, baseAgent(k.pub, { vault_namespace_set: ['network:api.x.com'] }));
   assert.ok(validateAgentInstall(net, { signed: true, verified: true }).errors.includes('invalid_permission'));
-  const unk = await signAgent(k, baseAgent(k.pub, { vault_namespace_set: ['hook:on-commit'] }));
+  const unk = await signAgent(k, baseAgent(k.pub, { vault_namespace_set: ['webcam:capture'] }));
   assert.ok(validateAgentInstall(unk, { signed: true, verified: true }).errors.includes('unknown_permission_tier'));
 });
 
@@ -423,4 +423,34 @@ test('parseAgentZone returns [] with no zone, and ignores a non-frozen lookalike
   const { parseAgentZone } = await import('../src/skill-manifest.mjs');
   assert.deepEqual(parseAgentZone('<article>no zone</article>'), []);
   assert.deepEqual(parseAgentZone('<div id="rwa-agents"><script type="application/rwa-agent+json">eyJ9</script></div>'), []); // not data-rwa-frozen
+});
+
+// ── I8 (v0.9 §9) — the hook skill kind: event-triggered, compute-only automation. hook:<event>
+// tier (event ∈ {on-commit,on-open,on-mode-change}, exact, no wildcards). Hooks are signed +
+// compute-only (no network/vault/escalation); an unknown event is unknown_permission_tier.
+test('parsePermission accepts the three hook events and rejects an unknown one', () => {
+  assert.deepEqual(parsePermission('hook:on-commit'), { tier: 'hook', value: 'on-commit' });
+  assert.equal(parsePermission('hook:on-open').tier, 'hook');
+  assert.equal(parsePermission('hook:on-mode-change').tier, 'hook');
+  assert.throws(() => parsePermission('hook:on-render'), /unknown_permission_tier/); // unknown event
+  assert.throws(() => parsePermission('hook:*'), /unknown_permission_tier/); // no wildcards
+});
+test('validateInstall: a signed+verified hook with hook:on-commit installs', () => {
+  const env = { skill: { name: 'auditor', kind: 'hook', permissions: ['hook:on-commit'], author_pubkey: PK_A } };
+  assert.equal(validateInstall(env, { signed: true, verified: true }).ok, true);
+});
+test('validateInstall: a hook is compute-only — a non-hook permission is compute_with_permissions', () => {
+  const env = { skill: { name: 'leaky', kind: 'hook', permissions: ['hook:on-commit', 'network:api.x.com'], author_pubkey: PK_A } };
+  assert.ok(validateInstall(env, { signed: true, verified: true }).errors.includes('compute_with_permissions'));
+});
+test('validateInstall: an unsigned/unverified hook is rejected (autonomous → must be signed)', () => {
+  const env = { skill: { name: 'auditor', kind: 'hook', permissions: ['hook:on-commit'], author_pubkey: PK_A } };
+  const un = validateInstall(env, { signed: false, verified: false });
+  assert.ok(!un.ok && un.errors.includes('unsigned_with_permissions'));
+  const tampered = validateInstall(env, { signed: true, verified: false });
+  assert.ok(!tampered.ok && tampered.errors.includes('unsigned_capability'));
+});
+test('validateInstall: an unknown hook event surfaces unknown_permission_tier', () => {
+  const env = { skill: { name: 'h', kind: 'hook', permissions: ['hook:on-render'], author_pubkey: PK_A } };
+  assert.ok(validateInstall(env, { signed: true, verified: true }).errors.includes('unknown_permission_tier'));
 });

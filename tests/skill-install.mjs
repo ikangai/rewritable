@@ -142,7 +142,7 @@ console.log('\n== I10: update prose-diff + re-affirmation ==');
 
   // an update ADDING an unknown permission tier (fsa:) is gate-rejected — forward-compat: an
   // unknown v0.9 tier must fail cleanly at install, not slip through on an otherwise-valid update.
-  const rvUnknown = await w.runtime.reviewSkill(await signv(['network:api.github.com', 'hook:on-commit'], CODE, '5.0.0'));
+  const rvUnknown = await w.runtime.reviewSkill(await signv(['network:api.github.com', 'webcam:capture'], CODE, '5.0.0'));
   check('I10: an update adding an UNKNOWN tier (hook:) is gate-rejected (unknown_permission_tier)', rvUnknown.gates.ok === false && rvUnknown.gates.errors.includes('unknown_permission_tier'));
 
   // a MIXED update (one perm added, one removed) surfaces BOTH sides of the diff
@@ -297,6 +297,23 @@ console.log('\n== I5: per-author name_history ==');
   const rvAfterRebuild = await w.runtime.reviewSkill(await sign('gh-sync-v3'));
   check('I5 name_history: runtimeBuildSourceIndex restores prior names from the in-file manifests',
     rvAfterRebuild.priorNames.some(p => p.name === 'gh-sync') && rvAfterRebuild.priorNames.some(p => p.name === 'github-sync'));
+}
+
+// I8 (v0.9 §9) — the hook skill kind as it surfaces through reviewSkill / _skValidateInstall /
+// installSkill. A hook is signed + compute-only (only hook:<event> perms); it installs like a skill
+// and self-describes as kind:'hook' (the FIRING integration is exercised in tests/hooks.mjs).
+console.log('\n== I8: hook kind grammar + install ==');
+{
+  const CODE = 'async function run(i,r){return 1}';
+  const rv = await w.runtime.reviewSkill(await makeSigned('auditor', 'hook', ['hook:on-commit'], CODE));
+  check('I8: a signed hook:on-commit passes the gates', rv.gates.ok === true);
+  check('I8: a hook permission renders human prose (runs automatically)', rv.permissions.some(p => p.perm === 'hook:on-commit' && /automatically/i.test(p.prose)));
+  check('I8: a hook with a non-hook perm is compute_with_permissions', w._skValidateInstall({ name: 'x', kind: 'hook', permissions: ['hook:on-commit', 'network:api.x.com'] }, { signed: true, verified: true }).errors.includes('compute_with_permissions'));
+  check('I8: an unknown hook event is unknown_permission_tier', w._skValidateInstall({ name: 'x', kind: 'hook', permissions: ['hook:on-render'] }, { signed: true, verified: true }).errors.includes('unknown_permission_tier'));
+  check('I8: an unsigned hook is rejected (unsigned_capability)', w._skValidateInstall({ name: 'x', kind: 'hook', permissions: ['hook:on-commit'] }, { signed: false, verified: false }).errors.includes('unsigned_capability'));
+  const ins = await w.runtime.installSkill(await makeSigned('auditor', 'hook', ['hook:on-commit'], CODE));
+  check('I8: a signed hook installs + lists as kind:hook', ins.ok === true && w.runtime.listSkills().some(s => s.name === 'auditor' && s.kind === 'hook'));
+  check('I8: an installed hook self-describes (kind:hook, provenance:installed)', w.runtime.describe().affordances.some(a => a.kind === 'hook' && a.name === 'auditor' && a.provenance === 'installed'));
 }
 
 console.log(`\n== ${pass} pass, ${fail} fail ==`);
