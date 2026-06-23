@@ -7303,6 +7303,64 @@ async function runtimeVaultNamespaces() {
   for (const k of Object.keys(rec.entries)) { const i = k.indexOf('\0'); if (i > 0) set.add(k.slice(0, i)); }
   return Array.from(set);
 }
+// ── I13 (v0.9 §14) — portable vault EXPORT/IMPORT (offline; escrow + account service deferred to
+// v1). A version-tagged, self-contained `rwa-vault-export/1` file: selected namespaces re-encrypted
+// under a SEPARATE transport passphrase (PBKDF2-200k + AES-256-GCM, per-namespace salt + check), so
+// it decrypts on another machine with only the passphrase — no server. The machine-local vault stays
+// the default; this travels ONLY on an explicit user action. Requires the vault unlocked (to read
+// plaintext to re-wrap). Never logs the passphrase. CLI/Worker have no access (UI/runtime action only).
+async function runtimeVaultExport(passphrase, namespaces) {
+  if (!_vaultKey) throw new Error('vault_locked');
+  if (!passphrase) throw new Error('vault_bad_passphrase');
+  const rec = await _vaultLoadRec();
+  const allNs = await runtimeVaultNamespaces();
+  const sel = (Array.isArray(namespaces) && namespaces.length) ? namespaces.filter(n => allNs.includes(n)) : allNs;
+  const out = { rwa: 'rwa-vault-export/1', containerUuid: DOC_UUID, exportedAt: Date.now(), namespaces: sel, entries: {} };
+  for (const ns of sel) {
+    const salt = _skB64(crypto.getRandomValues(new Uint8Array(16)));
+    const ekey = await _vaultDeriveKey(passphrase, salt);
+    const enc = async (text) => { const iv = crypto.getRandomValues(new Uint8Array(12)); const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, ekey, _skUtf8(text))); return { iv: _skB64(iv), ct: _skB64(ct) }; };
+    const items = [];
+    for (const k of Object.keys(rec.entries)) {
+      const i = k.indexOf('\0'); if (i <= 0 || k.slice(0, i) !== ns) continue;
+      const plain = await _vaultDec(rec.entries[k]); // decrypt under the LOCAL vault key…
+      items.push(Object.assign({ key: k.slice(i + 1) }, await enc(plain))); // …re-encrypt under the export key
+    }
+    out.entries[ns] = { salt, check: await enc('rwa-vault-export-ok'), items };
+  }
+  return out;
+}
+async function runtimeVaultImport(exportObj, passphrase, opts) {
+  opts = opts || {};
+  if (!_vaultKey) throw new Error('vault_locked'); // need the local key to re-wrap imported items
+  if (!exportObj || exportObj.rwa !== 'rwa-vault-export/1' || !exportObj.entries || typeof exportObj.entries !== 'object') throw new Error('account_export_malformed');
+  const rec = await _vaultLoadRec();
+  const result = { imported: 0, skipped: 0, namespaces: [], containerMismatch: exportObj.containerUuid !== DOC_UUID };
+  for (const ns of Object.keys(exportObj.entries)) {
+    const e = exportObj.entries[ns];
+    if (!e || typeof e.salt !== 'string' || !Array.isArray(e.items)) throw new Error('account_export_malformed');
+    const ekey = await _vaultDeriveKey(passphrase, e.salt);
+    const dec = async (entry) => new TextDecoder().decode(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: _skFromB64(entry.iv) }, ekey, _skFromB64(entry.ct)));
+    if (e.check) { try { await dec(e.check); } catch (_) { throw new Error('vault_decrypt_failed'); } } // wrong passphrase fails here, before any write
+    for (const it of e.items) {
+      let plain; try { plain = await dec(it); } catch (_) { throw new Error('vault_decrypt_failed'); }
+      const dk = ns + '\0' + it.key;
+      if (rec.entries[dk] && !opts.overwrite) { result.skipped++; continue; } // don't clobber without explicit overwrite
+      rec.entries[dk] = await _vaultEnc(plain); // re-encrypt under the LOCAL vault key (usable immediately)
+      result.imported++;
+    }
+    result.namespaces.push(ns);
+  }
+  try { await idbPut(RWA.VAULT, rec); } catch (_) { throw new Error('vault_storage_error'); }
+  return result;
+}
+// I13 — live-only account identity (opt-in, sessionStorage rwa_account; default null). Never stamped
+// into the file; never exposed to skill code (UI/describe only). Escrow/account-service deferred to v1.
+function runtimeAccountIdentity() {
+  let raw = null; try { raw = sessionStorage.getItem('rwa_account'); } catch (_) { return null; }
+  if (!raw) return null;
+  try { const a = JSON.parse(raw); return a && a.mode ? { mode: a.mode, accountId: a.accountId || null, lastSync: a.lastSync || null } : null; } catch (_) { return null; }
+}
 // §6 — the bridge's per-call vault gate (mirror of cli/src/skill-manifest.mjs vaultNamespaceAllowed).
 function _skVaultAllowed(skill, ns) {
   const perms = (skill.manifest && Array.isArray(skill.manifest.permissions)) ? skill.manifest.permissions : [];
@@ -8206,6 +8264,9 @@ function runtimeDescribe() {
     // undo-only — there is no redo (re-write-able-spec Invariant 7).
     baseline: { edit: ['lens'], tools: ['apply_dsl_plan', 'apply_edits', 'replace_document'], export: ['html', 'print'], history: ['undo'] },
     activeView: activeView ? activeView.name : null,
+    // I13 (v0.9 §14) — opt-in account identity, LIVE-only (never stamped into the file). null unless
+    // the user linked an account this session (sessionStorage rwa_account); machine-local is the default.
+    accountIdentity: runtimeAccountIdentity(),
   };
 }
 
@@ -9398,7 +9459,7 @@ document.addEventListener('keydown', e => {
       promptInstall: runtimePromptInstall, // v0.8 §1.3 — pick a .rwa-skill.json → show the dialog
       discoverSkills: runtimeDiscoverSkills, // v0.9 §11 (I6) — GET the marketplace index (opt-in network)
       fetchSkillFromIndex: runtimeFetchSkillFromIndex, // v0.9 §11 (I6) — fetch + client-side-verify an indexed skill
-      vault: { get: runtimeVaultGet, set: runtimeVaultSet, has: runtimeVaultHas, namespaces: runtimeVaultNamespaces, unlock: runtimeVaultUnlock, lock: runtimeVaultLock, isLocked: runtimeVaultIsLocked }, // v0.8 §6
+      vault: { get: runtimeVaultGet, set: runtimeVaultSet, has: runtimeVaultHas, namespaces: runtimeVaultNamespaces, unlock: runtimeVaultUnlock, lock: runtimeVaultLock, isLocked: runtimeVaultIsLocked, export: runtimeVaultExport, import: runtimeVaultImport }, // v0.8 §6 + v0.9 §14 (I13) portable export/import
       agents: { list: runtimeListAgents, active: runtimeAgentActive, setActive: runtimeSetActiveAgent, install: runtimeInstallAgent, uninstall: runtimeUninstallAgent, message: runtimeAgentMessage, showInstallDialog: showAgentInstallDialog }, // v0.9 §12 — multi-agent roles
       hookLog: runtimeHookLog, // v0.9 §9 — the hook audit trail (rwa_hook_log)
     };
