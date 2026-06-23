@@ -5110,10 +5110,29 @@ window.submitLens = submitLens;
 // workspaces (audit R7) can carry richer identifiers (e.g. signed source
 // keys per the action-spec) without changing the rwa_hist schema.
 function getActiveActor() {
+  // I12 — when a multi-agent role is active, commits attribute to it (agents:${role}); the role is
+  // the actor of record (rendered as a history badge). Else fall back to the backend/model string.
+  if (activeAgentRole) return 'agents:' + activeAgentRole;
   const backend = sessionStorage.getItem(RWA.K_BACKEND) || 'openrouter';
   if (backend === 'bridge') return 'bridge:claude-p';
   if (backend === 'bridge-session') return 'bridge:claude-session';
   return sessionStorage.getItem(RWA.K_MODEL) || RWA.MODEL;
+}
+// I12 — the modify() system prompt, keyed by the active agent's role. An active (verified) agent's
+// system_prompt swaps the per-kind FRAMING; the shared SYSTEM_PROMPT_RULES (tool protocol, frozen-
+// zone rules, data-rwa-id) are always appended so editing still works. No agent → the singleton.
+function resolveSystemPrompt() {
+  if (activeAgentRole) {
+    const rec = Array.from(installedAgents.values()).find(a => a.role === activeAgentRole && a.verified);
+    if (rec && typeof rec.manifest.system_prompt === 'string') return rec.manifest.system_prompt + '\n' + SYSTEM_PROMPT_RULES;
+  }
+  return SYSTEM_PROMPT;
+}
+// I12 — the role-scoped vault gate: exact vault:<ns> membership in the agent's vault_namespace_set
+// (mirrors _skVaultAllowed against the agent record instead of the skill's permissions).
+function _agVaultAllowed(agent, ns) {
+  const set = (agent && Array.isArray(agent.vault_namespace_set)) ? agent.vault_namespace_set : [];
+  return set.indexOf('vault:' + ns) !== -1;
 }
 
 // Resolve the user-selected backend into a transport config.
@@ -7220,9 +7239,18 @@ const SKILL_WORKER_PROLOGUE = `(function(){
 // bridged fetch/vault with per-call origin/namespace enforcement on THIS (main) thread.
 // Per-invocation identity_tag binds responses; 5s timeout; spawn -> invoke -> terminate.
 // (Vault: increment 8. The worker-scoped CSP that walls remote import() is the frozen-<head> 7b meta.)
-function runtimeInvokeSkill(skillId, input) {
+function runtimeInvokeSkill(skillId, input, opts) {
   const skill = installedSkills.get(skillId);
   if (!skill) return Promise.reject(new Error('skill_not_found'));
+  // I12 — run under a role: vault ops gate on the AGENT's vault_namespace_set (the role is the
+  // capability boundary for this invoke). Resolve BEFORE any Worker spawns so a bad role fails fast.
+  let agentRec = null;
+  const agentRole = opts && opts.agentRole;
+  if (agentRole != null) {
+    agentRec = Array.from(installedAgents.values()).find(a => a.role === agentRole) || null;
+    if (!agentRec) return Promise.reject(new Error('agent_not_found'));
+    if (!agentRec.verified) return Promise.reject(new Error('unverified_agent'));
+  }
   const isTool = skill.kind === 'tool';
   // §3.4/Inv 20 gate at the capability boundary: a `tool` that did not re-verify from the bytes
   // (unsigned, or signed-then-tampered → boot re-verify flips verified:false) must NOT reach the
@@ -7265,7 +7293,10 @@ function runtimeInvokeSkill(skillId, input) {
       }
       if (msg.type === 'bridge:vault') {
         const pl = msg.payload || {};
-        if (!_skVaultAllowed(skill, pl.ns)) { reply(msg.id, false, { error: 'vault_namespace_denied' }); return; } // §6 per-call gate
+        // I12 — under an active role the AGENT's vault_namespace_set is the gate (role-scoped);
+        // otherwise the skill's own vault: permissions. Either way an out-of-scope ns is denied.
+        const vaultOk = agentRec ? _agVaultAllowed(agentRec.manifest, pl.ns) : _skVaultAllowed(skill, pl.ns);
+        if (!vaultOk) { reply(msg.id, false, { error: 'vault_namespace_denied' }); return; } // §6 per-call gate
         try {
           if (pl.op === 'get') reply(msg.id, true, { result: await runtimeVaultGet(pl.ns, pl.key) });
           else if (pl.op === 'has') reply(msg.id, true, { result: await runtimeVaultHas(pl.ns, pl.key) });
@@ -7793,7 +7824,7 @@ async function modify(instr, lensMeta = null, opts = null) {
     const frozenZones = extractFrozenZones(cur);
 
     const messages = [
-      { role: 'system', content: SYSTEM_PROMPT },
+      { role: 'system', content: resolveSystemPrompt() },
       { role: 'user', content: buildUserPrompt(instr, cur, frozenZones) }
     ];
 
@@ -7980,7 +8011,7 @@ async function modifyViaBridge(instr, lensMeta = null) {
     const vOpts = { assets: vimg.assets, orphans: vimg.orphans };
     const frozenZones = extractFrozenZones(cur);
 
-    const prompt = SYSTEM_PROMPT + '\n\n' + buildUserPrompt(instr, cur, frozenZones) +
+    const prompt = resolveSystemPrompt() + '\n\n' + buildUserPrompt(instr, cur, frozenZones) +
       '\n\nThis backend is single-shot (no tool-calling protocol). Output ONLY a single JSON envelope as your last response, no markdown fences, no commentary, no preamble. The envelope MUST be one of these three exact shapes:\n\n' +
       '{"tool":"apply_dsl_plan","envelope":{"version":"rwa-edit-dsl/1","ops":[/* per the rules above */]}}\n\n' +
       '{"tool":"apply_edits","envelope":{"version":"rwa-edit/1","edits":[{"find":"...","replace":"..."}]}}\n\n' +

@@ -107,5 +107,35 @@ check('runtime exposes agents.{list,active,setActive,install,uninstall}',
   check('tamper: an unverified agent cannot be activated (unverified_agent)', threw && /unverified_agent/.test(String(threw.message || threw)));
 }
 
+// ── PHASE B — role binding: getActiveActor attribution, role-keyed modify() prompt, per-agent
+// vault scoping on invokeSkill. (The vault gate THROUGH the Worker is browser-proven separately —
+// jsdom can't run Workers; here we pin the pure helpers + the pre-spawn rejection.)
+console.log('\n== I12 phase B: role binding ==');
+{
+  const k = await newKey();
+  await w.runtime.agents.install(await signAgent(k, { role: 'editor', system_prompt: 'You are a meticulous copy-editor. Prefer minimal edits.', vault_namespace_set: ['vault:editor-notes'] }));
+  // getActiveActor() attributes commits to the active role (else the backend/model string)
+  w.runtime.agents.setActive(null);
+  const baseActor = w.getActiveActor();
+  check('B getActiveActor: no agent active → the backend/model string (backward compat)', typeof baseActor === 'string' && !/^agents:/.test(baseActor));
+  w.runtime.agents.setActive('editor');
+  check('B getActiveActor: an active agent → agents:${role}', w.getActiveActor() === 'agents:editor');
+  // resolveSystemPrompt() swaps the role framing but KEEPS the shared tool rules
+  const rp = w.resolveSystemPrompt();
+  check('B resolveSystemPrompt: uses the active agent system_prompt', /meticulous copy-editor/.test(rp));
+  check('B resolveSystemPrompt: still carries the shared tool rules (apply_edits)', /apply_edits/.test(rp));
+  w.runtime.agents.setActive(null);
+  const noAgentPrompt = w.resolveSystemPrompt();
+  check('B resolveSystemPrompt: no agent active → the singleton (no role framing, tool rules present)',
+    !/meticulous copy-editor/.test(noAgentPrompt) && /apply_edits/.test(noAgentPrompt));
+  // _agVaultAllowed: exact vault:<ns> membership in the agent's vault_namespace_set
+  check('B _agVaultAllowed: in-set namespace allowed', w._agVaultAllowed({ vault_namespace_set: ['vault:editor-notes'] }, 'editor-notes') === true);
+  check('B _agVaultAllowed: out-of-set namespace denied', w._agVaultAllowed({ vault_namespace_set: ['vault:editor-notes'] }, 'secrets') === false);
+  // invokeSkill role resolution happens BEFORE any Worker spawns: an unknown/unverified role rejects
+  const noop = await w.runtime.installSkill({ format: 'rwa-skill/1', skill: { name: 'noop', version: '1.0.0', kind: 'compute', permissions: [], author_pubkey: 'AAAA', code: 'async function run(i){return 1}' } });
+  let e1 = null; try { await w.runtime.invokeSkill(noop.skillId, {}, { agentRole: 'ghost' }); } catch (e) { e1 = e; }
+  check('B invokeSkill: an unknown agentRole rejects (agent_not_found) before spawning a Worker', e1 && /agent_not_found/.test(String(e1.message || e1)));
+}
+
 console.log(`\n== ${pass} pass, ${fail} fail ==`);
 process.exit(fail ? 1 : 0);
