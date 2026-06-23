@@ -218,6 +218,78 @@ export function skeletonDistance(a, b) {
   return levenshtein(skeleton(a), skeleton(b));
 }
 
+// ── I12 (v0.9 §12) — rwa-agent/1: a role-scoped, signed agent identity (role + system_prompt +
+// vault_namespace_set; NO code field). Parallels the skill canon; the seed mirrors this logic.
+const ROLE_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/; // ≤64, lowercase a-z0-9-_, leading alphanumeric
+
+/** Canonical agent manifest: stable-key-ordered over the signed fields; excludes the signature. */
+export function canonicalAgent(agent) {
+  const a = agent || {};
+  return JSON.stringify({
+    author_pubkey: a.author_pubkey ?? null,
+    description: a.description ?? null,
+    role: a.role ?? null,
+    system_prompt: a.system_prompt ?? null,
+    vault_namespace_set: Array.isArray(a.vault_namespace_set) ? a.vault_namespace_set : [],
+    version: a.version ?? null,
+  });
+}
+
+/** Agent signing message bytes = sha256(canonicalAgent). Agents have no code field. */
+export function agentSigningMessage(agent) {
+  return sha256(Buffer.from(enc.encode(canonicalAgent(agent))));
+}
+
+/** agentId = base64url(sha256(role ‖ 0x00 ‖ author_pubkey)). Same role from different keys differ. */
+export function agentId(role, authorPubkey) {
+  return sha256(Buffer.concat([Buffer.from(enc.encode(String(role))), NUL, Buffer.from(enc.encode(String(authorPubkey)))]))
+    .toString('base64url');
+}
+
+/** Ed25519 verify over agentSigningMessage. Mirrors verifyEnvelope; the seed uses async WebCrypto. */
+export function verifyAgentEnvelope(envelope) {
+  const sig = envelope && envelope.signature;
+  if (!sig) return { signed: false, verified: false };
+  const agent = envelope.agent || {};
+  try {
+    const raw = Buffer.from(agent.author_pubkey, 'base64');
+    const key = createPublicKey({ key: Buffer.concat([ED25519_SPKI_PREFIX, raw]), format: 'der', type: 'spki' });
+    const verified = edVerify(null, agentSigningMessage(agent), key, Buffer.from(sig, 'base64'));
+    return { signed: true, verified: !!verified };
+  } catch {
+    return { signed: true, verified: false };
+  }
+}
+
+// A system_prompt is a runtime literal — reject anything that could break out of the template or
+// inject document markers (backtick, ${, <DOC>/<\/DOC>) → agent_prompt_injection_risk.
+function agentPromptInjectionRisk(s) {
+  const p = String(s ?? '');
+  return p.includes('`') || p.includes('${') || /<\/?DOC>/i.test(p);
+}
+
+/** §12 agent install gates. Pure; takes the verification result so it stays synchronous. */
+export function validateAgentInstall(envelope, { signed, verified } = {}) {
+  const agent = (envelope && envelope.agent) || {};
+  const errors = [];
+  // A NUL in the role makes agentId(role‖0x00‖pubkey) ambiguous — reject (mirrors F8).
+  if (/\0/.test(String(agent.role == null ? '' : agent.role))) errors.push('invalid_agent_id');
+  if (typeof agent.role !== 'string' || !ROLE_RE.test(agent.role)) errors.push('invalid_role');
+  // A missing/non-string OR injection-bearing prompt is rejected under the same gate.
+  if (typeof agent.system_prompt !== 'string' || agentPromptInjectionRisk(agent.system_prompt)) errors.push('agent_prompt_injection_risk');
+  const set = agent.vault_namespace_set;
+  if (set != null && !Array.isArray(set)) errors.push('invalid_permission');
+  for (const p of (Array.isArray(set) ? set : [])) {
+    try {
+      if (parsePermission(p).tier !== 'vault') errors.push('invalid_permission'); // vault_namespace_set is vault-only
+    } catch (e) {
+      errors.push(/unknown_permission_tier/.test(e.message) ? 'unknown_permission_tier' : 'invalid_permission');
+    }
+  }
+  if (!signed) errors.push('unsigned_agent'); // unsigned agents are rejected at install (verified gates activation)
+  return { ok: errors.length === 0, errors };
+}
+
 /** §3.4 install gates. Pure; takes the verification result so it stays synchronous. */
 export function validateInstall(envelope, { signed, verified } = {}) {
   const skill = (envelope && envelope.skill) || {};

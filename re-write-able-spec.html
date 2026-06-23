@@ -6779,6 +6779,12 @@ let activeView = null;
 // runtimeDescribe()/runtimeListSkills(). The agent can never write the zone (it is
 // data-rwa-frozen); only the runtime rewrites it (increment 7, registry-aware commit).
 const installedSkills = new Map();
+// I12 (v0.9 §12) — installed AGENT registry. Map<agentId, {agentId, role, verified, manifest,
+// envelope}>. Populated at boot from the frozen #rwa-agents zone (readTrustworthyAgents). Identity
+// is the author key; activeAgentRole is the in-tab active role (null = none; not persisted — boot
+// starts with no agent active per §12).
+const installedAgents = new Map();
+let activeAgentRole = null;
 
 const RWA_VIEW_RESERVED_IDS = ['rwa-doc-mount', 'rwa-lens', 'rwa-runtime'];
 const RWA_VIEW_RESERVED_MARKERS = ['rwa:frozen:begin', 'rwa:frozen:end', 'data-rwa-frozen'];
@@ -6950,6 +6956,38 @@ async function _skVerify(env) {
     return !!(await crypto.subtle.verify({ name: 'Ed25519' }, key, _skFromB64(sig), await _skSigningMessage(skill, skill.code)));
   } catch (_) { return false; } // Ed25519 unsupported / bad bytes → verified:false (honest)
 }
+// ── I12 (v0.9 §12) — rwa-agent/1 canon (LIVE mirror of cli/src/skill-manifest.mjs canonicalAgent/
+// agentSigningMessage/agentId/verifyAgentEnvelope/validateAgentInstall). An agent is a role-scoped,
+// signed identity (role + system_prompt + vault_namespace_set; NO code). Same canon as the CLI so a
+// seed-live verify == the CLI-static verify for the same bytes.
+const _AG_ROLE_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+function _agCanonicalAgent(a) { a = a || {}; return JSON.stringify({ author_pubkey: a.author_pubkey ?? null, description: a.description ?? null, role: a.role ?? null, system_prompt: a.system_prompt ?? null, vault_namespace_set: Array.isArray(a.vault_namespace_set) ? a.vault_namespace_set : [], version: a.version ?? null }); }
+async function _agSigningMessage(a) { return _skSha256(_skUtf8(_agCanonicalAgent(a))); }
+async function _agAgentId(role, pubkey) { return _skB64url(await _skSha256(_skConcat(_skUtf8(String(role)), _skNUL, _skUtf8(String(pubkey))))); }
+async function _agVerify(env) {
+  const sig = env && env.signature;
+  if (!sig) return false;
+  const agent = env.agent || {};
+  try {
+    const key = await crypto.subtle.importKey('raw', _skFromB64(agent.author_pubkey), { name: 'Ed25519' }, false, ['verify']);
+    return !!(await crypto.subtle.verify({ name: 'Ed25519' }, key, _skFromB64(sig), await _agSigningMessage(agent)));
+  } catch (_) { return false; }
+}
+function _agPromptInjectionRisk(s) { const p = String(s ?? ''); return p.includes('`') || p.includes('${') || /<\/?DOC>/i.test(p); }
+function _agValidateInstall(agent, signed) {
+  agent = agent || {}; const errors = [];
+  if (/\0/.test(String(agent.role == null ? '' : agent.role))) errors.push('invalid_agent_id');
+  if (typeof agent.role !== 'string' || !_AG_ROLE_RE.test(agent.role)) errors.push('invalid_role');
+  if (typeof agent.system_prompt !== 'string' || _agPromptInjectionRisk(agent.system_prompt)) errors.push('agent_prompt_injection_risk');
+  const set = agent.vault_namespace_set;
+  if (set != null && !Array.isArray(set)) errors.push('invalid_permission');
+  for (const p of (Array.isArray(set) ? set : [])) {
+    try { if (_skParsePermission(p).tier !== 'vault') errors.push('invalid_permission'); }
+    catch (e) { errors.push(/unknown_permission_tier/.test(e.message) ? 'unknown_permission_tier' : 'invalid_permission'); }
+  }
+  if (!signed) errors.push('unsigned_agent');
+  return { ok: errors.length === 0, errors };
+}
 // Locate the inner HTML of the agent-unreachable <div data-rwa-frozen id="rwa-skills">
 // in the DOC TEXT (boot has the doc string before render). Only the frozen zone is
 // trusted; base64 envelopes contain no </div> so a flat scan is safe.
@@ -6982,6 +7020,33 @@ async function readTrustworthySkills(doc) {
     const id = await _skSkillId(skill.name, skill.author_pubkey);
     // Keep the FULL envelope (incl. signature) so buildSkillZone can re-emit a re-verifiable block (§7).
     out.set(id, { skillId: id, kind: skill.kind, name: skill.name, verified, manifest: skill, code: skill.code, envelope: env });
+  }
+  return out;
+}
+// I12 (v0.9 §12) — the frozen #rwa-agents zone (coexists with #rwa-skills). Same strict
+// frozen-attribute read as _skExtractZone so an agent-committed lookalike div can't forge an agent.
+function _agExtractZone(doc) {
+  const open = /<div\b[^>]*\bid="rwa-agents"[^>]*>/i.exec(String(doc || ''));
+  if (!open || !tagHasFrozenAttr(open[0])) return null;
+  const start = open.index + open[0].length;
+  const end = doc.indexOf('</div>', start);
+  return end < 0 ? null : doc.slice(start, end);
+}
+// Parse installed agents from the frozen zone, re-verifying each signature. Soft-fail. Returns a
+// Map<agentId, {agentId, role, verified, manifest, envelope}>. Mirrors readTrustworthySkills.
+async function readTrustworthyAgents(doc) {
+  const out = new Map();
+  const zone = _agExtractZone(doc);
+  if (!zone) return out;
+  const blocks = zone.matchAll(/<script\s+type="application\/rwa-agent\+json">([\s\S]*?)<\/script>/g);
+  for (const m of blocks) {
+    let env;
+    try { env = JSON.parse(new TextDecoder().decode(_skFromB64(m[1].trim()))); } catch (_) { continue; }
+    const agent = env && env.agent;
+    if (!agent || typeof agent.role !== 'string') continue;
+    const verified = await _agVerify(env);
+    const id = await _agAgentId(agent.role, agent.author_pubkey);
+    out.set(id, { agentId: id, role: agent.role, verified, manifest: agent, envelope: env });
   }
   return out;
 }
@@ -7409,6 +7474,81 @@ async function runtimeUninstallSkill(skillId) {
     await runtimeRegionCommit({ regions: [_skSkillsRegion()], actor: 'skill:uninstall', reachability: 'frozen' });
   } catch (e) {
     installedSkills.set(skillId, prev);
+    return { ok: false, errors: [(e && e.code) || (e && e.message) || 'persist_failed'] };
+  }
+  return { ok: true };
+}
+// ── I12 (v0.9 §12) — agent registry ops. The #rwa-agents zone is built/committed exactly like
+// #rwa-skills (skillId-sorted base64 envelopes, runtimeRegionCommit reachability:'frozen'); the two
+// zones coexist and the region primitive commits each atomically. insertAt is the no-zone fallback
+// (a fresh skill-host has no agents zone yet → the first install appends one).
+function buildAgentZone(agents) {
+  const blocks = Array.from(agents.values())
+    .filter(a => a.envelope)
+    .sort((a, b) => (a.agentId < b.agentId ? -1 : a.agentId > b.agentId ? 1 : 0))
+    .map(a => '<script type="application/rwa-agent+json">' + _skB64(_skUtf8(JSON.stringify(a.envelope))) + '<\/script>')
+    .join('');
+  return '<div data-rwa-frozen id="rwa-agents">' + blocks + '</div>';
+}
+function _agAgentsRegion() {
+  return {
+    frozenId: 'rwa-agents',
+    select(doc) {
+      const open = /<div\b[^>]*\bid="rwa-agents"[^>]*>/i.exec(doc);
+      if (!open) return null;
+      const close = doc.indexOf('</div>', open.index + open[0].length);
+      return close < 0 ? null : [open.index, close + 6];
+    },
+    insertAt(doc) { return doc.length; },
+    build() { return buildAgentZone(installedAgents); },
+  };
+}
+function runtimeListAgents() {
+  return Array.from(installedAgents.values()).map(a => ({ role: a.role, author_pubkey: a.manifest && a.manifest.author_pubkey, verified: a.verified }));
+}
+function runtimeAgentActive() {
+  if (!activeAgentRole) return null;
+  const rec = Array.from(installedAgents.values()).find(a => a.role === activeAgentRole);
+  return rec ? { role: rec.role, author_pubkey: rec.manifest && rec.manifest.author_pubkey } : null;
+}
+// Switch the active role. The trust anchor is the signature: an unverified (tampered) agent can be
+// installed but NEVER activated (unverified_agent), so a tampered prompt can't drive modify().
+function runtimeSetActiveAgent(role) {
+  if (role == null) { activeAgentRole = null; return; }
+  const rec = Array.from(installedAgents.values()).find(a => a.role === role);
+  if (!rec) throw new RwaEditError('agent_not_found', null, { role });
+  if (!rec.verified) throw new RwaEditError('unverified_agent', null, { role });
+  activeAgentRole = role;
+}
+// §12 — validate + verify + register an agent, then persist the #rwa-agents zone (same discipline as
+// runtimeInstallSkill: rollback the in-memory map on a persist failure). A signed-but-unverified
+// agent registers (verified:false) but can't activate.
+async function runtimeInstallAgent(envelope) {
+  const agent = (envelope && envelope.agent) || {};
+  const signed = !!(envelope && envelope.signature);
+  const gate = _agValidateInstall(agent, signed);
+  if (!gate.ok) return { ok: false, errors: gate.errors };
+  const verified = await _agVerify(envelope);
+  const id = await _agAgentId(agent.role, agent.author_pubkey);
+  const prev = installedAgents.get(id);
+  installedAgents.set(id, { agentId: id, role: agent.role, verified, manifest: agent, envelope });
+  try {
+    await runtimeRegionCommit({ regions: [_agAgentsRegion()], actor: prev ? 'agent:update' : 'agent:install', reachability: 'frozen' });
+  } catch (e) {
+    if (prev) installedAgents.set(id, prev); else installedAgents.delete(id);
+    return { ok: false, errors: [(e && e.code) || (e && e.message) || 'persist_failed'] };
+  }
+  return { ok: true, agentId: id, verified };
+}
+async function runtimeUninstallAgent(agentId) {
+  const prev = installedAgents.get(agentId);
+  if (!prev) return { ok: false, errors: ['not_installed'] };
+  installedAgents.delete(agentId);
+  if (activeAgentRole && prev.role === activeAgentRole && !Array.from(installedAgents.values()).some(a => a.role === activeAgentRole)) activeAgentRole = null;
+  try {
+    await runtimeRegionCommit({ regions: [_agAgentsRegion()], actor: 'agent:uninstall', reachability: 'frozen' });
+  } catch (e) {
+    installedAgents.set(agentId, prev);
     return { ok: false, errors: [(e && e.code) || (e && e.message) || 'persist_failed'] };
   }
   return { ok: true };
@@ -8839,6 +8979,11 @@ document.addEventListener('keydown', e => {
       const skMap = await readTrustworthySkills(doc);
       installedSkills.clear();
       skMap.forEach((v, k) => installedSkills.set(k, v));
+      // I12 — rebuild the agent registry from the frozen #rwa-agents zone (re-verify each). No agent
+      // is active by default; an unverified (tampered) agent is registered but can't activate.
+      const agMap = await readTrustworthyAgents(doc);
+      installedAgents.clear();
+      agMap.forEach((v, k) => installedAgents.set(k, v));
       // I5 — reconcile the per-author name_history (rwa_sources) from the in-file manifests, so a
       // fresh load (or an IDB-cleared one) still knows the renames recorded in the frozen zone.
       await runtimeBuildSourceIndex();
@@ -8885,6 +9030,7 @@ document.addEventListener('keydown', e => {
       showInstallDialog: showSkillInstallDialog, // v0.8 §1 — render the consent dialog for an envelope → resolves with the choice
       promptInstall: runtimePromptInstall, // v0.8 §1.3 — pick a .rwa-skill.json → show the dialog
       vault: { get: runtimeVaultGet, set: runtimeVaultSet, has: runtimeVaultHas, namespaces: runtimeVaultNamespaces, unlock: runtimeVaultUnlock, lock: runtimeVaultLock, isLocked: runtimeVaultIsLocked }, // v0.8 §6
+      agents: { list: runtimeListAgents, active: runtimeAgentActive, setActive: runtimeSetActiveAgent, install: runtimeInstallAgent, uninstall: runtimeUninstallAgent }, // v0.9 §12 — multi-agent roles
     };
     // `status` is a getter so each read returns a fresh snapshot of
     // dirty/fsa/storage; an enumerable data prop would let stale references

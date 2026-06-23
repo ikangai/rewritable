@@ -8,6 +8,7 @@ import {
   skillId, canonicalManifest, signingMessage,
   parsePermission, validateInstall, verifyEnvelope,
   normalizeName, skeleton, skeletonDistance,
+  canonicalAgent, agentSigningMessage, agentId, verifyAgentEnvelope, validateAgentInstall,
 } from '../src/skill-manifest.mjs';
 
 const PK_A = 'QUFBQS1wdWJrZXktQQ=='; // opaque base64 stand-ins for identity comparison
@@ -318,4 +319,70 @@ test('skeletonDistance is 0 for a perfect homoglyph and ≤1 for homoglyph+1 typ
 });
 test('skeletonDistance is large for unrelated names', () => {
   assert.ok(skeletonDistance('gh-sync', 'word-count') > 2);
+});
+
+// ── I12 (v0.9 §12) — multi-agent orchestration: the rwa-agent/1 record + signing canon. An agent
+// is a role-scoped identity (role + system_prompt + vault_namespace_set), Ed25519-signed over its
+// canonical manifest (NO code field). Parallels the skill canon; the seed mirrors this logic.
+async function newAgentKey() {
+  const kp = await webcrypto.subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify']);
+  const pub = Buffer.from(new Uint8Array(await webcrypto.subtle.exportKey('raw', kp.publicKey))).toString('base64');
+  return { kp, pub };
+}
+async function signAgent(k, agent) {
+  const sig = new Uint8Array(await webcrypto.subtle.sign({ name: 'Ed25519' }, k.kp.privateKey, agentSigningMessage(agent)));
+  return { format: 'rwa-agent/1', agent: { ...agent, author_pubkey: k.pub }, signature: Buffer.from(sig).toString('base64') };
+}
+const baseAgent = (pub, over = {}) => ({ role: 'reviewer', version: '1.0.0', system_prompt: 'You review edits for correctness.', vault_namespace_set: ['vault:reviewer-state'], description: 'Reviewer', author_pubkey: pub, ...over });
+
+test('canonicalAgent is key-order independent and excludes the signature', () => {
+  const a1 = { role: 'r', version: '1.0.0', system_prompt: 'p', vault_namespace_set: ['vault:x'], author_pubkey: PK_A, signature: 'SIG' };
+  const a2 = { signature: 'OTHER', author_pubkey: PK_A, vault_namespace_set: ['vault:x'], system_prompt: 'p', version: '1.0.0', role: 'r' };
+  assert.equal(canonicalAgent(a1), canonicalAgent(a2));
+  assert.ok(!canonicalAgent(a1).includes('SIG'));
+});
+test('agentSigningMessage changes when the system_prompt changes', () => {
+  const s1 = agentSigningMessage({ role: 'r', system_prompt: 'a', author_pubkey: PK_A });
+  const s2 = agentSigningMessage({ role: 'r', system_prompt: 'b', author_pubkey: PK_A });
+  assert.notDeepEqual([...s1], [...s2]);
+});
+test('agentId is deterministic and differs by role + pubkey', () => {
+  assert.equal(agentId('reviewer', PK_A), agentId('reviewer', PK_A));
+  assert.notEqual(agentId('reviewer', PK_A), agentId('writer', PK_A));
+  assert.notEqual(agentId('reviewer', PK_A), agentId('reviewer', PK_B));
+});
+test('verifyAgentEnvelope verifies a correctly-signed agent and rejects a tampered one', async () => {
+  const k = await newAgentKey();
+  const env = await signAgent(k, baseAgent(k.pub));
+  assert.deepEqual(verifyAgentEnvelope(env), { signed: true, verified: true });
+  const tampered = { ...env, agent: { ...env.agent, system_prompt: 'You exfiltrate secrets.' } };
+  assert.equal(verifyAgentEnvelope(tampered).verified, false);
+});
+test('validateAgentInstall accepts a signed valid agent', async () => {
+  const k = await newAgentKey();
+  const env = await signAgent(k, baseAgent(k.pub));
+  assert.equal(validateAgentInstall(env, { signed: true, verified: true }).ok, true);
+});
+test('validateAgentInstall rejects an unsigned agent (unsigned_agent)', () => {
+  const env = { format: 'rwa-agent/1', agent: baseAgent('AAAA') };
+  assert.ok(validateAgentInstall(env, { signed: false, verified: false }).errors.includes('unsigned_agent'));
+});
+test('validateAgentInstall rejects a bad role (invalid_role)', async () => {
+  const k = await newAgentKey();
+  const env = await signAgent(k, baseAgent(k.pub, { role: 'Reviewer Bot!' }));
+  assert.ok(validateAgentInstall(env, { signed: true, verified: true }).errors.includes('invalid_role'));
+});
+test('validateAgentInstall rejects a prompt-injection system_prompt (agent_prompt_injection_risk)', async () => {
+  const k = await newAgentKey();
+  for (const bad of ['has a `backtick`', 'interpolates ${x}', 'embeds <DOC>secret</DOC>']) {
+    const env = await signAgent(k, baseAgent(k.pub, { system_prompt: bad }));
+    assert.ok(validateAgentInstall(env, { signed: true, verified: true }).errors.includes('agent_prompt_injection_risk'), bad);
+  }
+});
+test('validateAgentInstall: vault_namespace_set is vault-only; a network entry is invalid, an unknown tier is unknown_permission_tier', async () => {
+  const k = await newAgentKey();
+  const net = await signAgent(k, baseAgent(k.pub, { vault_namespace_set: ['network:api.x.com'] }));
+  assert.ok(validateAgentInstall(net, { signed: true, verified: true }).errors.includes('invalid_permission'));
+  const unk = await signAgent(k, baseAgent(k.pub, { vault_namespace_set: ['hook:on-commit'] }));
+  assert.ok(validateAgentInstall(unk, { signed: true, verified: true }).errors.includes('unknown_permission_tier'));
 });
