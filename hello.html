@@ -407,7 +407,7 @@ window.ANCHORABLE_TAGS = ANCHORABLE_TAGS; // expose for tests
 // ─── Storage ────────────────────────────────────────────────────────
 const RWA = {
   DB:'rwa_'+DOC_UUID, KEY:'self',
-  DOC:'rwa_doc', UNDO:'rwa_undo', HIST:'rwa_hist', FSA:'rwa_fsa', STATE:'rwa_state', VAULT:'rwa_vault', SOURCES:'rwa_sources',
+  DOC:'rwa_doc', UNDO:'rwa_undo', HIST:'rwa_hist', FSA:'rwa_fsa', STATE:'rwa_state', VAULT:'rwa_vault', SOURCES:'rwa_sources', HOOK_LOG:'rwa_hook_log',
   UNDO_CAP:10, HIST_CAP:1000, NUDGE_THRESHOLD:5,
   K_API:'rwa_apikey', K_MODEL:'rwa_model', K_BACKEND:'rwa_backend',
   // Per-backend base-URL overrides for local OpenAI-compatible servers.
@@ -486,7 +486,7 @@ try {
 const canonLF = s => s == null ? '' : String(s).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
 
 let _db;
-const REQUIRED_STORES = [RWA.DOC, RWA.UNDO, RWA.HIST, RWA.FSA, RWA.STATE, RWA.VAULT, RWA.SOURCES];
+const REQUIRED_STORES = [RWA.DOC, RWA.UNDO, RWA.HIST, RWA.FSA, RWA.STATE, RWA.VAULT, RWA.SOURCES, RWA.HOOK_LOG];
 // User-declared store registry. Persisted to RWA.STATE so declarations survive
 // reload. The openDB() upgrade handler creates declared stores on every bump.
 // Populated at bootstrap via loadUserStoreDecls(); mutated by runtime.db.open.
@@ -924,6 +924,15 @@ function emitRuntimeEvent(event, payload) {
   for (const cb of [...runtimeEvents[event]]) {
     try { cb(payload); } catch (_) { /* swallow user-cb errors */ }
   }
+  // I8 (v0.9 §9) — fire installed hooks for the mapped lifecycle event. 'modify' (an edit commit,
+  // carrying instruction/lensMeta) → on-commit; 'mode' → on-mode-change (with the previous mode).
+  // Fire-and-forget: wrapped so a firing failure can never propagate into the commit/mode path.
+  try {
+    if (typeof fireHooks === 'function') {
+      if (event === 'modify') fireHooks('on-commit', { event: 'on-commit', instruction: payload && payload.instruction, lensMeta: payload && payload.lensMeta });
+      else if (event === 'mode') { const previous = _lastHookMode; _lastHookMode = payload && payload.mode; fireHooks('on-mode-change', { event: 'on-mode-change', mode: payload && payload.mode, previous }); }
+    }
+  } catch (_) { /* hook firing never breaks the emitter */ }
 }
 
 // === Cross-container bus (workspace-presence subset) ========================
@@ -6341,6 +6350,11 @@ const installedSkills = new Map();
 // starts with no agent active per §12).
 const installedAgents = new Map();
 let activeAgentRole = null;
+// I8 (v0.9 §9) — hook firing state. activeHooks holds skillIds currently executing (re-entrancy
+// guard, Inv 23); _lastHookMode tracks the prior mode for on-mode-change's `previous`; _hookSeq
+// makes rwa_hook_log keys unique within a millisecond.
+const activeHooks = new Set();
+let _lastHookMode = null, _hookSeq = 0;
 
 const RWA_VIEW_RESERVED_IDS = ['rwa-doc-mount', 'rwa-lens', 'rwa-runtime'];
 const RWA_VIEW_RESERVED_MARKERS = ['rwa:frozen:begin', 'rwa:frozen:end', 'data-rwa-frozen'];
@@ -7145,6 +7159,51 @@ async function runtimeUninstallAgent(agentId) {
     return { ok: false, errors: [(e && e.code) || (e && e.message) || 'persist_failed'] };
   }
   return { ok: true };
+}
+// ── I8 (v0.9 §9) — hook firing. Installed `hook` skills that declare hook:<event> run (compute-only,
+// no bridge) when the mapped lifecycle event fires. Fire-and-forget: never blocks/throws into the
+// emitter (Inv 24); deterministic skillId order; re-entrancy-guarded (Inv 23); every run logged to
+// rwa_hook_log (Inv 25). A hook must be verified (boot re-check) to fire.
+function _hooksForEvent(hookEvent) {
+  return Array.from(installedSkills.values())
+    .filter(s => s && s.kind === 'hook' && s.verified && Array.isArray(s.manifest && s.manifest.permissions) && s.manifest.permissions.indexOf('hook:' + hookEvent) !== -1)
+    .sort((a, b) => (a.skillId < b.skillId ? -1 : a.skillId > b.skillId ? 1 : 0));
+}
+function _hookLog(entry) {
+  return idbPut(RWA.HOOK_LOG, entry, entry.ts + '-' + (_hookSeq++)).catch(() => {});
+}
+function fireHooks(hookEvent, input) {
+  for (const h of _hooksForEvent(hookEvent)) {
+    if (activeHooks.has(h.skillId)) continue; // a hook can't re-fire its own event
+    activeHooks.add(h.skillId);
+    const t0 = Date.now(), sid = h.skillId;
+    let p; try { p = Promise.resolve(runtimeInvokeSkill(sid, input)); } catch (e) { p = Promise.reject(e); }
+    p.then(
+      result => _hookLog({ skillId: sid, event: hookEvent, ts: t0, input, result, duration: Date.now() - t0 }),
+      err => _hookLog({ skillId: sid, event: hookEvent, ts: t0, input, error: String((err && err.message) || err), duration: Date.now() - t0 })
+    ).then(() => activeHooks.delete(sid), () => activeHooks.delete(sid));
+  }
+}
+// The audit trail. getAll in key (≈ chronological) order; never throws.
+async function runtimeHookLog() {
+  try {
+    const db = await openDB();
+    return await new Promise((res) => { const tx = db.transaction(RWA.HOOK_LOG); const r = tx.objectStore(RWA.HOOK_LOG).getAll(); r.onsuccess = () => res(r.result || []); tx.onerror = () => res([]); });
+  } catch (_) { return []; }
+}
+// Boot prune: drop entries older than 30d, then cap to the 1000 most recent.
+async function _hookLogPrune() {
+  try {
+    const db = await openDB();
+    const read = (fn) => new Promise((res) => { const tx = db.transaction(RWA.HOOK_LOG); const r = tx.objectStore(RWA.HOOK_LOG)[fn](); r.onsuccess = () => res(r.result || []); tx.onerror = () => res([]); });
+    const keys = await read('getAllKeys'), vals = await read('getAll');
+    const cutoff = Date.now() - 30 * 24 * 3600 * 1000;
+    const pairs = keys.map((k, i) => ({ k, ts: (vals[i] && vals[i].ts) || 0 }));
+    const fresh = pairs.filter(p => p.ts >= cutoff);
+    const drop = pairs.filter(p => p.ts < cutoff).map(p => p.k)
+      .concat(fresh.length > 1000 ? fresh.sort((a, b) => a.ts - b.ts).slice(0, fresh.length - 1000).map(p => p.k) : []);
+    for (const k of drop) await idbDel(RWA.HOOK_LOG, k);
+  } catch (_) {}
 }
 // §1 — the install dialog (trust anchor). Renders the review and resolves with the user's choice.
 function showSkillInstallDialog(envelope) {
@@ -8640,6 +8699,11 @@ document.addEventListener('keydown', e => {
       // I5 — reconcile the per-author name_history (rwa_sources) from the in-file manifests, so a
       // fresh load (or an IDB-cleared one) still knows the renames recorded in the frozen zone.
       await runtimeBuildSourceIndex();
+      // I8 — seed the mode tracker for on-mode-change's `previous`, prune the hook log, then fire
+      // on-open hooks (fire-and-forget so a hook can never slow first paint; results logged).
+      _lastHookMode = rwaMode;
+      await _hookLogPrune();
+      fireHooks('on-open', { event: 'on-open', docUuid: DOC_UUID });
     } catch (_) { /* no installed skills */ }
     await _vaultReimportSession().catch(() => {}); // v0.8 §6 — restore an unlocked vault within the tab session
     // Spec §7: expose the public runtime API. Only constructed on the success
@@ -8684,6 +8748,7 @@ document.addEventListener('keydown', e => {
       promptInstall: runtimePromptInstall, // v0.8 §1.3 — pick a .rwa-skill.json → show the dialog
       vault: { get: runtimeVaultGet, set: runtimeVaultSet, has: runtimeVaultHas, namespaces: runtimeVaultNamespaces, unlock: runtimeVaultUnlock, lock: runtimeVaultLock, isLocked: runtimeVaultIsLocked }, // v0.8 §6
       agents: { list: runtimeListAgents, active: runtimeAgentActive, setActive: runtimeSetActiveAgent, install: runtimeInstallAgent, uninstall: runtimeUninstallAgent, message: runtimeAgentMessage, showInstallDialog: showAgentInstallDialog }, // v0.9 §12 — multi-agent roles
+      hookLog: runtimeHookLog, // v0.9 §9 — the hook audit trail (rwa_hook_log)
     };
     // `status` is a getter so each read returns a fresh snapshot of
     // dirty/fsa/storage; an enumerable data prop would let stale references

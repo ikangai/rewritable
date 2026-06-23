@@ -68,6 +68,10 @@ const FSA_CODE =
   'try{await r.fs.read("../secret");res.traversal="REACHED";}catch(e){res.traversal=String(e.message);}' +
   'return res;}';
 
+// I8 — a hook is compute-only: it sees its event input and proves no bridge (fetch removed).
+const HOOK_CODE =
+  'async function run(input){return {saw:input&&input.event, hasFetch:typeof fetch};}';
+
 // I12 — a skill that does vault ops on input.ns; invoked under a role, the AGENT's
 // vault_namespace_set is the gate (the role NARROWS the skill's own perms).
 const AGENT_VAULT_CODE =
@@ -119,6 +123,9 @@ const RENAME_B_ENV = await signEnvelope(renameKey, 'doc-assistant', 'tool', ['ne
 const agentKey = await newKey();
 const CURATOR_AGENT_ENV = await signAgentEnvelope(agentKey);
 const AGENT_VAULT_SKILL_ENV = await signEnvelope(agentKey, 'curator-vault', 'tool', ['vault:curated', 'vault:wider'], AGENT_VAULT_CODE);
+// I8 — a signed hook:on-mode-change. setMode fires it in a real Worker (compute-only); the result
+// lands in rwa_hook_log proving firing + execution + the audit trail end-to-end.
+const HOOK_ENV = await signEnvelope(await newKey(), 'mode-auditor', 'hook', ['hook:on-mode-change'], HOOK_CODE);
 
 // ── driver: runs after the runtime boots, writes a verdict to window.__mvp ──
 const driver = `
@@ -137,6 +144,7 @@ const driver = `
   var RENAME_B_ENV=${JSON.stringify(RENAME_B_ENV)};
   var CURATOR_AGENT_ENV=${JSON.stringify(CURATOR_AGENT_ENV)};
   var AGENT_VAULT_SKILL_ENV=${JSON.stringify(AGENT_VAULT_SKILL_ENV)};
+  var HOOK_ENV=${JSON.stringify(HOOK_ENV)};
   var el=document.getElementById('mvp');
   var log=function(m){ if(el) el.textContent+=m+'\\n'; };
   var checks=[]; var ck=function(name,cond,detail){ checks.push({name:name,pass:!!cond,detail:detail||''}); log((cond?'OK   ':'FAIL ')+name+(detail!==undefined?'  ['+detail+']':'')); };
@@ -236,6 +244,21 @@ const driver = `
       ck('§12 role-scoped vault: a namespace OUTSIDE the role set is denied (vault_namespace_denied), even though the skill declares it', outset && outset.set==='vault_namespace_denied', JSON.stringify(outset));
       R.agents.setActive(null);
     } else { ck('§12 runtime.agents exposed', false, 'runtime.agents missing'); }
+
+    // I8 (v0.9 §9) — a hook fires on a real lifecycle event, runs in a real Worker (compute-only),
+    // and its result lands in rwa_hook_log. setMode is a real event; the same fireHooks→Worker→log
+    // path serves every hook event.
+    if (typeof R.hookLog==='function') {
+      var hk=await R.installSkill(HOOK_ENV);
+      ck('install mode-auditor (hook, signed → verified:true)', hk.ok && nameVerified('mode-auditor')===true);
+      R.setMode('edit'); // fires on-mode-change
+      var hl=[]; var ht=Date.now();
+      while(Date.now()-ht<4000){ hl=await R.hookLog(); if(hl.some(function(e){return e.event==='on-mode-change'&&e.result;})) break; await new Promise(function(r){setTimeout(r,50);}); }
+      R.setMode('document');
+      var he=hl.filter(function(e){return e.event==='on-mode-change';}).pop(); out.hook=he;
+      ck('§9 hook FIRES + RUNS in a real Worker → result logged to rwa_hook_log', he && he.result && he.result.saw==='on-mode-change', JSON.stringify(he&&he.result));
+      ck('§9 hook is COMPUTE-ONLY (no bridge: fetch removed in-Worker)', he && he.result && he.result.hasFetch==='undefined', JSON.stringify(he&&he.result));
+    } else { ck('§9 runtime.hookLog exposed', false, 'runtime.hookLog missing'); }
   } catch(e){ ck('no uncaught error during the run', false, String((e&&e.message)||e)); out.error=String((e&&e.message)||e); }
   var passN=checks.filter(function(c){return c.pass;}).length, failN=checks.length-passN;
   window.__mvp={ pass:passN, fail:failN, checks:checks, out:out };
