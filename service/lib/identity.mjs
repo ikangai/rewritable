@@ -14,12 +14,12 @@
 // doc.test.mjs). Drift fails loudly. KEEP IN STEP with tools/self-description.mjs.
 
 import { tagHasFrozenAttr } from './apply-edits.mjs';
-import { parseSkillZone } from './skill-manifest.mjs';
+import { parseSkillZone, parseAgentZone } from './skill-manifest.mjs';
 
 export const SCHEMA_TAG = 'self-description/1';
 // Mirror of tools/self-description.mjs AFFORDANCE_KINDS / PROVENANCES — used by the
 // declared-projection conformance gate (declaredIsConforming). Keep in step.
-export const AFFORDANCE_KINDS = ['view', 'edit-surface', 'tool', 'compute', 'hook'];
+export const AFFORDANCE_KINDS = ['view', 'edit-surface', 'tool', 'compute', 'hook', 'agent'];
 export const PROVENANCES = ['first-party', 'installed'];
 
 // kind -> registered provider bundle (spec §4). Each provider is {kind,name,label};
@@ -35,6 +35,7 @@ export const KIND_PROVIDERS = {
   workflow: [],
   // skill-host: no first-party affordances; installed skills (provenance:'installed')
   // come from parseSkillZone (§8), not this table. Explicit [] mirrors the oracle.
+  workspace: [],
   'skill-host': [],
 };
 
@@ -85,6 +86,7 @@ export function buildSelfDescription({ doc, uuid, kind, frozenZones }) {
   const affordances = [
     ...(KIND_PROVIDERS[kind] || []).map((p) => ({ ...p, provenance: 'first-party' })),
     ...parseSkillZone(doc),
+    ...parseAgentZone(doc), // I12/SD-04 — installed agents (kind:'agent', name:role)
   ];
   return {
     rwa: SCHEMA_TAG,

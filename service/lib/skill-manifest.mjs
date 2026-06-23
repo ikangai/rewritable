@@ -60,6 +60,33 @@ export function parsePermission(p) {
     if (value.length > 64 || !VAULT_NS.test(value)) throw new Error(`invalid vault namespace: ${value}`);
     return { tier, value };
   }
+  if (tier === 'bus') {
+    // §5 (I1): topic 1–96 chars, must start alphanumeric, charset [A-Za-z0-9:_./%-], and NOT
+    // a runtime-reserved prefix (rwa_/rwa:/skills:/workspace: are the substrate's own channels).
+    if (!value || value.length > 96 || !/^[A-Za-z0-9][A-Za-z0-9:_./%-]*$/.test(value) || /^(?:rwa[:_]|skills:|workspace:)/.test(value))
+      throw new Error(`invalid bus topic: ${value}`);
+    return { tier, value };
+  }
+  if (tier === 'fsa') {
+    // §6 (I3): relative OPFS scope — lowercase [a-z0-9_/-], start+end alphanumeric/underscore,
+    // ≤128 chars, no leading/trailing slash, no '.'/'..' (excluded by charset), not _rwa/-prefixed.
+    if (!value || value.length > 128 || /^_rwa(?:\/|$)/.test(value) || !/^[a-z0-9_](?:[a-z0-9_/-]*[a-z0-9_])?$/.test(value))
+      throw new Error(`invalid fsa scope: ${value}`);
+    return { tier, value };
+  }
+  if (tier === 'idb') {
+    // §7 (I4): store name ^[A-Za-z0-9_][A-Za-z0-9_-]{0,62}$ (≤64 octets, no wildcards); never a
+    // reserved rwa_* store, and never the vault store — distinct subcodes so the dialog can explain.
+    if (/^rwa_/.test(value)) throw new Error(value === 'rwa_vault' ? 'idb_vault_store_forbidden' : 'idb_reserved_store');
+    if (!/^[A-Za-z0-9_][A-Za-z0-9_-]{0,62}$/.test(value)) throw new Error(`invalid idb store: ${value}`);
+    return { tier, value };
+  }
+  if (tier === 'hook') {
+    // §9 (I8): lifecycle event, exact-match enum, no wildcards. An UNKNOWN event is treated as an
+    // unknown tier (unknown_permission_tier) per the spec, so install rejects it the same way.
+    if (value === 'on-commit' || value === 'on-open' || value === 'on-mode-change') return { tier, value };
+    throw new Error(`unknown_permission_tier: hook event ${value}`);
+  }
   throw new Error(`unknown_permission_tier: ${tier}`);
 }
 
@@ -103,15 +130,35 @@ export function permissionToProse(perm) {
     if (v === '*') return 'Read and write credentials stored under ANY vault namespace — every credential you have stored. Use only for vault administration.';
     return `Read and write credentials stored under \`${v}\`.`;
   }
+  if (s.startsWith('bus:')) {
+    return `Send and receive messages on the \`${s.slice(4)}\` channel shared with other rewritables on this machine.`;
+  }
+  if (s.startsWith('fsa:')) {
+    return `Read and write files under \`${s.slice(4)}\` in this document's private storage.`;
+  }
+  if (s.startsWith('idb:')) {
+    return `Read and write the \`${s.slice(4)}\` data store in this document's database.`;
+  }
+  if (s.startsWith('hook:')) {
+    const ev = s.slice(5);
+    const when = ev === 'on-commit' ? 'every time the document is saved' : ev === 'on-open' ? 'every time the document opens' : ev === 'on-mode-change' ? 'every time you switch modes' : ev;
+    return `Run automatically ${when} (no network or credential access).`;
+  }
   return s;
 }
 
 /** §3.7/E — the compound-risk callout when vault + network co-occur, else null. */
 export function compoundRisk(permissions) {
   const perms = Array.isArray(permissions) ? permissions : [];
-  const hasVault = perms.some(p => String(p).startsWith('vault:'));
-  const hasNetwork = perms.some(p => String(p).startsWith('network:'));
+  const has = (t) => perms.some(p => String(p).startsWith(t + ':'));
+  const hasVault = has('vault'), hasNetwork = has('network'), hasBus = has('bus'), hasFsa = has('fsa'), hasIdb = has('idb');
   if (hasVault && hasNetwork) return 'This skill can both read your stored credentials AND make network requests. A skill with this combination can send credentials to its allowed destination — intentionally or by mistake. Install only if you fully trust this author.';
+  if (hasBus && (hasVault || hasNetwork)) return `This skill can message other rewritables on this machine AND ${hasVault ? 'read your stored credentials' : 'make network requests'}. Together these let it coordinate a multi-step action across your workspace — intentionally or by mistake. Install only if you fully trust this author.`;
+  if ((hasFsa || hasIdb) && (hasNetwork || hasVault || hasBus)) {
+    const store = hasFsa ? 'read and write files in this document' : 'read and write this document\'s stored data';
+    const sink = hasNetwork ? 'make network requests' : hasVault ? 'read your stored credentials' : 'message other rewritables on this machine';
+    return `This skill can ${store} AND ${sink}. Together these let it move your local data off this document — intentionally or by mistake. Install only if you fully trust this author.`;
+  }
   return null;
 }
 
@@ -141,6 +188,143 @@ export function levenshtein(a, b) {
   return prev[n];
 }
 
+// I5 (v0.9 §4) — Unicode-confusable skeleton. NFKC + toLowerCase fold case, fullwidth forms,
+// ligatures, and mathematical-alphanumeric letters to ASCII; this baked table folds the
+// CROSS-SCRIPT homoglyphs NFKC leaves alone (Cyrillic, Greek, Armenian, a few Latin-extended).
+// Deliberately CURATED, not the full UTS #39 confusables.txt: every entry maps a non-ASCII
+// glyph that renders ~identically to an ASCII letter. ASCII→ASCII is NEVER folded (so legit
+// distinct names like "tool"/"toml" stay distinct — no false collisions). Extensible: add a row.
+// Keys are post-NFKC-lowercase codepoints. Mirror of the seed's _SK_CONFUSABLES.
+const CONFUSABLES = {
+  // Cyrillic → Latin
+  'а': 'a', 'е': 'e', 'о': 'o', 'р': 'p', 'с': 'c',
+  'у': 'y', 'х': 'x', 'к': 'k', 'ѕ': 's', 'і': 'i',
+  'ј': 'j', 'ԁ': 'd', 'һ': 'h', 'ԛ': 'q', 'ԝ': 'w',
+  'ѵ': 'v', 'ӏ': 'l', 'ɠ': 'g',
+  // Greek → Latin
+  'α': 'a', 'ο': 'o', 'ρ': 'p', 'ε': 'e', 'ι': 'i',
+  'κ': 'k', 'ν': 'v', 'υ': 'u', 'χ': 'x', 'τ': 't',
+  'ϲ': 'c', 'ϳ': 'j',
+  // Armenian → Latin
+  'օ': 'o', 'ո': 'n',
+  // Latin-extended / IPA homoglyphs NFKC leaves alone
+  'ı': 'i', 'ɑ': 'a', 'ɡ': 'g',
+};
+
+/** NFKC-fold + lowercase a name before any lookalike comparison (UTS #36). */
+export function normalizeName(s) {
+  return String(s == null ? '' : s).normalize('NFKC').toLowerCase();
+}
+
+/** Confusable skeleton: normalize, then map each homoglyph to its ASCII prototype.
+ *  Two names with an equal skeleton render identically to a human (the trust-anchor risk). */
+export function skeleton(s) {
+  let out = '';
+  for (const ch of normalizeName(s)) out += (CONFUSABLES[ch] || ch);
+  return out;
+}
+
+/** Edit distance between two names' skeletons. 0 = perfect homoglyph; ≤1 = homoglyph + one typo. */
+export function skeletonDistance(a, b) {
+  return levenshtein(skeleton(a), skeleton(b));
+}
+
+// ── I12 (v0.9 §12) — rwa-agent/1: a role-scoped, signed agent identity (role + system_prompt +
+// vault_namespace_set; NO code field). Parallels the skill canon; the seed mirrors this logic.
+const ROLE_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/; // ≤64, lowercase a-z0-9-_, leading alphanumeric
+
+/** Canonical agent manifest: stable-key-ordered over the signed fields; excludes the signature. */
+export function canonicalAgent(agent) {
+  const a = agent || {};
+  return JSON.stringify({
+    author_pubkey: a.author_pubkey ?? null,
+    description: a.description ?? null,
+    role: a.role ?? null,
+    system_prompt: a.system_prompt ?? null,
+    vault_namespace_set: Array.isArray(a.vault_namespace_set) ? a.vault_namespace_set : [],
+    version: a.version ?? null,
+  });
+}
+
+/** Agent signing message bytes = sha256(canonicalAgent). Agents have no code field. */
+export function agentSigningMessage(agent) {
+  return sha256(Buffer.from(enc.encode(canonicalAgent(agent))));
+}
+
+/** agentId = base64url(sha256(role ‖ 0x00 ‖ author_pubkey)). Same role from different keys differ. */
+export function agentId(role, authorPubkey) {
+  return sha256(Buffer.concat([Buffer.from(enc.encode(String(role))), NUL, Buffer.from(enc.encode(String(authorPubkey)))]))
+    .toString('base64url');
+}
+
+/** Ed25519 verify over agentSigningMessage. Mirrors verifyEnvelope; the seed uses async WebCrypto. */
+export function verifyAgentEnvelope(envelope) {
+  const sig = envelope && envelope.signature;
+  if (!sig) return { signed: false, verified: false };
+  const agent = envelope.agent || {};
+  try {
+    const raw = Buffer.from(agent.author_pubkey, 'base64');
+    const key = createPublicKey({ key: Buffer.concat([ED25519_SPKI_PREFIX, raw]), format: 'der', type: 'spki' });
+    const verified = edVerify(null, agentSigningMessage(agent), key, Buffer.from(sig, 'base64'));
+    return { signed: true, verified: !!verified };
+  } catch {
+    return { signed: true, verified: false };
+  }
+}
+
+// A system_prompt is a runtime literal — reject anything that could break out of the template or
+// inject document markers (backtick, ${, <DOC>/<\/DOC>) → agent_prompt_injection_risk.
+function agentPromptInjectionRisk(s) {
+  const p = String(s ?? '');
+  return p.includes('`') || p.includes('${') || /<\/?DOC>/i.test(p);
+}
+
+/** §12 agent install gates. Pure; takes the verification result so it stays synchronous. */
+export function validateAgentInstall(envelope, { signed, verified } = {}) {
+  const agent = (envelope && envelope.agent) || {};
+  const errors = [];
+  // A NUL in the role makes agentId(role‖0x00‖pubkey) ambiguous — reject (mirrors F8).
+  if (/\0/.test(String(agent.role == null ? '' : agent.role))) errors.push('invalid_agent_id');
+  if (typeof agent.role !== 'string' || !ROLE_RE.test(agent.role)) errors.push('invalid_role');
+  // A missing/non-string OR injection-bearing prompt is rejected under the same gate.
+  if (typeof agent.system_prompt !== 'string' || agentPromptInjectionRisk(agent.system_prompt)) errors.push('agent_prompt_injection_risk');
+  const set = agent.vault_namespace_set;
+  if (set != null && !Array.isArray(set)) errors.push('invalid_permission');
+  for (const p of (Array.isArray(set) ? set : [])) {
+    try {
+      if (parsePermission(p).tier !== 'vault') errors.push('invalid_permission'); // vault_namespace_set is vault-only
+    } catch (e) {
+      errors.push(/unknown_permission_tier/.test(e.message) ? 'unknown_permission_tier' : 'invalid_permission');
+    }
+  }
+  if (!signed) errors.push('unsigned_agent'); // unsigned agents are rejected at install (verified gates activation)
+  return { ok: errors.length === 0, errors };
+}
+
+// §12 inter-agent bus message: {type:'request'|'response', id, from_role, to_role, payload} on
+// agents:* topics. Data-model only — the request→response choreography (wait/timeout) is the
+// conductor's responsibility, correlated by `id` (the requester's UUID, echoed by the responder).
+export function validateAgentMessage(m) {
+  const errors = [];
+  m = m || {};
+  if (m.type !== 'request' && m.type !== 'response') errors.push('invalid_type');
+  if (typeof m.id !== 'string' || !m.id) errors.push('invalid_id');
+  if (typeof m.from_role !== 'string' || !ROLE_RE.test(m.from_role)) errors.push('invalid_from_role');
+  if (typeof m.to_role !== 'string' || !ROLE_RE.test(m.to_role)) errors.push('invalid_to_role');
+  if (!('payload' in m)) errors.push('missing_payload');
+  return { ok: errors.length === 0, errors };
+}
+
+/** Build (and validate) an inter-agent bus message envelope. Throws invalid_agent_message if the
+ *  shape is bad. The caller supplies the correlation id (a fresh UUID for a request; the request's
+ *  id echoed for a response). */
+export function agentMessage(type, fromRole, toRole, payload, id) {
+  const m = { type, id, from_role: fromRole, to_role: toRole, payload };
+  const v = validateAgentMessage(m);
+  if (!v.ok) throw new Error('invalid_agent_message: ' + v.errors.join(','));
+  return m;
+}
+
 /** §3.4 install gates. Pure; takes the verification result so it stays synchronous. */
 export function validateInstall(envelope, { signed, verified } = {}) {
   const skill = (envelope && envelope.skill) || {};
@@ -153,11 +337,27 @@ export function validateInstall(envelope, { signed, verified } = {}) {
   if (/\0/.test(String(skill.name == null ? '' : skill.name))) errors.push('invalid_skill_id');
   for (const p of perms) {
     try { parsePermission(p); }
-    catch (e) { errors.push(/unknown_permission_tier/.test(e.message) ? 'unknown_permission_tier' : 'invalid_permission'); }
+    catch (e) {
+      const m = e.message;
+      if (/unknown_permission_tier/.test(m)) errors.push('unknown_permission_tier');
+      else if (m === 'idb_reserved_store' || m === 'idb_vault_store_forbidden') errors.push(m); // §7 distinct subcodes
+      else errors.push('invalid_permission');
+    }
   }
   if (skill.kind === 'compute' && perms.length > 0) errors.push('compute_with_permissions');
+  // §9 (I8): a hook is compute-only — only hook:<event> perms are allowed; any other tier (a real
+  // capability) is rejected as compute_with_permissions (no network/vault/escalation in a hook).
+  if (skill.kind === 'hook' && perms.some((p) => { try { return parsePermission(p).tier !== 'hook'; } catch { return false; } })) errors.push('compute_with_permissions');
+  // §8 (I7): view/edit-surface are zero-capability DOM authors — any permission is rejected (no
+  // render→fetch encoding loop), and they MUST carry a matching typed output contract.
+  if (skill.kind === 'view' || skill.kind === 'edit-surface') {
+    if (perms.length > 0) errors.push('output_skill_with_permissions');
+    const want = skill.kind === 'view' ? 'html-render' : 'dom-transform';
+    if (!skill.output || skill.output.kind !== want) errors.push('invalid_output_kind');
+  }
   if (!signed && perms.length > 0) errors.push('unsigned_with_permissions');
-  if (skill.kind === 'tool' && !verified) errors.push('unsigned_capability');
+  // Tools AND hooks carry capability (a hook runs autonomously on events) → must be signed+verified.
+  if ((skill.kind === 'tool' || skill.kind === 'hook') && !verified) errors.push('unsigned_capability');
   return { ok: errors.length === 0, errors };
 }
 
@@ -219,6 +419,41 @@ export function parseSkillZone(doc) {
       skillId: skillId(skill.name, skill.author_pubkey),
       kind: skill.kind,
       name: skill.name,
+      verified,
+      provenance: 'installed',
+    });
+  }
+  return out;
+}
+
+/** Locate the frozen `<div data-rwa-frozen id="rwa-agents">` zone (mirrors extractRwaSkillsZone). */
+function extractRwaAgentsZone(doc) {
+  const open = /<div\b[^>]*\bid="rwa-agents"[^>]*>/i.exec(String(doc || ''));
+  if (!open || !tagHasFrozenAttr(open[0])) return null;
+  const start = open.index + open[0].length;
+  const end = doc.indexOf('</div>', start);
+  return end < 0 ? null : doc.slice(start, end);
+}
+
+/** §12 / SD-04: parse installed agents from the frozen zone, re-verify each signature. Returns
+ *  [{agentId, kind:'agent', name:role, verified, provenance:'installed'}] — an installed agent is
+ *  an affordance the container offers (a role you can act under), mirroring parseSkillZone. */
+export function parseAgentZone(doc) {
+  const zone = extractRwaAgentsZone(doc);
+  if (!zone) return [];
+  const blocks = [...zone.matchAll(/<script\s+type="application\/rwa-agent\+json">([\s\S]*?)<\/script>/g)];
+  const out = [];
+  for (const m of blocks) {
+    let envelope;
+    try { envelope = JSON.parse(Buffer.from(m[1].trim(), 'base64').toString('utf8')); }
+    catch { continue; } // malformed block → skip (never blocks siblings)
+    const agent = envelope && envelope.agent;
+    if (!agent || typeof agent.role !== 'string') continue;
+    const { verified } = verifyAgentEnvelope(envelope);
+    out.push({
+      agentId: agentId(agent.role, agent.author_pubkey),
+      kind: 'agent',
+      name: agent.role,
       verified,
       provenance: 'installed',
     });

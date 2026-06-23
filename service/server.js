@@ -431,6 +431,113 @@ function serveShare(short, send) {
   }, body);
 }
 
+// ── I6 (v0.9 §11) — signed-skill marketplace: a read-only index of signed skills with TOFU
+// author-key trust + cryptographic revocation. Distinct from /publish (ephemeral doc snapshots):
+// skill-specific, signed, durable, queryable. Install-time human review stays the trust anchor —
+// the index only informs; the seed verifies the signature client-side and the dialog walls.
+const SKILLS_DIR = path.join(DATA_DIR, 'skills');
+fs.mkdirSync(SKILLS_DIR, { recursive: true });
+const ED25519_SPKI_PREFIX = Buffer.from('302a300506032b6570032100', 'hex');
+const SKILL_ID_RE = /^[A-Za-z0-9_-]{1,64}$/; // base64url skillId; also the path-traversal guard
+function sendSkillJson(send, status, obj, extra) {
+  send(status, Object.assign({ 'Content-Type': 'application/json; charset=utf-8' }, extra || {}), JSON.stringify(obj) + '\n');
+}
+function skillFingerprint(pubkeyB64) { return crypto.createHash('sha256').update(Buffer.from(String(pubkeyB64), 'utf8')).digest('hex').slice(0, 16); }
+function skillRecordPath(id) { return path.join(SKILLS_DIR, id + '.json'); }
+function readSkillRecord(id) { try { const r = JSON.parse(fs.readFileSync(skillRecordPath(id), 'utf8')); r.id = id; return r; } catch { return null; } }
+function writeSkillRecord(id, rec) { const { id: _drop, ...body } = rec; atomicWriteFile(skillRecordPath(id), JSON.stringify(body)); }
+function listSkillRecords() {
+  let files = []; try { files = fs.readdirSync(SKILLS_DIR); } catch { /* no skills yet */ }
+  return files.filter(f => f.endsWith('.json') && !f.startsWith('_')).map(f => readSkillRecord(f.slice(0, -5))).filter(Boolean);
+}
+// Generic Ed25519 verify of an arbitrary message (revocation proof) by a raw base64 pubkey.
+function verifyEd25519(message, sigB64, pubkeyB64) {
+  try {
+    const raw = Buffer.from(String(pubkeyB64), 'base64');
+    const key = crypto.createPublicKey({ key: Buffer.concat([ED25519_SPKI_PREFIX, raw]), format: 'der', type: 'spki' });
+    return crypto.verify(null, Buffer.from(String(message), 'utf8'), key, Buffer.from(String(sigB64), 'base64'));
+  } catch { return false; }
+}
+function indexEntry(rec) {
+  const s = rec.envelope.skill, m = rec.metadata || {};
+  return {
+    skillId: rec.id, name: s.name, version: s.version, author_pubkey: s.author_pubkey, kind: s.kind,
+    permissions_summary: [...new Set((Array.isArray(s.permissions) ? s.permissions : []).map(p => String(p).split(':')[0]))],
+    verified_count: m.verified ? 1 : 0, verified: !!m.verified, created_at: m.first_published_at, updated_at: m.updated_at,
+  };
+}
+async function handleSkillPublish(req, send) {
+  const rl = checkRateLimit(clientIp(req));
+  if (!rl.ok) return sendSkillJson(send, 429, { error: 'rate_limited', retryAfterSec: rl.retryAfterSec }, { 'Retry-After': String(rl.retryAfterSec) });
+  let buf; try { buf = await readBody(req, MAX_BODY_BYTES); }
+  catch (err) { return sendSkillJson(send, err && err.code === 'BODY_TOO_LARGE' ? 413 : 400, { error: err && err.code === 'BODY_TOO_LARGE' ? 'body_too_large' : 'read_failed' }); }
+  let env; try { env = JSON.parse(buf.toString('utf8')); } catch { return sendSkillJson(send, 400, { error: 'invalid_json' }); }
+  if (!env || env.format !== 'rwa-skill/1' || !env.skill || typeof env.skill.name !== 'string') return sendSkillJson(send, 422, { error: 'malformed_envelope' });
+  const sm = await import('./lib/skill-manifest.mjs');
+  const { signed, verified } = sm.verifyEnvelope(env);
+  const gate = sm.validateInstall(env, { signed, verified }); // unsigned tool → unsigned_capability; compute+perms → compute_with_permissions
+  if (!gate.ok) return sendSkillJson(send, 422, { error: gate.errors[0], errors: gate.errors });
+  const skill = env.skill, id = sm.skillId(skill.name, skill.author_pubkey), prev = readSkillRecord(id);
+  if (prev && prev.metadata && prev.metadata.revoked_at) return sendSkillJson(send, 410, { error: 'revoked', revoked_at: prev.metadata.revoked_at });
+  const now = Date.now();
+  const metadata = {
+    first_published_at: (prev && prev.metadata && prev.metadata.first_published_at) || now,
+    updated_at: now, author_fingerprint: skillFingerprint(skill.author_pubkey), verified,
+    installations_visible: (prev && prev.metadata && prev.metadata.installations_visible) || 0,
+  };
+  writeSkillRecord(id, { envelope: env, metadata });
+  return sendSkillJson(send, 201, { skillId: id, registryUrl: '/skills/index/' + id, verified });
+}
+function handleSkillIndex(rawUrl, send) {
+  const u = new URL(rawUrl, 'http://x'), q = u.searchParams;
+  const kind = q.get('kind'), author = q.get('author'), search = (q.get('search') || '').toLowerCase(), verifiedOnly = q.get('verified_only') === 'true';
+  let page = parseInt(q.get('page') || '1', 10); if (!(page >= 1)) page = 1;
+  let limit = parseInt(q.get('limit') || '50', 10); if (!(limit >= 1)) limit = 50; if (limit > 200) limit = 200;
+  let recs = listSkillRecords().filter(r => !(r.metadata && r.metadata.revoked_at));
+  if (kind) recs = recs.filter(r => r.envelope.skill.kind === kind);
+  if (author) recs = recs.filter(r => r.envelope.skill.author_pubkey === author);
+  if (verifiedOnly) recs = recs.filter(r => r.metadata && r.metadata.verified);
+  if (search) recs = recs.filter(r => String(r.envelope.skill.name).toLowerCase().includes(search));
+  recs.sort((a, b) => { const A = a.envelope.skill, B = b.envelope.skill; return (A.name < B.name ? -1 : A.name > B.name ? 1 : 0) || (String(A.version) < String(B.version) ? -1 : String(A.version) > String(B.version) ? 1 : 0) || (A.author_pubkey < B.author_pubkey ? -1 : A.author_pubkey > B.author_pubkey ? 1 : 0); });
+  const total = recs.length, entries = recs.slice((page - 1) * limit, (page - 1) * limit + limit).map(indexEntry);
+  return sendSkillJson(send, 200, { entries, total, page, limit }, { 'X-Content-Type-Options': 'nosniff', 'Cache-Control': 'max-age=300' });
+}
+function handleSkillDetail(id, send) {
+  if (!SKILL_ID_RE.test(id)) return sendSkillJson(send, 404, { error: 'not_found' });
+  const rec = readSkillRecord(id);
+  if (!rec) return sendSkillJson(send, 404, { error: 'not_found' });
+  if (rec.metadata && rec.metadata.revoked_at) return sendSkillJson(send, 410, { error: 'revoked', revoked_at: rec.metadata.revoked_at });
+  return sendSkillJson(send, 200, { envelope: rec.envelope, metadata: rec.metadata }, { 'X-Content-Type-Options': 'nosniff', 'Cache-Control': 'max-age=300' });
+}
+async function handleSkillRevoke(req, id, send) {
+  if (!SKILL_ID_RE.test(id)) return sendSkillJson(send, 404, { error: 'not_found' });
+  const rec = readSkillRecord(id);
+  if (!rec) return sendSkillJson(send, 404, { error: 'not_found' });
+  if (rec.metadata && rec.metadata.revoked_at) return sendSkillJson(send, 200, { revoked_at: rec.metadata.revoked_at }); // permanent + idempotent
+  let buf; try { buf = await readBody(req, 64 * 1024); } catch { return sendSkillJson(send, 400, { error: 'read_failed' }); }
+  let body; try { body = JSON.parse(buf.toString('utf8')); } catch { return sendSkillJson(send, 400, { error: 'invalid_json' }); }
+  const ts = body && body.timestamp, sig = body && body.signature;
+  if (typeof ts !== 'number' || typeof sig !== 'string') return sendSkillJson(send, 400, { error: 'missing_fields' });
+  // Signature MUST be by the registered author key over 'REVOKE:'||skillId||timestampMs (§11).
+  if (!verifyEd25519('REVOKE:' + id + ts, sig, rec.envelope.skill.author_pubkey)) return sendSkillJson(send, 403, { error: 'invalid_signature' });
+  rec.metadata.revoked_at = Date.now(); rec.metadata.revocation_signature = sig;
+  writeSkillRecord(id, rec);
+  try { fs.appendFileSync(path.join(SKILLS_DIR, '_revocations.log'), JSON.stringify({ skillId: id, at: rec.metadata.revoked_at }) + '\n'); } catch { /* audit best-effort */ }
+  return sendSkillJson(send, 200, { revoked_at: rec.metadata.revoked_at });
+}
+async function handleSkillReport(req, id, send) {
+  if (!SKILL_ID_RE.test(id)) return sendSkillJson(send, 404, { error: 'not_found' });
+  const rl = checkRateLimit(clientIp(req)); // abuse-rate-limited; no auto-block (human review gate, Shape B)
+  if (!rl.ok) return sendSkillJson(send, 429, { error: 'rate_limited', retryAfterSec: rl.retryAfterSec }, { 'Retry-After': String(rl.retryAfterSec) });
+  let buf; try { buf = await readBody(req, 64 * 1024); } catch { return sendSkillJson(send, 400, { error: 'read_failed' }); }
+  let body; try { body = JSON.parse(buf.toString('utf8')); } catch { return sendSkillJson(send, 400, { error: 'invalid_json' }); }
+  const reason = String((body && body.reason) || '').slice(0, 256);
+  if (!reason) return sendSkillJson(send, 400, { error: 'missing_reason' });
+  const at = Date.now();
+  try { fs.appendFileSync(path.join(SKILLS_DIR, '_reports.log'), JSON.stringify({ skillId: id, reason, evidence_url: (body && body.evidence_url) || null, at }) + '\n'); } catch { /* best-effort queue */ }
+  return sendSkillJson(send, 201, { reported_at: at });
+}
+
 async function handlePublish(req, send) {
   const ip = clientIp(req);
   const rl = checkRateLimit(ip);
@@ -1254,6 +1361,18 @@ const server = http.createServer((req, res) => {
       });
       return;
     }
+  }
+
+  // I6 — signed-skill marketplace (/skills/*). Apex-only (like /publish): a read-only index plus
+  // publish/revoke/report. GET reads are cacheable + nosniff; writes are rate-limited.
+  if (!isShareHost && (url === '/skills/publish' || url === '/skills/index' || url.startsWith('/skills/index/') || url.startsWith('/skills/revoke/') || url.startsWith('/skills/report/'))) {
+    const fail = (err) => { console.error('skills: unhandled error', err); if (!res.headersSent) sendSkillJson(send, 500, { error: 'internal_error' }); };
+    if (req.method === 'POST' && url === '/skills/publish') { handleSkillPublish(req, send).catch(fail); return; }
+    if (req.method === 'GET' && url === '/skills/index') { handleSkillIndex(req.url, send); return; }
+    if (req.method === 'GET' && url.startsWith('/skills/index/')) { handleSkillDetail(url.slice('/skills/index/'.length), send); return; }
+    if (req.method === 'POST' && url.startsWith('/skills/revoke/')) { handleSkillRevoke(req, url.slice('/skills/revoke/'.length), send).catch(fail); return; }
+    if (req.method === 'POST' && url.startsWith('/skills/report/')) { handleSkillReport(req, url.slice('/skills/report/'.length), send).catch(fail); return; }
+    return sendSkillJson(send, 405, { error: 'method_not_allowed' });
   }
 
   // POST /publish is the only non-GET endpoint. It lives only on the apex
