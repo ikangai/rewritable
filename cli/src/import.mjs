@@ -263,147 +263,231 @@ async function convertPdf(bytes) {
     e.exitCode = 2;
     throw e;
   }
-  const escape = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  const paragraphs = [];
+  const pages = [];
+  let totalText = 0;
   for (let p = 1; p <= doc.numPages; p++) {
     const page = await doc.getPage(p);
-    const tc = await page.getTextContent();
-    extractParagraphs(tc.items).forEach(line => paragraphs.push(line));
-    paragraphs.push(null); // page break: forces flush of next paragraph
+    const rendered = await renderPdfPage(page, pdfjs.Util, pdfjs.OPS);
+    pages.push(rendered.html);
+    totalText += rendered.textCount;
   }
   await doc.destroy().catch(() => {});
 
-  const blocks = [];
-  let buf = [];
-  const flush = () => {
-    const joined = buf.join(' ').replace(/\s+/g, ' ').trim();
-    if (joined) blocks.push(`<p>${escape(joined)}</p>`);
-    buf = [];
-  };
-  for (const line of paragraphs) {
-    if (line === null || line === '') { flush(); continue; }
-    buf.push(line);
-  }
-  flush();
-
-  if (blocks.length === 0) {
+  if (totalText === 0) {
     const e = new Error('pdf: no extractable text — this looks like a scanned/image PDF; OCR is not supported');
     e.exitCode = 2;
     throw e;
   }
   return {
-    html: `<article>\n${blocks.join('\n')}\n</article>`,
-    warnings: ['pdf: layout reconstructed by heuristics — review headings/lists manually'],
+    html: `<article class="rwa-pdf">\n${PDF_PAGE_STYLE}\n<div class="rwa-pdf-doc">\n${pages.join('\n')}\n</div>\n</article>`,
+    warnings: ['pdf: imported as a geometry-faithful reconstruction (positioned text + rules) — text stays editable but is absolutely positioned'],
   };
 }
 
-// Group pdf.js text items into paragraph-shaped lines.
+// ─────────────────────────────────────────────────────────────────────────
+// PDF geometry-faithful reconstruction
 //
-// Two non-obvious problems this handles:
-// (1) Adjacent items inside a word: pdf.js returns text per font run, so a
-//     word like "Aufwände" comes out as ["Aufw", "ä", "nde"] when the umlaut
-//     glyph lives in a different font table from the ASCII letters. Joining
-//     with ' ' produces "Aufw ä nde" — wrong. We concat directly and only
-//     synthesize a space when there's a real positional x-gap.
-// (2) Stacked short lines: an address block (Name / Street / City) has small
-//     y-gaps that fit inside the within-paragraph threshold, so naive logic
-//     would join them into one paragraph "Name Street City". We additionally
-//     break paragraphs when the *previous* line ended significantly short of
-//     the page's typical right margin (a heuristic for "hard line break").
+// Instead of flattening pdf.js text items into prose paragraphs (which throws
+// away every column, table, and alignment), reproduce the page: each text run
+// becomes an absolutely-positioned <span> at its real device coordinates, and
+// the page's vector rules/boxes become positioned <div>s. The result looks
+// like the source PDF while keeping the text as real, editable, selectable DOM
+// — so the rwa edit loop can still rewrite it (find/replace on the span text).
 //
-// Returns an array of strings; '' marks a paragraph break.
-function extractParagraphs(items) {
-  if (!items || items.length === 0) return [];
-  const rows = items.map(it => ({
-    str: it.str,
-    y: it.transform ? it.transform[5] : 0,
-    x: it.transform ? it.transform[4] : 0,
-    w: it.width || 0,
-    h: it.height || (it.transform ? Math.abs(it.transform[3]) : 0) || 12,
-  }));
-  // Sort top-to-bottom (y desc in PDF coords), then left-to-right within a
-  // row. pdfjs's content-stream order is reading order for well-tagged
-  // single-column PDFs, but for multi-column or absolutely-positioned layouts
-  // it interleaves visually-separate lines; sorting first makes the same-y
-  // grouping below tolerant of that.
-  rows.sort((a, b) => b.y - a.y || a.x - b.x);
-  // Group into visual lines by y (within half a line height).
-  const lines = [];
-  let cur = null;
-  for (const r of rows) {
-    if (cur && Math.abs(r.y - cur.y) <= cur.h * 0.5) {
-      cur.parts.push(r);
-      cur.y = (cur.y + r.y) / 2;
-    } else {
-      if (cur) lines.push(cur);
-      cur = { y: r.y, h: r.h, parts: [r] };
-    }
-  }
-  if (cur) lines.push(cur);
+// Coordinate math mirrors pdf.js's own text-layer builder: multiply the page
+// viewport transform by each item's text matrix, read font height from the
+// resulting matrix, and place the box top at baseline − ascent. Graphics are
+// recovered by walking the operator list with a CTM stack (save/restore/
+// transform) and emitting the device-space bounding box of every painted
+// fill/stroke path. PDFs of this family draw rules as thin filled rectangles,
+// so bbox-only rendering is exact; curves degrade to their bounding box.
+// ─────────────────────────────────────────────────────────────────────────
 
-  // For each line: concat parts directly, inserting a synthetic space only
-  // when there's a real positional gap (previous part's right edge to next
-  // part's x). pdf.js often emits explicit space items (str=" ") with tiny
-  // width — those carry the space character themselves, so the position-gap
-  // check below typically sees ~0 distance when they're present and we don't
-  // double-space.
-  const rendered = lines.map(line => {
-    line.parts.sort((a, b) => a.x - b.x);
-    let text = '';
-    let prev = null;
-    for (const p of line.parts) {
-      if (prev) {
-        const gap = p.x - (prev.x + prev.w);
-        const lastChar = text.slice(-1);
-        const firstChar = p.str.charAt(0);
-        // Threshold of 2 user-space units catches inter-word gaps on body
-        // text without false-positives inside words. Skip if the boundary
-        // already has whitespace from either side.
-        if (gap > 2 && !/\s/.test(lastChar) && !/\s/.test(firstChar)) {
-          text += ' ';
-        }
-      }
-      text += p.str;
-      prev = p;
-    }
-    const left = line.parts.length ? Math.min(...line.parts.map(p => p.x)) : 0;
-    const right = line.parts.length
-      ? Math.max(...line.parts.map(p => p.x + p.w))
-      : 0;
-    return { text: text.replace(/\s+/g, ' ').trim(), y: line.y, h: line.h, left, right };
-  });
+const PDF_PAGE_STYLE = `<style>
+.rwa-pdf{max-width:none;margin:0;padding:0;background:#e9ecef;}
+.rwa-pdf-doc{display:flex;flex-direction:column;align-items:center;gap:20px;padding:20px;overflow-x:auto;}
+.rwa-pdf-page{position:relative;flex:none;background:#fff;box-shadow:0 1px 5px rgba(0,0,0,.18);overflow:hidden;}
+.rwa-pdf-t{position:absolute;white-space:pre;line-height:1;color:#000;transform-origin:0 0;}
+.rwa-pdf-g{position:absolute;}
+@media print{.rwa-pdf{background:none}.rwa-pdf-doc{gap:0;padding:0;overflow:visible}.rwa-pdf-page{box-shadow:none}}
+</style>`;
 
-  // The page's "typical right margin" — use the 90th-percentile right edge
-  // (more robust than max, which a stray header/page-number could inflate).
-  // Lines ending well short of this are likely hard line-breaks, not soft
-  // wraps to the right margin.
-  const sortedRights = rendered.filter(l => l.text).map(l => l.right).sort((a, b) => a - b);
-  const margin = sortedRights.length
-    ? sortedRights[Math.floor(sortedRights.length * 0.9)]
-    : 0;
+function escapePdfText(s) {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
 
+// 2-decimal round as a compact numeric string (no unit).
+function pdfNum(n) {
+  return (Math.round(n * 100) / 100).toString();
+}
+
+// pdf.js 5.x passes path colors as a single CSS string in args[0] (e.g.
+// ["#0000ff"]); older shapes pass [r,g,b] 0–255. Normalise to a validated CSS
+// color — these strings land in an inline style, so reject anything unexpected.
+function pdfColorToCss(a) {
+  let c = null;
+  if (Array.isArray(a)) {
+    if (typeof a[0] === 'string') c = a[0];
+    else if (a.length >= 3) c = `rgb(${a[0] | 0},${a[1] | 0},${a[2] | 0})`;
+  } else if (typeof a === 'string') c = a;
+  if (c && /^#[0-9a-fA-F]{3,8}$/.test(c)) return c.toLowerCase();
+  if (c && /^rgb\(\d{1,3},\d{1,3},\d{1,3}\)$/.test(c)) return c;
+  return '#000000';
+}
+
+function pdfIsWhitish(css) {
+  const c = String(css).toLowerCase().replace(/\s+/g, '');
+  return c === '#fff' || c === '#ffffff' || c === 'white' || c === 'rgb(255,255,255)';
+}
+
+// Recover weight/style + family. The sanitized fontName ("g_d0_f2") carries no
+// weight; the embedded font's real PostScript name (via commonObjs, populated
+// by getOperatorList) does — e.g. "Cambria-Bold". Guard for the rare miss.
+function pdfFontMeta(page, fontName, style) {
+  let name = '';
+  try { const f = page.commonObjs.get(fontName); name = (f && f.name) || ''; } catch { name = ''; }
+  const bold = /bold|black|heavy|semibold|demibold|extrabold/i.test(name);
+  const italic = /italic|oblique/i.test(name);
+  const fam = style && style.fontFamily;
+  let family = "Georgia, 'Times New Roman', serif";
+  if (fam === 'sans-serif') family = "Helvetica, Arial, sans-serif";
+  else if (fam === 'monospace') family = "'Courier New', monospace";
+  return { bold, italic, family };
+}
+
+// Walk the operator list and return device-space rectangles for every visible
+// fill/stroke path. The CTM stack handles save/restore/transform; the path's
+// local minMax (args[2]) is mapped through the CTM via its four corners.
+function collectPdfGraphics(opList, baseTransform, Util, OPS) {
   const out = [];
-  let prev = null;
-  for (const line of rendered) {
-    if (!line.text) continue;  // pdfjs sometimes emits whitespace-only EOL stubs; ignore.
-    if (prev != null) {
-      const yGap = Math.abs(prev.y - line.y);
-      const yJump = yGap > prev.h * 1.5;
-      // Previous line ended significantly short of the page's right margin —
-      // that's the signature of a hard line-break (address line, table cell,
-      // bullet, sender block). Threshold of 1.5× line height (~1-2 chars)
-      // ignores end-of-line whitespace + small justification slop while still
-      // catching genuinely short lines. Soft wraps to the right margin are
-      // within ~few units and don't trigger.
-      const prevShortOfMargin = margin > 0 && (margin - prev.right) > prev.h * 1.5;
-      // Right-aligned blocks have a fixed right edge but varying left edge
-      // per line. A jump of more than a line-height in left position is a
-      // structural change, not text-flow continuation.
-      const leftJump = Math.abs(prev.left - line.left) > line.h;
-      if (yJump || prevShortOfMargin || leftJump) out.push('');
+  let ctm = baseTransform.slice();
+  const stack = [];
+  let fill = '#000000', stroke = '#000000', lineWidth = 1;
+  const apply = (m, x, y) => [m[0] * x + m[2] * y + m[4], m[1] * x + m[3] * y + m[5]];
+  const FILLY = new Set([OPS.fill, OPS.eoFill]);
+  const STROKEY = new Set([OPS.stroke]);
+  const BOTH = new Set([OPS.fillStroke, OPS.eoFillStroke]);
+  for (let i = 0; i < opList.fnArray.length; i++) {
+    const fn = opList.fnArray[i], a = opList.argsArray[i];
+    if (fn === OPS.save) stack.push(ctm.slice());
+    else if (fn === OPS.restore) { if (stack.length) ctm = stack.pop(); }
+    else if (fn === OPS.transform) ctm = Util.transform(ctm, a);
+    else if (fn === OPS.setFillRGBColor) fill = pdfColorToCss(a);
+    else if (fn === OPS.setStrokeRGBColor) stroke = pdfColorToCss(a);
+    else if (fn === OPS.setLineWidth) lineWidth = (typeof a === 'number' ? a : Array.isArray(a) ? a[0] : 1) || 1;
+    else if (fn === OPS.constructPath) {
+      const paint = a[0];
+      const isFill = FILLY.has(paint) || BOTH.has(paint);
+      const isStroke = STROKEY.has(paint) || BOTH.has(paint);
+      if (!isFill && !isStroke) continue; // endPath / clip → not painted
+      const mm = a[2];
+      if (!mm || mm.length < 4) continue;
+      const px = [], py = [];
+      for (const X of [mm[0], mm[2]]) for (const Y of [mm[1], mm[3]]) {
+        const [dx, dy] = apply(ctm, X, Y); px.push(dx); py.push(dy);
+      }
+      const x0 = Math.min(...px), x1 = Math.max(...px);
+      const y0 = Math.min(...py), y1 = Math.max(...py);
+      const color = isFill ? fill : stroke;
+      if (pdfIsWhitish(color)) continue; // invisible on the white page
+      const w = x1 - x0, h = y1 - y0;
+      if (w < 0.01 && h < 0.01) continue;
+      // Keep hairlines visible: strokes get their device line width, fills 0.5px.
+      const sc = Math.hypot(ctm[0], ctm[1]) || 1;
+      const minThick = isStroke && !isFill ? Math.max(lineWidth * sc, 0.5) : 0.5;
+      out.push({ x: x0, y: y0, w: Math.max(w, minThick), h: Math.max(h, minThick), color });
     }
-    out.push(line.text);
-    prev = line;
   }
   return out;
+}
+
+// Place one pdf.js text item in device space (angle-aware top/left).
+function placePdfItem(it, page, viewportTransform, styles, Util) {
+  const tx = Util.transform(viewportTransform, it.transform);
+  const fh = Math.hypot(tx[2], tx[3]);
+  if (fh < 0.1) return null;
+  const angle = Math.atan2(tx[1], tx[0]);
+  const style = styles[it.fontName] || {};
+  let ascentFrac = style.ascent;
+  if (!ascentFrac && style.descent) ascentFrac = 1 + style.descent;
+  if (!ascentFrac) ascentFrac = 0.8;
+  const a = fh * ascentFrac;
+  let left, top;
+  if (Math.abs(angle) < 1e-3) { left = tx[4]; top = tx[5] - a; }
+  else { left = tx[4] + a * Math.sin(angle); top = tx[5] - a * Math.cos(angle); }
+  const meta = pdfFontMeta(page, it.fontName, style);
+  return { str: it.str, left, right: left + (it.width || 0), top, fh, angle, ...meta };
+}
+
+// Reconstruct one page as a positioned layer. Returns { html, textCount }.
+//
+// Text items are grouped into "runs" — adjacent, same-style glyphs on one
+// baseline — and each run is emitted as a single positioned <span> that flows
+// naturally. We split a run only at a real column gap, a style change, or a new
+// line. This is what fixes word spacing: positioning each item independently
+// lets a wider substitute font (the embedded face isn't shipped) overflow its
+// slot and collide with the next item, eating the space; a flowing run spaces
+// words with the substitute font's own metrics while staying pinned at the
+// run's true start x, so columns and table cells stay put.
+async function renderPdfPage(page, Util, OPS) {
+  const vp = page.getViewport({ scale: 1 });
+  const tc = await page.getTextContent();
+  const styles = tc.styles || {};
+  // getOperatorList yields the graphics and populates commonObjs (fonts).
+  const opList = await page.getOperatorList();
+  const graphics = collectPdfGraphics(opList, vp.transform, Util, OPS);
+
+  const parts = [];
+  for (const g of graphics) {
+    parts.push(`<div class="rwa-pdf-g" style="left:${pdfNum(g.x)}px;top:${pdfNum(g.y)}px;width:${pdfNum(g.w)}px;height:${pdfNum(g.h)}px;background:${g.color}"></div>`);
+  }
+
+  const placed = [];
+  for (const it of tc.items) {
+    if (!it.transform || !it.str) continue;
+    const p = placePdfItem(it, page, vp.transform, styles, Util);
+    if (p) placed.push(p);
+  }
+  // Reading order: top-to-bottom, then left-to-right.
+  placed.sort((a, b) => a.top - b.top || a.left - b.left);
+
+  const WORD_GAP = 2; // device px — below this, no inter-item space
+  const runs = [];
+  let cur = null;
+  const sameStyle = (r, p) => r.bold === p.bold && r.italic === p.italic
+    && r.family === p.family && Math.abs(r.fh - p.fh) < 0.5;
+  for (const p of placed) {
+    const colGap = Math.max(p.fh * 1.2, 12); // wider than a space, narrower than a column
+    const mergeable = cur
+      && Math.abs(p.angle) < 1e-3 && Math.abs(cur.angle) < 1e-3
+      && Math.abs(p.top - cur.top) <= Math.max(cur.fh, p.fh) * 0.5
+      && (p.left - cur.right) <= colGap
+      && sameStyle(cur, p);
+    if (mergeable) {
+      const gap = p.left - cur.right;
+      const lastChar = cur.text.slice(-1), firstChar = p.str.charAt(0);
+      if (gap > WORD_GAP && !/\s/.test(lastChar) && !/\s/.test(firstChar)) cur.text += ' ';
+      cur.text += p.str;
+      cur.right = p.right;
+    } else {
+      if (cur) runs.push(cur);
+      cur = { text: p.str, left: p.left, top: p.top, right: p.right, fh: p.fh, bold: p.bold, italic: p.italic, family: p.family, angle: p.angle };
+    }
+  }
+  if (cur) runs.push(cur);
+
+  let textCount = 0;
+  for (const run of runs) {
+    const text = run.text.replace(/\s+$/, '');
+    if (text.trim() === '') continue;
+    const css = [`left:${pdfNum(run.left)}px`, `top:${pdfNum(run.top)}px`, `font-size:${pdfNum(run.fh)}px`, `font-family:${run.family}`];
+    if (run.bold) css.push('font-weight:700');
+    if (run.italic) css.push('font-style:italic');
+    if (Math.abs(run.angle) >= 1e-3) css.push(`transform:rotate(${(run.angle * 180 / Math.PI).toFixed(2)}deg)`);
+    parts.push(`<span class="rwa-pdf-t" style="${css.join(';')}">${escapePdfText(text)}</span>`);
+    textCount++;
+  }
+
+  const html = `<div class="rwa-pdf-page" style="width:${pdfNum(vp.width)}px;height:${pdfNum(vp.height)}px">\n${parts.join('\n')}\n</div>`;
+  return { html, textCount };
 }
