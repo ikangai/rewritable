@@ -161,38 +161,34 @@ console.log('\n== E0a0: exiting inline edit releases the lens anchor ==');
   check('exiting inline edit released the anchor (back to whole-doc)', !document.querySelector('[data-rwa-anchored]'));
 }
 
-// WHY (Rule 9): the "outline lags / every second selection" bug. A drag-to-select also opens
-// inline edit (pointerdown), so binding the anchor to inline-edit ENTRY anchored the dragged
-// block — the outline flickered onto the wrong block. The anchor must ride the COLLAPSED click
-// (fired after mouseup), so a drag — non-collapsed at click time — never anchors.
-console.log('\n== E0a1: a drag-select does NOT anchor, even though it opens inline edit ==');
+// WHY (Rule 9): working-block model — the block your caret is in IS the outline. Entering a
+// block to edit (as a drag-select's pointerdown does) outlines that block. The block you're
+// selecting in is the block you're working on.
+console.log('\n== E0a1: entering a block (incl. drag-select) outlines the working block ==');
 {
   await window.__setDocForTest('<p data-rwa-id="dragsel">drag to select these words here</p>');
   const el = $id('dragsel');
-  ptr(el); // pointerdown opens inline edit, exactly as the start of a drag would
-  const range = document.createRange();
-  range.setStart(el.firstChild, 0); range.setEnd(el.firstChild, 12); // the drag produced a selection
-  const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range);
-  click(el); // the click after mouseup sees a non-collapsed selection
-  check('a drag-select did NOT anchor the lens (the toolbar owns the selection)', !el.hasAttribute('data-rwa-anchored'));
+  ptr(el); // pointerdown opens inline edit on the block
+  check('the working block is outlined', el.hasAttribute('data-rwa-anchored'));
+  check('exactly one block is outlined', document.querySelectorAll('[data-rwa-anchored]').length === 1);
 }
 
-// WHY (Rule 9): the "outline sticks on the previous block" bug. Clicking a NON-focusable block
-// does NOT blur the contenteditable, so inlineEdit still points at the OLD block at click time
-// (jsdom's synthetic click doesn't fire native blur either — matching the real browser). The
-// click must anchor the CLICKED block, never the stale inlineEdit block — else the outline stays
-// on the block you just left.
-console.log('\n== E0a2: clicking a new block mid-edit anchors the CLICKED block, not the previous one ==');
+// WHY (Rule 9): THE bug this whole rework fixes — the outline drifting onto the previous block.
+// Switching to a new block must be ATOMIC: one pointerdown moves the cursor AND the outline to
+// the new block, leaving nothing on the old one. The switch fires on pointerdown (startInline
+// EditFromEvent), so a real browser's non-blurring click can't strand the outline behind.
+console.log('\n== E0a2: switching blocks in one pointerdown moves the outline atomically ==');
 {
   await window.__setDocForTest('<p data-rwa-id="ea">Para A here</p>\n<p data-rwa-id="eb">Para B here</p>');
   const a = $id('ea'), b = $id('eb');
-  ptr(a); click(a); // enter edit on A + anchor A
-  check('A is outlined while editing A', a.hasAttribute('data-rwa-anchored'));
-  // inlineEdit is still A (no blur fired). Click B — the click target is B.
-  click(b);
-  check('clicking B anchored the CLICKED block B', b.hasAttribute('data-rwa-anchored'));
-  check('the previous block A is no longer outlined', !a.hasAttribute('data-rwa-anchored'));
-  check('exactly one block is outlined', document.querySelectorAll('[data-rwa-anchored]').length === 1);
+  ptr(a); // enter edit on A
+  check('A is the working block (outlined)', a.hasAttribute('data-rwa-anchored'));
+  check('A is being edited', a.getAttribute('contenteditable') === 'true');
+  ptr(b); // switch to B in ONE pointerdown (A is unchanged → clean exit + enter)
+  check('B is now the working block (outlined)', b.hasAttribute('data-rwa-anchored'));
+  check('the previous block A lost its outline', !a.hasAttribute('data-rwa-anchored'));
+  check('B is now being edited, A is not', b.getAttribute('contenteditable') === 'true' && a.getAttribute('contenteditable') !== 'true');
+  check('exactly one block is outlined after the switch', document.querySelectorAll('[data-rwa-anchored]').length === 1);
 }
 
 // WHY (Rule 9): the "bubble appears every second selection" bug. The bubble floats over the

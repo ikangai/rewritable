@@ -3763,17 +3763,14 @@ if (typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent)) {
 // the i-th live anchorable corresponds to map[i].
 function handleMountClick(e) {
   if (rwaMode !== 'edit' || activeView) return;
-  // A drag that produced a text selection is a FORMAT gesture — the floating toolbar owns it,
-  // not the lens. A drag-select must NEVER anchor: it made the outline toggle on "every second
-  // selection" and lag on the previous block (a drag also opens inline edit via pointerdown,
-  // and the anchor used to ride inline-edit ENTRY). Only a deliberate click (collapsed) anchors.
+  // The working-block outline is owned solely by inline edit (enterInlineEdit→anchorTo). While
+  // editing, this click path must NOT anchor — a second writer here is exactly what raced the
+  // outline onto the previous block. handleMountClick now only anchors NON-editable containers
+  // (figure/pre/aside/table), which have no inline edit (design 2026-06-24-working-block).
+  if (inlineEdit) return;
+  // A drag that produced a text selection is a FORMAT gesture — the floating toolbar owns it.
   const _sel = window.getSelection && window.getSelection();
   if (_sel && _sel.rangeCount > 0 && !_sel.isCollapsed) return;
-  // Anchor the block UNDER THE CLICK — never inlineEdit's block. Clicking a non-focusable block
-  // does NOT blur the contenteditable, so inlineEdit still points at the block you're LEAVING;
-  // anchoring that stuck reference is exactly why the outline stayed on the previous block. The
-  // walk below resolves e.target's own anchorable, so the outline follows the click every time
-  // (a click inside the block you're editing just re-anchors the same block — harmless).
   // Audit R3 (scoped): respect the per-kind click-to-anchor flag. When
   // false (e.g. workflow files), all clicks pass through without anchoring
   // — the lens stays in default state and every command runs against the
@@ -4401,10 +4398,12 @@ function enterInlineEdit(el, entry) {
   // Baseline serialization for the no-op guard (so an accidental double-click +
   // click-away commits nothing — no undo frame, no history record, no dirty).
   inlineEdit.original = serializeLeafSafe(el);
-  // NOTE: the lens anchor is NOT set here. A drag-to-select also opens inline edit (via
-  // pointerdown), so anchoring on ENTRY would anchor the dragged block — the "outline lags /
-  // every second selection" bug. The anchor rides the collapsed CLICK instead (handleMountClick),
-  // which fires after mouseup when a drag is distinguishable from a click. Release stays on exit.
+  // "The block I'm working on": the block your caret is in IS the single source of truth for the
+  // outline + the lens (⌘K) target. anchorTo paints exactly this block — clearing every other
+  // outline — and points the lens at it. There is no second writer (handleMountClick no longer
+  // anchors while editing), and switching blocks goes through exit→enter atomically, so the
+  // cursor and outline can never land on different blocks (design 2026-06-24-working-block).
+  if (entry && typeof anchorTo === 'function') anchorTo(entry);
 }
 function exitInlineEdit() {
   if (!inlineEdit) return;
@@ -4614,11 +4613,38 @@ window.commitInlineEdit = commitInlineEdit;
 
 function startInlineEditFromEvent(e) {
   if (rwaMode !== 'edit' || activeView) return false;
-  if (inlineEdit) return false;
   const hit = resolveInlineEditTarget(e && e.target);
   if (!hit) return false;
+  // Already editing this exact block → leave it; the browser handles the caret move.
+  if (inlineEdit && inlineEdit.el === hit.el) return false;
+  // Editing a DIFFERENT block → switch atomically (commit/exit old, enter new) so the cursor
+  // and the working-block outline land on the new block in ONE click, never lagging a block
+  // behind (design 2026-06-24-working-block).
+  if (inlineEdit) { switchInlineEditTo(hit); return true; }
   enterInlineEdit(hit.el, hit.entry);
   return true;
+}
+
+// Atomic block switch. Clean (unedited) old block → exit + enter, synchronous. Dirty old block
+// → commit it (which re-renders), then re-resolve the target by its ORDINAL in the rebuilt DOM
+// and enter it (ordinals are stable because a leaf commit changes the block's text, not the
+// block order). Either way the outline ends on the clicked block, never the previous one.
+function switchInlineEditTo(hit) {
+  const mount = document.getElementById('rwa-doc-mount');
+  const targetOrd = mount ? anchorableOrdinal(mount, hit.el) : -1;
+  let dirty = false;
+  try { dirty = serializeLeafSafe(inlineEdit.el) !== inlineEdit.original; } catch (_) {}
+  if (!dirty) {
+    exitInlineEdit();
+    enterInlineEdit(hit.el, hit.entry);
+    return;
+  }
+  commitInlineEdit().then(() => {
+    if (targetOrd < 0 || !sourceMap) return;
+    const newEntry = sourceMap[targetOrd];
+    const newEl = newEntry ? liveNodeForEntry(newEntry) : null;
+    if (newEl && newEntry) enterInlineEdit(newEl, newEntry);
+  }).catch(() => {});
 }
 
 // Pointer-down opens the edit before the browser performs its default caret
