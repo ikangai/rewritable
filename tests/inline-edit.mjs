@@ -250,6 +250,74 @@ console.log('\n== E0i: clicking the italic toolbar button italicizes the selecti
   check('italic button wrapped the selection in <em>', doc.includes('click <em>italic</em> here'));
 }
 
+// WHY (Rule 9): "change font/sizes" is the headline parity ask. Headings + alignment are
+// BLOCK-level — they retag/restyle the whole leaf, not the selection — and must ride the
+// same deterministic non-agent commit path while preserving data-rwa-id (so #id links and
+// the sourceMap survive). Heading retag is exercised on article-wrapped prose (the real
+// shape): computeShape tracks body's top-level type set, which stays {article}.
+console.log('\n== E0j: heading control retags the selected block (p -> h2), id preserved ==');
+{
+  await window.__setDocForTest('<article><p data-rwa-id="h1blk">Promote me to a heading</p><p data-rwa-id="h1other">other</p></article>');
+  selectText($id('h1blk'), 'Promote');
+  await window.__runSelectionCommand('h2');
+  await settle();
+  const doc = await window.getDoc();
+  check('block became <h2> with its data-rwa-id preserved', doc.includes('<h2 data-rwa-id="h1blk">Promote me to a heading</h2>'));
+  const hist = await readHistTop();
+  check('heading retag is a deterministic selection-edit', hist.surface === 'selection-edit' && hist.actor === 'user:selection-command');
+}
+
+console.log('\n== E0k: block control demotes a heading back to paragraph ==');
+{
+  await window.__setDocForTest('<article><h2 data-rwa-id="h2demo">Back to body</h2><p>x</p></article>');
+  selectText($id('h2demo'), 'Back');
+  await window.__runSelectionCommand('paragraph');
+  await settle();
+  const doc = await window.getDoc();
+  check('heading became <p> with id preserved', doc.includes('<p data-rwa-id="h2demo">Back to body</p>'));
+}
+
+console.log('\n== E0l: alignment sets text-align on the block (no tag change) ==');
+{
+  await window.__setDocForTest('<p data-rwa-id="alc">center this paragraph</p>');
+  selectText($id('alc'), 'center');
+  await window.__runSelectionCommand('align center');
+  await settle();
+  const doc = await window.getDoc();
+  check('block open tag gained text-align:center', /<p data-rwa-id="alc" style="[^"]*text-align:center/.test(doc));
+}
+
+console.log('\n== E0m: alignment merges into an existing style without losing it ==');
+{
+  await window.__setDocForTest('<p data-rwa-id="alm" style="color:red">already styled</p>');
+  selectText($id('alm'), 'already');
+  await window.__runSelectionCommand('align right');
+  await settle();
+  const doc = await window.getDoc();
+  check('text-align added', /text-align:right/.test(doc));
+  check('pre-existing color preserved', /color:red/.test(doc));
+}
+
+console.log('\n== E0n: the toolbar exposes a block-type select + alignment buttons ==');
+{
+  check('toolbar has a block-type control', !!document.getElementById('rwa-selection-block'));
+  for (const id of ['rwa-selection-align-left', 'rwa-selection-align-center', 'rwa-selection-align-right']) {
+    check('toolbar has #' + id, !!document.getElementById(id));
+  }
+}
+
+console.log('\n== E0o: changing the block-type select retags the block ==');
+{
+  await window.__setDocForTest('<article><p data-rwa-id="selh">via the select control</p><p>y</p></article>');
+  selectText($id('selh'), 'via');
+  const sel = document.getElementById('rwa-selection-block');
+  sel.value = 'h3';
+  sel.dispatchEvent(new window.Event('change', { bubbles: true }));
+  await settle();
+  const doc = await window.getDoc();
+  check('select change retagged to <h3>', doc.includes('<h3 data-rwa-id="selh">via the select control</h3>'));
+}
+
 console.log('\n== E1: data-rwa-id preserved through an edit ==');
 {
   await window.__setDocForTest('<p data-rwa-id="aaaa1111">Hello</p>');

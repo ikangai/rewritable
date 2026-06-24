@@ -198,6 +198,9 @@ body{font-family:var(--font-ui);background:var(--bg);color:var(--text);min-heigh
 #rwa-selection-bar button.mono{font-family:var(--font-mono);font-size:11px;}
 #rwa-selection-bar button.on{background:var(--gray-900);color:var(--white);}
 #rwa-selection-bar .rwa-sel-sep{width:1px;align-self:stretch;margin:2px 1px;background:var(--gray-200);}
+#rwa-selection-bar button svg{display:block;}
+#rwa-selection-block{height:28px;border:1px solid var(--gray-200);border-radius:7px;background:var(--white);color:var(--gray-800);font:600 12px var(--font-ui);padding:0 4px;cursor:pointer;}
+#rwa-selection-block:hover{background:var(--gray-100);}
 #rwa-selection-bar[data-listening="1"] #rwa-selection-voice{background:var(--red);color:var(--white);}
 #rwa-selection-cmd{width:170px;border:1px solid var(--gray-200);border-radius:7px;padding:6px 8px;outline:none;font:12px var(--font-ui);color:var(--gray-900);}
 #rwa-selection-cmd:focus{border-color:var(--gray-400);}
@@ -1521,11 +1524,22 @@ function buildUI() {
   <div id="rwa-lens-hint"></div>
 </div>
 <div id="rwa-selection-bar" hidden data-rwa-no-inline-edit>
+  <select id="rwa-selection-block" title="Block type" aria-label="block type">
+    <option value="paragraph">¶ Text</option>
+    <option value="h1">Heading 1</option>
+    <option value="h2">Heading 2</option>
+    <option value="h3">Heading 3</option>
+  </select>
+  <span class="rwa-sel-sep" aria-hidden="true"></span>
   <button type="button" id="rwa-selection-bold" title="Bold" aria-label="bold selection"><strong>B</strong></button>
   <button type="button" id="rwa-selection-italic" title="Italic" aria-label="italic selection"><em>I</em></button>
   <button type="button" id="rwa-selection-underline" title="Underline" aria-label="underline selection"><span style="text-decoration:underline">U</span></button>
   <button type="button" id="rwa-selection-strike" title="Strikethrough" aria-label="strikethrough selection"><span style="text-decoration:line-through">S</span></button>
   <button type="button" id="rwa-selection-code" title="Inline code" aria-label="inline code selection" class="mono">&lt;&gt;</button>
+  <span class="rwa-sel-sep" aria-hidden="true"></span>
+  <button type="button" id="rwa-selection-align-left" title="Align left" aria-label="align left"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><line x1="2" y1="4" x2="14" y2="4"/><line x1="2" y1="8" x2="10" y2="8"/><line x1="2" y1="12" x2="13" y2="12"/></svg></button>
+  <button type="button" id="rwa-selection-align-center" title="Align center" aria-label="align center"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><line x1="3" y1="4" x2="13" y2="4"/><line x1="5" y1="8" x2="11" y2="8"/><line x1="4" y1="12" x2="12" y2="12"/></svg></button>
+  <button type="button" id="rwa-selection-align-right" title="Align right" aria-label="align right"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><line x1="2" y1="4" x2="14" y2="4"/><line x1="6" y1="8" x2="14" y2="8"/><line x1="3" y1="12" x2="14" y2="12"/></svg></button>
   <span class="rwa-sel-sep" aria-hidden="true"></span>
   <input id="rwa-selection-cmd" placeholder="format or ask… (/ AI)" autocomplete="off" spellcheck="false">
   <button type="button" class="pri" id="rwa-selection-run">Run</button>
@@ -1872,6 +1886,14 @@ function buildUI() {
   wireFormatBtn('rwa-selection-underline', 'underline');
   wireFormatBtn('rwa-selection-strike', 'strikethrough');
   wireFormatBtn('rwa-selection-code', 'inline code');
+  wireFormatBtn('rwa-selection-align-left', 'align left');
+  wireFormatBtn('rwa-selection-align-center', 'align center');
+  wireFormatBtn('rwa-selection-align-right', 'align right');
+  // The block-type <select> can't preventDefault its mousedown (that would block the
+  // dropdown); it relies on the cached selectionCommandState, which survives because the
+  // bar holds focus while the select is open.
+  const blockSel = document.getElementById('rwa-selection-block');
+  if (blockSel) blockSel.addEventListener('change', () => runSelectionCommand(blockSel.value, { actor: 'user:selection-command' }).catch(() => {}));
   document.getElementById('rwa-selection-run').addEventListener('click', () => {
     runSelectionCommand(selCmd.value || '', { actor: 'user:selection-command' }).catch(() => {});
   });
@@ -3461,6 +3483,13 @@ function parseSelectionCommand(raw) {
   if (/\b(underline|underlined)\b/.test(t)) return { kind: 'wrap', tag: 'u', label: 'underline' };
   if (/\b(strikethrough|strike through|strikethru|strike|crossed out|cross out)\b/.test(t)) return { kind: 'wrap', tag: 's', label: 'strikethrough' };
   if (/\b(code|monospace|inline code)\b/.test(t)) return { kind: 'wrap', tag: 'code', label: 'code' };
+  if (/\b(h1|heading 1|title)\b/.test(t)) return { kind: 'retag', tag: 'h1', label: 'heading 1' };
+  if (/\b(h2|heading 2|heading)\b/.test(t)) return { kind: 'retag', tag: 'h2', label: 'heading 2' };
+  if (/\b(h3|heading 3|subheading|subhead)\b/.test(t)) return { kind: 'retag', tag: 'h3', label: 'heading 3' };
+  if (/\b(paragraph|body text|normal text|plain text)\b/.test(t)) return { kind: 'retag', tag: 'p', label: 'paragraph' };
+  if (/\b(align center|center|centre|centered|centred)\b/.test(t)) return { kind: 'align', align: 'center', label: 'center' };
+  if (/\b(align right|right align|right)\b/.test(t)) return { kind: 'align', align: 'right', label: 'right' };
+  if (/\b(align left|left align|left)\b/.test(t)) return { kind: 'align', align: 'left', label: 'left' };
   return null;
 }
 
@@ -3492,6 +3521,63 @@ async function applySelectionWrap(target, action, actor, instruction) {
   return { ok: true };
 }
 
+// Split a leaf block's source into its open tag, attributes, inner HTML and any
+// trailing whitespace — so a retag/restyle preserves every attribute (data-rwa-id
+// included) and the surrounding bytes exactly.
+function blockOpenInner(block, tag) {
+  const lt = tag.toLowerCase();
+  const openEnd = block.indexOf('>');
+  const closeMatch = new RegExp('(</' + lt + '\\s*>)(\\s*)$', 'i').exec(block);
+  if (openEnd < 0 || !closeMatch) return null;
+  return { openTag: block.slice(0, openEnd + 1), attrs: block.slice(1 + lt.length, openEnd), inner: block.slice(openEnd + 1, closeMatch.index), trailing: closeMatch[2] };
+}
+// Merge text-align into an open tag's style attribute (idempotent; keeps other props).
+function setOpenTagTextAlign(openTag, align) {
+  const decl = 'text-align:' + align;
+  const m = /\sstyle="([^"]*)"/i.exec(openTag);
+  if (m) {
+    let props = m[1].replace(/\s*text-align\s*:[^;]*;?/ig, '').trim().replace(/;\s*$/, '');
+    props = props ? props + '; ' + decl : decl;
+    return openTag.slice(0, m.index) + ' style="' + props + '"' + openTag.slice(m.index + m[0].length);
+  }
+  return openTag.slice(0, -1) + ' style="' + decl + '">';
+}
+// Block-level formatting (heading retag / alignment) — operates on the whole leaf the
+// selection sits in, committed through the same non-agent path as the inline wraps.
+async function applyBlockFormat(target, action, actor) {
+  if (inlineEdit && serializeLeafSafe(inlineEdit.el) !== inlineEdit.original) {
+    showAffordance('finish the current edit first');
+    return { ok: false, reason: 'inline_edit_dirty' };
+  }
+  if (inlineEdit) exitInlineEdit();
+  const block = currentDocCache.slice(target.entry.start, target.entry.end);
+  const parts = blockOpenInner(block, target.entry.tag);
+  if (!parts) { showAffordance('block could not be parsed'); return { ok: false, reason: 'block_unparsed' }; }
+  let nextBlock;
+  if (action.kind === 'retag') {
+    if (!/^(p|h[1-6])$/.test(target.entry.tag.toLowerCase())) { showAffordance("can't change this block's type"); return { ok: false, reason: 'not_retaggable' }; }
+    if (target.entry.tag.toLowerCase() === action.tag) { showAffordance('already ' + action.label); return { ok: true, noop: true }; }
+    nextBlock = '<' + action.tag + parts.attrs + '>' + parts.inner + '</' + action.tag + '>' + parts.trailing;
+  } else {
+    nextBlock = setOpenTagTextAlign(parts.openTag, action.align) + block.slice(block.indexOf('>') + 1);
+  }
+  const a = resolveAnchorFind(target.entry);
+  if (!a) { showAffordance('selection block is ambiguous'); return { ok: false, reason: 'anchor_unresolved' }; }
+  const replace = a.replacePrefix + nextBlock + a.replaceSuffix;
+  try {
+    await runtimeApplyEnvelope(
+      { version: 'rwa-edit/1', edits: [{ find: a.find, replace, reason: 'format:' + action.label }] },
+      { surface: 'selection-edit', instruction: action.label, actor: actor || 'user:selection-command' });
+  } catch (e) {
+    showAffordance("couldn't " + action.label + ' here — ' + ((e && e.message) || 'blocked'));
+    return { ok: false, reason: (e && e.code) || 'apply_failed' };
+  }
+  try { window.getSelection().removeAllRanges(); } catch (_) {}
+  hideSelectionCommandBar();
+  showAffordance(action.label + ' — ⌘Z to undo');
+  return { ok: true };
+}
+
 async function runSelectionCommand(raw, options) {
   options = options || {};
   const target = resolveSelectionCommandTarget() || selectionCommandState;
@@ -3505,6 +3591,7 @@ async function runSelectionCommand(raw, options) {
     return { ok: false, reason: 'unknown_command' };
   }
   if (action.kind === 'wrap') return applySelectionWrap(target, action, options.actor, raw);
+  if (action.kind === 'retag' || action.kind === 'align') return applyBlockFormat(target, action, options.actor);
   return { ok: false, reason: 'unknown_command' };
 }
 
@@ -3520,6 +3607,8 @@ function positionSelectionCommandBar(target) {
   const left = Math.max(8, Math.min(window.scrollX + (rect ? rect.left : 0), window.scrollX + window.innerWidth - 320));
   bar.style.top = top + 'px';
   bar.style.left = left + 'px';
+  const blockSel = document.getElementById('rwa-selection-block');
+  if (blockSel) { const tg = (target.entry && target.entry.tag || '').toLowerCase(); blockSel.value = /^h[1-3]$/.test(tg) ? tg : 'paragraph'; }
   bar.hidden = false;
 }
 
