@@ -207,6 +207,49 @@ console.log('\n== E0e: voice command feeds the same selection command path ==');
   delete window.SpeechRecognition;
 }
 
+// WHY (Rule 9): WYSIWYG parity (heyhtml.com) needs more than bold/italic/code — a real
+// formatting toolbar. Underline/strikethrough ride the SAME proven wrap→non-agent-commit
+// path, so the test pins that the inline-format vocabulary + the direct toolbar buttons
+// both compile to rwa-edit/1 deterministically (no model call).
+console.log('\n== E0f: selection command underlines the selection ==');
+{
+  await window.__setDocForTest('<p data-rwa-id="w6u">underline this word</p>');
+  selectText($id('w6u'), 'this word');
+  await window.__runSelectionCommand('underline');
+  await settle();
+  const doc = await window.getDoc();
+  check('selected text wrapped in <u>', doc.includes('underline <u>this word</u>'));
+  const hist = await readHistTop();
+  check('underline is a deterministic selection-edit (no model)', hist.surface === 'selection-edit' && hist.actor === 'user:selection-command');
+}
+
+console.log('\n== E0g: selection command strikes through the selection ==');
+{
+  await window.__setDocForTest('<p data-rwa-id="w7s">strike this out</p>');
+  selectText($id('w7s'), 'this');
+  await window.__runSelectionCommand('strikethrough');
+  await settle();
+  const doc = await window.getDoc();
+  check('selected text wrapped in <s>', doc.includes('strike <s>this</s> out'));
+}
+
+console.log('\n== E0h: the toolbar exposes bold/italic/underline/strike/code buttons ==');
+{
+  for (const id of ['rwa-selection-bold', 'rwa-selection-italic', 'rwa-selection-underline', 'rwa-selection-strike', 'rwa-selection-code']) {
+    check('toolbar has #' + id, !!document.getElementById(id));
+  }
+}
+
+console.log('\n== E0i: clicking the italic toolbar button italicizes the selection ==');
+{
+  await window.__setDocForTest('<p data-rwa-id="w8i">click italic here</p>');
+  selectText($id('w8i'), 'italic');
+  document.getElementById('rwa-selection-italic').dispatchEvent(new window.MouseEvent('click', { bubbles: true, button: 0 }));
+  await settle();
+  const doc = await window.getDoc();
+  check('italic button wrapped the selection in <em>', doc.includes('click <em>italic</em> here'));
+}
+
 console.log('\n== E1: data-rwa-id preserved through an edit ==');
 {
   await window.__setDocForTest('<p data-rwa-id="aaaa1111">Hello</p>');

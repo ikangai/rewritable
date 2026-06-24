@@ -195,6 +195,9 @@ body{font-family:var(--font-ui);background:var(--bg);color:var(--text);min-heigh
 #rwa-selection-bar button{height:28px;border:0;border-radius:7px;background:transparent;color:var(--gray-700);font:600 12px var(--font-ui);cursor:pointer;padding:0 9px;}
 #rwa-selection-bar button:hover{background:var(--gray-100);color:var(--gray-900);}
 #rwa-selection-bar button.pri{background:var(--gray-900);color:var(--white);}
+#rwa-selection-bar button.mono{font-family:var(--font-mono);font-size:11px;}
+#rwa-selection-bar button.on{background:var(--gray-900);color:var(--white);}
+#rwa-selection-bar .rwa-sel-sep{width:1px;align-self:stretch;margin:2px 1px;background:var(--gray-200);}
 #rwa-selection-bar[data-listening="1"] #rwa-selection-voice{background:var(--red);color:var(--white);}
 #rwa-selection-cmd{width:170px;border:1px solid var(--gray-200);border-radius:7px;padding:6px 8px;outline:none;font:12px var(--font-ui);color:var(--gray-900);}
 #rwa-selection-cmd:focus{border-color:var(--gray-400);}
@@ -1518,10 +1521,15 @@ function buildUI() {
   <div id="rwa-lens-hint"></div>
 </div>
 <div id="rwa-selection-bar" hidden data-rwa-no-inline-edit>
-  <button type="button" id="rwa-selection-bold" title="Bold selection" aria-label="bold selection"><strong>B</strong></button>
-  <input id="rwa-selection-cmd" placeholder="make it bold" autocomplete="off" spellcheck="false">
+  <button type="button" id="rwa-selection-bold" title="Bold" aria-label="bold selection"><strong>B</strong></button>
+  <button type="button" id="rwa-selection-italic" title="Italic" aria-label="italic selection"><em>I</em></button>
+  <button type="button" id="rwa-selection-underline" title="Underline" aria-label="underline selection"><span style="text-decoration:underline">U</span></button>
+  <button type="button" id="rwa-selection-strike" title="Strikethrough" aria-label="strikethrough selection"><span style="text-decoration:line-through">S</span></button>
+  <button type="button" id="rwa-selection-code" title="Inline code" aria-label="inline code selection" class="mono">&lt;&gt;</button>
+  <span class="rwa-sel-sep" aria-hidden="true"></span>
+  <input id="rwa-selection-cmd" placeholder="format or ask… (/ AI)" autocomplete="off" spellcheck="false">
   <button type="button" class="pri" id="rwa-selection-run">Run</button>
-  <button type="button" id="rwa-selection-voice">Mic</button>
+  <button type="button" id="rwa-selection-voice" title="Dictate a command" aria-label="dictate a command">Mic</button>
 </div>
 <div id="rwa-lens-hist-panel" hidden></div>`;
 
@@ -1850,7 +1858,20 @@ function buildUI() {
   }
 
   const selCmd = document.getElementById('rwa-selection-cmd');
-  document.getElementById('rwa-selection-bold').addEventListener('click', () => runSelectionCommand('make it bold', { actor: 'user:selection-command' }).catch(() => {}));
+  // Deterministic formatting buttons → the same local rwa-edit/1 wrap path (no model).
+  // mousedown preventDefault keeps the text selection alive through the click (a real
+  // browser would otherwise collapse it when focus moves to the button).
+  const wireFormatBtn = (id, command) => {
+    const b = document.getElementById(id);
+    if (!b) return;
+    b.addEventListener('mousedown', (e) => e.preventDefault());
+    b.addEventListener('click', () => runSelectionCommand(command, { actor: 'user:selection-command' }).catch(() => {}));
+  };
+  wireFormatBtn('rwa-selection-bold', 'make it bold');
+  wireFormatBtn('rwa-selection-italic', 'italic');
+  wireFormatBtn('rwa-selection-underline', 'underline');
+  wireFormatBtn('rwa-selection-strike', 'strikethrough');
+  wireFormatBtn('rwa-selection-code', 'inline code');
   document.getElementById('rwa-selection-run').addEventListener('click', () => {
     runSelectionCommand(selCmd.value || '', { actor: 'user:selection-command' }).catch(() => {});
   });
@@ -3437,6 +3458,8 @@ function parseSelectionCommand(raw) {
   if (!t) return null;
   if (/\b(bold|strong|emphasize strongly)\b/.test(t)) return { kind: 'wrap', tag: 'strong', label: 'bold' };
   if (/\b(italic|italics|emphasize)\b/.test(t)) return { kind: 'wrap', tag: 'em', label: 'italic' };
+  if (/\b(underline|underlined)\b/.test(t)) return { kind: 'wrap', tag: 'u', label: 'underline' };
+  if (/\b(strikethrough|strike through|strikethru|strike|crossed out|cross out)\b/.test(t)) return { kind: 'wrap', tag: 's', label: 'strikethrough' };
   if (/\b(code|monospace|inline code)\b/.test(t)) return { kind: 'wrap', tag: 'code', label: 'code' };
   return null;
 }
