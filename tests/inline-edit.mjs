@@ -149,6 +149,20 @@ console.log('\n== E0: single click enters WYSIWYG inline edit ==');
   check('single-click edit committed through normal path', doc.includes('Typed in place'));
 }
 
+// WHY (Rule 9): the "bubble appears every second selection" bug. The bubble floats over the
+// line above the selection; if it captured pointer events, a press to select that line would
+// land on the bar (its buttons' mousedown-preventDefault swallowing the selection). The bar
+// must be pointer-transparent (unarmed) the moment it appears, so the press passes through to
+// the text. (Arming-on-hover and the real pass-through are pointer hit-testing → browser-proven.)
+console.log('\n== E0a3: the formatting bar is pointer-transparent (unarmed) right after a selection ==');
+{
+  await window.__setDocForTest('<p data-rwa-id="armtest">transparent until you hover it</p>');
+  selectText($id('armtest'), 'until you');
+  const bar = document.getElementById('rwa-selection-bar');
+  check('bar is shown for the selection', bar.hidden === false);
+  check('bar is NOT armed right after selecting (a press passes through to the text)', !bar.classList.contains('armed'));
+}
+
 console.log('\n== E0b: keyboard entry opens inline edit ==');
 {
   await window.__setDocForTest('<p data-rwa-id="w2key">Keyboard editable</p>');

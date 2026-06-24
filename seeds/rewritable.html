@@ -196,7 +196,13 @@ body{font-family:var(--font-ui);background:var(--bg);color:var(--text);min-heigh
 #rwa-img-chip button{width:22px;height:22px;border:0;border-radius:6px;background:transparent;color:var(--gray-900);font-size:11px;line-height:1;cursor:pointer;padding:0;font-family:var(--font-ui);}
 #rwa-img-chip button:hover{background:var(--gray-100);}
 #rwa-img-chip button.on{background:var(--gray-900);color:var(--white);}
-#rwa-selection-bar{position:absolute;z-index:70;display:flex;align-items:center;gap:4px;padding:5px;border-radius:10px;border:1px solid var(--gray-200);background:var(--white);box-shadow:0 8px 24px rgba(0,0,0,0.12);font-family:var(--font-ui);}
+/* The bubble floats over the line above the selection. It is pointer-transparent by default
+   so a press meant to start a NEW selection passes THROUGH it to the text (otherwise the
+   press lands on the bar and its buttons' mousedown-preventDefault swallows the selection —
+   the "bubble appears every second selection" bug). It "arms" (becomes clickable) only after
+   the pointer deliberately dwells over it (see maybeArmBar). */
+#rwa-selection-bar{position:absolute;z-index:70;display:flex;align-items:center;gap:4px;padding:5px;border-radius:10px;border:1px solid var(--gray-200);background:var(--white);box-shadow:0 8px 24px rgba(0,0,0,0.12);font-family:var(--font-ui);pointer-events:none;}
+#rwa-selection-bar.armed{pointer-events:auto;}
 #rwa-selection-bar[hidden]{display:none!important;}
 #rwa-selection-bar button{height:28px;border:0;border-radius:7px;background:transparent;color:var(--gray-700);font:600 12px var(--font-ui);cursor:pointer;padding:0 9px;}
 #rwa-selection-bar button:hover{background:var(--gray-100);color:var(--gray-900);}
@@ -2018,6 +2024,9 @@ function buildUI() {
   document.addEventListener('selectionchange', scheduleSelectionCommandRefresh);
   document.addEventListener('mouseup', scheduleSelectionCommandRefresh);
   document.addEventListener('keyup', scheduleSelectionCommandRefresh);
+  // Track the pointer to arm the bubble on a deliberate dwell (so it stays pointer-transparent
+  // to a press that's starting a selection over the text it overlaps).
+  document.addEventListener('mousemove', (e) => { _lastPointer = { x: e.clientX, y: e.clientY }; maybeArmSelectionBar(e.clientX, e.clientY); });
 
   // rwa-lens/1: Esc releases the anchor when one is held. Listener is on
   // `window` so Esc anywhere works (including with focus outside the lens
@@ -3493,8 +3502,28 @@ window.serializeLeafSafe = serializeLeafSafe;
 let selectionCommandState = null; // { el, entry, text, occurrence, range }
 let selectionVoiceRecognizer = null;
 
+// The bubble is pointer-transparent (CSS) until "armed". Arming on a brief pointer dwell
+// distinguishes "moving onto the bar to click a control" (arm → clickable) from "pressing to
+// select text the bar happens to overlap" (no dwell → press passes through to the text). A
+// fresh/hidden bar is always disarmed, so a press right after it appears reaches the text.
+let _barArmTimer = null, _lastPointer = { x: -1, y: -1 };
+function disarmSelectionBar() {
+  if (_barArmTimer) { clearTimeout(_barArmTimer); _barArmTimer = null; }
+  const bar = document.getElementById('rwa-selection-bar');
+  if (bar) bar.classList.remove('armed');
+}
+function maybeArmSelectionBar(x, y) {
+  const bar = document.getElementById('rwa-selection-bar');
+  if (!bar || bar.hidden) { disarmSelectionBar(); return; }
+  let r; try { r = bar.getBoundingClientRect(); } catch (_) { return; }
+  const inside = x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+  if (inside) {
+    if (!bar.classList.contains('armed') && !_barArmTimer) _barArmTimer = setTimeout(() => { _barArmTimer = null; bar.classList.add('armed'); }, 130);
+  } else { disarmSelectionBar(); }
+}
 function hideSelectionCommandBar() {
   selectionCommandState = null;
+  disarmSelectionBar();
   const bar = document.getElementById('rwa-selection-bar');
   if (bar) {
     bar.hidden = true;
@@ -3776,7 +3805,9 @@ function positionSelectionCommandBar(target) {
   // cluster, link field, color swatches) so they don't carry over from a prior selection.
   for (const sid of ['rwa-selection-cmdwrap', 'rwa-selection-link-input', 'rwa-selection-color-pop']) { const e = document.getElementById(sid); if (e) e.hidden = true; }
   const moreBtn = document.getElementById('rwa-selection-more'); if (moreBtn) { moreBtn.setAttribute('aria-expanded', 'false'); moreBtn.classList.remove('on'); }
+  bar.classList.remove('armed'); // a freshly (re)positioned bar starts pointer-transparent
   bar.hidden = false;
+  maybeArmSelectionBar(_lastPointer.x, _lastPointer.y); // arm only if the pointer is already dwelling on it
 }
 
 function refreshSelectionCommandBar() {
