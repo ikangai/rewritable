@@ -3430,8 +3430,13 @@ function anchorTo(entry) {
     x.addEventListener('click', releaseAnchor);
     badge.appendChild(x);
   }
-  // Visual highlight on the live block.
-  if (lensState._highlighted) lensState._highlighted.removeAttribute('data-rwa-anchored');
+  // Visual highlight on the live block. Clear EVERY existing outline first — never trust the
+  // single _highlighted ref: it goes stale across re-renders (the old node is detached, the
+  // rebuilt one keeps no attribute), so removing only from it left the PREVIOUS block outlined
+  // and just stacked a second outline on the new block. Querying the live DOM is the source of
+  // truth. (This is why the outline "showed the previous block" while anchoring itself worked.)
+  const _hlMount = document.getElementById('rwa-doc-mount');
+  if (_hlMount) _hlMount.querySelectorAll('[data-rwa-anchored]').forEach(n => n.removeAttribute('data-rwa-anchored'));
   if (liveNode) {
     liveNode.setAttribute('data-rwa-anchored', '');
     lensState._highlighted = liveNode;
@@ -3458,10 +3463,11 @@ function releaseAnchor() {
     badge.hidden = true;
     badge.textContent = '';
   }
-  if (lensState._highlighted) {
-    lensState._highlighted.removeAttribute('data-rwa-anchored');
-    lensState._highlighted = null;
-  }
+  // Clear EVERY outline (not just the possibly-stale _highlighted ref) so releasing always
+  // leaves a clean DOM — no orphan outline can linger on a previously-anchored block.
+  const _hlMount = document.getElementById('rwa-doc-mount');
+  if (_hlMount) _hlMount.querySelectorAll('[data-rwa-anchored]').forEach(n => n.removeAttribute('data-rwa-anchored'));
+  lensState._highlighted = null;
   lensState.anchor = null;
   const input = lens.querySelector('#rwa-lens-input');
   if (input) input.placeholder = LENS_PLACEHOLDER;

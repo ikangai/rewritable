@@ -513,6 +513,31 @@ console.log('\n== Test L5.1d: a text selection does NOT anchor the lens ==');
   check('lens stays in its default (un-anchored) state', window.document.getElementById('rwa-lens').dataset.state === 'default');
 }
 
+// WHY (Rule 9): the "outline shows the previous block" bug. The outline was removed only from a
+// single _highlighted node ref; that ref goes stale after a re-render (old node detached, rebuilt
+// node carries no attribute), so the PREVIOUS block stayed outlined while a second outline stacked
+// on the new one. anchorTo/releaseAnchor must clear EVERY data-rwa-anchored in the live DOM.
+console.log('\n== Test L5.1e: anchoring clears a STALE outline left on the previous block ==');
+{
+  await window.__setDocForTest('<p id="blka">Block A</p>\n<p id="blkb">Block B</p>');
+  window.__lensState.anchor = null;
+  window.__lensState._highlighted = null;
+  window.document.getElementById('rwa-lens').dataset.state = 'default';
+  const a = window.document.querySelector('#blka');
+  const b = window.document.querySelector('#blkb');
+  // Reproduce the post-re-render stale state: A is visually outlined, but _highlighted no longer
+  // points at it (exactly what a rebuild leaves behind).
+  a.setAttribute('data-rwa-anchored', '');
+  window.__lensState._highlighted = null;
+  b.dispatchEvent(new window.MouseEvent('click', { bubbles: true })); // anchor B
+  check('the stale outline on the previous block (A) is cleared', !a.hasAttribute('data-rwa-anchored'));
+  check('only the newly-anchored block (B) is outlined', b.hasAttribute('data-rwa-anchored'));
+  check('exactly one block carries the outline', window.document.querySelectorAll('[data-rwa-anchored]').length === 1);
+  // And releasing clears everything.
+  window.releaseAnchor();
+  check('releaseAnchor clears every outline', window.document.querySelectorAll('[data-rwa-anchored]').length === 0);
+}
+
 console.log('\n== Test L5.2: badge shown when anchored, hidden in default ==');
 {
   await window.__setDocForTest('<p>One.</p>');
