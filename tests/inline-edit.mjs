@@ -318,6 +318,47 @@ console.log('\n== E0o: changing the block-type select retags the block ==');
   check('select change retagged to <h3>', doc.includes('<h3 data-rwa-id="selh">via the select control</h3>'));
 }
 
+// WHY (Rule 9): links are core to document editing + heyhtml parity. The link wraps the
+// selection in <a href> via the same commit path, and the href MUST be sanitized — a
+// javascript:/data: URL is an XSS vector and must never reach the document.
+console.log('\n== E0p: link wraps the selection in a sanitized anchor ==');
+{
+  await window.__setDocForTest('<p data-rwa-id="lnk">see the docs here</p>');
+  selectText($id('lnk'), 'the docs');
+  await window.__runSelectionLink('https://example.com/docs');
+  await settle();
+  const doc = await window.getDoc();
+  check('selected text wrapped in <a href>', doc.includes('see <a href="https://example.com/docs">the docs</a> here'));
+  const hist = await readHistTop();
+  check('link is a deterministic selection-edit', hist.surface === 'selection-edit');
+}
+
+console.log('\n== E0q: a javascript: URL is rejected (no XSS into the doc) ==');
+{
+  await window.__setDocForTest('<p data-rwa-id="xss">do not link this</p>');
+  selectText($id('xss'), 'link this');
+  const res = await window.__runSelectionLink('javascript:alert(1)');
+  await settle();
+  const doc = await window.getDoc();
+  check('javascript: URL refused', res && res.ok === false);
+  check('no anchor / javascript: reached the document', !/javascript:/i.test(doc) && !doc.includes('<a '));
+}
+
+console.log('\n== E0r: the toolbar exposes a link control ==');
+{
+  check('toolbar has a link button', !!document.getElementById('rwa-selection-link'));
+}
+
+console.log('\n== E0s: clicking the link button reveals the URL input ==');
+{
+  await window.__setDocForTest('<p data-rwa-id="lnkui">link the input flow</p>');
+  selectText($id('lnkui'), 'the input');
+  const input = document.getElementById('rwa-selection-link-input');
+  check('URL input hidden until the link button is clicked', input.hidden === true);
+  document.getElementById('rwa-selection-link').dispatchEvent(new window.MouseEvent('click', { bubbles: true, button: 0 }));
+  check('URL input revealed after clicking link', input.hidden === false);
+}
+
 console.log('\n== E1: data-rwa-id preserved through an edit ==');
 {
   await window.__setDocForTest('<p data-rwa-id="aaaa1111">Hello</p>');

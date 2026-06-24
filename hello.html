@@ -207,8 +207,10 @@ body{font-family:var(--font-ui);background:var(--bg);color:var(--text);min-heigh
 #rwa-selection-block{height:28px;border:1px solid var(--gray-200);border-radius:7px;background:var(--white);color:var(--gray-800);font:600 12px var(--font-ui);padding:0 4px;cursor:pointer;}
 #rwa-selection-block:hover{background:var(--gray-100);}
 #rwa-selection-bar[data-listening="1"] #rwa-selection-voice{background:var(--red);color:var(--white);}
-#rwa-selection-cmd{width:170px;border:1px solid var(--gray-200);border-radius:7px;padding:6px 8px;outline:none;font:12px var(--font-ui);color:var(--gray-900);}
-#rwa-selection-cmd:focus{border-color:var(--gray-400);}
+#rwa-selection-cmd,#rwa-selection-link-input{width:170px;border:1px solid var(--gray-200);border-radius:7px;padding:6px 8px;outline:none;font:12px var(--font-ui);color:var(--gray-900);}
+#rwa-selection-cmd:focus,#rwa-selection-link-input:focus{border-color:var(--gray-400);}
+#rwa-selection-link-input{width:160px;}
+#rwa-selection-bar input[hidden]{display:none!important;}
 body:not([data-rwa-mode="edit"]) #rwa-lens,
 body:not([data-rwa-mode="edit"]) #rwa-pal,
 body:not([data-rwa-mode="edit"]) #rwa-lens-hist-panel,
@@ -1542,6 +1544,8 @@ function buildUI() {
   <button type="button" id="rwa-selection-underline" title="Underline" aria-label="underline selection"><span style="text-decoration:underline">U</span></button>
   <button type="button" id="rwa-selection-strike" title="Strikethrough" aria-label="strikethrough selection"><span style="text-decoration:line-through">S</span></button>
   <button type="button" id="rwa-selection-code" title="Inline code" aria-label="inline code selection" class="mono">&lt;&gt;</button>
+  <button type="button" id="rwa-selection-link" title="Link" aria-label="link selection"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M6.5 9.5l3-3"/><path d="M7 4.5l1-1a2.5 2.5 0 0 1 3.5 3.5l-1 1"/><path d="M9 11.5l-1 1a2.5 2.5 0 0 1-3.5-3.5l1-1"/></svg></button>
+  <input id="rwa-selection-link-input" hidden type="text" placeholder="https://…" autocomplete="off" spellcheck="false">
   <span class="rwa-sel-sep" aria-hidden="true"></span>
   <button type="button" id="rwa-selection-align-left" title="Align left" aria-label="align left"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><line x1="2" y1="4" x2="14" y2="4"/><line x1="2" y1="8" x2="10" y2="8"/><line x1="2" y1="12" x2="13" y2="12"/></svg></button>
   <button type="button" id="rwa-selection-align-center" title="Align center" aria-label="align center"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><line x1="3" y1="4" x2="13" y2="4"/><line x1="5" y1="8" x2="11" y2="8"/><line x1="4" y1="12" x2="12" y2="12"/></svg></button>
@@ -1914,6 +1918,25 @@ function buildUI() {
   wireFormatBtn('rwa-selection-align-left', 'align left');
   wireFormatBtn('rwa-selection-align-center', 'align center');
   wireFormatBtn('rwa-selection-align-right', 'align right');
+  // Link control: the button reveals a URL field (prefilled if the selection is already a
+  // link); Enter applies the sanitized href, Esc cancels. mousedown preventDefault keeps
+  // the text selection alive; the cached selectionCommandState backs the apply.
+  const linkBtn = document.getElementById('rwa-selection-link');
+  const linkInput = document.getElementById('rwa-selection-link-input');
+  if (linkBtn && linkInput) {
+    linkBtn.addEventListener('mousedown', (e) => e.preventDefault());
+    linkBtn.addEventListener('click', () => {
+      if (!linkInput.hidden) { linkInput.hidden = true; return; }
+      const t = resolveSelectionCommandTarget() || selectionCommandState;
+      let pre = '';
+      try { const n = t && t.range && t.range.startContainer; const el = n && (n.nodeType === 1 ? n : n.parentElement); const a = el && el.closest && el.closest('a[href]'); if (a) pre = a.getAttribute('href') || ''; } catch (_) {}
+      linkInput.value = pre; linkInput.hidden = false; linkInput.focus();
+    });
+    linkInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); const url = linkInput.value || ''; linkInput.hidden = true; runSelectionLink(url, { actor: 'user:selection-command' }).catch(() => {}); }
+      else if (e.key === 'Escape') { e.preventDefault(); linkInput.hidden = true; }
+    });
+  }
   // The block-type <select> can't preventDefault its mousedown (that would block the
   // dropdown); it relies on the cached selectionCommandState, which survives because the
   // bar holds focus while the select is open.
@@ -3535,7 +3558,7 @@ async function applySelectionWrap(target, action, actor, instruction) {
     return { ok: false, reason: 'anchor_unresolved' };
   }
   const tag = action.tag;
-  const nextBlock = loc.block.slice(0, loc.start) + '<' + tag + '>' + loc.selectedSource + '</' + tag + '>' + loc.block.slice(loc.end);
+  const nextBlock = loc.block.slice(0, loc.start) + '<' + tag + (action.attrs || '') + '>' + loc.selectedSource + '</' + tag + '>' + loc.block.slice(loc.end);
   const replace = a.replacePrefix + nextBlock + a.replaceSuffix;
   await runtimeApplyEnvelope(
     { version: 'rwa-edit/1', edits: [{ find: a.find, replace, reason: 'selection:' + action.label }] },
@@ -3620,6 +3643,29 @@ async function runSelectionCommand(raw, options) {
   return { ok: false, reason: 'unknown_command' };
 }
 
+// Link insertion — wraps the selection in <a href>. The URL is sanitized (scheme allowlist:
+// http(s)/mailto/tel, plus scheme-less relative/anchor; javascript:/data:/vbscript:/etc. are
+// refused) and attribute-escaped, so a hostile URL can never become script in the document.
+function sanitizeHref(url) {
+  const u = String(url || '').trim();
+  if (!u) return null;
+  const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(u);
+  if (scheme) return /^(https?|mailto|tel)$/i.test(scheme[1]) ? u : null;
+  return u; // no scheme → relative / anchor → allowed
+}
+async function applySelectionLink(target, url, actor) {
+  const href = sanitizeHref(url);
+  if (!href) { showAffordance('that link is not allowed'); return { ok: false, reason: 'bad_url' }; }
+  const esc = href.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  return applySelectionWrap(target, { tag: 'a', label: 'link', attrs: ' href="' + esc + '"' }, actor, 'link');
+}
+async function runSelectionLink(url, options) {
+  options = options || {};
+  const target = resolveSelectionCommandTarget() || selectionCommandState;
+  if (!target) { showAffordance('select text in Edit mode first'); return { ok: false, reason: 'no_selection' }; }
+  return applySelectionLink(target, url, options.actor || 'user:selection-command');
+}
+
 function positionSelectionCommandBar(target) {
   const bar = document.getElementById('rwa-selection-bar');
   if (!bar || !target || !target.range) return;
@@ -3691,6 +3737,7 @@ function startSelectionVoice() {
 if (typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent)) {
   window.__refreshSelectionCommandBar = refreshSelectionCommandBar;
   window.__runSelectionCommand = runSelectionCommand;
+  window.__runSelectionLink = runSelectionLink;
   window.__startSelectionVoice = startSelectionVoice;
   window.__parseSelectionCommand = parseSelectionCommand;
 }
