@@ -206,6 +206,8 @@ body{font-family:var(--font-ui);background:var(--bg);color:var(--text);min-heigh
 #rwa-selection-bar button svg{display:block;}
 #rwa-selection-block,#rwa-selection-size{height:28px;border:1px solid var(--gray-200);border-radius:7px;background:var(--white);color:var(--gray-800);font:600 12px var(--font-ui);padding:0 4px;cursor:pointer;}
 #rwa-selection-block:hover,#rwa-selection-size:hover{background:var(--gray-100);}
+#rwa-selection-cmdwrap{display:flex;align-items:center;gap:4px;}
+#rwa-selection-cmdwrap[hidden]{display:none;}
 #rwa-selection-bar[data-listening="1"] #rwa-selection-voice{background:var(--red);color:var(--white);}
 #rwa-selection-cmd,#rwa-selection-link-input{width:170px;border:1px solid var(--gray-200);border-radius:7px;padding:6px 8px;outline:none;font:12px var(--font-ui);color:var(--gray-900);}
 #rwa-selection-cmd:focus,#rwa-selection-link-input:focus{border-color:var(--gray-400);}
@@ -2001,10 +2003,10 @@ function buildUI() {
 </div>
 <div id="rwa-selection-bar" hidden data-rwa-no-inline-edit>
   <select id="rwa-selection-block" title="Block type" aria-label="block type">
-    <option value="paragraph">¶ Text</option>
-    <option value="h1">Heading 1</option>
-    <option value="h2">Heading 2</option>
-    <option value="h3">Heading 3</option>
+    <option value="paragraph">¶</option>
+    <option value="h1">H1</option>
+    <option value="h2">H2</option>
+    <option value="h3">H3</option>
   </select>
   <select id="rwa-selection-size" title="Text size" aria-label="text size">
     <option value="" disabled selected>Size</option>
@@ -2036,9 +2038,12 @@ function buildUI() {
   <button type="button" id="rwa-selection-align-center" title="Align center" aria-label="align center"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><line x1="3" y1="4" x2="13" y2="4"/><line x1="5" y1="8" x2="11" y2="8"/><line x1="4" y1="12" x2="12" y2="12"/></svg></button>
   <button type="button" id="rwa-selection-align-right" title="Align right" aria-label="align right"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><line x1="2" y1="4" x2="14" y2="4"/><line x1="6" y1="8" x2="14" y2="8"/><line x1="3" y1="12" x2="14" y2="12"/></svg></button>
   <span class="rwa-sel-sep" aria-hidden="true"></span>
-  <input id="rwa-selection-cmd" placeholder="format or ask… (/ AI)" autocomplete="off" spellcheck="false">
-  <button type="button" class="pri" id="rwa-selection-run">Run</button>
-  <button type="button" id="rwa-selection-voice" title="Dictate a command" aria-label="dictate a command">Mic</button>
+  <button type="button" id="rwa-selection-more" title="Command / voice" aria-label="command and voice" aria-haspopup="true" aria-expanded="false">⋯</button>
+  <span id="rwa-selection-cmdwrap" hidden>
+    <input id="rwa-selection-cmd" placeholder="make it bold…" autocomplete="off" spellcheck="false">
+    <button type="button" class="pri" id="rwa-selection-run">Run</button>
+    <button type="button" id="rwa-selection-voice" title="Dictate a command" aria-label="dictate a command">Mic</button>
+  </span>
 </div>
 <div id="rwa-lens-hist-panel" hidden></div>`;
 
@@ -2434,6 +2439,18 @@ function buildUI() {
       if (!sw) return;
       colorPop.hidden = true;
       runSelectionColor(sw.getAttribute('data-color'), { actor: 'user:selection-command' }).catch(() => {});
+    });
+  }
+  // ⋯ reveals the typed-command + voice cluster (tucked away so the bubble stays compact —
+  // all formatting is one click via the buttons above; this is the command/voice fallback).
+  const moreBtn = document.getElementById('rwa-selection-more');
+  const cmdWrap = document.getElementById('rwa-selection-cmdwrap');
+  if (moreBtn && cmdWrap) {
+    moreBtn.addEventListener('click', () => {
+      cmdWrap.hidden = !cmdWrap.hidden;
+      moreBtn.setAttribute('aria-expanded', String(!cmdWrap.hidden));
+      moreBtn.classList.toggle('on', !cmdWrap.hidden);
+      if (!cmdWrap.hidden && selCmd) selCmd.focus();
     });
   }
   // The block-type <select> can't preventDefault its mousedown (that would block the
@@ -4212,6 +4229,10 @@ function positionSelectionCommandBar(target) {
   bar.style.left = left + 'px';
   const blockSel = document.getElementById('rwa-selection-block');
   if (blockSel) { const tg = (target.entry && target.entry.tag || '').toLowerCase(); blockSel.value = /^h[1-3]$/.test(tg) ? tg : 'paragraph'; }
+  // A fresh bubble starts collapsed — hide the reveal-on-demand surfaces (command/voice
+  // cluster, link field, color swatches) so they don't carry over from a prior selection.
+  for (const sid of ['rwa-selection-cmdwrap', 'rwa-selection-link-input', 'rwa-selection-color-pop']) { const e = document.getElementById(sid); if (e) e.hidden = true; }
+  const moreBtn = document.getElementById('rwa-selection-more'); if (moreBtn) { moreBtn.setAttribute('aria-expanded', 'false'); moreBtn.classList.remove('on'); }
   bar.hidden = false;
 }
 

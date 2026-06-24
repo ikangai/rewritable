@@ -424,6 +424,25 @@ console.log('\n== E0y: the toolbar exposes a font-size control ==');
   check('the size control offers several steps', sizeEl && sizeEl.querySelectorAll('option').length >= 4);
 }
 
+// WHY (Rule 9): the bubble was too wide. The command/voice cluster is now tucked behind ⋯
+// so the default bubble stays compact (all formatting is one click via the buttons); ⋯
+// reveals it on demand. A fresh selection must start collapsed.
+console.log('\n== E0z: the command/voice cluster is tucked behind ⋯ and reveals on click ==');
+{
+  await window.__setDocForTest('<p data-rwa-id="tuck">tuck the command cluster away</p>');
+  selectText($id('tuck'), 'command');
+  const wrap = document.getElementById('rwa-selection-cmdwrap');
+  const more = document.getElementById('rwa-selection-more');
+  check('a ⋯ more button exists', !!more);
+  check('the command/voice cluster is hidden by default', wrap.hidden === true);
+  more.dispatchEvent(new window.MouseEvent('click', { bubbles: true, button: 0 }));
+  check('clicking ⋯ reveals the command/voice cluster', wrap.hidden === false);
+  // a genuinely fresh selection (focus leaves the bar, as a real doc click does) re-collapses it
+  document.getElementById('rwa-selection-cmd').blur();
+  selectText($id('tuck'), 'tuck');
+  check('a fresh selection starts collapsed again', wrap.hidden === true);
+}
+
 console.log('\n== E1: data-rwa-id preserved through an edit ==');
 {
   await window.__setDocForTest('<p data-rwa-id="aaaa1111">Hello</p>');
