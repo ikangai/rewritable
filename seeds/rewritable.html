@@ -3930,6 +3930,10 @@ function enterInlineEdit(el, entry) {
   // Baseline serialization for the no-op guard (so an accidental double-click +
   // click-away commits nothing — no undo frame, no history record, no dirty).
   inlineEdit.original = serializeLeafSafe(el);
+  // The lens anchor tracks the block you're editing (user-chosen model): editing a block
+  // anchors the lens to it, so ⌘K always targets where your caret is. Switching blocks moves
+  // it (enter exits the old → release → re-anchor); finishing the edit releases it.
+  if (entry && typeof anchorTo === 'function') anchorTo(entry);
 }
 function exitInlineEdit() {
   if (!inlineEdit) return;
@@ -3941,6 +3945,8 @@ function exitInlineEdit() {
   try { el.removeAttribute('contenteditable'); } catch (_) {}
   try { delete el.dataset.rwaCmd; } catch (_) {}
   inlineEdit = null;
+  // Stop editing → the lens releases back to whole-doc (the anchor never lingers past the edit).
+  if (typeof releaseAnchor === 'function') releaseAnchor();
 }
 // Esc — discard the hand-edit and restore the block from the stored doc.
 function revertInlineEdit() {

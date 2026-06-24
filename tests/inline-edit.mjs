@@ -141,12 +141,24 @@ console.log('\n== E0: single click enters WYSIWYG inline edit ==');
   ptr(el);
   click(el);
   check('single click entered inline edit', el.getAttribute('contenteditable') === 'true');
-  check('click did not also anchor the lens', !el.hasAttribute('data-rwa-anchored'));
+  // Anchor-follows-the-edit model: editing a block anchors the lens to it, so ⌘K targets where the caret is.
+  check('inline edit anchors the lens to the edited block', el.hasAttribute('data-rwa-anchored'));
   el.textContent = 'Typed in place';
   await window.commitInlineEdit();
   await settle();
   const doc = await window.getDoc();
   check('single-click edit committed through normal path', doc.includes('Typed in place'));
+}
+
+// Anchor-follows-the-edit: stopping the edit releases the anchor (it never lingers past the edit).
+console.log('\n== E0a0: exiting inline edit releases the lens anchor ==');
+{
+  await window.__setDocForTest('<p data-rwa-id="reledit">edit then leave me</p>');
+  const el = $id('reledit');
+  ptr(el); click(el);
+  check('editing the block anchored the lens to it', el.hasAttribute('data-rwa-anchored'));
+  window.revertInlineEdit();
+  check('exiting inline edit released the anchor (back to whole-doc)', !document.querySelector('[data-rwa-anchored]'));
 }
 
 // WHY (Rule 9): the "bubble appears every second selection" bug. The bubble floats over the
