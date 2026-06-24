@@ -55,6 +55,11 @@ body{font-family:var(--font-ui);background:var(--bg);color:var(--text);min-heigh
 .rwa-st-btn.ok{color:var(--green);border-color:var(--green);background:var(--white);}
 #rwa-set-panel{position:fixed;top:50px;right:12px;background:var(--white);border:1px solid var(--gray-200);border-radius:var(--radius-sm);padding:14px;display:none;width:340px;max-width:calc(100vw - 24px);z-index:999;box-shadow:0 4px 16px rgba(0,0,0,0.08);}
 #rwa-set-panel.open{display:block;}
+#rwa-st-menu-panel{position:fixed;top:50px;right:12px;background:var(--white);border:1px solid var(--gray-200);border-radius:var(--radius-sm);padding:6px;display:flex;flex-direction:column;gap:2px;min-width:172px;z-index:999;box-shadow:0 4px 16px rgba(0,0,0,0.08);}
+#rwa-st-menu-panel[hidden]{display:none;}
+.rwa-st-menu-item{display:flex;align-items:center;gap:10px;background:transparent;border:0;border-radius:6px;padding:8px 10px;font:500 13px var(--font-ui);color:var(--gray-800);cursor:pointer;text-align:left;text-transform:none;letter-spacing:0;}
+.rwa-st-menu-item:hover{background:var(--gray-100);color:var(--gray-900);}
+.rwa-st-menu-ic{font-size:14px;width:16px;text-align:center;color:var(--gray-500);}
 .rwa-set-row{display:flex;flex-direction:column;gap:4px;margin-bottom:10px;}
 .rwa-set-row:last-child{margin-bottom:0;}
 .rwa-set-row label{font-family:var(--font-mono);font-size:9px;letter-spacing:1.5px;text-transform:uppercase;color:var(--gray-500);}
@@ -206,11 +211,7 @@ body{font-family:var(--font-ui);background:var(--bg);color:var(--text);min-heigh
 #rwa-selection-cmd:focus{border-color:var(--gray-400);}
 body:not([data-rwa-mode="edit"]) #rwa-lens,
 body:not([data-rwa-mode="edit"]) #rwa-pal,
-body:not([data-rwa-mode="edit"]) #rwa-set-panel,
-body:not([data-rwa-mode="edit"]) #rwa-skin-panel,
 body:not([data-rwa-mode="edit"]) #rwa-lens-hist-panel,
-body:not([data-rwa-mode="edit"]) #rwa-st-cog,
-body:not([data-rwa-mode="edit"]) #rwa-st-skin,
 body:not([data-rwa-mode="edit"]) #rwa-img-chip,
 body:not([data-rwa-mode="edit"]) #rwa-selection-bar{display:none!important;}
 body:not([data-rwa-mode="document"]) #rwa-view-toggle,
@@ -1476,6 +1477,8 @@ function closeRuntimePanels() {
   }
   const hist = document.getElementById('rwa-lens-hist-panel');
   if (hist) hist.hidden = true;
+  const menu = document.getElementById('rwa-st-menu-panel');
+  if (menu && !menu.hidden) { menu.hidden = true; const mb = document.getElementById('rwa-st-menu'); if (mb) mb.setAttribute('aria-expanded', 'false'); }
 }
 
 function hideEditTransients() {
@@ -1945,11 +1948,14 @@ function buildUI() {
     <button class="rwa-mode-tab" type="button" data-rwa-mode-target="actions">Actions</button>
   </div>
   <button class="rwa-st-btn" id="rwa-st-status">● ready</button>
-  <button class="rwa-st-btn" id="rwa-st-info" title="what is this?" aria-label="what is this?">ⓘ</button>
-  <button class="rwa-st-btn" id="rwa-st-cog">⚙</button>
-  <button class="rwa-st-btn" id="rwa-st-skin" title="skins — pick a look" aria-label="skins">✦</button>
-  <button class="rwa-st-btn" id="rwa-st-share" title="share at a link" aria-label="share at a link">↗</button>
+  <button class="rwa-st-btn" id="rwa-st-menu" title="Menu" aria-label="menu" aria-haspopup="true" aria-expanded="false">⋯</button>
   <button class="rwa-st-btn pri" id="rwa-st-commit">⌘S</button>
+</div>
+<div id="rwa-st-menu-panel" hidden role="menu" aria-label="runtime menu">
+  <button class="rwa-st-menu-item" id="rwa-st-info" role="menuitem" title="what is this?"><span class="rwa-st-menu-ic" aria-hidden="true">ⓘ</span>What is this?</button>
+  <button class="rwa-st-menu-item" id="rwa-st-cog" role="menuitem"><span class="rwa-st-menu-ic" aria-hidden="true">⚙</span>Settings</button>
+  <button class="rwa-st-menu-item" id="rwa-st-skin" role="menuitem" title="skins — pick a look"><span class="rwa-st-menu-ic" aria-hidden="true">✦</span>Skins</button>
+  <button class="rwa-st-menu-item" id="rwa-st-share" role="menuitem" title="share at a link"><span class="rwa-st-menu-ic" aria-hidden="true">↗</span>Share…</button>
 </div>
 <div id="rwa-set-panel">
   <div class="rwa-set-row"><label>Backend</label><select id="rwa-backend"><option value="openrouter">OpenRouter (API key)</option><option value="ollama">Ollama (localhost)</option><option value="lmstudio">LM Studio (localhost)</option><option value="atomic">atomic.chat (localhost)</option><option value="bridge">Bridge (claude -p, localhost)</option><option value="bridge-session">Bridge session (claude, persistent)</option></select></div>
@@ -2175,6 +2181,25 @@ function buildUI() {
     }
   };
 
+  // Unobtrusive chrome: the secondary actions (info/settings/skins/share) live behind a
+  // single ⋯ menu so the persistent row stays quiet. Opening it closes any panel; choosing
+  // an item runs the item's own handler (below) then closes the menu; an outside click
+  // dismisses it. The item ids/handlers are unchanged — they're just relocated.
+  const stMenuBtn = document.getElementById('rwa-st-menu');
+  const stMenuPanel = document.getElementById('rwa-st-menu-panel');
+  if (stMenuBtn && stMenuPanel) {
+    stMenuBtn.onclick = (e) => {
+      e.stopPropagation();
+      const willOpen = stMenuPanel.hidden;
+      closeRuntimePanels();
+      stMenuPanel.hidden = !willOpen;
+      stMenuBtn.setAttribute('aria-expanded', String(willOpen));
+    };
+    stMenuPanel.addEventListener('click', () => { stMenuPanel.hidden = true; stMenuBtn.setAttribute('aria-expanded', 'false'); });
+    document.addEventListener('click', (e) => {
+      if (!stMenuPanel.hidden && !stMenuPanel.contains(e.target) && e.target !== stMenuBtn) { stMenuPanel.hidden = true; stMenuBtn.setAttribute('aria-expanded', 'false'); }
+    });
+  }
   document.getElementById('rwa-st-cog').onclick = () => {
     document.getElementById('rwa-info-panel').classList.remove('open');   // panels are mutually exclusive
     document.getElementById('rwa-skin-panel').classList.remove('open');
