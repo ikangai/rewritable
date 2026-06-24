@@ -83,16 +83,17 @@ console.log('\n== M3: a menu item still opens its panel and closes the menu ==')
 // WHY (Rule 9): the 4-tab mode bar conflated "view↔edit" (the real document mode) with two
 // management surfaces. Collapse to an Edit activation toggle (quiet reading view by default)
 // + a ⋯ menu; the mode machinery (setMode/RWA_MODES/panels/hooks) is unchanged underneath.
-console.log('\n== M4: Edit is a toggle (no mode tabs) flipping document<->edit ==');
+console.log('\n== M4: a two-state View | Edit segmented toggle (no mode tabs) ==');
 {
   check('the 4-tab mode bar is gone', !doc.getElementById('rwa-mode-tabs'));
+  const view = doc.getElementById('rwa-st-view');
   const edit = doc.getElementById('rwa-st-edit');
-  check('an Edit toggle exists in the chrome', !!edit && doc.getElementById('rwa-set').contains(edit));
-  check('Edit is off (document mode) by default', w.runtime.mode !== 'edit' && edit.getAttribute('aria-pressed') === 'false');
+  check('View and Edit segments exist in the chrome', !!view && !!edit && doc.getElementById('rwa-set').contains(edit));
+  check('View is active (reading) by default', w.runtime.mode !== 'edit' && view.classList.contains('on') && view.getAttribute('aria-pressed') === 'true' && !edit.classList.contains('on'));
   edit.click(); await tick();
-  check('clicking Edit turns on edit mode', w.runtime.mode === 'edit' && doc.body.dataset.rwaMode === 'edit' && edit.getAttribute('aria-pressed') === 'true' && edit.classList.contains('on'));
-  edit.click(); await tick();
-  check('clicking Edit again returns to the reading view', w.runtime.mode === 'document' && edit.getAttribute('aria-pressed') === 'false');
+  check('clicking Edit activates edit + highlights the Edit segment', w.runtime.mode === 'edit' && doc.body.dataset.rwaMode === 'edit' && edit.classList.contains('on') && edit.getAttribute('aria-pressed') === 'true' && !view.classList.contains('on'));
+  view.click(); await tick();
+  check('clicking View returns to the reading view + highlights View', w.runtime.mode === 'document' && view.classList.contains('on') && !edit.classList.contains('on'));
 }
 
 console.log('\n== M5: Save appears only when there are unsaved changes ==');

@@ -46,8 +46,10 @@ body{font-family:var(--font-ui);background:var(--bg);color:var(--text);min-heigh
 .rwa-st-btn.dirty{color:var(--gray-900);border-color:var(--gray-300);background:var(--gray-100);}
 .rwa-st-btn.pri{background:var(--gray-900);color:var(--white);border-color:var(--gray-900);}
 .rwa-st-btn.pri:hover{background:var(--gray-700);border-color:var(--gray-700);color:var(--white);}
-.rwa-st-btn.on{background:var(--gray-900);color:var(--white);border-color:var(--gray-900);}
-.rwa-st-btn.on:hover{background:var(--gray-700);border-color:var(--gray-700);color:var(--white);}
+#rwa-st-modeseg{display:inline-flex;background:var(--gray-100);border:1px solid var(--gray-200);border-radius:8px;padding:2px;gap:2px;}
+.rwa-seg{background:transparent;border:0;color:var(--gray-500);font:600 11px var(--font-ui);padding:5px 12px;border-radius:6px;cursor:pointer;letter-spacing:.2px;transition:color .12s,background .12s;}
+.rwa-seg:hover{color:var(--gray-900);}
+.rwa-seg.on{background:var(--white);color:var(--gray-900);box-shadow:0 1px 3px rgba(0,0,0,0.12);}
 .rwa-st-btn.run{color:var(--gray-700);border-color:var(--gray-300);background:var(--gray-50);}
 .rwa-st-btn.err{color:var(--red);border-color:var(--red);background:var(--white);}
 .rwa-st-btn.ok{color:var(--green);border-color:var(--green);background:var(--white);}
@@ -57,6 +59,7 @@ body{font-family:var(--font-ui);background:var(--bg);color:var(--text);min-heigh
 #rwa-st-menu-panel[hidden]{display:none;}
 .rwa-st-menu-item{display:flex;align-items:center;gap:10px;background:transparent;border:0;border-radius:6px;padding:8px 10px;font:500 13px var(--font-ui);color:var(--gray-800);cursor:pointer;text-align:left;text-transform:none;letter-spacing:0;}
 .rwa-st-menu-item:hover{background:var(--gray-100);color:var(--gray-900);}
+.rwa-st-menu-item.on{background:var(--gray-100);color:var(--gray-900);}
 .rwa-st-menu-ic{font-size:14px;width:16px;text-align:center;color:var(--gray-500);}
 .rwa-set-row{display:flex;flex-direction:column;gap:4px;margin-bottom:10px;}
 .rwa-set-row:last-child{margin-bottom:0;}
@@ -1503,10 +1506,10 @@ function hideEditTransients() {
 function syncModeChrome() {
   if (document.body) document.body.dataset.rwaMode = rwaMode;
   document.querySelectorAll('[data-rwa-mode-target]').forEach(btn => {
-    btn.classList.toggle('on', btn.dataset.rwaModeTarget === rwaMode);
+    const on = btn.dataset.rwaModeTarget === rwaMode; // View/Edit segments + Skills/Activity menu items
+    btn.classList.toggle('on', on);
+    if (btn.hasAttribute('aria-pressed')) btn.setAttribute('aria-pressed', String(on));
   });
-  const editBtn = document.getElementById('rwa-st-edit'); // Edit is an on/off activation toggle, not a tab
-  if (editBtn) { const on = rwaMode === 'edit'; editBtn.classList.toggle('on', on); editBtn.setAttribute('aria-pressed', String(on)); }
   const panel = document.getElementById('rwa-mode-panel');
   if (!panel) return;
   if (rwaMode === 'skills' || rwaMode === 'actions') {
@@ -1951,7 +1954,10 @@ function buildUI() {
   document.getElementById('rwa-runtime').innerHTML = `
 <div id="rwa-set">
   <button class="rwa-st-btn" id="rwa-st-status">● ready</button>
-  <button class="rwa-st-btn" id="rwa-st-edit" type="button" role="switch" aria-pressed="false" aria-label="toggle edit mode" title="Edit — turn on to format and edit in place">Edit</button>
+  <div id="rwa-st-modeseg" role="group" aria-label="view or edit mode">
+    <button class="rwa-seg" type="button" id="rwa-st-view" data-rwa-mode-target="document" aria-pressed="true" title="Reading view">View</button>
+    <button class="rwa-seg" type="button" id="rwa-st-edit" data-rwa-mode-target="edit" aria-pressed="false" title="Edit — format and edit in place">Edit</button>
+  </div>
   <button class="rwa-st-btn" id="rwa-st-menu" title="Menu" aria-label="menu" aria-haspopup="true" aria-expanded="false">⋯</button>
   <button class="rwa-st-btn pri" id="rwa-st-commit" title="Save (⌘S)" hidden>⌘S</button>
 </div>
@@ -2049,10 +2055,8 @@ function buildUI() {
   m.value = sessionStorage.getItem(RWA.K_MODEL) || RWA.MODEL;
   k.oninput = e => sessionStorage.setItem(RWA.K_API, e.target.value.trim());
   m.oninput = e => sessionStorage.setItem(RWA.K_MODEL, e.target.value.trim() || RWA.MODEL);
-  attachModeTabs(); // wires the Activity/Skills menu items (data-rwa-mode-target)
-  // Edit is a toggle, not a tab: flip document<->edit. Skills is a skill-host-only menu item.
-  const editToggle = document.getElementById('rwa-st-edit');
-  if (editToggle) editToggle.onclick = () => runtimeSetMode(rwaMode === 'edit' ? 'document' : 'edit');
+  attachModeTabs(); // wires the View/Edit segments + the Activity/Skills menu items (data-rwa-mode-target)
+  // Skills is a skill-host-only menu item.
   const skillsItem = document.getElementById('rwa-st-skills'); // PRODUCT_KIND is available now; the doc (#rwa-skills) may not be rendered yet
   if (skillsItem && PRODUCT_KIND === 'skill-host') skillsItem.hidden = false;
 
