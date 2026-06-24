@@ -8,10 +8,13 @@ import path from 'node:path';
 import { webcrypto } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { applySeedSubs, kindOverrides, replaceInlineDoc } from '../cli/src/seed.mjs';
+import { extractArgon2 } from './lib/argon2-fallback.mjs';
 
 const { JSDOM, VirtualConsole } = jsdomPkg;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SEED = path.join(__dirname, '..', 'seeds', 'rewritable.html');
+// I9: new vaults default to Argon2id (v1); jsdom has no Worker → inject the sync fallback.
+const argon2idForPage = extractArgon2(fs.readFileSync(SEED, 'utf8')).forPage;
 let pass = 0, fail = 0;
 const check = (m, c) => { if (c) { pass++; console.log('  OK  ' + m); } else { fail++; console.log('  ✗   ' + m); } };
 
@@ -29,6 +32,7 @@ async function boot() {
       Object.defineProperty(window.navigator, 'storage', { value: { persist: () => Promise.resolve(false) }, configurable: true });
       Object.defineProperty(window, 'crypto', { value: webcrypto, configurable: true });
       window.TextEncoder = TextEncoder; window.TextDecoder = TextDecoder;
+      window._argon2id = argon2idForPage; // jsdom has no Worker; sync Argon2id fallback (I9)
     } });
   const w = dom.window; const t0 = Date.now();
   while (Date.now() - t0 < 4000) { if (w.runtime && w.runtime.vault) break; await new Promise(r => setTimeout(r, 5)); }
