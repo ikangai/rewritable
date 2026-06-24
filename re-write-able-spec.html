@@ -204,8 +204,8 @@ body{font-family:var(--font-ui);background:var(--bg);color:var(--text);min-heigh
 #rwa-selection-bar button.on{background:var(--gray-900);color:var(--white);}
 #rwa-selection-bar .rwa-sel-sep{width:1px;align-self:stretch;margin:2px 1px;background:var(--gray-200);}
 #rwa-selection-bar button svg{display:block;}
-#rwa-selection-block{height:28px;border:1px solid var(--gray-200);border-radius:7px;background:var(--white);color:var(--gray-800);font:600 12px var(--font-ui);padding:0 4px;cursor:pointer;}
-#rwa-selection-block:hover{background:var(--gray-100);}
+#rwa-selection-block,#rwa-selection-size{height:28px;border:1px solid var(--gray-200);border-radius:7px;background:var(--white);color:var(--gray-800);font:600 12px var(--font-ui);padding:0 4px;cursor:pointer;}
+#rwa-selection-block:hover,#rwa-selection-size:hover{background:var(--gray-100);}
 #rwa-selection-bar[data-listening="1"] #rwa-selection-voice{background:var(--red);color:var(--white);}
 #rwa-selection-cmd,#rwa-selection-link-input{width:170px;border:1px solid var(--gray-200);border-radius:7px;padding:6px 8px;outline:none;font:12px var(--font-ui);color:var(--gray-900);}
 #rwa-selection-cmd:focus,#rwa-selection-link-input:focus{border-color:var(--gray-400);}
@@ -2006,6 +2006,13 @@ function buildUI() {
     <option value="h2">Heading 2</option>
     <option value="h3">Heading 3</option>
   </select>
+  <select id="rwa-selection-size" title="Text size" aria-label="text size">
+    <option value="" disabled selected>Size</option>
+    <option value="small">Small</option>
+    <option value="normal">Normal</option>
+    <option value="large">Large</option>
+    <option value="huge">Huge</option>
+  </select>
   <span class="rwa-sel-sep" aria-hidden="true"></span>
   <button type="button" id="rwa-selection-bold" title="Bold" aria-label="bold selection"><strong>B</strong></button>
   <button type="button" id="rwa-selection-italic" title="Italic" aria-label="italic selection"><em>I</em></button>
@@ -2434,6 +2441,8 @@ function buildUI() {
   // bar holds focus while the select is open.
   const blockSel = document.getElementById('rwa-selection-block');
   if (blockSel) blockSel.addEventListener('change', () => runSelectionCommand(blockSel.value, { actor: 'user:selection-command' }).catch(() => {}));
+  const sizeSel = document.getElementById('rwa-selection-size');
+  if (sizeSel) sizeSel.addEventListener('change', () => { const v = sizeSel.value; sizeSel.value = ''; if (v) runSelectionSize(v, { actor: 'user:selection-command' }).catch(() => {}); });
   document.getElementById('rwa-selection-run').addEventListener('click', () => {
     runSelectionCommand(selCmd.value || '', { actor: 'user:selection-command' }).catch(() => {});
   });
@@ -4174,6 +4183,21 @@ async function runSelectionColor(color, options) {
   return applySelectionColor(target, color, options.actor || 'user:selection-command');
 }
 
+// Font size — a fixed em-scale (named steps only) wrapped as <span style="font-size:Xem">.
+// Headings give semantic sizes; this is the fine control the user's "font/-sizes" ask wants.
+const RWA_FONT_SIZE_SCALE = { small: '0.85em', normal: '1em', large: '1.3em', huge: '1.7em' };
+async function applySelectionSize(target, size, actor) {
+  const em = RWA_FONT_SIZE_SCALE[String(size || '').trim().toLowerCase()];
+  if (!em) { showAffordance('that size is not available'); return { ok: false, reason: 'bad_size' }; }
+  return applySelectionWrap(target, { tag: 'span', label: 'size', attrs: ' style="font-size:' + em + '"' }, actor, 'size');
+}
+async function runSelectionSize(size, options) {
+  options = options || {};
+  const target = resolveSelectionCommandTarget() || selectionCommandState;
+  if (!target) { showAffordance('select text in Edit mode first'); return { ok: false, reason: 'no_selection' }; }
+  return applySelectionSize(target, size, options.actor || 'user:selection-command');
+}
+
 function positionSelectionCommandBar(target) {
   const bar = document.getElementById('rwa-selection-bar');
   if (!bar || !target || !target.range) return;
@@ -4247,6 +4271,7 @@ if (typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent)) {
   window.__runSelectionCommand = runSelectionCommand;
   window.__runSelectionLink = runSelectionLink;
   window.__runSelectionColor = runSelectionColor;
+  window.__runSelectionSize = runSelectionSize;
   window.__startSelectionVoice = startSelectionVoice;
   window.__parseSelectionCommand = parseSelectionCommand;
 }

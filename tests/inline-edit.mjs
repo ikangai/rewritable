@@ -393,6 +393,37 @@ console.log('\n== E0v: the toolbar exposes a color control with a swatch popover
   check('the popover offers several swatches', pop.querySelectorAll('[data-color]').length >= 4);
 }
 
+// WHY (Rule 9): the user asked to "change font/-sizes". Headings give semantic sizes; an
+// explicit size control sets font-size on the selection (a fixed em-scale, validated so no
+// arbitrary style is injected), via the same commit path.
+console.log('\n== E0w: font-size control sizes the selected text ==');
+{
+  await window.__setDocForTest('<p data-rwa-id="sz">make these bigger now</p>');
+  selectText($id('sz'), 'these bigger');
+  await window.__runSelectionSize('large');
+  await settle();
+  const doc = await window.getDoc();
+  check('selected text wrapped with a font-size span', /<span style="font-size:[0-9.]+em">these bigger<\/span>/.test(doc));
+}
+
+console.log('\n== E0x: an unknown size is refused (no style injection) ==');
+{
+  await window.__setDocForTest('<p data-rwa-id="szx">do not inject size</p>');
+  selectText($id('szx'), 'inject');
+  const res = await window.__runSelectionSize('999px;background:red');
+  await settle();
+  const doc = await window.getDoc();
+  check('unknown size refused', res && res.ok === false);
+  check('no span/background reached the doc', !doc.includes('<span') && !doc.includes('background'));
+}
+
+console.log('\n== E0y: the toolbar exposes a font-size control ==');
+{
+  const sizeEl = document.getElementById('rwa-selection-size');
+  check('toolbar has a font-size control', !!sizeEl);
+  check('the size control offers several steps', sizeEl && sizeEl.querySelectorAll('option').length >= 4);
+}
+
 console.log('\n== E1: data-rwa-id preserved through an edit ==');
 {
   await window.__setDocForTest('<p data-rwa-id="aaaa1111">Hello</p>');
