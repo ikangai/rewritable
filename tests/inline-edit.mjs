@@ -759,6 +759,18 @@ console.log('\n== C1: prompt mode toggles on leading slash ==');
   window.revertInlineEdit();
 }
 
+// WHY (Rule 9): the goal — typing "/" must CHANGE THE TEXT COLOUR so the LLM-command mode is
+// unmistakable (browser-proven: rgb(38,38,38)→rgb(59,130,246) on "/", reverting on Esc). jsdom
+// doesn't apply stylesheet rules, so pin the rule itself: the command-mode selector must set a
+// text colour. A regression that drops the colour cue fails here.
+console.log('\n== C1c: command mode colours the block text (the mode cue) ==');
+{
+  const styleText = Array.from(document.querySelectorAll('style')).map(s => s.textContent || '').join('\n');
+  const rule = styleText.match(/\[data-rwa-cmd="on"\][^}]*\}/);
+  check('a [data-rwa-cmd="on"] style rule exists', !!rule);
+  check('command mode sets a text colour (not just a background)', !!rule && /(^|[;{])\s*color\s*:/.test(rule[0]));
+}
+
 // C1b — the \/ escape is the type-a-literal-slash route: the escaping
 // backslash is an input artifact, not content. The lens strips it at submit
 // (submitLens); the inline surface must commit the same bytes, or identical

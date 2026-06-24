@@ -249,10 +249,11 @@ body:not([data-rwa-mode="document"]) #rwa-view-chrome{display:none!important;}
 .rwa-editable-leaf:focus-visible{outline:2px solid rgba(59,130,246,0.5);outline-offset:2px;}
 .rwa-editable-leaf[contenteditable="true"]{background:rgba(59,130,246,0.07);box-shadow:0 0 0 2px rgba(59,130,246,0.22);outline:none;caret-color:var(--blue);}
 /* Inline prompt mode — the block's text starts with "/" (addressing the model,
-   not writing content). Tint + inset accent bar only: no border/padding so the
-   per-keystroke toggle never shifts layout (caret stays put), and no ::before
-   glyph (pseudo-elements on contenteditable cause Chromium caret jumps). */
-[data-rwa-cmd="on"]{background:rgba(59,130,246,0.06);box-shadow:inset 2px 0 0 var(--blue);border-radius:4px;}
+   not writing content). The TEXT turns the accent color the moment you type "/",
+   so the mode change is unmistakable (Notion-style); plus a faint tint + inset
+   accent bar. Colour/tint/shadow only — no border/padding (would shift layout and
+   move the caret per-keystroke) and no ::before glyph (Chromium caret jumps). */
+[data-rwa-cmd="on"]{color:var(--blue);background:rgba(59,130,246,0.06);box-shadow:inset 2px 0 0 var(--blue);border-radius:4px;caret-color:var(--blue);}
 .rwa-locked{position:relative;background:rgba(239,68,68,0.04);border-left:3px solid var(--red);padding-left:8px;}
 .rwa-locked::before{content:'\1F512';position:absolute;top:4px;right:8px;font-size:12px;opacity:.6;}
 /* === DOCUMENT-PRODUCT DEFAULT: baseline content typography === */
