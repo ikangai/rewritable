@@ -2,6 +2,30 @@
 
 All notable changes to the `rewritable` CLI (`rwa`).
 
+## [0.11.0] - 2026-06-24
+
+### Changed
+- **`rwa import <file>.pdf` now reconstructs the page geometry** instead of
+  flattening it to prose. The old converter ran pdf.js text extraction and
+  emitted a flat stack of `<p>` paragraphs, discarding every column, table, and
+  rule — an imported invoice looked nothing like the source. The new path
+  rebuilds each page as a positioned layer: every text run sits at its real PDF
+  coordinates (adjacent same-style glyphs grouped into flowing runs, which
+  preserves the word spacing a wider substitute font would otherwise eat), and
+  the document's rules/boxes are drawn from a CTM-stack walk of the PDF's vector
+  operators. Bold/italic are recovered from the embedded font names. The output
+  stays **editable real-text DOM** — the `⌘K` agent loop rewrites it via
+  find/replace, `rwa doc` reads it. Deterministic and offline; no new dependency.
+  Near-perfect, not pixel-exact (system substitute fonts, black text). The
+  scanned/image-PDF guard (exit `2`, no OCR) is unchanged.
+
+### Notes
+- `cli/src/import.mjs` and `service/public/import.html` carry the reconstruction
+  byte-for-byte (the browser `/import` path mirrors the CLI). Verified by running
+  the browser helpers in Node against a real invoice — output diff-identical to
+  the CLI. CLI suite 488/488, service 77/77. No seed change. Design + rationale:
+  `docs/plans/2026-06-24-pdf-import-fidelity-design.md`.
+
 ## [0.10.0] - 2026-06-23
 
 ### Added

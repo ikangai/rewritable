@@ -2,6 +2,16 @@
 
 Notable changes to `re-write-able`. The container format is versioned in `re-write-able-spec.md`; the edit protocol in `rwa-edit-spec.md`; the structural-transform DSL in `rwa-edit-dsl-spec.md`. The CLI follows semver in `cli/package.json`.
 
+## 2026-06-24 — PDF import: geometry-faithful reconstruction (cli 0.11.0)
+
+`rwa import <file>.pdf` and the browser `/import` page now **reproduce the PDF's layout** instead of flattening it to prose. The previous converter ran pdf.js text extraction and emitted a flat stack of `<p>` paragraphs — so an imported invoice, form, or statement lost every column, table, alignment, and rule and looked nothing like the source.
+
+- **Positioned text, not paragraphs.** Each page is rebuilt as an absolutely-positioned layer at its real point size. Every text run is placed at its true PDF coordinates; adjacent same-style glyphs are grouped into flowing runs, which restores the word spacing a wider substitute font would otherwise eat (the embedded face isn't shipped). Bold/italic are recovered from the embedded font names.
+- **Vector rules and boxes.** The page's rules, table grid, and boxes are recovered from a CTM-stack walk of the PDF's operator list — every painted fill/stroke path becomes a positioned element (colors preserved, e.g. a blue link underline).
+- **Still a rewritable.** The output is editable real-text DOM — the `⌘K` agent loop rewrites it via find/replace and `rwa doc` reads it. Deterministic and offline, no new dependency; near-perfect, not pixel-exact (system substitute fonts, black text). The scanned/image-only PDF guard is unchanged (exit `2`, no OCR). The model-based `--vision` / `--claude` paths remain for when an exact visual copy is wanted.
+
+Mirrored byte-for-byte across `cli/src/import.mjs` and `service/public/import.html` (verified diff-identical output on a real invoice). CLI 488/488, service 77/77; **no seed change**. Design: `docs/plans/2026-06-24-pdf-import-fidelity-design.md`.
+
 ## 2026-06-23 — v0.9 skill layer, part 2: DOM-author skills, worker pool, bus subscribe, marketplace, vault export (cli 0.10.0)
 
 Five more of the v0.9 deferred items, taking the skill layer to **12 of 13** built. All additive, browser- or jsdom-proven (`tests/skill-exec-probe.mjs` Chromium 54/0 + the seed jsdom suites), none lifting the Shape B ceiling. Spec: `docs/specs/re-write-able-actions-spec-v0.9-open-items.md` (items marked ✅ BUILT).

@@ -59,6 +59,8 @@ npx rwa new                       # → ./rewritable.html
 npx rwa new presentation          # → built-in slide deck (bare word = a kind, or
                                   #   a cwd data-rwa-template="presentation" file)
 npx rwa import notes.md           # → ./notes.html  (md/html/txt/csv/docx/pdf)
+npx rwa import invoice.pdf        # PDF → editable HTML, geometry reconstructed
+                                  #   (positioned text + drawn rules); deterministic, offline
 npx rwa import scan.pdf --vision  # PDF → HTML via an OpenRouter vision model
 npx rwa import scan.pdf --claude  # PDF/docx → HTML via local `claude -p` + the
                                   #   pdf/docx skills under ~/.claude/skills/

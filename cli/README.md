@@ -74,6 +74,8 @@ Embeds the input file's content as the document's initial state. Supported forma
 - `.html`, `.htm` — `<!DOCTYPE>`/`<html>`/`<head>`/`<body>` shells stripped, `<style>` tags retained from `<head>`, body content kept as-is. **`<script>` tags are preserved** (rwa documents support inline JS); a stderr warning is printed when scripts are detected.
 - `.csv` — parsed via [`papaparse`](https://www.papaparse.com/) (RFC 4180; handles quoted commas, embedded newlines, escaped quotes, BOM). First row becomes `<thead>`, remaining rows `<tbody>`; every cell is HTML-escaped. Parse warnings print to stderr but don't abort the import.
 - `.txt` — paragraph-split on blank lines, HTML chars escaped
+- `.docx` — converted via [`mammoth`](https://github.com/mwilliamson/mammoth.js) to semantic HTML; `href`/`src` URLs are scheme-sanitized (same allow-list as `.md`).
+- `.pdf` — reconstructed with **maximum geometry fidelity**: each page is rebuilt as positioned, real (still editable) text at its original coordinates, with the document's rules and boxes drawn from the PDF's own vector operators — so an invoice, form, or statement *looks like the original* while staying a rewritable you can edit with `⌘K`. Bold/italic are recovered from the embedded font names; near-perfect, not pixel-exact (system substitute fonts, black text). A scanned/image-only PDF (no text layer) exits `2` — OCR is not supported. For a model-based alternative, see `--vision` / `--claude`.
 
 Output defaults to `<input-basename>.html` in the input's directory. Conversion is deterministic and offline — no API key, no network.
 
