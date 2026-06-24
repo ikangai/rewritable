@@ -161,6 +161,22 @@ console.log('\n== E0a0: exiting inline edit releases the lens anchor ==');
   check('exiting inline edit released the anchor (back to whole-doc)', !document.querySelector('[data-rwa-anchored]'));
 }
 
+// WHY (Rule 9): the "outline lags / every second selection" bug. A drag-to-select also opens
+// inline edit (pointerdown), so binding the anchor to inline-edit ENTRY anchored the dragged
+// block — the outline flickered onto the wrong block. The anchor must ride the COLLAPSED click
+// (fired after mouseup), so a drag — non-collapsed at click time — never anchors.
+console.log('\n== E0a1: a drag-select does NOT anchor, even though it opens inline edit ==');
+{
+  await window.__setDocForTest('<p data-rwa-id="dragsel">drag to select these words here</p>');
+  const el = $id('dragsel');
+  ptr(el); // pointerdown opens inline edit, exactly as the start of a drag would
+  const range = document.createRange();
+  range.setStart(el.firstChild, 0); range.setEnd(el.firstChild, 12); // the drag produced a selection
+  const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range);
+  click(el); // the click after mouseup sees a non-collapsed selection
+  check('a drag-select did NOT anchor the lens (the toolbar owns the selection)', !el.hasAttribute('data-rwa-anchored'));
+}
+
 // WHY (Rule 9): the "bubble appears every second selection" bug. The bubble floats over the
 // line above the selection; if it captured pointer events, a press to select that line would
 // land on the bar (its buttons' mousedown-preventDefault swallowing the selection). The bar

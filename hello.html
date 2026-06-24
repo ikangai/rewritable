@@ -3300,15 +3300,19 @@ if (typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent)) {
 // the i-th live anchorable corresponds to map[i].
 function handleMountClick(e) {
   if (rwaMode !== 'edit' || activeView) return;
-  // Pointer-down may already have opened a WYSIWYG inline edit. In that case
-  // the click belongs to caret placement, not to lens anchoring.
-  if (inlineEdit) return;
   // A drag that produced a text selection is a FORMAT gesture — the floating toolbar owns it,
-  // not the lens. Anchoring on a selection made the lens toggle on "every second selection"
-  // (whether inlineEdit happened to be set alternated between blocks). Only a deliberate click
-  // (collapsed selection) anchors.
+  // not the lens. A drag-select must NEVER anchor: it made the outline toggle on "every second
+  // selection" and lag on the previous block (a drag also opens inline edit via pointerdown,
+  // and the anchor used to ride inline-edit ENTRY). Only a deliberate click (collapsed) anchors.
   const _sel = window.getSelection && window.getSelection();
   if (_sel && _sel.rangeCount > 0 && !_sel.isCollapsed) return;
+  // Anchor follows the edit, bound to the CLICK (not to inline-edit entry): a collapsed click
+  // while inline-editing anchors the block the caret is in. Because this is the click — fired
+  // after mouseup, when we know the selection is collapsed — a drag never reaches here.
+  if (inlineEdit) {
+    if (inlineEdit.entry && LENS_CLICK_TO_ANCHOR) anchorTo(inlineEdit.entry);
+    return;
+  }
   // Audit R3 (scoped): respect the per-kind click-to-anchor flag. When
   // false (e.g. workflow files), all clicks pass through without anchoring
   // — the lens stays in default state and every command runs against the
@@ -3930,10 +3934,10 @@ function enterInlineEdit(el, entry) {
   // Baseline serialization for the no-op guard (so an accidental double-click +
   // click-away commits nothing — no undo frame, no history record, no dirty).
   inlineEdit.original = serializeLeafSafe(el);
-  // The lens anchor tracks the block you're editing (user-chosen model): editing a block
-  // anchors the lens to it, so ⌘K always targets where your caret is. Switching blocks moves
-  // it (enter exits the old → release → re-anchor); finishing the edit releases it.
-  if (entry && typeof anchorTo === 'function') anchorTo(entry);
+  // NOTE: the lens anchor is NOT set here. A drag-to-select also opens inline edit (via
+  // pointerdown), so anchoring on ENTRY would anchor the dragged block — the "outline lags /
+  // every second selection" bug. The anchor rides the collapsed CLICK instead (handleMountClick),
+  // which fires after mouseup when a drag is distinguishable from a click. Release stays on exit.
 }
 function exitInlineEdit() {
   if (!inlineEdit) return;
