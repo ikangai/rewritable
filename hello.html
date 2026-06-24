@@ -211,6 +211,11 @@ body{font-family:var(--font-ui);background:var(--bg);color:var(--text);min-heigh
 #rwa-selection-cmd:focus,#rwa-selection-link-input:focus{border-color:var(--gray-400);}
 #rwa-selection-link-input{width:160px;}
 #rwa-selection-bar input[hidden]{display:none!important;}
+#rwa-selection-bar .rwa-color-a{border-bottom:3px solid #dc2626;line-height:1;padding-bottom:1px;font-weight:700;}
+#rwa-selection-color-pop{position:absolute;top:40px;left:8px;display:flex;gap:5px;padding:7px;background:var(--white);border:1px solid var(--gray-200);border-radius:9px;box-shadow:0 8px 24px rgba(0,0,0,0.12);z-index:71;}
+#rwa-selection-color-pop[hidden]{display:none;}
+#rwa-selection-color-pop .rwa-sw{width:18px;height:18px;border:1px solid rgba(0,0,0,0.14);border-radius:50%;cursor:pointer;padding:0;transition:transform .1s;}
+#rwa-selection-color-pop .rwa-sw:hover{transform:scale(1.15);}
 body:not([data-rwa-mode="edit"]) #rwa-lens,
 body:not([data-rwa-mode="edit"]) #rwa-pal,
 body:not([data-rwa-mode="edit"]) #rwa-lens-hist-panel,
@@ -1546,6 +1551,16 @@ function buildUI() {
   <button type="button" id="rwa-selection-code" title="Inline code" aria-label="inline code selection" class="mono">&lt;&gt;</button>
   <button type="button" id="rwa-selection-link" title="Link" aria-label="link selection"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M6.5 9.5l3-3"/><path d="M7 4.5l1-1a2.5 2.5 0 0 1 3.5 3.5l-1 1"/><path d="M9 11.5l-1 1a2.5 2.5 0 0 1-3.5-3.5l1-1"/></svg></button>
   <input id="rwa-selection-link-input" hidden type="text" placeholder="https://…" autocomplete="off" spellcheck="false">
+  <button type="button" id="rwa-selection-color" title="Text color" aria-label="text color"><span class="rwa-color-a">A</span></button>
+  <div id="rwa-selection-color-pop" hidden role="menu" aria-label="text color">
+    <button class="rwa-sw" type="button" data-color="#111827" title="Ink" aria-label="ink" style="background:#111827"></button>
+    <button class="rwa-sw" type="button" data-color="#dc2626" title="Red" aria-label="red" style="background:#dc2626"></button>
+    <button class="rwa-sw" type="button" data-color="#d97706" title="Amber" aria-label="amber" style="background:#d97706"></button>
+    <button class="rwa-sw" type="button" data-color="#16a34a" title="Green" aria-label="green" style="background:#16a34a"></button>
+    <button class="rwa-sw" type="button" data-color="#2563eb" title="Blue" aria-label="blue" style="background:#2563eb"></button>
+    <button class="rwa-sw" type="button" data-color="#7c3aed" title="Violet" aria-label="violet" style="background:#7c3aed"></button>
+    <button class="rwa-sw" type="button" data-color="#6b7280" title="Gray" aria-label="gray" style="background:#6b7280"></button>
+  </div>
   <span class="rwa-sel-sep" aria-hidden="true"></span>
   <button type="button" id="rwa-selection-align-left" title="Align left" aria-label="align left"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><line x1="2" y1="4" x2="14" y2="4"/><line x1="2" y1="8" x2="10" y2="8"/><line x1="2" y1="12" x2="13" y2="12"/></svg></button>
   <button type="button" id="rwa-selection-align-center" title="Align center" aria-label="align center"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><line x1="3" y1="4" x2="13" y2="4"/><line x1="5" y1="8" x2="11" y2="8"/><line x1="4" y1="12" x2="12" y2="12"/></svg></button>
@@ -1935,6 +1950,20 @@ function buildUI() {
     linkInput.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') { e.preventDefault(); const url = linkInput.value || ''; linkInput.hidden = true; runSelectionLink(url, { actor: 'user:selection-command' }).catch(() => {}); }
       else if (e.key === 'Escape') { e.preventDefault(); linkInput.hidden = true; }
+    });
+  }
+  // Color control: the button reveals a fixed swatch palette; a swatch applies its hex.
+  const colorBtn = document.getElementById('rwa-selection-color');
+  const colorPop = document.getElementById('rwa-selection-color-pop');
+  if (colorBtn && colorPop) {
+    colorBtn.addEventListener('mousedown', (e) => e.preventDefault());
+    colorBtn.addEventListener('click', () => { colorPop.hidden = !colorPop.hidden; });
+    colorPop.addEventListener('mousedown', (e) => e.preventDefault());
+    colorPop.addEventListener('click', (e) => {
+      const sw = e.target.closest('[data-color]');
+      if (!sw) return;
+      colorPop.hidden = true;
+      runSelectionColor(sw.getAttribute('data-color'), { actor: 'user:selection-command' }).catch(() => {});
     });
   }
   // The block-type <select> can't preventDefault its mousedown (that would block the
@@ -3666,6 +3695,22 @@ async function runSelectionLink(url, options) {
   return applySelectionLink(target, url, options.actor || 'user:selection-command');
 }
 
+// Text color — wraps the selection in <span style="color:#hex">. The color MUST be a plain
+// hex (the swatch palette feeds it); anything else is refused so no extra style declaration
+// (e.g. background:url(...)) can be injected through the attribute.
+function sanitizeColor(c) { const v = String(c || '').trim(); return /^#[0-9a-f]{3,8}$/i.test(v) ? v : null; }
+async function applySelectionColor(target, color, actor) {
+  const c = sanitizeColor(color);
+  if (!c) { showAffordance('that color is not allowed'); return { ok: false, reason: 'bad_color' }; }
+  return applySelectionWrap(target, { tag: 'span', label: 'color', attrs: ' style="color:' + c + '"' }, actor, 'color');
+}
+async function runSelectionColor(color, options) {
+  options = options || {};
+  const target = resolveSelectionCommandTarget() || selectionCommandState;
+  if (!target) { showAffordance('select text in Edit mode first'); return { ok: false, reason: 'no_selection' }; }
+  return applySelectionColor(target, color, options.actor || 'user:selection-command');
+}
+
 function positionSelectionCommandBar(target) {
   const bar = document.getElementById('rwa-selection-bar');
   if (!bar || !target || !target.range) return;
@@ -3738,6 +3783,7 @@ if (typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent)) {
   window.__refreshSelectionCommandBar = refreshSelectionCommandBar;
   window.__runSelectionCommand = runSelectionCommand;
   window.__runSelectionLink = runSelectionLink;
+  window.__runSelectionColor = runSelectionColor;
   window.__startSelectionVoice = startSelectionVoice;
   window.__parseSelectionCommand = parseSelectionCommand;
 }

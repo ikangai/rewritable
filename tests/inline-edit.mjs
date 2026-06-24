@@ -359,6 +359,40 @@ console.log('\n== E0s: clicking the link button reveals the URL input ==');
   check('URL input revealed after clicking link', input.hidden === false);
 }
 
+// WHY (Rule 9): text color completes the heyhtml inline-format set. It wraps the selection
+// in <span style="color:…"> via the same commit path; the color MUST be a validated hex (a
+// fixed-swatch palette feeds it) so no arbitrary style string can be injected.
+console.log('\n== E0t: text color wraps the selection in a colored span ==');
+{
+  await window.__setDocForTest('<p data-rwa-id="clr">color these words red</p>');
+  selectText($id('clr'), 'these words');
+  await window.__runSelectionColor('#dc2626');
+  await settle();
+  const doc = await window.getDoc();
+  check('selected text wrapped in a colored span', doc.includes('color <span style="color:#dc2626">these words</span> red'));
+}
+
+console.log('\n== E0u: a non-hex color is refused (no style injection) ==');
+{
+  await window.__setDocForTest('<p data-rwa-id="clrx">do not inject here</p>');
+  selectText($id('clrx'), 'inject');
+  const res = await window.__runSelectionColor('red;background:url(x)');
+  await settle();
+  const doc = await window.getDoc();
+  check('non-hex color refused', res && res.ok === false);
+  check('no style/span reached the document', !doc.includes('<span') && !doc.includes('background'));
+}
+
+console.log('\n== E0v: the toolbar exposes a color control with a swatch popover ==');
+{
+  check('toolbar has a color button', !!document.getElementById('rwa-selection-color'));
+  const pop = document.getElementById('rwa-selection-color-pop');
+  check('a swatch popover exists, hidden by default', !!pop && pop.hidden === true);
+  document.getElementById('rwa-selection-color').dispatchEvent(new window.MouseEvent('click', { bubbles: true, button: 0 }));
+  check('clicking color reveals the swatches', pop.hidden === false);
+  check('the popover offers several swatches', pop.querySelectorAll('[data-color]').length >= 4);
+}
+
 console.log('\n== E1: data-rwa-id preserved through an edit ==');
 {
   await window.__setDocForTest('<p data-rwa-id="aaaa1111">Hello</p>');
