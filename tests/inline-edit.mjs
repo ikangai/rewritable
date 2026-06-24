@@ -763,12 +763,35 @@ console.log('\n== C1: prompt mode toggles on leading slash ==');
 // unmistakable (browser-proven: rgb(38,38,38)→rgb(59,130,246) on "/", reverting on Esc). jsdom
 // doesn't apply stylesheet rules, so pin the rule itself: the command-mode selector must set a
 // text colour. A regression that drops the colour cue fails here.
-console.log('\n== C1c: command mode colours the block text (the mode cue) ==');
+console.log('\n== C1c: ONLY the "/command" span is coloured (the mode cue) ==');
 {
   const styleText = Array.from(document.querySelectorAll('style')).map(s => s.textContent || '').join('\n');
-  const rule = styleText.match(/\[data-rwa-cmd="on"\][^}]*\}/);
-  check('a [data-rwa-cmd="on"] style rule exists', !!rule);
-  check('command mode sets a text colour (not just a background)', !!rule && /(^|[;{])\s*color\s*:/.test(rule[0]));
+  const spanRule = styleText.match(/\[data-rwa-cmd-text\][^}]*\}/);
+  check('a [data-rwa-cmd-text] style rule exists', !!spanRule);
+  check('the command span sets a text colour', !!spanRule && /(^|[;{])\s*color\s*:/.test(spanRule[0]));
+  const blockRule = styleText.match(/\[data-rwa-cmd="on"\][^}]*\}/);
+  check('the whole block is NOT recoloured (colour lives on the span)', !!blockRule && !/(^|[;{])\s*color\s*:/.test(blockRule[0]));
+}
+
+// WHY (Rule 9): the user's bug — a "/" in the MIDDLE of a block (after existing content) must
+// start command mode, not just a block-leading "/". And the instruction is the text after THAT
+// slash, never the whole block.
+console.log('\n== C1d: a mid-block "/" (word boundary) starts command mode ==');
+{
+  await window.__setDocForTest('<p data-rwa-id="c1daaaaa">Make this nicer.</p>');
+  const el = $id('c1daaaaa');
+  dbl(el);
+  el.textContent = 'Make this nicer. /rewrite it more concisely';
+  el.dispatchEvent(new window.InputEvent('input', { bubbles: true }));
+  check('mid-block word-boundary slash → command mode on', el.dataset.rwaCmd === 'on');
+  check('commandStartIndex points at the trailing slash', window.commandStartIndex(el.textContent) === 'Make this nicer. '.length);
+  check('instruction is the text AFTER the slash (not the whole block)',
+    el.textContent.slice(window.commandStartIndex(el.textContent) + 1).trim() === 'rewrite it more concisely');
+  // a mid-WORD slash is not a command (http://, /etc/hosts)
+  el.textContent = 'see http://example.com/path';
+  el.dispatchEvent(new window.InputEvent('input', { bubbles: true }));
+  check('mid-word slash → not command mode', el.dataset.rwaCmd !== 'on');
+  window.revertInlineEdit();
 }
 
 // C1b — the \/ escape is the type-a-literal-slash route: the escaping
