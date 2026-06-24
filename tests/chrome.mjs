@@ -80,5 +80,52 @@ console.log('\n== M3: a menu item still opens its panel and closes the menu ==')
   check('the menu closed after choosing an item', panel.hidden === true);
 }
 
+// WHY (Rule 9): the 4-tab mode bar conflated "view↔edit" (the real document mode) with two
+// management surfaces. Collapse to an Edit activation toggle (quiet reading view by default)
+// + a ⋯ menu; the mode machinery (setMode/RWA_MODES/panels/hooks) is unchanged underneath.
+console.log('\n== M4: Edit is a toggle (no mode tabs) flipping document<->edit ==');
+{
+  check('the 4-tab mode bar is gone', !doc.getElementById('rwa-mode-tabs'));
+  const edit = doc.getElementById('rwa-st-edit');
+  check('an Edit toggle exists in the chrome', !!edit && doc.getElementById('rwa-set').contains(edit));
+  check('Edit is off (document mode) by default', w.runtime.mode !== 'edit' && edit.getAttribute('aria-pressed') === 'false');
+  edit.click(); await tick();
+  check('clicking Edit turns on edit mode', w.runtime.mode === 'edit' && doc.body.dataset.rwaMode === 'edit' && edit.getAttribute('aria-pressed') === 'true' && edit.classList.contains('on'));
+  edit.click(); await tick();
+  check('clicking Edit again returns to the reading view', w.runtime.mode === 'document' && edit.getAttribute('aria-pressed') === 'false');
+}
+
+console.log('\n== M5: Save appears only when there are unsaved changes ==');
+{
+  const commit = doc.getElementById('rwa-st-commit');
+  check('Save is hidden when clean', commit.hidden === true);
+  w.__setDirty(true);
+  check('Save appears when dirty', commit.hidden === false);
+  w.__setDirty(false);
+  check('Save hides again once clean', commit.hidden === true);
+}
+
+console.log('\n== M6: Skills + Activity move into the menu; Skills only for skill-host ==');
+{
+  const panel = doc.getElementById('rwa-st-menu-panel');
+  const activity = doc.getElementById('rwa-st-activity');
+  const skills = doc.getElementById('rwa-st-skills');
+  check('Activity is a menu item', !!activity && panel.contains(activity));
+  check('Skills is a menu item', !!skills && panel.contains(skills));
+  check('Skills is hidden on a plain document', skills.hidden === true);
+  const sh = await boot('skill-host');
+  const shSkills = sh.document.getElementById('rwa-st-skills');
+  check('Skills is shown on a skill-host file', !!shSkills && shSkills.hidden === false);
+}
+
+console.log('\n== M7: choosing Activity opens the activity panel ==');
+{
+  doc.getElementById('rwa-st-menu').click();
+  doc.getElementById('rwa-st-activity').click();
+  await new Promise(r => setTimeout(r, 60));
+  const mp = doc.getElementById('rwa-mode-panel');
+  check('Activity opens the mode panel with the renamed label', mp.classList.contains('open') && /Activity/i.test(mp.textContent || ''));
+}
+
 console.log('\n== ' + pass + ' pass, ' + fail + ' fail ==');
 process.exit(fail ? 1 : 0);

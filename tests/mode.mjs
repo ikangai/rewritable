@@ -164,11 +164,11 @@ console.log('== Runtime modes ==');
   const { window } = dom;
   const before = await readHistLen(window);
   window.runtime.setMode('actions');
-  await waitFor(() => /Action center/i.test(window.document.getElementById('rwa-mode-panel')?.textContent || ''));
+  await waitFor(() => /Activity/i.test(window.document.getElementById('rwa-mode-panel')?.textContent || ''));
   const after = await readHistLen(window);
   const panel = window.document.getElementById('rwa-mode-panel');
-  check('Actions mode renders launcher panel', !!panel.querySelector('#rwa-actions-save') && !!panel.querySelector('#rwa-actions-undo'));
-  check('Actions mode open does not mutate history', after === before);
+  check('Activity (actions) mode renders its launcher panel', !!panel.querySelector('#rwa-actions-save') && !!panel.querySelector('#rwa-actions-undo'));
+  check('Activity mode open does not mutate history', after === before);
   dom.window.close();
 }
 

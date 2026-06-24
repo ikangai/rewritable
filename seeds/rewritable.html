@@ -41,15 +41,13 @@
 [hidden]{display:none!important;}
 body{font-family:var(--font-ui);background:var(--bg);color:var(--text);min-height:100dvh;padding-bottom:160px;line-height:1.5;-webkit-font-smoothing:antialiased;}
 #rwa-set{position:fixed;top:12px;right:12px;display:flex;gap:6px;align-items:center;z-index:1000;}
-#rwa-mode-tabs{display:flex;gap:2px;align-items:center;background:var(--white);border:1px solid var(--gray-200);border-radius:8px;padding:2px;box-shadow:0 1px 4px rgba(0,0,0,0.04);}
-.rwa-mode-tab{background:transparent;border:0;color:var(--gray-500);font-family:var(--font-mono);font-size:10px;padding:5px 8px;border-radius:6px;cursor:pointer;letter-spacing:.4px;text-transform:uppercase;transition:color .15s,background .15s;}
-.rwa-mode-tab:hover{color:var(--gray-900);background:var(--gray-50);}
-.rwa-mode-tab.on{background:var(--gray-900);color:var(--white);}
 .rwa-st-btn{background:var(--white);border:1px solid var(--gray-200);color:var(--gray-500);font-family:var(--font-mono);font-size:10px;padding:6px 10px;border-radius:6px;cursor:pointer;letter-spacing:.5px;text-transform:uppercase;transition:color .15s,background .15s,border-color .15s;}
 .rwa-st-btn:hover{color:var(--gray-900);border-color:var(--gray-300);background:var(--gray-50);}
 .rwa-st-btn.dirty{color:var(--gray-900);border-color:var(--gray-300);background:var(--gray-100);}
 .rwa-st-btn.pri{background:var(--gray-900);color:var(--white);border-color:var(--gray-900);}
 .rwa-st-btn.pri:hover{background:var(--gray-700);border-color:var(--gray-700);color:var(--white);}
+.rwa-st-btn.on{background:var(--gray-900);color:var(--white);border-color:var(--gray-900);}
+.rwa-st-btn.on:hover{background:var(--gray-700);border-color:var(--gray-700);color:var(--white);}
 .rwa-st-btn.run{color:var(--gray-700);border-color:var(--gray-300);background:var(--gray-50);}
 .rwa-st-btn.err{color:var(--red);border-color:var(--red);background:var(--white);}
 .rwa-st-btn.ok{color:var(--green);border-color:var(--green);background:var(--white);}
@@ -1044,6 +1042,8 @@ function syncModeChrome() {
   document.querySelectorAll('[data-rwa-mode-target]').forEach(btn => {
     btn.classList.toggle('on', btn.dataset.rwaModeTarget === rwaMode);
   });
+  const editBtn = document.getElementById('rwa-st-edit'); // Edit is an on/off activation toggle, not a tab
+  if (editBtn) { const on = rwaMode === 'edit'; editBtn.classList.toggle('on', on); editBtn.setAttribute('aria-pressed', String(on)); }
   const panel = document.getElementById('rwa-mode-panel');
   if (!panel) return;
   if (rwaMode === 'skills' || rwaMode === 'actions') {
@@ -1487,21 +1487,18 @@ function buildFile(doc) {
 function buildUI() {
   document.getElementById('rwa-runtime').innerHTML = `
 <div id="rwa-set">
-  <div id="rwa-mode-tabs" role="tablist" aria-label="runtime mode">
-    <button class="rwa-mode-tab" type="button" data-rwa-mode-target="document">Document</button>
-    <button class="rwa-mode-tab" type="button" data-rwa-mode-target="edit">Edit</button>
-    <button class="rwa-mode-tab" type="button" data-rwa-mode-target="skills">Skills</button>
-    <button class="rwa-mode-tab" type="button" data-rwa-mode-target="actions">Actions</button>
-  </div>
   <button class="rwa-st-btn" id="rwa-st-status">● ready</button>
+  <button class="rwa-st-btn" id="rwa-st-edit" type="button" role="switch" aria-pressed="false" aria-label="toggle edit mode" title="Edit — turn on to format and edit in place">Edit</button>
   <button class="rwa-st-btn" id="rwa-st-menu" title="Menu" aria-label="menu" aria-haspopup="true" aria-expanded="false">⋯</button>
-  <button class="rwa-st-btn pri" id="rwa-st-commit">⌘S</button>
+  <button class="rwa-st-btn pri" id="rwa-st-commit" title="Save (⌘S)" hidden>⌘S</button>
 </div>
 <div id="rwa-st-menu-panel" hidden role="menu" aria-label="runtime menu">
   <button class="rwa-st-menu-item" id="rwa-st-info" role="menuitem" title="what is this?"><span class="rwa-st-menu-ic" aria-hidden="true">ⓘ</span>What is this?</button>
   <button class="rwa-st-menu-item" id="rwa-st-cog" role="menuitem"><span class="rwa-st-menu-ic" aria-hidden="true">⚙</span>Settings</button>
   <button class="rwa-st-menu-item" id="rwa-st-skin" role="menuitem" title="skins — pick a look"><span class="rwa-st-menu-ic" aria-hidden="true">✦</span>Skins</button>
   <button class="rwa-st-menu-item" id="rwa-st-share" role="menuitem" title="share at a link"><span class="rwa-st-menu-ic" aria-hidden="true">↗</span>Share…</button>
+  <button class="rwa-st-menu-item" id="rwa-st-skills" role="menuitem" data-rwa-mode-target="skills" title="manage installed skills" hidden><span class="rwa-st-menu-ic" aria-hidden="true">◈</span>Skills</button>
+  <button class="rwa-st-menu-item" id="rwa-st-activity" role="menuitem" data-rwa-mode-target="actions" title="recent edits, history and live affordances"><span class="rwa-st-menu-ic" aria-hidden="true">↻</span>Activity</button>
 </div>
 <div id="rwa-set-panel">
   <div class="rwa-set-row"><label>Backend</label><select id="rwa-backend"><option value="openrouter">OpenRouter (API key)</option><option value="ollama">Ollama (localhost)</option><option value="lmstudio">LM Studio (localhost)</option><option value="atomic">atomic.chat (localhost)</option><option value="bridge">Bridge (claude -p, localhost)</option><option value="bridge-session">Bridge session (claude, persistent)</option></select></div>
@@ -1589,7 +1586,12 @@ function buildUI() {
   m.value = sessionStorage.getItem(RWA.K_MODEL) || RWA.MODEL;
   k.oninput = e => sessionStorage.setItem(RWA.K_API, e.target.value.trim());
   m.oninput = e => sessionStorage.setItem(RWA.K_MODEL, e.target.value.trim() || RWA.MODEL);
-  attachModeTabs();
+  attachModeTabs(); // wires the Activity/Skills menu items (data-rwa-mode-target)
+  // Edit is a toggle, not a tab: flip document<->edit. Skills is a skill-host-only menu item.
+  const editToggle = document.getElementById('rwa-st-edit');
+  if (editToggle) editToggle.onclick = () => runtimeSetMode(rwaMode === 'edit' ? 'document' : 'edit');
+  const skillsItem = document.getElementById('rwa-st-skills'); // PRODUCT_KIND is available now; the doc (#rwa-skills) may not be rendered yet
+  if (skillsItem && PRODUCT_KIND === 'skill-host') skillsItem.hidden = false;
 
   // Bridge SESSION backend config: the bearer token the bridge requires on every
   // /session/* call, and a server-side working dir for the claude session.
@@ -2024,7 +2026,7 @@ function buildUI() {
 }
 const setStatus = (cls, msg) => { const e = document.getElementById('rwa-st-status'); if (e) { e.className = 'rwa-st-btn ' + (cls || ''); e.textContent = msg; } };
 const setPalSt = (cls, msg) => { const e = document.getElementById('rwa-pal-st'); if (e) { e.className = cls || ''; e.textContent = msg; } };
-const setDirty = d => { const e = document.getElementById('rwa-st-commit'); if (e) e.classList.toggle('dirty', d); };
+const setDirty = d => { const e = document.getElementById('rwa-st-commit'); if (e) { e.classList.toggle('dirty', d); e.hidden = !d; } }; // Save is shown only when there are unsaved changes
 
 // rwa-lens/1 progress chip: inline status above the textarea during in-flight
 // agent runs. State drives both visibility and color (CSS keyed off
@@ -2307,8 +2309,8 @@ async function renderActionsModePanel(panel) {
   ).join('') : '<div class="rwa-mode-empty">No installed skills.</div>';
   panel.innerHTML = [
     '<div class="rwa-mode-section">',
-    '<div class="rwa-mode-kicker">Actions</div>',
-    '<h4>Action center</h4>',
+    '<div class="rwa-mode-kicker">Activity</div>',
+    '<h4>Activity</h4>',
     '<div class="rwa-mode-actions">',
     '<button type="button" id="rwa-actions-undo">Undo</button>',
     '<button type="button" class="pri" id="rwa-actions-save">Save / Export</button>',
@@ -3831,6 +3833,7 @@ if (typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent)) {
   window.__runSelectionColor = runSelectionColor;
   window.__runSelectionSize = runSelectionSize;
   window.__startSelectionVoice = startSelectionVoice;
+  window.__setDirty = setDirty;
   window.__parseSelectionCommand = parseSelectionCommand;
 }
 
