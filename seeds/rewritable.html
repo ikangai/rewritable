@@ -3306,13 +3306,11 @@ function handleMountClick(e) {
   // and the anchor used to ride inline-edit ENTRY). Only a deliberate click (collapsed) anchors.
   const _sel = window.getSelection && window.getSelection();
   if (_sel && _sel.rangeCount > 0 && !_sel.isCollapsed) return;
-  // Anchor follows the edit, bound to the CLICK (not to inline-edit entry): a collapsed click
-  // while inline-editing anchors the block the caret is in. Because this is the click — fired
-  // after mouseup, when we know the selection is collapsed — a drag never reaches here.
-  if (inlineEdit) {
-    if (inlineEdit.entry && LENS_CLICK_TO_ANCHOR) anchorTo(inlineEdit.entry);
-    return;
-  }
+  // Anchor the block UNDER THE CLICK — never inlineEdit's block. Clicking a non-focusable block
+  // does NOT blur the contenteditable, so inlineEdit still points at the block you're LEAVING;
+  // anchoring that stuck reference is exactly why the outline stayed on the previous block. The
+  // walk below resolves e.target's own anchorable, so the outline follows the click every time
+  // (a click inside the block you're editing just re-anchors the same block — harmless).
   // Audit R3 (scoped): respect the per-kind click-to-anchor flag. When
   // false (e.g. workflow files), all clicks pass through without anchoring
   // — the lens stays in default state and every command runs against the

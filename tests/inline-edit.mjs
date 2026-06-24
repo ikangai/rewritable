@@ -177,6 +177,24 @@ console.log('\n== E0a1: a drag-select does NOT anchor, even though it opens inli
   check('a drag-select did NOT anchor the lens (the toolbar owns the selection)', !el.hasAttribute('data-rwa-anchored'));
 }
 
+// WHY (Rule 9): the "outline sticks on the previous block" bug. Clicking a NON-focusable block
+// does NOT blur the contenteditable, so inlineEdit still points at the OLD block at click time
+// (jsdom's synthetic click doesn't fire native blur either — matching the real browser). The
+// click must anchor the CLICKED block, never the stale inlineEdit block — else the outline stays
+// on the block you just left.
+console.log('\n== E0a2: clicking a new block mid-edit anchors the CLICKED block, not the previous one ==');
+{
+  await window.__setDocForTest('<p data-rwa-id="ea">Para A here</p>\n<p data-rwa-id="eb">Para B here</p>');
+  const a = $id('ea'), b = $id('eb');
+  ptr(a); click(a); // enter edit on A + anchor A
+  check('A is outlined while editing A', a.hasAttribute('data-rwa-anchored'));
+  // inlineEdit is still A (no blur fired). Click B — the click target is B.
+  click(b);
+  check('clicking B anchored the CLICKED block B', b.hasAttribute('data-rwa-anchored'));
+  check('the previous block A is no longer outlined', !a.hasAttribute('data-rwa-anchored'));
+  check('exactly one block is outlined', document.querySelectorAll('[data-rwa-anchored]').length === 1);
+}
+
 // WHY (Rule 9): the "bubble appears every second selection" bug. The bubble floats over the
 // line above the selection; if it captured pointer events, a press to select that line would
 // land on the bar (its buttons' mousedown-preventDefault swallowing the selection). The bar
