@@ -3766,6 +3766,12 @@ function handleMountClick(e) {
   // Pointer-down may already have opened a WYSIWYG inline edit. In that case
   // the click belongs to caret placement, not to lens anchoring.
   if (inlineEdit) return;
+  // A drag that produced a text selection is a FORMAT gesture — the floating toolbar owns it,
+  // not the lens. Anchoring on a selection made the lens toggle on "every second selection"
+  // (whether inlineEdit happened to be set alternated between blocks). Only a deliberate click
+  // (collapsed selection) anchors.
+  const _sel = window.getSelection && window.getSelection();
+  if (_sel && _sel.rangeCount > 0 && !_sel.isCollapsed) return;
   // Audit R3 (scoped): respect the per-kind click-to-anchor flag. When
   // false (e.g. workflow files), all clicks pass through without anchoring
   // — the lens stays in default state and every command runs against the

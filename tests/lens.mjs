@@ -496,6 +496,23 @@ console.log('\n== Test L5.1c: click on lens itself is not anchor ==');
   check('clicking lens does not anchor', window.__lensState.anchor === null);
 }
 
+// WHY (Rule 9): in Edit mode, SELECTING text (a drag) is a formatting gesture owned by the
+// floating toolbar — it must NOT anchor the lens. Anchoring on a selection made the lens
+// toggle on "every second selection". A deliberate click (collapsed) still anchors (L5.1).
+console.log('\n== Test L5.1d: a text selection does NOT anchor the lens ==');
+{
+  await window.__setDocForTest('<p id="seldrag">Select these words here</p>');
+  window.__lensState.anchor = null;
+  window.document.getElementById('rwa-lens').dataset.state = 'default';
+  const el = window.document.querySelector('#seldrag');
+  const range = window.document.createRange();
+  range.setStart(el.firstChild, 0); range.setEnd(el.firstChild, 13); // a non-collapsed selection
+  const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range);
+  el.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  check('a drag-selection does not anchor the lens', window.__lensState.anchor === null);
+  check('lens stays in its default (un-anchored) state', window.document.getElementById('rwa-lens').dataset.state === 'default');
+}
+
 console.log('\n== Test L5.2: badge shown when anchored, hidden in default ==');
 {
   await window.__setDocForTest('<p>One.</p>');
