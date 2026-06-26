@@ -39,3 +39,16 @@ service/data/*
 # Per-machine state; the synthesized diary entries (*.md) are the canonical
 # artifact and are tracked normally.
 .dev-diary/.events.jsonl
+
+# Loose root-level scratch/test rewritables generated during local work
+# (ad-hoc `rwa new`/`import` outputs, rendered docs). Listed explicitly and
+# anchored to root (leading /) so the tracked reference containers
+# (hello.html, re-write-able-spec.html) and same-named files in subdirs
+# (e.g. demo/invoice-tracker.html) are never shadowed.
+/bp.html
+/my-flow.html
+/r9-workflow.html
+/invoice-tracker.html
+/architecture.html
+/README.html
+/kanban board.html
