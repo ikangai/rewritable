@@ -201,7 +201,7 @@ A **skill-host** rewritable (`rwa new skill-host`) can install **skills** — sm
 
 Compute skills can opt into a warm **Worker pool** (reused across invocations, idle-evicted, hard-capped) for high-frequency use; tools always spawn fresh. Every skill stays isolated per invocation either way.
 
-The honest boundary: the runtime shows you what a skill *can* do; it cannot tell you whether it *should*. Within its granted permissions, the skill's code decides what to do — so the human install review is the real trust anchor. Spec: [`docs/specs/re-write-able-actions-spec-v0.8.md`](docs/specs/re-write-able-actions-spec-v0.8.md) (built); the v0.9 additions (more tiers, agents, hooks, confusable detection) are tracked in [`docs/specs/re-write-able-actions-spec-v0.9-open-items.md`](docs/specs/re-write-able-actions-spec-v0.9-open-items.md).
+The honest boundary: the runtime shows you what a skill *can* do; it cannot tell you whether it *should*. Within its granted permissions, the skill's code decides what to do — so the human install review is the real trust anchor. Spec: [`docs/specs/re-write-able-actions-spec-v0.8.md`](docs/specs/re-write-able-actions-spec-v0.8.md) (built); the v0.9 additions (more tiers, agents, hooks, confusable detection) are specified in [`docs/specs/re-write-able-actions-spec-v0.9.md`](docs/specs/re-write-able-actions-spec-v0.9.md) (built).
 
 ## Talking to it from a chat or a phone
 
@@ -213,11 +213,11 @@ The messaging and voice surfaces in `surfaces/` are **adapters onto the one cont
 ## The specs
 
 - [`re-write-able-spec.md`](re-write-able-spec.md) — the container spec: architecture, storage model, agent contract, embedding, security, platform behavior. Currently v0.15.
-- [`rwa-edit-spec.md`](rwa-edit-spec.md) — the anchor-based edit protocol the agent uses to modify documents. Currently rwa-edit/1 (v1.4).
+- [`rwa-edit-spec.md`](rwa-edit-spec.md) — the anchor-based edit protocol the agent uses to modify documents. Currently rwa-edit/1 (v1.6).
 - [`rwa-edit-dsl-spec.md`](rwa-edit-dsl-spec.md) — the structural-transform DSL layered on rwa-edit/1: a small typed vocabulary (`replace`, `insert`, `delete`, `set_attr`) the runtime compiles to anchor-based edits. Currently rwa-edit-dsl/1 (v0.1).
-- [`docs/specs/rwa-lens-spec.md`](docs/specs/rwa-lens-spec.md) — the lens edit model: a single steerable input with default and anchored states, slash-discriminated content vs. instruction, class-declared locks. Currently rwa-lens/1 (v0.9).
+- [`docs/specs/rwa-lens-spec.md`](docs/specs/rwa-lens-spec.md) — the lens edit model: a single steerable input with default and anchored states, slash-discriminated content vs. instruction, class-declared locks, the working-block inline-edit surface, and the selection formatting bubble. Currently rwa-lens/1 (v0.12).
 - [`docs/specs/rwa-operations-api.md`](docs/specs/rwa-operations-api.md) — the surface-agnostic operations contract: the five verbs every surface speaks (`bootstrap / import / modify / describe / publish`) and the three shared wire strings (`rwa-edit/1`, `rwa-edit-dsl/1`, `self-description/1`). The routing index that ties CLI, lens, service, hosted runtime, skill, and the messaging/voice adapters to one contract. Currently v0.1 (draft).
-- [`docs/specs/re-write-able-actions-spec-v0.8.md`](docs/specs/re-write-able-actions-spec-v0.8.md) — the actions/skill layer: signed skills, the permission tiers, the install-consent trust anchor, Worker isolation, the vault. v0.8 (built); v0.9 additions (agents, hooks, `bus:`/`fsa:`/`idb:` tiers, confusable detection) are specified in [`re-write-able-actions-spec-v0.9-open-items.md`](docs/specs/re-write-able-actions-spec-v0.9-open-items.md) (draft).
+- [`docs/specs/re-write-able-actions-spec-v0.8.md`](docs/specs/re-write-able-actions-spec-v0.8.md) — the actions/skill layer: signed skills, the permission tiers, the install-consent trust anchor, Worker isolation, the vault. v0.8 (built); v0.9 additions (agents, hooks, `bus:`/`fsa:`/`idb:` tiers, confusable detection) are specified in [`re-write-able-actions-spec-v0.9.md`](docs/specs/re-write-able-actions-spec-v0.9.md) (built).
 - [`CHANGELOG.md`](CHANGELOG.md) — release notes.
 
 ## Related

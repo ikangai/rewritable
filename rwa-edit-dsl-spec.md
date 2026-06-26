@@ -277,4 +277,4 @@ These are deferred to a future spec revision once more model coverage exists.
 
 ---
 
-Spec version 0.1 — initial draft, May 2026, informed by 89-scenario baseline of `gemini-3.1-pro-preview` and `gemini-3.1-flash-lite-preview`; §12 added 2026-05-05 after the production-runtime smoke runs revealed the adoption pattern. Companion documents: `re-write-able-spec.md` (container spec, v0.10), `rwa-edit-spec.md` (edit protocol, v1.4).
+Spec version 0.1 — initial draft, May 2026, informed by 89-scenario baseline of `gemini-3.1-pro-preview` and `gemini-3.1-flash-lite-preview`; §12 added 2026-05-05 after the production-runtime smoke runs revealed the adoption pattern. Companion documents: `re-write-able-spec.md` (container spec, v0.15), `rwa-edit-spec.md` (edit protocol, v1.6).
