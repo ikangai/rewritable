@@ -20,9 +20,9 @@ Verified end-to-end (10/10) at generation time:
 - `parseAgentZone` finds exactly one agent, `verified:true`, `kind:'agent'`.
 - **Booted in jsdom**: `runtime.agents.list()` shows `concise-editor` verified; `runtime.describe()` surfaces it as a `kind:'agent'` affordance; `runtime.agents.setActive('concise-editor')` succeeds (a tampered/unsigned record would install `verified:false` and be refused at activation — `unverified_agent`).
 
-## What is *not* shown (honest boundary)
+## Dropping it onto a target (the bridge is built)
 
-The spec's one forward-design surface — the literal **drag-this-carrier-onto-that-file** gesture that extracts the record and routes it to the install dialog — is **not built**. What *is* built and exercised here: the signed record, the frozen-zone format, boot-load + live verify, `describe()` surfacing, and activation. To install this intelligence into another rewritable today, hand its record to that file's agent-install dialog (or publish it to the skill index); the literal file-drop is the bridge §5 leaves open.
+The literal **drag-this-carrier-onto-that-file** gesture is now implemented (intelligence/0.2 §5): the target's runtime claims a dropped `.html`, un-escapes its `INLINE_DOC`, extracts the signed `rwa-agent/1` record from the `#rwa-agents` zone, and routes it to the agent-install **consent dialog** — install stays behind that dialog (the trust anchor). Seed functions: `extractAgentEnvelopesFromCarrier` / `classifyInstallText` / `routeInstallFromText` / `handleCarrierDrop` (a capture-phase window drop), plus the install picker generalized to accept carriers. Pinned by `tests/intelligence-drop.mjs` (13/13: extract → classify → install-verified → full drop-to-dialog-to-install, dropping *this* carrier). You can also still hand the record to the dialog directly or publish it to the skill index.
 
 ## Maintenance
 

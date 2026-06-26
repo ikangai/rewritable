@@ -7991,12 +7991,93 @@ function showAgentInstallDialog(envelope) {
     const ib = card.querySelector('[data-act=install]'); if (ib) ib.onclick = async () => close(await runtimeInstallAgent(envelope));
   }));
 }
-// §1.3 / §12 — install trigger: pick a .rwa-skill.json OR .rwa-agent.json, parse, dispatch by format.
+// §1.3 / §12 — install trigger: pick a .rwa-skill.json / .rwa-agent.json envelope OR an
+// intelligence carrier .html (a rewritable carrying a signed rwa-agent/1 record), then route.
 function runtimePromptInstall() {
-  const inp = document.createElement('input'); inp.type = 'file'; inp.accept = '.rwa-skill.json,.rwa-agent.json,application/json,.json';
-  inp.onchange = () => { const f = inp.files && inp.files[0]; if (!f) return; const rd = new FileReader(); rd.onload = () => { let env; try { env = JSON.parse(rd.result); } catch (_) { setStatus && setStatus('err', 'invalid skill/agent JSON'); return; } if (env && env.format === 'rwa-agent/1') showAgentInstallDialog(env); else showSkillInstallDialog(env); }; rd.readAsText(f); };
+  const inp = document.createElement('input'); inp.type = 'file'; inp.accept = '.rwa-skill.json,.rwa-agent.json,application/json,.json,.html,.htm,text/html';
+  inp.onchange = () => { const f = inp.files && inp.files[0]; if (!f) return; const rd = new FileReader(); rd.onload = () => { routeInstallFromText(String(rd.result || '')); }; rd.readAsText(f); };
   inp.click();
 }
+
+// ── intelligence/0.2 (docs/specs/rwa-intelligence-spec.md §5) — the file-drop bridge.
+// An "intelligence" ships as a CARRIER: a (skill-host) rewritable carrying a signed rwa-agent/1
+// record in its frozen #rwa-agents zone (the overlay half is the v0.9 agent role — see
+// runtime.agents / buildAgentZone above). Dropping a carrier onto a target extracts that record
+// and routes it to the existing consent dialog + runtime.agents.install. In a carrier's RAW bytes
+// the record lives inside INLINE_DOC, so its closing script tag is backslash-escaped (the zone
+// <div>/</div> delimiters are not). We extract + un-escape INLINE_DOC (the inverse of buildFile's
+// escapeTL — every escape is one backslash + one char), then parse the zone exactly as
+// readTrustworthyAgents does. The signature stays the trust anchor: the dialog re-verifies.
+function _carrierDoc(html) {
+  const marker = 'const INLINE_DOC = `';
+  const i = String(html || '').indexOf(marker);
+  if (i < 0) return String(html || ''); // not a full container — treat the text itself as the doc
+  let j = i + marker.length;
+  for (; j < html.length; j++) { const c = html[j]; if (c === '\\') { j++; continue; } if (c === '`') break; }
+  return html.slice(i + marker.length, j).replace(/\\([\s\S])/g, '$1');
+}
+function extractAgentEnvelopesFromCarrier(html) {
+  const zone = _agExtractZone(_carrierDoc(html));
+  if (!zone) return [];
+  const out = [];
+  for (const m of zone.matchAll(/<script\s+type="application\/rwa-agent\+json">([\s\S]*?)<\/script>/g)) {
+    let env; try { env = JSON.parse(new TextDecoder().decode(_skFromB64(m[1].trim()))); } catch (_) { continue; }
+    if (env && env.agent && typeof env.agent.role === 'string') out.push(env);
+  }
+  return out;
+}
+// Classify a dropped/picked file's text: a carrier .html, a bare envelope JSON, or nothing.
+function classifyInstallText(text) {
+  const s = String(text || '');
+  let obj = null; try { obj = JSON.parse(s); } catch (_) {}
+  if (obj && typeof obj === 'object') {
+    if (obj.agent || obj.format === 'rwa-agent/1') return { kind: 'json-agent', envelope: obj };
+    if (obj.skill || obj.format === 'rwa-skill/1') return { kind: 'json-skill', envelope: obj };
+    return { kind: 'none' };
+  }
+  const envelopes = extractAgentEnvelopesFromCarrier(s);
+  if (envelopes.length) return { kind: 'agent-carrier', envelopes };
+  return { kind: 'none' };
+}
+// Route extracted content to the right consent dialog. Install stays behind the dialog (the trust
+// anchor); the dialog is fire-and-forget so the drop handler returns immediately. Multiple records
+// in one carrier are queued (each dialog awaits the previous close).
+async function routeInstallFromText(text) {
+  const c = classifyInstallText(text);
+  if (c.kind === 'json-agent') showAgentInstallDialog(c.envelope);
+  else if (c.kind === 'json-skill') showSkillInstallDialog(c.envelope);
+  else if (c.kind === 'agent-carrier') { (async () => { for (const env of c.envelopes) { await showAgentInstallDialog(env); } })(); }
+  else if (typeof setStatus === 'function') setStatus('err', 'no installable skill or intelligence found in that file');
+  return c;
+}
+async function _readDroppedText(file) {
+  if (file && typeof file.text === 'function') return file.text();
+  return new Promise((res, rej) => { const rd = new FileReader(); rd.onload = () => res(String(rd.result || '')); rd.onerror = rej; rd.readAsText(file); });
+}
+// Drop gesture — capture phase, so a carrier is claimed before the Edit-mode image-mount drop.
+// Acts only on an .html/.htm file; any other drop flows through untouched to existing handlers.
+async function handleCarrierDrop(e) {
+  const files = Array.from((e && e.dataTransfer && e.dataTransfer.files) || []);
+  const carrier = files.find(f => /text\/html/i.test(f.type || '') || /\.html?$/i.test(f.name || ''));
+  if (!carrier) return; // not a carrier — let the image/other drop handlers run
+  if (e.preventDefault) e.preventDefault();
+  if (e.stopPropagation) e.stopPropagation();
+  try { await routeInstallFromText(await _readDroppedText(carrier)); }
+  catch (_) { if (typeof setStatus === 'function') setStatus('err', 'could not read the dropped file'); }
+}
+function handleCarrierDragOver(e) {
+  // Let a file drop fire anywhere on the page (a carrier can be dropped onto the document, not only
+  // the edit mount). Idempotent with the mount's own dragover; the drop handler decides whether to claim it.
+  const t = e && e.dataTransfer;
+  if (t && (Array.from(t.items || []).some(i => i.kind === 'file') || Array.from(t.types || []).includes('Files'))) e.preventDefault();
+}
+window.addEventListener('dragover', handleCarrierDragOver, true);
+window.addEventListener('drop', handleCarrierDrop, true);
+// Automation/test hooks (mirror window.__ingestImageFile).
+window.__rwaExtractAgentCarrier = extractAgentEnvelopesFromCarrier;
+window.__rwaClassifyInstallText = classifyInstallText;
+window.__rwaInstallFromText = routeInstallFromText;
+window.__rwaHandleCarrierDrop = handleCarrierDrop;
 
 // §4/§5a — does a network: host pattern admit a host? Mirror of cli/src/skill-manifest.mjs
 // matchNetworkOrigin (keep in step). The bridge's per-call origin check.
