@@ -26,4 +26,4 @@ The spec's one forward-design surface — the literal **drag-this-carrier-onto-t
 
 ## Maintenance
 
-Like `hello.html` / `re-write-able-spec.html`, this carries a full snapshot of the seed bootstrap, so it lags `seeds/rewritable.html` after a seed change. The **signed record stays valid** across seed changes (it depends only on the agent canon, not the surrounding bytes); regenerating means re-running the bootstrap substitution around the same record. Not yet wired into `tools/regenerate-refs.mjs`.
+Like `hello.html` / `re-write-able-spec.html`, this carries a full snapshot of the seed bootstrap, so it lags `seeds/rewritable.html` after a seed change. The **signed record stays valid** across seed changes (it depends only on the agent canon, not the surrounding bytes). It is **wired into the regen flow**: run `node tools/regenerate-refs.mjs` after a seed change — it re-applies the `skill-host` kind regions and preserves this file's `DOC_UUID`, `<title>`, and the signed record verbatim (a no-op against the current seed; verified by an empty `git diff`).
