@@ -52,3 +52,11 @@ service/data/*
 /architecture.html
 /README.html
 /kanban board.html
+
+# Other loose root-level local scratch: FSA permission-probe artifacts, an
+# import screenshot, and stray ad-hoc files. Local-only, never committed.
+/.access-test
+/.access-test2
+/.import-current.png
+/blog post about rewrtiable
+/kanban board
