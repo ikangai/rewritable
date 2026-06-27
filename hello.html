@@ -2326,13 +2326,22 @@ async function renderActionsModePanel(panel) {
   // recommended model (intelligence/0.2 I-A). A verified role can be activated; unverified cannot.
   const agentList = (typeof runtimeListAgents === 'function') ? runtimeListAgents() : [];
   const activeRole = (runtimeAgentActive() || {}).role || null;
+  const advisorSet = (typeof runtimeListAdvisors === 'function') ? runtimeListAdvisors() : [];
+  const advisorFull = advisorSet.length >= 3;
   const agentRows = agentList.length ? agentList.map(a => {
     const isActive = a.role === activeRole;
-    const meta = (a.verified ? 'verified' : 'unverified') + (isActive ? ' · active' : '');
-    const btn = !a.verified ? '' : (isActive
-      ? '<button type="button" data-agent-off="1">Deactivate</button>'
-      : '<button type="button" data-agent-on="' + escRuntimeHtml(a.role) + '">Activate</button>');
-    return '<div class="rwa-mode-row"><div><div class="rwa-mode-title">' + escRuntimeHtml(a.role) + '</div><div class="rwa-mode-meta">' + escRuntimeHtml('intelligence · ' + meta) + '</div></div>' + btn + '</div>';
+    const isAdvisor = advisorSet.indexOf(a.role) >= 0;
+    const state = isActive ? 'primary' : (isAdvisor ? 'advisor' : '');
+    const meta = (a.verified ? 'verified' : 'unverified') + (state ? ' · ' + state : '');
+    let btns = '';
+    if (a.verified) {
+      const r = escRuntimeHtml(a.role);
+      if (isActive) btns = '<button type="button" data-agent-off="1">Deactivate</button>';
+      else if (isAdvisor) btns = '<button type="button" data-agent-advoff="' + r + '">Remove advisor</button>';
+      else btns = '<button type="button" data-agent-on="' + r + '">Activate</button>'
+        + (advisorFull ? '<button type="button" disabled title="advisor limit reached">Add advisor</button>' : '<button type="button" data-agent-advon="' + r + '">Add advisor</button>');
+    }
+    return '<div class="rwa-mode-row"><div><div class="rwa-mode-title">' + escRuntimeHtml(a.role) + '</div><div class="rwa-mode-meta">' + escRuntimeHtml('intelligence · ' + meta) + '</div></div>' + btns + '</div>';
   }).join('') : '<div class="rwa-mode-empty">No intelligences installed.</div>';
   panel.innerHTML = [
     '<div class="rwa-mode-section">',
@@ -2372,6 +2381,12 @@ async function renderActionsModePanel(panel) {
   }));
   const agentOff = panel.querySelector('[data-agent-off]');
   if (agentOff) agentOff.addEventListener('click', () => { runtimeSetActiveAgent(null); renderActionsModePanel(panel); });
+  panel.querySelectorAll('[data-agent-advon]').forEach(btn => btn.addEventListener('click', () => {
+    try { runtimeAddAdvisor(btn.getAttribute('data-agent-advon')); } // I-E: layer an advisory lens
+    catch (e) { if (typeof setStatus === 'function') setStatus('err', '✗ ' + (e && (e.code || e.message))); }
+    renderActionsModePanel(panel);
+  }));
+  panel.querySelectorAll('[data-agent-advoff]').forEach(btn => btn.addEventListener('click', () => { runtimeRemoveAdvisor(btn.getAttribute('data-agent-advoff')); renderActionsModePanel(panel); }));
 }
 
 // ─── Agent (rwa-edit/1) ─────────────────────────────────────────────
@@ -5613,11 +5628,26 @@ function getActiveActor() {
 // system_prompt swaps the per-kind FRAMING; the shared SYSTEM_PROMPT_RULES (tool protocol, frozen-
 // zone rules, data-rwa-id) are always appended so editing still works. No agent → the singleton.
 function resolveSystemPrompt() {
+  let base = SYSTEM_PROMPT;
   if (activeAgentRole) {
     const rec = Array.from(installedAgents.values()).find(a => a.role === activeAgentRole && a.verified);
-    if (rec && typeof rec.manifest.system_prompt === 'string') return rec.manifest.system_prompt + '\n' + SYSTEM_PROMPT_RULES;
+    if (rec && typeof rec.manifest.system_prompt === 'string') base = rec.manifest.system_prompt + '\n' + SYSTEM_PROMPT_RULES;
   }
-  return SYSTEM_PROMPT;
+  return base + _agAdvisorBlock(); // I-E: append any advisory lenses (secondary; empty → byte-identical)
+}
+// I-E (intelligence/0.2 §6) — blended overlays. The PRIMARY is activeAgentRole (framing/actor/vault,
+// unchanged). advisorRoles add advisory PROSE only — never capabilities, so the vault gate
+// (_agVaultAllowed, keyed on the active record) stays primary-only by construction. Verified-only,
+// ephemeral (never serialized), capped. Block is omitted when empty (single-role prompt unchanged).
+function _agAdvisorBlock() {
+  if (!advisorRoles.size) return '';
+  const lines = [];
+  for (const role of advisorRoles) {
+    if (role === activeAgentRole) continue; // a role is primary XOR advisor, never both
+    const rec = Array.from(installedAgents.values()).find(a => a.role === role && a.verified);
+    if (rec && typeof rec.manifest.system_prompt === 'string') lines.push('- ' + role + ': ' + rec.manifest.system_prompt);
+  }
+  return lines.length ? '\n\nAdditional advisory lenses (secondary — apply only where they don\'t conflict with the above):\n' + lines.join('\n') : '';
 }
 // I12 — the role-scoped vault gate: exact vault:<ns> membership in the agent's vault_namespace_set
 // (mirrors _skVaultAllowed against the agent record instead of the skill's permissions).
@@ -6832,6 +6862,10 @@ const installedSkills = new Map();
 // starts with no agent active per §12).
 const installedAgents = new Map();
 let activeAgentRole = null;
+// I-E — advisory roles layered atop the primary (in-memory, ephemeral, never serialized — like the
+// active role). Capped for prompt coherence/size. Advisors contribute prose only (see _agAdvisorBlock).
+const advisorRoles = new Set();
+const ADVISOR_CAP = 3;
 // I8 (v0.9 §9) — hook firing state. activeHooks holds skillIds currently executing (re-entrancy
 // guard, Inv 23); _lastHookMode tracks the prior mode for on-mode-change's `previous`; _hookSeq
 // makes rwa_hook_log keys unique within a millisecond.
@@ -7826,6 +7860,19 @@ function runtimeSetActiveAgent(role) {
   if (!rec.verified) throw new RwaEditError('unverified_agent', null, { role });
   activeAgentRole = role;
 }
+// I-E — add/remove an advisory role. Verified-only (its prompt drives modify), not-the-primary,
+// capped. Checks order so unverified/not-found beat the cap. Returns the current advisor list.
+function runtimeAddAdvisor(role) {
+  const rec = Array.from(installedAgents.values()).find(a => a.role === role);
+  if (!rec) throw new RwaEditError('agent_not_found', null, { role });
+  if (!rec.verified) throw new RwaEditError('unverified_agent', null, { role });
+  if (role === activeAgentRole || advisorRoles.has(role)) return Array.from(advisorRoles); // primary / already → no-op
+  if (advisorRoles.size >= ADVISOR_CAP) throw new RwaEditError('advisor_cap_reached', null, { cap: ADVISOR_CAP });
+  advisorRoles.add(role);
+  return Array.from(advisorRoles);
+}
+function runtimeRemoveAdvisor(role) { advisorRoles.delete(role); return Array.from(advisorRoles); }
+function runtimeListAdvisors() { return Array.from(advisorRoles); }
 // §12 — validate + verify + register an agent, then persist the #rwa-agents zone (same discipline as
 // runtimeInstallSkill: rollback the in-memory map on a persist failure). A signed-but-unverified
 // agent registers (verified:false) but can't activate.
@@ -7851,6 +7898,7 @@ async function runtimeUninstallAgent(agentId) {
   if (!prev) return { ok: false, errors: ['not_installed'] };
   installedAgents.delete(agentId);
   if (activeAgentRole && prev.role === activeAgentRole && !Array.from(installedAgents.values()).some(a => a.role === activeAgentRole)) activeAgentRole = null;
+  if (prev.role && !Array.from(installedAgents.values()).some(a => a.role === prev.role)) advisorRoles.delete(prev.role); // I-E: drop a removed role from advisors
   try {
     await runtimeRegionCommit({ regions: [_agAgentsRegion()], actor: 'agent:uninstall', reachability: 'frozen' });
   } catch (e) {
@@ -8161,6 +8209,8 @@ window.__rwaGetRecommendation = getRecommendation;
 window.__rwaApplyRecommendation = applyRecommendation;
 window.__rwaOfferRecommendedModel = offerRecommendedModel;
 window.__rwaActivateAgent = runtimeActivateAgent;
+window.__rwaResolveSystemPrompt = resolveSystemPrompt; // I-E test hook — the assembled modify() prompt
+window.__rwaGetActiveActor = getActiveActor;
 
 // §4/§5a — does a network: host pattern admit a host? Mirror of cli/src/skill-manifest.mjs
 // matchNetworkOrigin (keep in step). The bridge's per-call origin check.
@@ -9694,7 +9744,7 @@ document.addEventListener('keydown', e => {
       discoverSkills: runtimeDiscoverSkills, // v0.9 §11 (I6) — GET the marketplace index (opt-in network)
       fetchSkillFromIndex: runtimeFetchSkillFromIndex, // v0.9 §11 (I6) — fetch + client-side-verify an indexed skill
       vault: { get: runtimeVaultGet, set: runtimeVaultSet, has: runtimeVaultHas, namespaces: runtimeVaultNamespaces, unlock: runtimeVaultUnlock, lock: runtimeVaultLock, isLocked: runtimeVaultIsLocked, export: runtimeVaultExport, import: runtimeVaultImport }, // v0.8 §6 + v0.9 §14 (I13) portable export/import
-      agents: { list: runtimeListAgents, active: runtimeAgentActive, setActive: runtimeSetActiveAgent, activate: runtimeActivateAgent, install: runtimeInstallAgent, uninstall: runtimeUninstallAgent, message: runtimeAgentMessage, showInstallDialog: showAgentInstallDialog, offerModel: offerRecommendedModel }, // v0.9 §12 — multi-agent roles; `activate` = setActive + offer recommended model (intelligence/0.2 I-A)
+      agents: { list: runtimeListAgents, active: runtimeAgentActive, setActive: runtimeSetActiveAgent, activate: runtimeActivateAgent, install: runtimeInstallAgent, uninstall: runtimeUninstallAgent, message: runtimeAgentMessage, showInstallDialog: showAgentInstallDialog, offerModel: offerRecommendedModel, addAdvisor: runtimeAddAdvisor, removeAdvisor: runtimeRemoveAdvisor, advisors: runtimeListAdvisors }, // v0.9 §12 — multi-agent roles; `activate` = setActive + offer recommended model (I-A); addAdvisor/removeAdvisor/advisors = blended overlays (I-E)
       hookLog: runtimeHookLog, // v0.9 §9 — the hook audit trail (rwa_hook_log)
     };
     // `status` is a getter so each read returns a fresh snapshot of
