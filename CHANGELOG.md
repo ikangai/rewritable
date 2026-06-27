@@ -2,6 +2,16 @@
 
 Notable changes to `re-write-able`. The container format is versioned in `re-write-able-spec.md`; the edit protocol in `rwa-edit-spec.md`; the structural-transform DSL in `rwa-edit-dsl-spec.md`. The CLI follows semver in `cli/package.json`.
 
+## 2026-06-27 — intelligence/0.2 I-A: recommend a model on activation (cli 0.13.0)
+
+A drop-in intelligence (the carrier shipped in 0.12.0) can now carry a **recommended model**, and the runtime **offers to apply it on activation** behind a one-line consent.
+
+- A non-secret `recommended_model` / `recommended_backend` rides on the `rwa-agent/1` **envelope**, *outside* the signed `agent` — so `canonicalAgent` is unchanged, every existing signature still verifies, and a carrier can add the field **without re-signing**. Seed-only: the CLI / service / oracle are untouched.
+- On activation — `runtime.agents.activate(role)`, or the new Activity-panel **Intelligences → Activate** section — the runtime offers to apply it. It is **never auto-applied**, only to `sessionStorage` `rwa_model` / `rwa_backend` (backend enum-validated), and **never** a base-URL override or the API key. The recommendation is a suggestion; the model and key remain sessionStorage-only and never travel in a file.
+- New seed surface: `getRecommendation` / `applyRecommendation` / `offerRecommendedModel` / `runtimeActivateAgent`, `runtime.agents.activate`, and an Activity-panel section listing installed intelligences with activate/deactivate (agents had no GUI before).
+
+Pinned by `tests/intelligence-model-rec.mjs` (22/0); regression green (intelligence-drop 15, mode 18, agents 31). Seed-only — shipped via the bundled seed (`rwa new` / `import`); no CLI source change. *Unsigned-envelope design* (not in the signed canon) is deliberate: consent + non-secret + enum-validation make it safe while keeping a deployed signature byte-stable. Forward (spec §6): I-B…I-E. Spec: `docs/specs/rwa-intelligence-spec.md`.
+
 ## 2026-06-27 — intelligence/0.2: the drop-in intelligence bridge (cli 0.12.0)
 
 A **droppable intelligence** for rewritables: drag a *carrier* (a `.html` rewritable that carries a signed `rwa-agent/1` role in its frozen `#rwa-agents` zone) onto a target, and the runtime extracts the record, verifies the signature, and routes it to the agent-install consent dialog. The overlay half — an agent *role* that reframes the `⌘K` editor's system prompt and scopes vault access — was already built (v0.9 §12); this is the file-drop bridge that makes it *droppable* (`docs/specs/rwa-intelligence-spec.md` §5).
