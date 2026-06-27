@@ -421,19 +421,16 @@ const INLINE_DOC = `<article>
 <h2>What it carries</h2>
 <ul>
 <li><strong>Role:</strong> <code>concise-editor</code></li>
-<li><strong>Recommended model:</strong> <code>anthropic/claude-sonnet-4-6</code> — a <em>recommendation only</em>. The model and key live in your session settings and never travel in a file; an intelligence suggests a model, it does not carry one.</li>
+<li><strong>Recommended model:</strong> <code>anthropic/claude-sonnet-4-6</code> on backend <code>openrouter</code> — carried as a structured, non-secret recommendation (intelligence/0.2 I-A). On activation the runtime <em>offers</em> to apply it to your session behind a one-line consent; it never auto-applies, never sets a base-URL, and never touches your API key. The model and key live in your session settings and never travel in a file.</li>
 <li><strong>Vault namespaces:</strong> none — this intelligence needs no secrets.</li>
-<li><strong>Author key fingerprint:</strong> <code>8a1063343bc3a89b</code> (Ed25519; a throwaway key for this example). The record below is genuinely signed and verifies live.</li>
+<li><strong>Author:</strong> a throwaway Ed25519 key (fingerprint shown in the install dialog). The record is genuinely signed and verifies live; the recommendation rides <em>outside</em> the signed payload, so it does not change the signature.</li>
 <li><strong>Affinity:</strong> prose documents — a human-read note; nothing gates it.</li>
 </ul>
 
-<h2>How to drop it</h2>
-<p>The signed record lives in this file&rsquo;s frozen <code>#rwa-agents</code> zone (it is not editable from inside the running document). To install it into another rewritable today: publish it to the skill index, or hand the record to that file&rsquo;s agent-install dialog. The target verifies the signature and writes a copy into <em>its own</em> frozen zone, behind your explicit consent. The literal drag-this-file-onto-that-file gesture is the one small bridge the spec leaves as forward design (§5).</p>
-
-<h2>Try it here</h2>
-<p>This carrier is itself a skill-host, so the role is already installed on it. Activate <code>concise-editor</code> from the Skills panel, then &#8984;K &ldquo;tighten this&rdquo; — the same overlay a target file would get after install.</p>
+<h2>How to use it</h2>
+<p>Drop this file onto another rewritable to install the role (behind the consent dialog). Then open the <strong>Activity</strong> panel, find <code>concise-editor</code> under <em>Intelligences</em>, and click <strong>Activate</strong> — the runtime offers its recommended model, and &#8984;K runs through the role&rsquo;s framing. This carrier is itself a skill-host, so the role is already installed here; try it directly.</p>
 </article>
-<div data-rwa-frozen id="rwa-agents"><script type="application/rwa-agent+json">eyJhZ2VudCI6eyJhdXRob3JfcHVia2V5IjoiS0p1NUN4ZG4yaEtGQmk0OWsyOGdSUWpvczRzbnhXQW9qTnJRWXY5MzRWcz0iLCJkZXNjcmlwdGlvbiI6IlRpZ2h0ZW5zIHByb3NlIOKAlCBzaG9ydGVyIHNlbnRlbmNlcywgZmV3ZXIgaGVkZ2VzLCBtZWFuaW5nIHByZXNlcnZlZC4gUmVjb21tZW5kZWQgbW9kZWw6IGFudGhyb3BpYy9jbGF1ZGUtc29ubmV0LTQtNi4iLCJyb2xlIjoiY29uY2lzZS1lZGl0b3IiLCJzeXN0ZW1fcHJvbXB0IjoiWW91IGFyZSBhIGNvbmNpc2lvbiBlZGl0b3IuIEZhdm9yIGVkaXRzIHRoYXQgc2hvcnRlbiBzZW50ZW5jZXMsIGN1dCBoZWRnaW5nIGFuZCBmaWxsZXIgd29yZHMsIGFuZCByZW1vdmUgcmVkdW5kYW5jeSDigJQgd2l0aG91dCBkcm9wcGluZyBmYWN0cywgY2F2ZWF0cywgbnVtYmVycywgb3IgdGhlIGF1dGhvcidzIHZvaWNlLiBQcmVmZXIgdGhlIHNtYWxsZXN0IHN1cmdpY2FsIGNoYW5nZSB0aGF0IGFjaGlldmVzIHRoZSBjdXQuIE5ldmVyIHBhZCwgbmV2ZXIgYWRkIG5ldyBjbGFpbXMuIiwidmF1bHRfbmFtZXNwYWNlX3NldCI6W10sInZlcnNpb24iOiJyd2EtYWdlbnQvMSJ9LCJzaWduYXR1cmUiOiJEVDVaZ3lvRldFN0FROFBzcm9UdW41Y3hPdXV5d1djWDUvNkJMdXN2ZjMyU01iR2hERGFmU0xCMERSZmsrZWpDUW16cndiTmhCVzAxckRGcWxFZTBBdz09In0=<\/script></div>`;
+<div data-rwa-frozen id="rwa-agents"><script type="application/rwa-agent+json">eyJhZ2VudCI6eyJhdXRob3JfcHVia2V5IjoiS0p1NUN4ZG4yaEtGQmk0OWsyOGdSUWpvczRzbnhXQW9qTnJRWXY5MzRWcz0iLCJkZXNjcmlwdGlvbiI6IlRpZ2h0ZW5zIHByb3NlIOKAlCBzaG9ydGVyIHNlbnRlbmNlcywgZmV3ZXIgaGVkZ2VzLCBtZWFuaW5nIHByZXNlcnZlZC4gUmVjb21tZW5kZWQgbW9kZWw6IGFudGhyb3BpYy9jbGF1ZGUtc29ubmV0LTQtNi4iLCJyb2xlIjoiY29uY2lzZS1lZGl0b3IiLCJzeXN0ZW1fcHJvbXB0IjoiWW91IGFyZSBhIGNvbmNpc2lvbiBlZGl0b3IuIEZhdm9yIGVkaXRzIHRoYXQgc2hvcnRlbiBzZW50ZW5jZXMsIGN1dCBoZWRnaW5nIGFuZCBmaWxsZXIgd29yZHMsIGFuZCByZW1vdmUgcmVkdW5kYW5jeSDigJQgd2l0aG91dCBkcm9wcGluZyBmYWN0cywgY2F2ZWF0cywgbnVtYmVycywgb3IgdGhlIGF1dGhvcidzIHZvaWNlLiBQcmVmZXIgdGhlIHNtYWxsZXN0IHN1cmdpY2FsIGNoYW5nZSB0aGF0IGFjaGlldmVzIHRoZSBjdXQuIE5ldmVyIHBhZCwgbmV2ZXIgYWRkIG5ldyBjbGFpbXMuIiwidmF1bHRfbmFtZXNwYWNlX3NldCI6W10sInZlcnNpb24iOiJyd2EtYWdlbnQvMSJ9LCJzaWduYXR1cmUiOiJEVDVaZ3lvRldFN0FROFBzcm9UdW41Y3hPdXV5d1djWDUvNkJMdXN2ZjMyU01iR2hERGFmU0xCMERSZmsrZWpDUW16cndiTmhCVzAxckRGcWxFZTBBdz09IiwicmVjb21tZW5kZWRfbW9kZWwiOiJhbnRocm9waWMvY2xhdWRlLXNvbm5ldC00LTYiLCJyZWNvbW1lbmRlZF9iYWNrZW5kIjoib3BlbnJvdXRlciJ9<\/script></div>`;
 // === END PRODUCT: INLINE_DOC stub ===
 
 // === DOCUMENT-PRODUCT DEFAULT: ANCHORABLE_TAGS ===
@@ -2339,6 +2336,18 @@ async function renderActionsModePanel(panel) {
   const skillRows = skillAffs.length ? skillAffs.map(a =>
     '<div class="rwa-mode-row"><div><div class="rwa-mode-title">' + escRuntimeHtml(a.name) + '</div><div class="rwa-mode-meta">' + escRuntimeHtml(a.kind || 'skill') + ' · ' + escRuntimeHtml(a.skillId) + '</div></div><button type="button" data-action-skill="' + escRuntimeHtml(a.skillId) + '">Open in Skills</button></div>'
   ).join('') : '<div class="rwa-mode-empty">No installed skills.</div>';
+  // Intelligences (rwa-agent/1 roles) — list + activate/deactivate. Activating offers the role's
+  // recommended model (intelligence/0.2 I-A). A verified role can be activated; unverified cannot.
+  const agentList = (typeof runtimeListAgents === 'function') ? runtimeListAgents() : [];
+  const activeRole = (runtimeAgentActive() || {}).role || null;
+  const agentRows = agentList.length ? agentList.map(a => {
+    const isActive = a.role === activeRole;
+    const meta = (a.verified ? 'verified' : 'unverified') + (isActive ? ' · active' : '');
+    const btn = !a.verified ? '' : (isActive
+      ? '<button type="button" data-agent-off="1">Deactivate</button>'
+      : '<button type="button" data-agent-on="' + escRuntimeHtml(a.role) + '">Activate</button>');
+    return '<div class="rwa-mode-row"><div><div class="rwa-mode-title">' + escRuntimeHtml(a.role) + '</div><div class="rwa-mode-meta">' + escRuntimeHtml('intelligence · ' + meta) + '</div></div>' + btn + '</div>';
+  }).join('') : '<div class="rwa-mode-empty">No intelligences installed.</div>';
   panel.innerHTML = [
     '<div class="rwa-mode-section">',
     '<div class="rwa-mode-kicker">Activity</div>',
@@ -2353,6 +2362,7 @@ async function renderActionsModePanel(panel) {
     '<div class="rwa-mode-section"><div class="rwa-mode-kicker">Recent runs</div>' + histRows + '</div>',
     '<div class="rwa-mode-section"><div class="rwa-mode-kicker">Live affordances</div>' + affRows + '</div>',
     '<div class="rwa-mode-section"><div class="rwa-mode-kicker">Installed skill actions</div>' + skillRows + '</div>',
+    '<div class="rwa-mode-section"><div class="rwa-mode-kicker">Intelligences</div>' + agentRows + '</div>',
   ].join('');
   const undoBtn = panel.querySelector('#rwa-actions-undo');
   if (undoBtn) undoBtn.addEventListener('click', () => runtimeUndo());
@@ -2369,6 +2379,13 @@ async function renderActionsModePanel(panel) {
   panel.querySelectorAll('[data-action-skill]').forEach(btn => {
     btn.addEventListener('click', () => runtimeSetMode('skills'));
   });
+  panel.querySelectorAll('[data-agent-on]').forEach(btn => btn.addEventListener('click', () => {
+    try { runtimeActivateAgent(btn.getAttribute('data-agent-on')); } // setActive + offer recommended model
+    catch (e) { if (typeof setStatus === 'function') setStatus('err', '✗ ' + (e && (e.code || e.message))); }
+    renderActionsModePanel(panel);
+  }));
+  const agentOff = panel.querySelector('[data-agent-off]');
+  if (agentOff) agentOff.addEventListener('click', () => { runtimeSetActiveAgent(null); renderActionsModePanel(panel); });
 }
 
 // ─── Agent (rwa-edit/1) ─────────────────────────────────────────────
@@ -8100,6 +8117,65 @@ window.__rwaClassifyInstallText = classifyInstallText;
 window.__rwaInstallFromText = routeInstallFromText;
 window.__rwaHandleCarrierDrop = handleCarrierDrop;
 
+// ── intelligence/0.2 I-A (docs/specs/rwa-intelligence-spec.md §6) — recommended model on activation.
+// A carrier may carry a NON-SECRET recommended_model / recommended_backend on its rwa-agent/1
+// ENVELOPE (OUTSIDE the signed `agent`, so canonicalAgent is unchanged and the signature still
+// verifies — this stays seed-only). On activation the runtime OFFERS to apply it to sessionStorage
+// behind a one-line consent: it never auto-applies, never sets a base-URL, never touches the API
+// key. A recommendation is a suggestion, not a stored credential (key/model are sessionStorage-only).
+const REC_MODEL_RE = /^[A-Za-z0-9._:\/-]{1,200}$/; // a model id: provider/name, dots, colon (ollama), hyphen
+const REC_BACKENDS = ['openrouter', 'ollama', 'lmstudio', 'atomic', 'bridge', 'bridge-session'];
+function getRecommendation(envelope) {
+  const e = envelope || {};
+  const out = {};
+  if (typeof e.recommended_model === 'string' && REC_MODEL_RE.test(e.recommended_model.trim())) out.model = e.recommended_model.trim();
+  if (typeof e.recommended_backend === 'string' && REC_BACKENDS.includes(e.recommended_backend.trim())) out.backend = e.recommended_backend.trim();
+  return (out.model || out.backend) ? out : null;
+}
+function applyRecommendation(rec) {
+  const r = rec || {};
+  const applied = {};
+  if (r.model && REC_MODEL_RE.test(String(r.model))) { sessionStorage.setItem(RWA.K_MODEL, String(r.model)); applied.model = String(r.model); }
+  if (r.backend && REC_BACKENDS.includes(String(r.backend))) { sessionStorage.setItem(RWA.K_BACKEND, String(r.backend)); applied.backend = String(r.backend); }
+  try { const m = document.getElementById('rwa-model'); if (m && applied.model) m.value = applied.model; const b = document.getElementById('rwa-backend'); if (b && applied.backend) { b.value = applied.backend; b.dispatchEvent(new Event('change')); } } catch (_) {}
+  return applied;
+}
+// Offer the role's recommended model, if any and if it differs from the current session. Fire-and-
+// forget consent dialog; resolves with the choice. Activation already happened — this only proposes.
+function offerRecommendedModel(role) {
+  const recRec = Array.from(installedAgents.values()).find(a => a.role === role);
+  const rec = recRec && getRecommendation(recRec.envelope);
+  if (!rec) return Promise.resolve({ offered: false });
+  const curModel = sessionStorage.getItem(RWA.K_MODEL) || RWA.MODEL;
+  const curBackend = sessionStorage.getItem(RWA.K_BACKEND) || 'openrouter';
+  if ((!rec.model || rec.model === curModel) && (!rec.backend || rec.backend === curBackend)) return Promise.resolve({ offered: false });
+  return new Promise(resolve => {
+    const prev = document.getElementById('rwa-model-offer'); if (prev) prev.remove();
+    const overlay = document.createElement('div'); overlay.id = 'rwa-model-offer';
+    overlay.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;';
+    const card = document.createElement('div');
+    card.style.cssText = 'background:#fff;max-width:480px;width:92%;border-radius:18px;padding:24px 26px;font:14px/1.5 var(--font-ui,system-ui);box-shadow:0 12px 48px rgba(0,0,0,.28);';
+    const what = [rec.model ? 'model <code>' + _skEsc(rec.model) + '</code>' : '', rec.backend ? 'backend <code>' + _skEsc(rec.backend) + '</code>' : ''].filter(Boolean).join(' on ');
+    card.innerHTML =
+      '<h2 style="margin:0 0 .4em;font-size:1.15rem">Use this intelligence’s recommended ' + (rec.model ? 'model' : 'backend') + '?</h2>' +
+      '<p style="margin:.2em 0;color:#444">The <strong>' + _skEsc(role) + '</strong> role suggests ' + what + ' for ⌘K. This is a <em>recommendation</em> (not part of the signed role) — applying it changes only your session’s model/backend selection. Your API key is untouched.</p>' +
+      '<div style="display:flex;gap:10px;margin-top:1.2em;justify-content:flex-end">' +
+        '<button data-act="keep" style="padding:9px 16px;border:1px solid #ccc;border-radius:10px;background:#fff;cursor:pointer">Keep current</button>' +
+        '<button data-act="apply" style="padding:9px 16px;border:none;border-radius:10px;background:var(--gray-900,#111);color:#fff;cursor:pointer">Use it</button>' +
+      '</div>';
+    overlay.appendChild(card); document.body.appendChild(overlay);
+    const close = (choice) => { overlay.remove(); resolve(choice); };
+    card.querySelector('[data-act=keep]').onclick = () => close({ offered: true, applied: null });
+    card.querySelector('[data-act=apply]').onclick = () => close({ offered: true, applied: applyRecommendation(rec) });
+  });
+}
+// Activate a role AND offer its recommended model — the "on activation" entry the UI calls.
+function runtimeActivateAgent(role) { runtimeSetActiveAgent(role); return offerRecommendedModel(role); }
+window.__rwaGetRecommendation = getRecommendation;
+window.__rwaApplyRecommendation = applyRecommendation;
+window.__rwaOfferRecommendedModel = offerRecommendedModel;
+window.__rwaActivateAgent = runtimeActivateAgent;
+
 // §4/§5a — does a network: host pattern admit a host? Mirror of cli/src/skill-manifest.mjs
 // matchNetworkOrigin (keep in step). The bridge's per-call origin check.
 function _skMatchNetworkOrigin(pattern, host) {
@@ -9632,7 +9708,7 @@ document.addEventListener('keydown', e => {
       discoverSkills: runtimeDiscoverSkills, // v0.9 §11 (I6) — GET the marketplace index (opt-in network)
       fetchSkillFromIndex: runtimeFetchSkillFromIndex, // v0.9 §11 (I6) — fetch + client-side-verify an indexed skill
       vault: { get: runtimeVaultGet, set: runtimeVaultSet, has: runtimeVaultHas, namespaces: runtimeVaultNamespaces, unlock: runtimeVaultUnlock, lock: runtimeVaultLock, isLocked: runtimeVaultIsLocked, export: runtimeVaultExport, import: runtimeVaultImport }, // v0.8 §6 + v0.9 §14 (I13) portable export/import
-      agents: { list: runtimeListAgents, active: runtimeAgentActive, setActive: runtimeSetActiveAgent, install: runtimeInstallAgent, uninstall: runtimeUninstallAgent, message: runtimeAgentMessage, showInstallDialog: showAgentInstallDialog }, // v0.9 §12 — multi-agent roles
+      agents: { list: runtimeListAgents, active: runtimeAgentActive, setActive: runtimeSetActiveAgent, activate: runtimeActivateAgent, install: runtimeInstallAgent, uninstall: runtimeUninstallAgent, message: runtimeAgentMessage, showInstallDialog: showAgentInstallDialog, offerModel: offerRecommendedModel }, // v0.9 §12 — multi-agent roles; `activate` = setActive + offer recommended model (intelligence/0.2 I-A)
       hookLog: runtimeHookLog, // v0.9 §9 — the hook audit trail (rwa_hook_log)
     };
     // `status` is a getter so each read returns a fresh snapshot of

@@ -7,7 +7,8 @@ Reference artifact for [`docs/specs/rwa-intelligence-spec.md`](../../docs/specs/
 `concise-editor.html` is a **real `skill-host` rewritable** that *carries* one signed `rwa-agent/1` intelligence — a role tuned to tighten prose. It demonstrates every claim in the spec on the built substrate:
 
 - The signed record lives in the file's **frozen `#rwa-agents` zone** (`<script type="application/rwa-agent+json">…base64…</script>`), written in the exact format the runtime's `buildAgentZone`/`parseAgentZone` expect.
-- The document body is a **self-describing card**: what the intelligence does, the role, the *recommended* model (a recommendation only — the model never travels in a file), the author-key fingerprint, and the affinity note.
+- The document body is a **self-describing card**: what the intelligence does, the role, the *recommended* model, the author-key fingerprint, and the affinity note.
+- It carries a structured **`recommended_model` / `recommended_backend`** on the envelope (intelligence/0.2 **I-A**). On activation (Activity panel → *Intelligences* → Activate) the runtime offers to apply it to your session behind a one-line consent — never auto-applied, only `rwa_model`/`rwa_backend`, never a base-URL or the API key. The field rides *outside* the signed `agent`, so it was added without re-signing (the signature still verifies).
 - It is **itself a skill-host**, so the role is already installed on it — open the file, activate `concise-editor` from the Skills panel, and ⌘K runs through the role's framing. That is the same overlay a *target* file would get after install.
 
 ## It is genuinely signed and verifies live
