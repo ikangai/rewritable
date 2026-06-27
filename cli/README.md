@@ -261,6 +261,19 @@ rwa host notes.html --url https://host.example --json   # {"id":"…","token":"�
 
 This command is **network-bearing** (like `rwa clone` / `rwa publish-site`), so the offline-first rule does not apply to it.
 
+### `rwa intelligence new <role>`
+
+Mint a **droppable intelligence** — a signed `rwa-agent/1` role packaged as a *carrier* rewritable you can drop onto another rewritable to retune its ⌘K editor (intelligence/0.2). It generates a fresh Ed25519 keypair, signs the role, and scaffolds a self-describing `skill-host` carrier. The **private key** is written to a sibling `<name>.key.json`, kept out of the carrier — keep it to publish updates under the same author identity.
+
+```
+rwa intelligence new concise \
+  --prompt "Tighten prose: shorter sentences, fewer hedges, meaning preserved." \
+  --model anthropic/claude-sonnet-4-6 --backend openrouter \
+  --affinity document,presentation
+```
+
+Flags: `--prompt` (required — the role's system prompt), `--description`, `--model` / `--backend` (a *recommended* model offered on activation behind consent — never auto-applied, never carries your key), `--affinity` (comma-separated document kinds; advisory — a mismatch only warns), `--vault` (comma-separated namespaces the role may reach), `--out <path>`, `--force`. Offline; the carrier holds only the public key + signature.
+
 ### `rwa skin <path> <name>`
 
 Pick a **named look** for a rewritable instead of hand-styling it from the blank lens. A skin is one self-contained `<style data-rwa-skin="NAME">` block — system fonts only, no web fonts or remote assets — that the command splices into the **document body**. So it commits with the document, ships inside the exported `.html`, survives sharing, and one in-browser undo (`⌘Z`) reverts it. Five presets ship today: `notion-clean`, `linear-dark`, `editorial-serif`, `stripe-docs`, `terminal-mono` (clean · dark · editorial · docs · terminal).

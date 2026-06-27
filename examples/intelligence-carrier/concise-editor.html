@@ -2346,7 +2346,8 @@ async function renderActionsModePanel(panel) {
     const isActive = a.role === activeRole;
     const isAdvisor = advisorSet.indexOf(a.role) >= 0;
     const state = isActive ? 'primary' : (isAdvisor ? 'advisor' : '');
-    const meta = (a.verified ? 'verified' : 'unverified') + (state ? ' · ' + state : '');
+    const aff = (a.affinity && a.affinity.length) ? ' · for ' + a.affinity.join('/') : '';
+    const meta = (a.verified ? 'verified' : 'unverified') + (state ? ' · ' + state : '') + aff;
     let btns = '';
     if (a.verified) {
       const r = escRuntimeHtml(a.role);
@@ -2389,14 +2390,16 @@ async function renderActionsModePanel(panel) {
     btn.addEventListener('click', () => runtimeSetMode('skills'));
   });
   panel.querySelectorAll('[data-agent-on]').forEach(btn => btn.addEventListener('click', () => {
-    try { runtimeActivateAgent(btn.getAttribute('data-agent-on')); } // setActive + offer recommended model
+    const role = btn.getAttribute('data-agent-on');
+    try { runtimeActivateAgent(role); const aw = affinityWarning(role); if (aw && typeof setStatus === 'function') setStatus('', aw); } // setActive + offer model; advisory affinity warn (I-D)
     catch (e) { if (typeof setStatus === 'function') setStatus('err', '✗ ' + (e && (e.code || e.message))); }
     renderActionsModePanel(panel);
   }));
   const agentOff = panel.querySelector('[data-agent-off]');
   if (agentOff) agentOff.addEventListener('click', () => { runtimeSetActiveAgent(null); renderActionsModePanel(panel); });
   panel.querySelectorAll('[data-agent-advon]').forEach(btn => btn.addEventListener('click', () => {
-    try { runtimeAddAdvisor(btn.getAttribute('data-agent-advon')); } // I-E: layer an advisory lens
+    const role = btn.getAttribute('data-agent-advon');
+    try { runtimeAddAdvisor(role); const aw = affinityWarning(role); if (aw && typeof setStatus === 'function') setStatus('', aw); } // I-E: layer an advisory lens; I-D affinity warn
     catch (e) { if (typeof setStatus === 'function') setStatus('err', '✗ ' + (e && (e.code || e.message))); }
     renderActionsModePanel(panel);
   }));
@@ -7858,7 +7861,7 @@ function _agAgentsRegion() {
   };
 }
 function runtimeListAgents() {
-  return Array.from(installedAgents.values()).map(a => ({ role: a.role, author_pubkey: a.manifest && a.manifest.author_pubkey, verified: a.verified }));
+  return Array.from(installedAgents.values()).map(a => ({ role: a.role, author_pubkey: a.manifest && a.manifest.author_pubkey, verified: a.verified, affinity: getAffinity(a.envelope) }));
 }
 function runtimeAgentActive() {
   if (!activeAgentRole) return null;
@@ -8180,6 +8183,24 @@ function getRecommendation(envelope) {
   if (typeof e.recommended_backend === 'string' && REC_BACKENDS.includes(e.recommended_backend.trim())) out.backend = e.recommended_backend.trim();
   return (out.model || out.backend) ? out : null;
 }
+// I-D (intelligence/0.2 §6) — advisory kind-affinity. A role may declare an UNSIGNED `affinity`
+// envelope field (the document kinds it is tuned for). Activating/advising it on a mismatched
+// PRODUCT_KIND only WARNS — never blocks (spec §4: affinity is a soft note). Advisory by design.
+function getAffinity(envelope) {
+  const a = envelope && envelope.affinity;
+  if (Array.isArray(a)) return a.filter(x => typeof x === 'string' && x);
+  if (typeof a === 'string' && a) return [a];
+  return [];
+}
+function affinityWarning(role) {
+  const rec = Array.from(installedAgents.values()).find(x => x.role === role);
+  if (!rec) return null;
+  const aff = getAffinity(rec.envelope);
+  if (!aff.length || aff.indexOf(PRODUCT_KIND) >= 0) return null;
+  return '⚠ “' + role + '” is tuned for ' + aff.join('/') + ' documents, but this is a ' + PRODUCT_KIND + ' — applied anyway.';
+}
+window.__rwaGetAffinity = getAffinity;
+window.__rwaAffinityWarning = affinityWarning;
 function applyRecommendation(rec) {
   const r = rec || {};
   const applied = {};

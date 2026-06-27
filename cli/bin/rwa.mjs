@@ -728,6 +728,36 @@ function detectProductKind(fileText) {
     // `rwa skill publish <file.rwa-skill.json> [--url base] [--json]` — publish a SIGNED skill
     // envelope to the marketplace index (POST /skills/publish, I6 §11). The envelope is already
     // signed (no key needed). Online by design; exit 4 labeled `publish_error` (like `publish`).
+    // `rwa intelligence new <role> --prompt "..." [--description ..] [--model id] [--backend name]
+    //  [--affinity kind,kind] [--vault ns,ns] [--out file] [--force]` — I-C (intelligence/0.2 §6):
+    // mint a signed rwa-agent/1 role and scaffold a carrier rewritable (private key → sibling file).
+    if (verb === 'intelligence') {
+      const sub = rest[0];
+      if (sub !== 'new') {
+        process.stderr.write("rwa intelligence: unknown subcommand '" + (sub || '') + "' (try: rwa intelligence new <role> --prompt \"...\")\n");
+        process.exitCode = 1;
+        return;
+      }
+      const subRest = rest.slice(1);
+      const valFlags = ['--prompt', '--description', '--model', '--backend', '--affinity', '--vault', '--out'];
+      const role = subRest.find((a, i) => !a.startsWith('-') && !valFlags.includes(subRest[i - 1]));
+      const g = (n) => getFlag(n, subRest).value;
+      const list = (n) => { const v = g(n); return v ? v.split(',').map(s => s.trim()).filter(Boolean) : []; };
+      try {
+        const { intelligenceNewCmd } = await import('../src/intelligence.mjs');
+        await intelligenceNewCmd({
+          role, prompt: g('--prompt'), description: g('--description'),
+          model: g('--model'), backend: g('--backend'),
+          affinity: list('--affinity'), vault: list('--vault'),
+          outPath: g('--out'), force: subRest.includes('--force') || subRest.includes('-f'),
+        });
+      } catch (e) {
+        process.stderr.write('rwa intelligence: ' + ((e && e.message) || e) + '\n');
+        process.exitCode = (e && e.exitCode) || 1;
+      }
+      return;
+    }
+
     if (verb === 'skill') {
       const sub = rest[0];
       const subRest = rest.slice(1);
