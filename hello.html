@@ -8056,12 +8056,16 @@ async function _readDroppedText(file) {
 }
 // Drop gesture — capture phase, so a carrier is claimed before the Edit-mode image-mount drop.
 // Acts only on an .html/.htm file; any other drop flows through untouched to existing handlers.
+// A carrier is a self-contained .html (seed + doc, ~0.6 MB; larger with embedded images); cap the
+// read so a wildly oversized drop can't be slurped into memory (mirrors the image-ingest size cap).
+const CARRIER_MAX_BYTES = 32 * 1024 * 1024;
 async function handleCarrierDrop(e) {
   const files = Array.from((e && e.dataTransfer && e.dataTransfer.files) || []);
   const carrier = files.find(f => /text\/html/i.test(f.type || '') || /\.html?$/i.test(f.name || ''));
   if (!carrier) return; // not a carrier — let the image/other drop handlers run
   if (e.preventDefault) e.preventDefault();
   if (e.stopPropagation) e.stopPropagation();
+  if (carrier.size > CARRIER_MAX_BYTES) { if (typeof setStatus === 'function') setStatus('err', 'that file is too large to be an intelligence carrier (' + Math.round(carrier.size / 1048576) + ' MB)'); return; }
   try { await routeInstallFromText(await _readDroppedText(carrier)); }
   catch (_) { if (typeof setStatus === 'function') setStatus('err', 'could not read the dropped file'); }
 }

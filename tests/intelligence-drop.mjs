@@ -102,5 +102,22 @@ console.log('== intelligence/0.2 file-drop bridge ==');
   check('D4: consenting installs the intelligence (verified)', !!a && a.verified === true);
 }
 
+// E — a wildly oversized "carrier" is refused before it is read (mirrors the image-ingest
+// size cap). Self-inflicted DoS guard: a huge dropped .html must not be slurped into memory.
+{
+  const w = await boot(article);
+  const huge = { type: 'text/html', name: 'huge.html', size: 64 * 1024 * 1024, text: async () => carrierHtml };
+  const ev = { dataTransfer: { files: [huge], items: [{ kind: 'file' }], types: ['Files'] }, preventDefault() {}, stopPropagation() {} };
+  await w.__rwaHandleCarrierDrop(ev);
+  await new Promise(r => setTimeout(r, 80));
+  check('E1: an oversized carrier is refused (no install dialog opens)', !w.document.getElementById('rwa-agent-install'));
+  check('E2: a normal-size carrier still opens the dialog (cap does not over-block)', await (async () => {
+    const file = new w.File([carrierHtml], 'ok.html', { type: 'text/html' });
+    await w.__rwaHandleCarrierDrop({ dataTransfer: { files: [file], items: [{ kind: 'file' }], types: ['Files'] }, preventDefault() {}, stopPropagation() {} });
+    await new Promise(r => setTimeout(r, 120));
+    return !!w.document.getElementById('rwa-agent-install');
+  })());
+}
+
 console.log(`\n== ${pass} pass, ${fail} fail ==`);
 process.exit(fail ? 1 : 0);

@@ -22,7 +22,7 @@ Verified end-to-end (10/10) at generation time:
 
 ## Dropping it onto a target (the bridge is built)
 
-The literal **drag-this-carrier-onto-that-file** gesture is now implemented (intelligence/0.2 §5): the target's runtime claims a dropped `.html`, un-escapes its `INLINE_DOC`, extracts the signed `rwa-agent/1` record from the `#rwa-agents` zone, and routes it to the agent-install **consent dialog** — install stays behind that dialog (the trust anchor). Seed functions: `extractAgentEnvelopesFromCarrier` / `classifyInstallText` / `routeInstallFromText` / `handleCarrierDrop` (a capture-phase window drop), plus the install picker generalized to accept carriers. Pinned by `tests/intelligence-drop.mjs` (13/13: extract → classify → install-verified → full drop-to-dialog-to-install, dropping *this* carrier). You can also still hand the record to the dialog directly or publish it to the skill index.
+The literal **drag-this-carrier-onto-that-file** gesture is now implemented (intelligence/0.2 §5): the target's runtime claims a dropped `.html`, un-escapes its `INLINE_DOC`, extracts the signed `rwa-agent/1` record from the `#rwa-agents` zone, and routes it to the agent-install **consent dialog** — install stays behind that dialog (the trust anchor). Seed functions: `extractAgentEnvelopesFromCarrier` / `classifyInstallText` / `routeInstallFromText` / `handleCarrierDrop` (a capture-phase window drop, size-capped at 32 MB), plus the install picker generalized to accept carriers. Pinned by `tests/intelligence-drop.mjs` (13/13: extract → classify → install-verified → full drop-to-dialog-to-install, dropping *this* carrier). You can also still hand the record to the dialog directly or publish it to the skill index.
 
 ## Maintenance
 
