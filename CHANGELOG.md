@@ -2,6 +2,16 @@
 
 Notable changes to `re-write-able`. The container format is versioned in `re-write-able-spec.md`; the edit protocol in `rwa-edit-spec.md`; the structural-transform DSL in `rwa-edit-dsl-spec.md`. The CLI follows semver in `cli/package.json`.
 
+## 2026-06-27 — intelligence/0.2 I-E: blended overlays (cli 0.14.0)
+
+You can now stack more than one intelligence at once. The single active role stays the **primary** (it drives the ⌘K framing, the actor, and the vault scope — unchanged); additional **advisor** roles layer their instructions as a clearly-subordinate "advisory lenses (secondary)" block in the agent's system prompt — so edits can be, say, both concise *and* legally-toned.
+
+- **Safe by construction (merge model: primary + advisory).** Advisors contribute prose only — never capabilities. The vault gate reads the *active* role's record, never advisors, so stacking a role can't widen credential access. Advisors are verified-only (their prompt drives the agent), capped at 3, and ephemeral (never serialized into the file). With no advisors, the assembled prompt is byte-identical to the single-role case.
+- **UI:** the Activity panel's *Intelligences* section gains per-role *Add advisor* / *Remove advisor* alongside Activate/Deactivate (the cap disables *Add* at 3).
+- New seed surface: `runtime.agents.{addAdvisor, removeAdvisor, advisors}`; `_agAdvisorBlock` appended in `resolveSystemPrompt`.
+
+Merge models "ordered composition" and "sequential pipeline" were considered and rejected (escalation risk / latency). Pinned by `tests/intelligence-blend.mjs` (19/0); regression green (agents 31, mode 18, model-rec 22, drop 15). Seed-only — shipped via the bundled seed (`rwa new` / `import`); no CLI source change. Design: `docs/plans/2026-06-27-intelligence-blended-overlays-design.md`. With I-E built, the spec §6 forward set is now just I-B…I-D. *Deferred nicety:* recording the advisor set in the commit `lensMeta` for audit.
+
 ## 2026-06-27 — intelligence/0.2 I-A: recommend a model on activation (cli 0.13.0)
 
 A drop-in intelligence (the carrier shipped in 0.12.0) can now carry a **recommended model**, and the runtime **offers to apply it on activation** behind a one-line consent.
