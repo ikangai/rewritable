@@ -2,6 +2,15 @@
 
 Notable changes to `re-write-able`. The container format is versioned in `re-write-able-spec.md`; the edit protocol in `rwa-edit-spec.md`; the structural-transform DSL in `rwa-edit-dsl-spec.md`. The CLI follows semver in `cli/package.json`.
 
+## 2026-06-27 — intelligence/0.2: the drop-in intelligence bridge (cli 0.12.0)
+
+A **droppable intelligence** for rewritables: drag a *carrier* (a `.html` rewritable that carries a signed `rwa-agent/1` role in its frozen `#rwa-agents` zone) onto a target, and the runtime extracts the record, verifies the signature, and routes it to the agent-install consent dialog. The overlay half — an agent *role* that reframes the `⌘K` editor's system prompt and scopes vault access — was already built (v0.9 §12); this is the file-drop bridge that makes it *droppable* (`docs/specs/rwa-intelligence-spec.md` §5).
+
+- **Seed.** `extractAgentEnvelopesFromCarrier` un-escapes the carrier's `INLINE_DOC` and parses its `#rwa-agents` zone exactly as the boot-time trust reader does; `classifyInstallText` / `routeInstallFromText` dispatch a carrier `.html` vs a bare skill/agent envelope; a capture-phase window `drop` claims a dropped carrier (size-capped at 32 MB) before the Edit-mode image drop; the install picker is generalized to accept carriers. **Install stays behind the consent dialog** (the trust anchor) and only for a verified, gate-passing record; activation is separate and never automatic; carriers route only to agents (no skill-code smuggling); the prompt-injection guard is unchanged.
+- **Spec + worked example.** `docs/specs/rwa-intelligence-spec.md` re-grounds the design on the built substrate (core v0.15, rwa-edit/1, actions v0.9, self-description) and supersedes the v0.7-citing `intelligence/0.1` draft; `examples/intelligence-carrier/concise-editor.html` is a real signed carrier (jsdom-boot-proven), wired into `tools/regenerate-refs.mjs` as a skill-host reference.
+
+Pinned by `tests/intelligence-drop.mjs` (15/0); regression green (image-assets 92, lens 262, agents 31, skill-install 83, inline-edit 152, mode 18, view 23, chrome 29). Seed-only feature — the npm package ships it because `rwa new` / `import` bundle the seed; no CLI source change. Forward (per the spec §6): the structured model-recommendation channel (I-A) and the §6 design items.
+
 ## 2026-06-24 — PDF import: geometry-faithful reconstruction (cli 0.11.0)
 
 `rwa import <file>.pdf` and the browser `/import` page now **reproduce the PDF's layout** instead of flattening it to prose. The previous converter ran pdf.js text extraction and emitted a flat stack of `<p>` paragraphs — so an imported invoice, form, or statement lost every column, table, alignment, and rule and looked nothing like the source.
