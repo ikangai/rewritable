@@ -2,6 +2,15 @@
 
 Notable changes to `re-write-able`. The container format is versioned in `re-write-able-spec.md`; the edit protocol in `rwa-edit-spec.md`; the structural-transform DSL in `rwa-edit-dsl-spec.md`. The CLI follows semver in `cli/package.json`.
 
+## 2026-06-27 — intelligence/0.2 I-C + I-D: authoring scaffold & kind-affinity (cli 0.15.0)
+
+Two more §6 items, effectively closing intelligence/0.2's backlog (only I-B remains, and it is recommended *against* — carrying base-URL config reintroduces a key-redirection vector).
+
+- **I-C — `rwa intelligence new <role>`.** Mint a droppable intelligence from the command line: it generates an Ed25519 keypair, signs an `rwa-agent/1` role, and scaffolds a *carrier* rewritable (a `skill-host` holding the record + a self-describing card). The **private key** is written to a sibling `.key.json`, kept out of the carrier — needed to publish updates under the same author identity. Flags: `--prompt` (required), `--description`, `--model` / `--backend` (a *recommended* model, offered on activation behind consent), `--affinity`, `--vault`, `--out`, `--force`. Reuses the agent canon — **no** `intelligence/1` wire-type fork, **no** new `PRODUCT_KIND`; first-class at the authoring/identity level, not a second registry.
+- **I-D — advisory kind-affinity.** A role may declare which document kinds it suits (an unsigned `affinity` field); activating or advising it on a mismatched `PRODUCT_KIND` shows a **non-blocking warning** and the Activity panel surfaces the affinity. Advisory by design — it never refuses to activate (a hard gate was rejected: it would lock you out of your own document).
+
+Pinned by `cli/tests/intelligence.test.mjs` and `tests/intelligence-affinity.mjs`; cli 491/491; seed regression green (blend 19, agents 31, mode 18, model-rec 22, drop 15). Spec: `docs/specs/rwa-intelligence-spec.md` §6. With I-A/I-C/I-D/I-E all built, §6 is effectively closed.
+
 ## 2026-06-27 — intelligence/0.2 I-E: blended overlays (cli 0.14.0)
 
 You can now stack more than one intelligence at once. The single active role stays the **primary** (it drives the ⌘K framing, the actor, and the vault scope — unchanged); additional **advisor** roles layer their instructions as a clearly-subordinate "advisory lenses (secondary)" block in the agent's system prompt — so edits can be, say, both concise *and* legally-toned.
