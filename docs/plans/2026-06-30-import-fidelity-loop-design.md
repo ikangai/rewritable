@@ -50,7 +50,9 @@ Rasterize the **original** (pdf.js `page.render()` → canvas → PNG) and the *
 
 ## Pipeline
 
-CLI: `convert()` → structural score → if `< threshold` **and** a model is reachable: re-import via `--vision`, re-score, **keep the better** rung. `--json` emits `{ rung, structural, visual?, escalated, warnings }`. New module `cli/src/import-fidelity.mjs` (measure + escalate orchestration), invoked by `importCmd` after `convert`. The browser-side check extends `service/public/import.html` (and could surface a "fidelity: 82% — N issues" badge on import).
+CLI: `convert()` → structural score → if `< threshold` **and** a model is reachable: re-import via `--vision` and **keep the escalated (higher) rung** (we don't re-score the model result with the same text-only metric — its blind spot is exactly why we escalated); a failed escalation falls back to the deterministic import, loud. New module `cli/src/import-fidelity.mjs` (measure + escalate orchestration), invoked by `importCmd` after `convert`. The browser-side check extends `service/public/import.html`.
+
+> **As built (not the original sketch):** the offline score is `min(coverage, garble)` only — `density` is computed but not scored (char-count alone false-positives on short docs) and not yet surfaced. There is **no `--json` fidelity output** in `importCmd` today (an earlier draft of this doc claimed one); escalation is reported on stderr. A structured `--json` surface (and surfacing `density`) is future work — until then `density` is dead and should either be wired up or removed (Rule 2).
 
 ## Scope
 

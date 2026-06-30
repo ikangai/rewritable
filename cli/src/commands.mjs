@@ -272,13 +272,18 @@ export async function importCmd({ inputPath, outPath, force, open, vision, claud
     // import stays offline and warns). `--no-escalate` opts out. Design: docs/plans/2026-06-30-…
     if (ext === 'pdf' && conv.fidelityInput && escalate !== false) {
       const { measureAndEscalate } = await import('./import-fidelity.mjs');
+      // Resolve the OpenRouter key ONCE so the reachability probe and the actual escalation target
+      // agree (both honor RWA_OPENROUTER_KEY, the project-preferred var, AND OPENROUTER_API_KEY).
+      // convertPdfViaVision otherwise only reads OPENROUTER_API_KEY, so a probe that said "reachable"
+      // on RWA_OPENROUTER_KEY alone would escalate into a guaranteed "key required" throw.
+      const orKey = process.env.RWA_OPENROUTER_KEY || process.env.OPENROUTER_API_KEY;
       const r = await measureAndEscalate(
         { structuralInput: conv.fidelityInput, importResult: conv },
         {
           threshold: targetFidelity,
           escalate: escalate !== false,
-          modelReachable: () => !!(process.env.RWA_OPENROUTER_KEY || process.env.OPENROUTER_API_KEY),
-          visionImport: async () => { console.error('note: import fidelity low — escalating to --vision (openrouter)…'); return convertPdfViaVision(contents, { model }); },
+          modelReachable: () => !!orKey,
+          visionImport: async () => { console.error('note: import fidelity low — escalating to --vision (openrouter)…'); return convertPdfViaVision(contents, { model, apiKey: orKey }); },
         },
       );
       if (r.note) console.error('note: ' + r.note);

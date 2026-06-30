@@ -10,8 +10,15 @@
 //               quality — a PDF with broken font encoding extracts to garbage; the geometry import
 //               is then unfaithful and should escalate to --vision, which reads the rendered glyphs).
 // The graphics/visual signal ("this page is a chart/scan the text import can't reproduce") needs a
-// renderer; it is the browser-side VISUAL JUDGE, a later increment. `density` is reported for
-// visibility but deliberately NOT scored here (char-count alone false-positives on short docs).
+// renderer; it is the browser-side VISUAL JUDGE, a later increment. `density` is returned for
+// callers/future use but deliberately NOT scored here (char-count alone false-positives on short
+// docs) and is not yet surfaced in CLI output.
+//
+// Sensitivity, stated honestly: this is a FLOOR, biased to never over-escalate a good import.
+// coverage uses substring `includes`, so reordered/duplicated text scores ~1.0; garble only counts
+// U+FFFD + control chars, so wrong-encoding glyphs that aren't U+FFFD score ~1.0. The offline
+// trigger therefore reliably fires only on DROPPED text or replacement-char garble — visual/glyph
+// faithfulness is the VLM judge's job, not this metric's.
 
 const DEFAULT_THRESHOLD = 0.85;
 const MIN_CHARS_PER_PAGE = 200; // informational density floor only (not part of the score in inc. 1)

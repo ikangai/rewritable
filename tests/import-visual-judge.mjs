@@ -56,5 +56,22 @@ check('dragging the slider clips the original layer', /inset\(0 80% 0 0\)/.test(
 panel.querySelectorAll('.fid-page')[0].onclick();
 check('clicking a page chip switches the active page (chip marked on)', panel.querySelectorAll('.fid-page')[0].classList.contains('on'));
 
+// --- M1: the consent gate — confirm=false must NOT touch the network ---
+// The VLM judge is the only network path on the import page; "decline consent → no call" is the
+// property that makes it safe. Give rasterizeOriginal a stub pdfjs so the original canvas exists
+// (orig truthy), so the handler reaches the consent check; with confirm=false it must return BEFORE
+// getJudgeKey / rasterizeImport / fetch.
+win.pdfjs = { getDocument: () => ({ promise: Promise.resolve({ numPages: 1, getPage: () => Promise.resolve({ getViewport: () => ({ width: 50, height: 50 }), render: () => ({ promise: Promise.resolve() }) }), destroy: () => Promise.resolve() }) }) };
+let fetchCalled = false, promptCalled = false;
+win.fetch = () => { fetchCalled = true; return Promise.resolve({ ok: true, json: async () => ({}) }); };
+win.prompt = () => { promptCalled = true; return 'sk-should-not-be-asked'; };
+win.confirm = () => false;
+const panel2 = doc.createElement('div'); doc.body.appendChild(panel2);
+await api.buildFidelityCompare(panel2, { file: fakeFile, fidelityInput });
+check('stubbed pdfjs makes the original canvas available (judge is reachable)', win.__fidProbe.originalsRendered === 1);
+const jbtn = panel2.querySelector('.fid-judge');
+await jbtn.onclick();
+check('CONSENT GATE: confirm=false → no network call and no key prompt (judge aborted)', fetchCalled === false && promptCalled === false);
+
 console.log(`\n== ${pass} pass, ${fail} fail ==`);
 process.exit(fail ? 1 : 0);

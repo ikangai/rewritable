@@ -1259,7 +1259,7 @@ function detectProductKind(fileText) {
       process.exitCode = 2;
       return;
     }
-    const positional = rest.filter((a, i) => !a.startsWith('-') && rest[i - 1] !== '--model' && rest[i - 1] !== '--timeout' && rest[i - 1] !== '--kind' && rest[i - 1] !== '--skin');
+    const positional = rest.filter((a, i) => !a.startsWith('-') && rest[i - 1] !== '--model' && rest[i - 1] !== '--timeout' && rest[i - 1] !== '--kind' && rest[i - 1] !== '--skin' && rest[i - 1] !== '--target-fidelity');
     if (verb === 'new') {
       // `rwa new --kind <starter>` selects a built-in starter. Otherwise a bare-word
       // first positional is a TEMPLATE name (clone a data-rwa-template-labeled file

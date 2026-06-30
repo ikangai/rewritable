@@ -703,8 +703,12 @@ async function judgePage(origDataUrl, importDataUrl, opts) {
   const content = data && data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content;
   return parseJudge(content || '');
 }
-// Rasterize the IMPORT page (a .rwa-pdf-page of positioned text + rules — no external resources, so
-// the canvas stays untainted) to a PNG data URL via SVG foreignObject. Browser-only.
+// Rasterize the IMPORT page to a PNG data URL via SVG foreignObject. Browser-only.
+// INVARIANT: this stays untainted (so toDataURL won't throw) only because the geometry PDF import
+// emits NO <img>/external resources — renderPdfPage produces positioned spans + colored divs. If
+// data-URI images ever land in the import path, the draw can taint and this throws (caught upstream
+// → "judge failed"). Also engine-dependent: foreignObject→canvas taints in Firefox, so the visual
+// judge is effectively Chromium-only; it degrades gracefully elsewhere.
 async function rasterizeImport(pageEl) {
   const w = Math.max(1, Math.ceil(pageEl.offsetWidth || parseFloat(pageEl.style.width) || 612));
   const h = Math.max(1, Math.ceil(pageEl.offsetHeight || parseFloat(pageEl.style.height) || 792));
