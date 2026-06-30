@@ -2,6 +2,54 @@
 
 All notable changes to the `rewritable` CLI (`rwa`).
 
+## [0.16.0] - 2026-06-30
+
+### Added
+- **Import fidelity loop for PDFs.** After `rwa import <file>.pdf`, an OFFLINE
+  structural check (source-text coverage + extraction garble) scores the
+  deterministic geometry import; on a low score it AUTO-ESCALATES to `--vision` —
+  but only when a model is reachable (`RWA_OPENROUTER_KEY` / `OPENROUTER_API_KEY`).
+  Offline-first is preserved: a keyless low-fidelity import stays offline, succeeds,
+  and warns (suggesting `--vision`/`--claude`). Multipage docs are scored per page
+  and escalation triggers on the WORST page (not the average); a failed escalation
+  falls back to the deterministic import, loud. New flags: `--no-escalate`,
+  `--target-fidelity <0..1>` (default 0.85). The deterministic geometry import is
+  unchanged — the loop only measures and, when authorized, escalates.
+
+## [0.15.0] - 2026-06-30
+
+### Added
+- **`rwa intelligence new <role> --prompt <text>`** — mints a signed `rwa-agent/1`
+  role and scaffolds a droppable "intelligence" carrier (a skill-host rewritable),
+  writing the Ed25519 private key to a sibling `.key.json`. (intelligence/0.2 I-C)
+
+### Changed
+- Bundled seed: intelligence/0.2 I-D — an advisory kind-affinity that WARNS (never
+  blocks) when an intelligence is activated/advised on a mismatched product kind.
+
+### Fixed
+- The scaffolded private-key file is written mode `0600` (was world-readable) — security review.
+
+## [0.14.0] - 2026-06-27
+
+### Changed
+- Bundled seed: intelligence/0.2 I-E (blended overlays) — stack a primary
+  intelligence plus capped, verified, prose-only advisory overlays; the vault stays primary-only.
+
+## [0.13.0] - 2026-06-27
+
+### Changed
+- Bundled seed: intelligence/0.2 I-A — a dropped intelligence carrier can apply its
+  recommended model on activation, behind a one-line consent (model is
+  `sessionStorage`-only; never a base URL or key).
+
+## [0.12.0] - 2026-06-27
+
+### Added
+- Bundled seed: intelligence/0.2 — the drop-in "intelligence" carrier plus the
+  file-drop install bridge (drop a signed carrier onto a rewritable → consent →
+  install its `rwa-agent/1` role).
+
 ## [0.11.0] - 2026-06-24
 
 ### Changed
