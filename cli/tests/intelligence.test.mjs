@@ -3,7 +3,7 @@
 // private key goes to a sibling file and is NEVER in the carrier.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { intelligenceNewCmd } from '../src/intelligence.mjs';
@@ -53,6 +53,13 @@ test('minimal carrier (no model/affinity/vault) still verifies', async () => {
   assert.equal(env.affinity, undefined);
   assert.deepEqual(env.agent.vault_namespace_set, []);
   assert.ok(verifyAgentEnvelope(env).verified);
+});
+
+test('the private-key file is written owner-only (0600)', async () => {
+  const out = join(tmp(), 'perm.intelligence.html');
+  const r = await intelligenceNewCmd({ role: 'perm', prompt: 'Do it.', outPath: out });
+  const mode = statSync(r.keyOut).mode & 0o777;
+  assert.equal(mode, 0o600, 'the private-key file must be rw------- (owner only); got ' + mode.toString(8));
 });
 
 test('validation: missing prompt / bad role / injection / bad backend → exit 2', async () => {

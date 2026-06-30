@@ -52,11 +52,13 @@ export async function intelligenceNewCmd(opts = {}) {
   // The private key — needed to re-sign updates under the same author identity. Sibling file, loud.
   const fingerprint = Buffer.from(await webcrypto.subtle.digest('SHA-256', Buffer.from(author_pubkey, 'base64'))).toString('hex').slice(0, 16);
   const keyOut = out.replace(/\.html?$/i, '') + '.key.json';
+  // 0600: the file holds the PRIVATE key — owner read/write only, never world-readable.
   await fs.writeFile(keyOut, JSON.stringify({
     role, author_pubkey, fingerprint,
     private_key_pkcs8_b64: b64(new Uint8Array(await webcrypto.subtle.exportKey('pkcs8', kp.privateKey))),
     warning: 'SECRET. Keep this to publish updates to this intelligence under the same author identity. Never commit or share it. The carrier .html holds only the public key.',
-  }, null, 2) + '\n');
+  }, null, 2) + '\n', { mode: 0o600 });
+  try { await fs.chmod(keyOut, 0o600); } catch (_) {} // guarantee owner-only even if the file pre-existed (writeFile mode applies only on create; best-effort on non-POSIX)
 
   console.log('wrote ' + rel(out) + ' (intelligence "' + role + '")');
   console.log('author ' + fingerprint + ' — private key saved to ' + rel(keyOut) + ' (keep secret; needed to update this intelligence)');
