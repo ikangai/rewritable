@@ -8,7 +8,7 @@
 // renderer and is deferred to the browser-side visual judge (a later increment).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { structuralScore, measureAndEscalate } from '../src/import-fidelity.mjs';
+import { structuralScore, measureAndEscalate, structuralScoreByPage } from '../src/import-fidelity.mjs';
 
 const html = (t) => '<article class="rwa-pdf"><span>' + t + '</span></article>';
 const dense = 'The quarterly report shows revenue up twelve percent across all regions this year and next.';
@@ -74,6 +74,30 @@ test('measureAndEscalate: --no-escalate disables the loop even when reachable', 
   const r = await measureAndEscalate(lowInput, { escalate: false, modelReachable: () => true, visionImport: async () => { called = true; return { html: 'x' }; } });
   assert.equal(called, false);
   assert.equal(r.escalated, false);
+});
+
+test('structuralScoreByPage: per-page scores, overall mean, and the worst page', () => {
+  const r = structuralScoreByPage([
+    { sourceText: dense, html: html(dense) },
+    { sourceText: garbled, html: html(garbled) },
+  ]);
+  assert.equal(r.pages.length, 2);
+  assert.equal(r.pages[0].page, 1);
+  assert.ok(r.pages[0].score > 0.95);
+  assert.ok(r.pages[1].score < 0.85);
+  assert.equal(r.worst.page, 2);
+  assert.ok(r.overall > 0.7 && r.overall < 0.95, 'overall is the mean: ' + r.overall);
+});
+
+test('measureAndEscalate: a single low-fidelity page triggers escalation (worst-page, not the average)', async () => {
+  const input = {
+    structuralInput: { perPage: [{ sourceText: dense, html: html(dense) }, { sourceText: garbled, html: html(garbled) }] },
+    importResult: { html: html(dense) + html(garbled), warnings: [] },
+  };
+  let called = false;
+  const r = await measureAndEscalate(input, { modelReachable: () => true, visionImport: async () => { called = true; return { html: html(dense) + html(dense) }; } });
+  assert.equal(called, true, 'one bad page must trigger escalation even though the doc averages above threshold');
+  assert.equal(r.escalated, true);
 });
 
 test('measureAndEscalate: a failed escalation falls back to the deterministic import (loud)', async () => {

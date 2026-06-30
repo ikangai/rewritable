@@ -59,6 +59,29 @@ export function structuralScore({ sourceText, pages } = {}, importedHtml) {
 }
 
 /**
+ * Per-page structural fidelity for a multipage import. `perPage`: [{ sourceText, html }], where
+ * imported page i aligns 1:1 with source page i (the geometry import preserves page order). Returns
+ * { pages:[{page, score, coverage, garble, reasons}], overall (mean), worst (the lowest page) }.
+ * The per-page strip is what the browser visual judge surfaces so you jump to the bad pages.
+ */
+export function structuralScoreByPage(perPage = []) {
+  const pages = perPage.map((p, i) => ({ page: i + 1, ...structuralScore({ sourceText: p.sourceText, pages: 1 }, p.html) }));
+  const overall = pages.length ? pages.reduce((a, p) => a + p.score, 0) / pages.length : 1;
+  const worst = pages.length ? pages.reduce((w, p) => (p.score < w.score ? p : w)) : null;
+  return { pages, overall, worst };
+}
+
+// The escalate-trigger fidelity: the WORST page when per-page data is present (so one bad page in an
+// otherwise-good doc still escalates — averaging would hide it), else the whole-doc score.
+function measureStructural(structuralInput, importHtml) {
+  if (structuralInput && Array.isArray(structuralInput.perPage) && structuralInput.perPage.length) {
+    const bp = structuralScoreByPage(structuralInput.perPage);
+    return { score: bp.worst.score, coverage: bp.worst.coverage, garble: bp.worst.garble, reasons: bp.worst.reasons, overall: bp.overall, worst: bp.worst, pages: bp.pages };
+  }
+  return structuralScore(structuralInput, importHtml);
+}
+
+/**
  * Measure the geometry import; if its score is below `threshold` AND escalation is enabled AND a
  * model is reachable, re-import via the injected `visionImport` and keep the higher-rung result.
  * Offline-first: with no reachable model, never call the network — keep the deterministic import and
@@ -69,7 +92,7 @@ export function structuralScore({ sourceText, pages } = {}, importedHtml) {
 export async function measureAndEscalate({ structuralInput, importResult }, deps = {}) {
   const threshold = deps.threshold == null ? DEFAULT_THRESHOLD : deps.threshold;
   const escalate = deps.escalate !== false; // default on
-  const fidelity = structuralScore(structuralInput, importResult.html);
+  const fidelity = measureStructural(structuralInput, importResult.html);
 
   if (fidelity.score >= threshold || !escalate) {
     return { result: importResult, fidelity, escalated: false };
@@ -90,7 +113,6 @@ export async function measureAndEscalate({ structuralInput, importResult }, deps
     // — its blind spot (graphics/garbled glyphs) is exactly why we escalated; the model addresses it.
     return {
       result: vResult, escalated: true, baselineFidelity: fidelity,
-      fidelity: structuralScore(structuralInput, vResult.html),
       note: 'import fidelity ' + fidelity.score.toFixed(2) + ' — escalated to --vision',
     };
   } catch (e) {

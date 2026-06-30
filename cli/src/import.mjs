@@ -264,6 +264,7 @@ async function convertPdf(bytes) {
     throw e;
   }
   const pages = [];
+  const perPage = [];
   let totalText = 0;
   let sourceText = '';
   for (let p = 1; p <= doc.numPages; p++) {
@@ -272,6 +273,7 @@ async function convertPdf(bytes) {
     pages.push(rendered.html);
     totalText += rendered.textCount;
     sourceText += (rendered.text || '') + '\n';
+    perPage.push({ sourceText: rendered.text || '', html: rendered.html }); // for per-page fidelity
   }
   const pageCount = doc.numPages;
   await doc.destroy().catch(() => {});
@@ -284,7 +286,7 @@ async function convertPdf(bytes) {
   return {
     html: `<article class="rwa-pdf">\n${PDF_PAGE_STYLE}\n<div class="rwa-pdf-doc">\n${pages.join('\n')}\n</div>\n</article>`,
     warnings: ['pdf: imported as a geometry-faithful reconstruction (positioned text + rules) — text stays editable but is absolutely positioned'],
-    fidelityInput: { sourceText, pages: pageCount }, // for the import fidelity loop (import-fidelity.mjs)
+    fidelityInput: { sourceText, pages: pageCount, perPage }, // for the import fidelity loop (import-fidelity.mjs); perPage drives per-page/worst-page scoring
   };
 }
 
