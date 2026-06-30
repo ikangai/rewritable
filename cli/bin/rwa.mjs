@@ -1217,6 +1217,16 @@ function detectProductKind(fileText) {
     const vision = rest.includes('--vision');
     const claude = rest.includes('--claude');
     const trustInput = rest.includes('--trust-input');
+    // Import fidelity loop (PDF): measure the deterministic import + auto-escalate to --vision when
+    // low AND a model is reachable. --no-escalate opts out; --target-fidelity <0..1> sets the bar.
+    const escalate = !rest.includes('--no-escalate');
+    const tfIdx = rest.indexOf('--target-fidelity');
+    const targetFidelity = tfIdx >= 0 ? Number(rest[tfIdx + 1]) : undefined;
+    if (tfIdx >= 0 && (!Number.isFinite(targetFidelity) || targetFidelity < 0 || targetFidelity > 1)) {
+      console.error('rwa import: --target-fidelity must be a number between 0 and 1');
+      process.exitCode = 2;
+      return;
+    }
     // --model and --timeout take a value: find the index, then take the next arg.
     const modelIdx = rest.indexOf('--model');
     const model = modelIdx >= 0 ? rest[modelIdx + 1] : undefined;
@@ -1268,7 +1278,7 @@ function detectProductKind(fileText) {
         process.exitCode = 2;
         return;
       }
-      await importCmd({ inputPath: positional[0], outPath: positional[1], force, open, vision, claude, trustInput, model, timeoutSec });
+      await importCmd({ inputPath: positional[0], outPath: positional[1], force, open, vision, claude, trustInput, model, timeoutSec, escalate, targetFidelity });
     } else {
       console.error(`rwa: unknown verb "${verb}". Try --help.`);
       process.exitCode = 2;

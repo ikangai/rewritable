@@ -79,6 +79,8 @@ Embeds the input file's content as the document's initial state. Supported forma
 
 Output defaults to `<input-basename>.html` in the input's directory. Conversion is deterministic and offline — no API key, no network.
 
+**Import fidelity loop (PDF).** After a PDF import, `rwa` runs an offline **structural fidelity check** (text-coverage + extraction-quality). If it's low *and* a model is reachable (`RWA_OPENROUTER_KEY` set), it **auto-escalates** to `--vision` and keeps the higher-fidelity result — announced on stderr. **Offline-first is preserved:** with no key, a low-fidelity import stays offline, succeeds, and just warns (suggesting `--vision`/`--claude`). Controls: `--no-escalate` (disable the loop), `--target-fidelity <0..1>` (set the bar, default 0.85). *(The deterministic geometry import is unchanged; the loop only measures and, when authorized, escalates. The full picture-level visual judge is a browser-side follow-up.)*
+
 ### `rwa clone <url> [path]`
 
 Clone a public webpage into a self-contained rewritable: fetch the page, extract its main article and title, and bake the content into a fresh container. First-class for **WordPress / ikangai posts** — a blog post becomes an editable, shareable single-file `.html` you can rewrite with `⌘K`.

@@ -265,12 +265,15 @@ async function convertPdf(bytes) {
   }
   const pages = [];
   let totalText = 0;
+  let sourceText = '';
   for (let p = 1; p <= doc.numPages; p++) {
     const page = await doc.getPage(p);
     const rendered = await renderPdfPage(page, pdfjs.Util, pdfjs.OPS);
     pages.push(rendered.html);
     totalText += rendered.textCount;
+    sourceText += (rendered.text || '') + '\n';
   }
+  const pageCount = doc.numPages;
   await doc.destroy().catch(() => {});
 
   if (totalText === 0) {
@@ -281,6 +284,7 @@ async function convertPdf(bytes) {
   return {
     html: `<article class="rwa-pdf">\n${PDF_PAGE_STYLE}\n<div class="rwa-pdf-doc">\n${pages.join('\n')}\n</div>\n</article>`,
     warnings: ['pdf: imported as a geometry-faithful reconstruction (positioned text + rules) — text stays editable but is absolutely positioned'],
+    fidelityInput: { sourceText, pages: pageCount }, // for the import fidelity loop (import-fidelity.mjs)
   };
 }
 
@@ -489,5 +493,7 @@ async function renderPdfPage(page, Util, OPS) {
   }
 
   const html = `<div class="rwa-pdf-page" style="width:${pdfNum(vp.width)}px;height:${pdfNum(vp.height)}px">\n${parts.join('\n')}\n</div>`;
-  return { html, textCount };
+  // text: the raw pdf.js-extracted source text (for the import fidelity check — coverage + garble).
+  const text = tc.items.map(i => i.str || '').join(' ');
+  return { html, textCount, text };
 }

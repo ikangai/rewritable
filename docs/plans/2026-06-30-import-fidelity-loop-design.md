@@ -1,6 +1,8 @@
 # Import fidelity loop — measuring how close an import is to the original (design)
 
-Date: 2026-06-30. Status: **design, not yet implemented.** Origin: "how about a fidelity loop for the import? rwa should check the quality of the imported document — how close is it visually to the original?"
+Date: 2026-06-30. Status: **increment 1 (CLI structural check + auto-escalate) BUILT**; the browser-side visual judge is the next increment. Origin: "how about a fidelity loop for the import? rwa should check the quality of the imported document — how close is it visually to the original?"
+
+> **Increment 1 (built):** `cli/src/import-fidelity.mjs` — `structuralScore` (coverage + garble; offline) + `measureAndEscalate` (auto-escalate to `--vision` only when a model is reachable; keyless stays offline + warns; failed escalation falls back loud). Wired through `convertPdf` (`fidelityInput`) → `importCmd` → bin (`--no-escalate`, `--target-fidelity`). Pinned by `cli/tests/import-fidelity.test.mjs` (9/0); full CLI suite 501/0. Scoped to coverage + garble (false-positive-free); the density/graphics signal is deferred to the visual judge (needs a renderer). CLI-only — the conversion output is unchanged, so the import.html mirror's output-parity holds.
 
 ## Problem & existing implementation (surveyed first)
 

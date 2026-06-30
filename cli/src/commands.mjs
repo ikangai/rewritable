@@ -228,7 +228,7 @@ export async function newCmd({ outPath, force, open, kind, templateName, skin })
 
 export { KNOWN_KINDS };
 
-export async function importCmd({ inputPath, outPath, force, open, vision, claude, trustInput, model, timeoutSec }) {
+export async function importCmd({ inputPath, outPath, force, open, vision, claude, trustInput, model, timeoutSec, escalate, targetFidelity }) {
   if (vision && claude) {
     const e = new Error('--vision and --claude are mutually exclusive');
     e.exitCode = 2;
@@ -265,7 +265,26 @@ export async function importCmd({ inputPath, outPath, force, open, vision, claud
     // Buffer (not utf8 string) — docx and pdf are binary, and text formats
     // decode internally inside convert().
     const contents = await fs.readFile(input);
-    ({ html, warnings } = await convert(ext, contents));
+    const conv = await convert(ext, contents);
+    ({ html, warnings } = conv);
+    // Import fidelity loop (PDF) — measure the deterministic import; on a low structural score,
+    // auto-escalate to --vision, but ONLY when a model is reachable (offline-first: a keyless
+    // import stays offline and warns). `--no-escalate` opts out. Design: docs/plans/2026-06-30-…
+    if (ext === 'pdf' && conv.fidelityInput && escalate !== false) {
+      const { measureAndEscalate } = await import('./import-fidelity.mjs');
+      const r = await measureAndEscalate(
+        { structuralInput: conv.fidelityInput, importResult: conv },
+        {
+          threshold: targetFidelity,
+          escalate: escalate !== false,
+          modelReachable: () => !!(process.env.RWA_OPENROUTER_KEY || process.env.OPENROUTER_API_KEY),
+          visionImport: async () => { console.error('note: import fidelity low — escalating to --vision (openrouter)…'); return convertPdfViaVision(contents, { model }); },
+        },
+      );
+      if (r.note) console.error('note: ' + r.note);
+      html = r.result.html;
+      warnings = r.result.warnings || warnings;
+    }
   }
   for (const w of warnings) console.error(`note: ${w}`);
 
