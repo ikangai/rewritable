@@ -135,10 +135,11 @@ const FILE_RE = /(FILE\s*:\s*)'[^']*'/;
 const INLINE_DOC_MARKER = 'const INLINE_DOC = `';
 
 const escapeHtml = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-// </script must be escaped — the FILE: substitution lands inside the
-// bootstrap <script>…</script> block, so a filename containing </script>
+// <\/script must be escaped — the FILE: substitution lands inside the
+// bootstrap <script>…<\/script> block, so a filename containing <\/script>
 // would close the script tag early and turn the rest into HTML. Matches
-// escapeTL's </script handling.
+// escapeTL's <\/script handling. (The literal sequence is written escaped HERE
+// too — an unescaped one in this very comment would close THIS script early.)
 const escapeJsString = s => s.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/<\/script/gi, '<\\/script');
 const canonLF = s => s == null ? '' : String(s).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
 const escapeTL = s => canonLF(s)
