@@ -46,6 +46,23 @@
                  font-size: .8rem; }
   .share .hint { opacity: .55; font-size: .75rem; margin-top: .4rem; }
   .share .err { color: #ff5757; font-size: .8rem; margin-top: .4rem; }
+  .fidelity:not(:empty) { margin: 1.25rem 0 0; padding: 1rem; border: 1px solid #222;
+                          border-radius: 8px; background: #0f0f0f; text-align: left; }
+  .fid-head { font-size: .85rem; opacity: .85; margin-bottom: .6rem; }
+  .fid-strip { display: flex; flex-wrap: wrap; gap: .35rem; margin-bottom: .7rem; }
+  .fid-page { background: #143a14; color: #cfe; border: 1px solid #2a5a2a; border-radius: 4px;
+              padding: .25rem .5rem; font: inherit; font-size: .75rem; cursor: pointer; }
+  .fid-page.low { background: #4a1414; color: #fdd; border-color: #6a2a2a; }
+  .fid-page.on { outline: 2px solid #b8ff57; }
+  .fid-cap { font-size: .8rem; opacity: .8; margin-bottom: .4rem; }
+  .fid-ctrls { display: flex; gap: .6rem; align-items: center; margin-bottom: .5rem; }
+  .fid-slider { flex: 1; }
+  .fid-flick { background: #b8ff57; color: #0a0a0a; border: 0; border-radius: 4px;
+               padding: .3rem .7rem; font: inherit; font-size: .8rem; cursor: pointer; }
+  .fid-wrap { position: relative; overflow: auto; max-height: 60vh; border: 1px solid #222; background: #fff; }
+  .fid-layer { position: absolute; top: 0; left: 0; }
+  .fid-imp { position: relative; } /* the import page sets the box size; original overlays it */
+  .fid-canvas { display: block; }
 </style>
 </head>
 <body>
@@ -59,6 +76,7 @@
   </div>
   <p id="status" class="status" role="status"></p>
   <div id="share" class="share" aria-live="polite"></div>
+  <div id="fidelity" class="fidelity" aria-live="polite"></div>
   <p class="nav"><a href="/new">start with a blank container instead</a></p>
 </main>
 <!-- marked + papaparse + mammoth + pdf.js versions pinned to match
@@ -324,13 +342,18 @@ async function convertPdf(arrayBuffer) {
   }
   const Util = window.pdfjs.Util, OPS = window.pdfjs.OPS;
   const pages = [];
+  const perPage = [];
   let totalText = 0;
+  let sourceText = '';
   for (let p = 1; p <= doc.numPages; p++) {
     const page = await doc.getPage(p);
     const rendered = await renderPdfPage(page, Util, OPS);
     pages.push(rendered.html);
     totalText += rendered.textCount;
+    sourceText += (rendered.text || '') + '\n';
+    perPage.push({ sourceText: rendered.text || '', html: rendered.html }); // per-page fidelity
   }
+  const pageCount = doc.numPages;
   await doc.destroy().catch(() => {});
 
   if (totalText === 0) {
@@ -339,6 +362,7 @@ async function convertPdf(arrayBuffer) {
   return {
     html: `<article class="rwa-pdf">\n${PDF_PAGE_STYLE}\n<div class="rwa-pdf-doc">\n${pages.join('\n')}\n</div>\n</article>`,
     warnings: ['pdf: imported as a geometry-faithful reconstruction (positioned text + rules) — text stays editable but is absolutely positioned'],
+    fidelityInput: { sourceText, pages: pageCount, perPage },
   };
 }
 
@@ -509,7 +533,106 @@ async function renderPdfPage(page, Util, OPS) {
   }
 
   const html = `<div class="rwa-pdf-page" style="width:${pdfNum(vp.width)}px;height:${pdfNum(vp.height)}px">\n${parts.join('\n')}\n</div>`;
-  return { html, textCount };
+  const text = tc.items.map(i => i.str || '').join(' '); // raw source text for the import fidelity check
+  return { html, textCount, text };
+}
+
+// --- Import fidelity (visual judge) ---
+// Inlined port of cli/src/import-fidelity.mjs (structuralScore / structuralScoreByPage). Keep in
+// step with that module (4-site mirror discipline; parity is pinned by tests/import-fidelity-port.test.mjs).
+function _fidBadChars(src) {
+  let bad = 0;
+  for (let i = 0; i < src.length; i++) { const c = src.charCodeAt(i); if (c === 0xFFFD || (c < 0x20 && c !== 9 && c !== 10 && c !== 13)) bad++; }
+  return bad;
+}
+function structuralScore(input, importedHtml) {
+  const src = String((input && input.sourceText) == null ? '' : input.sourceText);
+  const importText = String(importedHtml == null ? '' : importedHtml).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase();
+  const tokens = [...new Set(src.replace(/\s+/g, ' ').trim().toLowerCase().split(' ').filter(t => t.length > 1))];
+  let coverage = 1;
+  if (tokens.length) { let hit = 0; for (const t of tokens) if (importText.includes(t)) hit++; coverage = hit / tokens.length; }
+  const garble = src.length ? Math.max(0, 1 - _fidBadChars(src) / src.length) : 1;
+  const pageN = Math.max(1, (input && input.pages) | 0);
+  const density = Math.min(1, src.replace(/\s+/g, '').length / (pageN * 200));
+  const score = Math.min(coverage, garble);
+  const reasons = [];
+  if (coverage < 0.9) reasons.push('low-coverage');
+  if (garble < 0.9) reasons.push('garbled-text');
+  return { score, coverage, garble, density, reasons };
+}
+function structuralScoreByPage(perPage) {
+  perPage = perPage || [];
+  const pages = perPage.map((p, i) => ({ page: i + 1, ...structuralScore({ sourceText: p.sourceText, pages: 1 }, p.html) }));
+  const overall = pages.length ? pages.reduce((a, p) => a + p.score, 0) / pages.length : 1;
+  const worst = pages.length ? pages.reduce((w, p) => (p.score < w.score ? p : w)) : null;
+  return { pages, overall, worst };
+}
+window.__importFidelity = { structuralScore, structuralScoreByPage }; // probe + parity hook
+
+// Rasterize the ORIGINAL pdf pages to canvases (the ground truth for the visual compare). Re-reads
+// the file (pdf.js may detach the convert buffer); scale 1 so a page canvas matches the import
+// page box (.rwa-pdf-page is sized from the same viewport) — they overlay 1:1.
+async function rasterizeOriginal(arrayBuffer) {
+  const data = new Uint8Array(arrayBuffer);
+  const doc = await window.pdfjs.getDocument({ data, isEvalSupported: false }).promise;
+  const out = [];
+  for (let p = 1; p <= doc.numPages; p++) {
+    const page = await doc.getPage(p);
+    const vp = page.getViewport({ scale: 1 });
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.ceil(vp.width)); canvas.height = Math.max(1, Math.ceil(vp.height));
+    await page.render({ canvasContext: canvas.getContext('2d'), viewport: vp }).promise;
+    out.push(canvas);
+  }
+  await doc.destroy().catch(() => {});
+  return out;
+}
+
+// Build the visual judge: a per-page fidelity strip + a slider/curtain + flicker over the
+// original (canvas) vs the import (rendered .rwa-pdf-page). Defaults to the worst page. Sets
+// window.__fidProbe for the headless probe. Best-effort: a rasterize failure degrades to scores-only.
+async function buildFidelityCompare(panel, { file, fidelityInput }) {
+  if (!panel || !fidelityInput || !Array.isArray(fidelityInput.perPage) || !fidelityInput.perPage.length) return null;
+  const by = structuralScoreByPage(fidelityInput.perPage);
+  let originals = [];
+  try { originals = await rasterizeOriginal(await file.arrayBuffer()); } catch (_) { /* scores-only fallback */ }
+  const pct = (s) => Math.round(s * 100) + '%';
+  panel.innerHTML = PDF_PAGE_STYLE + '<div class="fid-head">Import fidelity — drag to compare original ↔ import</div><div class="fid-strip"></div><div class="fid-compare"></div>';
+  const strip = panel.querySelector('.fid-strip');
+  const compare = panel.querySelector('.fid-compare');
+  by.pages.forEach((pg, i) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'fid-page' + (pg.score < 0.85 ? ' low' : '');
+    b.dataset.page = pg.page;
+    b.textContent = 'p' + pg.page + ' · ' + pct(pg.score);
+    b.onclick = () => showPage(i);
+    strip.appendChild(b);
+  });
+  function showPage(i) {
+    const pg = by.pages[i], orig = originals[i], imp = fidelityInput.perPage[i].html;
+    compare.innerHTML = '';
+    const cap = document.createElement('div'); cap.className = 'fid-cap';
+    cap.textContent = 'Page ' + pg.page + ' — fidelity ' + pct(pg.score) + (pg.reasons.length ? ' (' + pg.reasons.join(', ') + ')' : '');
+    const ctrls = document.createElement('div'); ctrls.className = 'fid-ctrls';
+    const slider = document.createElement('input'); slider.type = 'range'; slider.min = '0'; slider.max = '100'; slider.value = '50'; slider.className = 'fid-slider';
+    const flick = document.createElement('button'); flick.type = 'button'; flick.className = 'fid-flick'; flick.textContent = 'Flicker';
+    ctrls.appendChild(slider); ctrls.appendChild(flick);
+    const wrap = document.createElement('div'); wrap.className = 'fid-wrap';
+    const impLayer = document.createElement('div'); impLayer.className = 'fid-layer fid-imp'; impLayer.innerHTML = imp;
+    const origLayer = document.createElement('div'); origLayer.className = 'fid-layer fid-orig';
+    if (orig) { orig.className = 'fid-canvas'; origLayer.appendChild(orig); } else { origLayer.textContent = '(original render unavailable)'; }
+    origLayer.style.clipPath = 'inset(0 50% 0 0)';
+    slider.oninput = () => { origLayer.style.clipPath = 'inset(0 ' + (100 - Number(slider.value)) + '% 0 0)'; };
+    let shown = true; flick.onclick = () => { shown = !shown; origLayer.style.visibility = shown ? 'visible' : 'hidden'; };
+    wrap.appendChild(impLayer); wrap.appendChild(origLayer);
+    compare.appendChild(cap); compare.appendChild(ctrls); compare.appendChild(wrap);
+    [...strip.children].forEach((c, j) => c.classList.toggle('on', j === i));
+  }
+  const worstIdx = by.worst ? by.worst.page - 1 : 0;
+  showPage(worstIdx);
+  window.__fidProbe = { pages: by.pages, overall: by.overall, worst: by.worst, originalsRendered: originals.length, defaultPage: worstIdx + 1, lowPages: by.pages.filter(p => p.score < 0.85).map(p => p.page) };
+  return by;
 }
 
 // --- UI wiring ---
@@ -657,7 +780,7 @@ async function handleFile(file) {
   dropEl.classList.add('busy');
   setStatus('converting…');
   try {
-    let html, warnings = [];
+    let html, warnings = [], pdfFidelity = null;
     if (ext === 'md' || ext === 'markdown') {
       const text = await file.text();
       if (!text.trim()) return showError('file is empty');
@@ -680,7 +803,9 @@ async function handleFile(file) {
       ({ html, warnings } = await convertDocx(buf));
     } else if (ext === 'pdf') {
       const buf = await file.arrayBuffer();
-      ({ html, warnings } = await convertPdf(buf));
+      const conv = await convertPdf(buf);
+      ({ html, warnings } = conv);
+      pdfFidelity = conv.fidelityInput; // drives the visual judge after the download
     }
     for (const w of warnings) console.warn(w);
     const seedRes = await fetch('/rewritable.html', { cache: 'no-store' });
@@ -696,6 +821,12 @@ async function handleFile(file) {
     setStatus(`downloaded ${outName}${suffix}`, 'ok');
     lastShare = { bytes: result, name: outName };
     renderShareIdle();
+    if (ext === 'pdf' && pdfFidelity) {
+      // The visual judge — review how close the import is to the original (the file is already
+      // downloaded; this lets you assess + decide whether to re-import with --vision).
+      try { await buildFidelityCompare(document.getElementById('fidelity'), { file, fidelityInput: pdfFidelity }); }
+      catch (e) { console.warn('fidelity compare failed:', e && e.message); }
+    }
   } catch (err) {
     showError(err && err.message ? err.message : String(err));
   } finally {

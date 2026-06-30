@@ -1,6 +1,6 @@
 # Import visual judge — browser-side fidelity compare (increment 2, design)
 
-Date: 2026-06-30. Status: **design + implementing.** Follows increment 1 (CLI structural check + auto-escalate, `2026-06-30-import-fidelity-loop-design.md`). This is the *picture-level* "how close visually" answer — it needs a renderer, so it lives in the browser import (`service/public/import.html`), which already has pdf.js and a live DOM.
+Date: 2026-06-30. Status: **2a + 2b BUILT** (2c, the opt-in VLM judge + in-browser improve, deferred). Follows increment 1 (CLI structural check + auto-escalate, `2026-06-30-import-fidelity-loop-design.md`). This is the *picture-level* "how close visually" answer — it needs a renderer, so it lives in the browser import (`service/public/import.html`), which already has pdf.js and a live DOM.
 
 ## UX
 
@@ -47,5 +47,5 @@ Ship the **slider/curtain + a flicker toggle** (both free, both on the two rende
 ## Increment split
 
 - **2a (this build, TDD):** the multipage structural data layer — `structuralScoreByPage` + `convertPdf` per-page source surfacing + CLI per-page reporting. Pure, fully tested. This is what makes multipage real.
-- **2b (browser UI):** the slider/flicker compare + per-page strip + render-both in `service/public/import.html`; headless smoke + operator browser-verify.
-- **2c (opt-in judge):** the VLM `judgePage` + "Improve fidelity"; key-gated.
+- **2b (browser UI) — BUILT.** `service/public/import.html` gains: the scorer port (`structuralScore`/`structuralScoreByPage`, parity-pinned by `cli/tests/import-fidelity-port.test.mjs`), `convertPdf` per-page surfacing, `rasterizeOriginal` (pdf.js → canvas), and `buildFidelityCompare` — a per-page fidelity strip (jump to low pages, opens on the worst) + a slider/curtain + flicker over original-canvas vs import-render, shown after a PDF import. Headless-verified by `tests/import-visual-judge.mjs` (10/0: strip, worst-page default, slider/flicker DOM, the `window.__fidProbe` verdict, graceful rasterize-degrade, page-switch). **Operator-verify boundary:** the actual pdf.js pixel rasterization + the visual overlay alignment need a real browser/canvas (the jsdom harness exercises everything else). Ships via a service deploy (not npm).
+- **2c (opt-in judge) — deferred.** The VLM `judgePage` (score + findings on the two rendered images) + an in-browser "Improve fidelity" (re-import via the model). Key-gated.
