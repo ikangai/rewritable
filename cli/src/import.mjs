@@ -283,8 +283,18 @@ async function convertPdf(bytes) {
     e.exitCode = 2;
     throw e;
   }
+  // Print at true page size, edge to edge. Two coupled corrections, both print-only
+  // (screen rendering is byte-unchanged): (1) the page box is sized in PDF points
+  // rendered as CSS px (72→96 dpi), so it draws at 75% of physical size — zoom
+  // (96/72, held a hair under 1.33333 so the page never spills to a blank second
+  // sheet) scales it back to true size; (2) a per-document @page matching the source
+  // page's own size + margin:0 overrides the seed's @page{margin:18mm}, so a page that
+  // already carries its own margins isn't double-framed. Points-based @page size keeps
+  // this correct for any paper (A4, Letter, …), not just A4.
+  const dims = /width:([\d.]+)px;height:([\d.]+)px/.exec(pages[0] || '');
+  const printPageRule = dims ? `\n<style>@page{size:${dims[1]}pt ${dims[2]}pt;margin:0}</style>` : '';
   return {
-    html: `<article class="rwa-pdf">\n${PDF_PAGE_STYLE}\n<div class="rwa-pdf-doc">\n${pages.join('\n')}\n</div>\n</article>`,
+    html: `<article class="rwa-pdf">\n${PDF_PAGE_STYLE}${printPageRule}\n<div class="rwa-pdf-doc">\n${pages.join('\n')}\n</div>\n</article>`,
     warnings: ['pdf: imported as a geometry-faithful reconstruction (positioned text + rules) — text stays editable but is absolutely positioned'],
     fidelityInput: { sourceText, pages: pageCount, perPage }, // for the import fidelity loop (import-fidelity.mjs); perPage drives per-page/worst-page scoring
   };
@@ -315,7 +325,7 @@ const PDF_PAGE_STYLE = `<style>
 .rwa-pdf-page{position:relative;flex:none;background:#fff;box-shadow:0 1px 5px rgba(0,0,0,.18);overflow:hidden;}
 .rwa-pdf-t{position:absolute;white-space:pre;line-height:1;color:#000;transform-origin:0 0;}
 .rwa-pdf-g{position:absolute;}
-@media print{.rwa-pdf{background:none}.rwa-pdf-doc{gap:0;padding:0;overflow:visible}.rwa-pdf-page{box-shadow:none}}
+@media print{.rwa-pdf{background:none}.rwa-pdf-doc{gap:0;padding:0;overflow:visible}.rwa-pdf-page{box-shadow:none;zoom:1.3333}}
 </style>`;
 
 function escapePdfText(s) {

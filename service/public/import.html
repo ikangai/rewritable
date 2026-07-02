@@ -366,8 +366,14 @@ async function convertPdf(arrayBuffer) {
   if (totalText === 0) {
     throw new Error('pdf: no extractable text — this looks like a scanned/image PDF; OCR is not supported');
   }
+  // Print at true page size, edge to edge — byte-mirror of cli/src/import.mjs. zoom
+  // (96/72, a hair under to avoid a blank second page) undoes the 72→96 dpi 75% shrink;
+  // a per-document @page matching the source page size + margin:0 overrides the seed's
+  // @page{margin:18mm}. Both print-only; screen (and the fidelity judge overlay) unchanged.
+  const dims = /width:([\d.]+)px;height:([\d.]+)px/.exec(pages[0] || '');
+  const printPageRule = dims ? `\n<style>@page{size:${dims[1]}pt ${dims[2]}pt;margin:0}</style>` : '';
   return {
-    html: `<article class="rwa-pdf">\n${PDF_PAGE_STYLE}\n<div class="rwa-pdf-doc">\n${pages.join('\n')}\n</div>\n</article>`,
+    html: `<article class="rwa-pdf">\n${PDF_PAGE_STYLE}${printPageRule}\n<div class="rwa-pdf-doc">\n${pages.join('\n')}\n</div>\n</article>`,
     warnings: ['pdf: imported as a geometry-faithful reconstruction (positioned text + rules) — text stays editable but is absolutely positioned'],
     fidelityInput: { sourceText, pages: pageCount, perPage },
   };
@@ -384,7 +390,7 @@ const PDF_PAGE_STYLE = `<style>
 .rwa-pdf-page{position:relative;flex:none;background:#fff;box-shadow:0 1px 5px rgba(0,0,0,.18);overflow:hidden;}
 .rwa-pdf-t{position:absolute;white-space:pre;line-height:1;color:#000;transform-origin:0 0;}
 .rwa-pdf-g{position:absolute;}
-@media print{.rwa-pdf{background:none}.rwa-pdf-doc{gap:0;padding:0;overflow:visible}.rwa-pdf-page{box-shadow:none}}
+@media print{.rwa-pdf{background:none}.rwa-pdf-doc{gap:0;padding:0;overflow:visible}.rwa-pdf-page{box-shadow:none;zoom:1.3333}}
 </style>`;
 
 function escapePdfText(s) {
