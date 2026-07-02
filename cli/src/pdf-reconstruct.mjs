@@ -31,11 +31,21 @@ export function groupLines(runs) {
   const lines = [];
   for (const r of sorted) {
     const last = lines[lines.length - 1];
-    const tol = (r.fontSize || 10) * 0.5;
-    if (last && Math.abs(r.y - last.y) <= tol) last.runs.push(r);
-    else lines.push({ y: r.y, runs: [r] });
+    const rfs = r.fontSize || 10;
+    // Tolerance scales to the LARGER of the line's and the run's font, so a small superscript
+    // stays on its big-font baseline; the anchor is a running mean, so it doesn't drift with a
+    // slowly-shifting baseline (comparing to a fixed first-run y wrongly splits either case).
+    const tol = last ? Math.max(rfs, last.fs) * 0.6 : rfs * 0.6;
+    if (last && Math.abs(r.y - last.y) <= tol) {
+      last.runs.push(r);
+      last.sum += r.y;
+      last.y = last.sum / last.runs.length;
+      last.fs = Math.max(last.fs, rfs);
+    } else {
+      lines.push({ y: r.y, runs: [r], sum: r.y, fs: rfs });
+    }
   }
-  for (const l of lines) l.runs.sort((a, b) => a.x - b.x);
+  for (const l of lines) { l.runs.sort((a, b) => a.x - b.x); delete l.sum; delete l.fs; }
   return lines;
 }
 
@@ -47,11 +57,15 @@ export function segmentRegions(lines) {
   const gaps = [];
   for (let i = 1; i < lines.length; i++) gaps.push(lines[i].y - lines[i - 1].y);
   const sortedGaps = [...gaps].sort((a, b) => a - b);
-  // A LOW percentile of the gaps estimates the intra-region line spacing — the median
-  // collapses when boundary gaps are a large fraction of all gaps (few lines per region,
-  // e.g. a lone-line heading). Threshold = ~1.8 line-heights, floored by font size.
-  const typical = sortedGaps.length ? sortedGaps[Math.floor(sortedGaps.length * 0.35)] : 0;
-  const threshold = Math.max(typical * 1.8, (lines[0].runs[0]?.fontSize || 10) * 1.6);
+  const fonts = lines.map((l) => l.runs[0]?.fontSize || 10).sort((a, b) => a - b);
+  const medFont = fonts[Math.floor(fonts.length / 2)];
+  // Intra-region line spacing: a LOW percentile of the gaps when there are enough to be
+  // representative, else font-based (a lone/2-line region has no reliable gap sample — a
+  // single gap IS the boundary, so estimating from it never splits). The floor uses the
+  // MEDIAN font, not the first line's, so a large opening title can't inflate it and swallow
+  // the body. Threshold ≈ 1.8 line-heights.
+  const typical = sortedGaps.length >= 3 ? sortedGaps[Math.floor(sortedGaps.length * 0.35)] : medFont * 1.3;
+  const threshold = Math.max(typical * 1.8, medFont * 1.6);
   const regions = [{ lines: [lines[0]] }];
   for (let i = 1; i < lines.length; i++) {
     if (lines[i].y - lines[i - 1].y > threshold) regions.push({ lines: [lines[i]] });
@@ -60,10 +74,11 @@ export function segmentRegions(lines) {
   return regions;
 }
 
-// Cluster run left-edges across a region's lines into ordered column bands. Runs whose
-// x starts within `tol` of a band's leftmost member share a column (bounds the band width
-// to tol, so distant columns never chain-merge). Right-aligned jitter within a numeric
-// column is absorbed by tol; strong right-alignment is refined later at cell-emit time.
+// Cluster run left-edges across a region's lines into ordered column bands. Runs whose x
+// starts within `tol` of a band's leftmost member share a column (bounds the band width to
+// tol, so distant columns never chain-merge). LIMITATION: a right-aligned numeric column whose
+// left edges vary by more than tol (different digit counts) can over-split into phantom
+// columns; right-edge-based column detection is a later increment (see module header).
 export function detectColumns(region, tol = 12) {
   const xs = [];
   for (const l of region.lines) for (const r of l.runs) xs.push(r.x);
@@ -83,33 +98,53 @@ export function detectColumns(region, tol = 12) {
 export function classifyRegion(region, rules = []) {
   const columns = detectColumns(region);
   const nLines = region.lines.length;
-  // A table is a FILLED grid: ≥2 columns each populated across most rows. Prose whose runs
-  // land at scattered x (justified text, an inline emphasized phrase) produces sparse
-  // "columns" populated by a single line each — those are not real table columns.
+  const fs = region.lines[0].runs[0]?.fontSize || 10;
+
+  // A lone line, decided BEFORE the grid test: a bold line is a heading (so a title the
+  // extractor split into runs isn't turned into a 1-row table), a plain multi-column line is
+  // a table row (a line-item), otherwise a block.
+  if (nLines === 1) {
+    const bold = region.lines[0].runs.some((r) => r.bold);
+    if (bold) return { type: 'heading', confidence: 0.9 };
+    if (columns.length >= 2) return { type: 'table', confidence: 0.9, columns };
+    return { type: 'block', confidence: 0.9 };
+  }
+
+  // Table = ≥2 columns populated across most rows. Drawn rules spanning the region corroborate
+  // a real (possibly sparse, empty-celled) table, so the fill bar is relaxed when rule-bounded;
+  // without rules the bar stays high so scattered prose runs aren't mistaken for columns.
   const colOf = (x) => { let idx = 0; for (let i = 0; i < columns.length; i++) if (x >= columns[i].x - 1) idx = i; return idx; };
   const pop = columns.map(() => new Set());
   region.lines.forEach((l, li) => { for (const r of l.runs) pop[colOf(r.x)].add(li); });
-  const minFill = nLines === 1 ? 1 : 0.6;
+  const top = Math.min(...region.lines.map((l) => l.y));
+  const bottom = Math.max(...region.lines.map((l) => l.y));
+  const ruleBounded = rules.some((ru) => ru.y >= top - fs && ru.y <= bottom + fs);
+  const minFill = ruleBounded ? 0.3 : 0.6;
   const realIdx = columns.map((_, i) => i).filter((i) => pop[i].size / nLines >= minFill);
   if (realIdx.length >= 2) {
     const filled = realIdx.reduce((a, i) => a + pop[i].size, 0);
     return { type: 'table', confidence: filled / (realIdx.length * nLines), columns };
   }
-  if (nLines === 1) {
-    const bold = region.lines[0].runs.some((r) => r.bold);
-    return { type: bold ? 'heading' : 'block', confidence: 0.9 };
+
+  // Multi-line, not a grid: prose if the lines share ONE dominant left margin (tolerating a
+  // single indented first line); two substantial left-margin clusters mean a spatial
+  // multi-column block (address pair / right-aligned header) — score it below the fallback
+  // threshold so it stays a faithful positioned-span island rather than jumbled prose.
+  const lefts = region.lines.map((l) => l.runs[0].x).sort((a, b) => a - b);
+  const groups = [];
+  for (const x of lefts) {
+    const g = groups[groups.length - 1];
+    if (g && x - g.min <= fs * 1.5) g.count++;
+    else groups.push({ min: x, count: 1 });
   }
-  // Multi-line, not a grid: prose ONLY if the lines share a left margin. Scattered
-  // line-starts mean a spatial multi-column block (an address pair, a right-aligned header)
-  // that would jumble if flowed — score it below the fallback threshold so it stays a
-  // faithful positioned-span island instead.
-  const lefts = region.lines.map((l) => l.runs[0].x);
-  const spread = Math.max(...lefts) - Math.min(...lefts);
-  const fs = region.lines[0].runs[0].fontSize || 10;
-  const confidence = spread < fs * 0.6 ? 0.9 : spread < fs * 2 ? 0.7 : 0.3;
+  const biggest = Math.max(...groups.map((g) => g.count));
+  const substantial = groups.filter((g) => g.count >= 2).length;
+  const confidence = biggest >= nLines - 1 ? 0.9 : substantial >= 2 ? 0.3 : 0.6;
   return { type: 'prose', confidence };
 }
 
+// Kept local (duplicates import.mjs's escapePdfText) so this module stays standalone and
+// pdf.js-free; consolidate into one shared escaper when it's wired into import.mjs.
 function esc(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
@@ -119,31 +154,50 @@ function esc(s) {
 // bold phrase the PDF split across a line break becomes a single span. Flowing text can't
 // collide, which is exactly why this beats the positioned-span form for prose.
 export function emitProse(region) {
-  const runs = region.lines.flatMap((l) => l.runs);
-  const segs = [];
-  for (const r of runs) {
-    const last = segs[segs.length - 1];
+  // Flatten runs in reading order, remembering line index. The separator before each run is
+  // '' when it butts against the previous run on the SAME line (a mid-word split the extractor
+  // introduced — "Rech"+"nung") and ' ' otherwise (a real word gap, or a line break). Runs of
+  // the same emphasis are coalesced; the boundary separator sits outside the <b>/<i> tags.
+  const flat = [];
+  region.lines.forEach((l, li) => { for (const r of l.runs) flat.push({ r, li }); });
+  let out = '';
+  let cur = null;
+  const flush = () => {
+    if (!cur) return;
+    let t = esc(cur.text);
+    if (cur.bold) t = `<b>${t}</b>`;
+    if (cur.italic) t = `<i>${t}</i>`;
+    out += t;
+    cur = null;
+  };
+  for (let i = 0; i < flat.length; i++) {
+    const { r, li } = flat[i];
+    const prev = flat[i - 1];
+    let sep = '';
+    if (prev) {
+      const sameLine = prev.li === li;
+      const gap = r.x - (prev.r.x + (prev.r.w || 0));
+      sep = sameLine && gap <= (r.fontSize || 10) * 0.25 ? '' : ' ';
+    }
     const bold = !!r.bold;
     const italic = !!r.italic;
-    if (last && last.bold === bold && last.italic === italic) last.texts.push(r.text);
-    else segs.push({ bold, italic, texts: [r.text] });
+    if (cur && cur.bold === bold && cur.italic === italic) {
+      cur.text += sep + r.text;
+    } else {
+      flush();
+      out += sep;
+      cur = { bold, italic, text: r.text };
+    }
   }
-  const body = segs
-    .map((s) => {
-      let t = esc(s.texts.join(' '));
-      if (s.bold) t = `<b>${t}</b>`;
-      if (s.italic) t = `<i>${t}</i>`;
-      return t;
-    })
-    .join(' ');
-  return `<p>${body}</p>`;
+  flush();
+  return `<p>${out}</p>`;
 }
 
 // Emit a region as a <table>: one <tr> per line, one <td> per detected column. Each run is
 // placed in the last column whose left edge it clears. A column is right-aligned when its
 // runs' RIGHT edges cluster tighter than their left edges (how the PDF right-aligns money),
 // so the amounts stay under one another and reflow correctly when edited.
-export function emitTable(region, columns, rules = []) {
+export function emitTable(region, columns) {
   const cols = columns && columns.length ? columns : detectColumns(region);
   const colOf = (x) => {
     let idx = 0;
@@ -197,7 +251,9 @@ function emitGeometryFallback(region) {
   const spans = runs.map((r) => {
     const w = r.bold ? ';font-weight:700' : '';
     const it = r.italic ? ';font-style:italic' : '';
-    return `<span class="rwa-pdf-t" style="left:${r.x}px;top:${r.y - top}px;font-size:${r.fontSize || 10}px${w}${it}">${esc(r.text)}</span>`;
+    // position:absolute is INLINE here on purpose: reconstructGeometryHtml ships no
+    // .rwa-pdf-t stylesheet, so the island must self-position or it renders as run-on text.
+    return `<span class="rwa-pdf-t" style="position:absolute;left:${r.x}px;top:${r.y - top}px;font-size:${r.fontSize || 10}px${w}${it}">${esc(r.text)}</span>`;
   });
   return `<div class="rwa-pdf-fallback" style="position:relative;height:${Math.max(0, bottom - top)}px">\n${spans.join('\n')}\n</div>`;
 }
@@ -214,7 +270,7 @@ export function reconstructPage(page) {
     const c = classifyRegion(region, rules);
     let html;
     if (c.confidence < FALLBACK_THRESHOLD) html = emitGeometryFallback(region);
-    else if (c.type === 'table') html = emitTable(region, c.columns, rules);
+    else if (c.type === 'table') html = emitTable(region, c.columns);
     else if (c.type === 'heading') html = emitHeading(region);
     else if (c.type === 'prose') html = emitProse(region);
     else html = emitBlock(region);
@@ -230,7 +286,10 @@ function unesc(s) {
 }
 
 function styleNum(style, prop) {
-  const m = new RegExp(prop + ':([\\d.-]+)px').exec(style);
+  // Anchor the property to a boundary (start / after ';' / whitespace) and regex-escape it, so
+  // `styleNum(style,'top')` can't capture the value of a compound like `margin-top`.
+  const p = prop.replace(/[.*+?^${}()|[\]\\-]/g, '\\$&');
+  const m = new RegExp('(?:^|[;\\s])' + p + ':\\s*([\\d.-]+)px').exec(style);
   return m ? parseFloat(m[1]) : undefined;
 }
 
@@ -254,6 +313,7 @@ export function parseGeometryPage(pageHtml) {
   while ((m = spanRe.exec(pageHtml))) {
     const style = m[1];
     const text = unesc(m[2]);
+    if (!text.trim()) continue; // drop empty/whitespace positioning spans (no phantom columns)
     const fontSize = styleNum(style, 'font-size') || 10;
     runs.push({
       x: styleNum(style, 'left') || 0,

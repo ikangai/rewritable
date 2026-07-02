@@ -234,3 +234,123 @@ test('reconstructGeometryHtml: converts a geometry article into a semantic edita
   assert.match(out, /<p>Thank you for your business this year\.<\/p>/, 'prose reflowed into a paragraph');
   assert.doesNotMatch(out, /rwa-pdf-t/, 'positioned spans replaced by semantic elements');
 });
+
+// ── Review fixes ────────────────────────────────────────────────────────────
+
+// F1: islands must self-position (the reconstructed article ships no .rwa-pdf-t stylesheet)
+test('F1 emitGeometryFallback: island spans carry inline position:absolute', () => {
+  // Alternating left/right lines (an address pair) — a scattered block that stays an island,
+  // NOT a filled grid (which would correctly become a table).
+  const page = { runs: [
+    { x: 62, y: 100, w: 200, fontSize: 10, text: 'Left one' },
+    { x: 476, y: 114, w: 100, fontSize: 10, text: 'Right one' },
+    { x: 62, y: 128, w: 150, fontSize: 10, text: 'Left two' },
+    { x: 476, y: 142, w: 90, fontSize: 10, text: 'Right two' },
+  ] };
+  const { html } = reconstructPage(page);
+  assert.match(html, /rwa-pdf-fallback/, 'is an island');
+  const spans = html.match(/<span class="rwa-pdf-t"[^>]*>/g) || [];
+  assert.ok(spans.length >= 2, 'has positioned spans');
+  for (const s of spans) assert.match(s, /position:absolute/, 'every span self-positions');
+});
+
+// F2: a lone bold line split into runs is a heading, not a 1-row table
+test('F2 classifyRegion: a lone bold multi-run line is a heading, not a table', () => {
+  const region = { lines: [{ y: 100, runs: [
+    { x: 71, y: 100, w: 120, fontSize: 12, bold: true, text: 'RECHNUNG' },
+    { x: 260, y: 100, w: 100, fontSize: 12, bold: true, text: '0018_2026' },
+  ] }] };
+  assert.equal(classifyRegion(region).type, 'heading');
+});
+
+test('F2 classifyRegion: a lone non-bold multi-column line stays a table (line-item row)', () => {
+  const region = { lines: [{ y: 100, runs: [
+    { x: 71, y: 100, w: 200, fontSize: 10, text: 'Umsetzung X' },
+    { x: 340, y: 100, w: 54, fontSize: 10, text: '€ 100' },
+    { x: 450, y: 100, w: 60, fontSize: 10, text: 'Q1' },
+  ] }] };
+  assert.equal(classifyRegion(region).type, 'table');
+});
+
+// F3: adjacency-aware spacing — a mid-word run split joins without a space
+test('F3 emitProse: adjacent runs join without a space; gapped runs get a space', () => {
+  const adjacent = { lines: [{ y: 1, runs: [
+    { x: 71, y: 1, w: 20, fontSize: 10, text: 'Rech' },
+    { x: 91, y: 1, w: 30, fontSize: 10, text: 'nung' }, // butts against 71+20
+  ] }] };
+  assert.match(emitProse(adjacent), /<p>Rechnung<\/p>/);
+  const gapped = { lines: [{ y: 1, runs: [
+    { x: 71, y: 1, w: 20, fontSize: 10, text: 'Hello' },
+    { x: 130, y: 1, w: 30, fontSize: 10, text: 'World' }, // clear gap
+  ] }] };
+  assert.match(emitProse(gapped), /<p>Hello World<\/p>/);
+});
+
+// F4: a two-line region with a large gap splits (font-based threshold when gaps are too few)
+test('F4 segmentRegions: a two-line region with a large gap splits', () => {
+  const line = (y, t) => ({ y, runs: [{ x: 71, y, fontSize: 10, text: t }] });
+  assert.equal(segmentRegions([line(100, 'title'), line(500, 'body')]).length, 2);
+});
+
+// F5: a large opening title does not inflate the threshold and swallow the body
+test('F5 segmentRegions: a large title does not merge the body blocks below it', () => {
+  const line = (y, fs, t) => ({ y, runs: [{ x: 71, y, fontSize: fs, text: t }] });
+  // Body blocks are 30px apart — above a 10px-font threshold (~25) but below the inflated
+  // 24px-title floor (24*1.6=38.4), so a first-line-font floor wrongly merges them.
+  const lines = [line(100, 24, 'BIG'), line(160, 10, 'a'), line(174, 10, 'ab'), line(204, 10, 'b'), line(218, 10, 'bb')];
+  assert.ok(segmentRegions(lines).length >= 3, 'title + 2 body blocks stay separate');
+});
+
+// F6: groupLines keeps a small superscript run on its large-font baseline
+test('F6 groupLines: a small superscript run stays on its large-font baseline', () => {
+  const runs = [
+    { x: 71, y: 100, w: 30, fontSize: 20, text: 'H' },
+    { x: 101, y: 108, w: 8, fontSize: 8, text: '2' },
+    { x: 71, y: 140, w: 30, fontSize: 20, text: 'next' },
+  ];
+  const lines = groupLines(runs);
+  assert.equal(lines.length, 2, 'H+2 share a line; next is separate');
+  assert.deepEqual(lines[0].runs.map((r) => r.text), ['H', '2']);
+});
+
+// F8: prose with a first-line indent stays prose (one dominant margin + one outlier)
+test('F8 classifyRegion: prose with a first-line indent is still prose, above threshold', () => {
+  const region = { lines: [
+    { y: 100, runs: [{ x: 91, y: 100, w: 380, fontSize: 10, text: 'Indented first line' }] },
+    { y: 114, runs: [{ x: 71, y: 114, w: 400, fontSize: 10, text: 'second line at margin' }] },
+    { y: 128, runs: [{ x: 71, y: 128, w: 400, fontSize: 10, text: 'third line at margin' }] },
+  ] };
+  const c = classifyRegion(region);
+  assert.equal(c.type, 'prose');
+  assert.ok(c.confidence >= 0.5, 'not dumped to a fallback island');
+});
+
+// F9: drawn rules corroborate a sparse (empty-celled) short table
+test('F9 classifyRegion: a rule-bounded sparse 2-column region is a table', () => {
+  const region = { lines: [
+    { y: 100, runs: [{ x: 71, y: 100, w: 100, fontSize: 10, text: 'Netto' }, { x: 340, y: 100, w: 54, fontSize: 10, text: '€ 100' }] },
+    { y: 114, runs: [{ x: 71, y: 114, w: 100, fontSize: 10, text: 'Rabatt' }] }, // amount cell empty
+  ] };
+  const rules = [{ x: 71, y: 95, w: 300, h: 1 }, { x: 71, y: 120, w: 300, h: 1 }];
+  assert.equal(classifyRegion(region, rules).type, 'table');
+});
+
+// F13: parseGeometryPage drops empty/whitespace positioning spans (no phantom runs)
+test('F13 parseGeometryPage: empty/whitespace spans are not turned into phantom runs', () => {
+  const pageHtml = [
+    '<div class="rwa-pdf-page" style="width:595px;height:842px">',
+    '<span class="rwa-pdf-t" style="left:71px;top:100px;font-size:10px"></span>',
+    '<span class="rwa-pdf-t" style="left:71px;top:100px;font-size:10px">real</span>',
+    '</div>',
+  ].join('\n');
+  const page = parseGeometryPage(pageHtml);
+  assert.equal(page.runs.length, 1);
+  assert.equal(page.runs[0].text, 'real');
+});
+
+// F15: styleNum matches the exact property, not a substring of a compound one
+test('F15 parseGeometryPage: a compound property does not leak into a shorter lookup', () => {
+  const pageHtml = '<div class="rwa-pdf-page" style="width:1px;height:1px"><span class="rwa-pdf-t" style="margin-top:999px;left:71px;top:100px;font-size:10px">x</span></div>';
+  const page = parseGeometryPage(pageHtml);
+  assert.equal(page.runs[0].y, 100, 'top is 100, not 999 leaked from margin-top');
+});
