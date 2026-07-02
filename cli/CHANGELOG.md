@@ -2,6 +2,19 @@
 
 All notable changes to the `rewritable` CLI (`rwa`).
 
+## [0.16.1] - 2026-07-02
+
+### Fixed
+- **PDF imports now print / export back to PDF A4-correct — edge-to-edge, no double
+  margin.** A geometry PDF import printed with huge margins: the seed's
+  `@page{margin:18mm}` double-framed a page that already carries its own margins, and
+  the page box (PDF points rendered as CSS px, 72→96 dpi) drew at 75% of physical size.
+  The emitter now ships two print-only corrections — a `zoom` (96/72) on the page box,
+  and a per-document `@page` sized to the *source* page (in `pt`, so it is correct for
+  any paper — A4, Letter, …) with `margin:0`. Screen rendering is unchanged. Verified
+  end-to-end (fresh import → headless print-to-PDF = one page, edge to edge). The same
+  fix ships to the browser importer (`service/public/import.html`).
+
 ## [0.16.0] - 2026-06-30
 
 ### Added

@@ -1,6 +1,6 @@
 {
   "name": "rewritable",
-  "version": "0.16.0",
+  "version": "0.16.1",
   "description": "CLI for re-writeable: emit and import single-file rwa documents.",
   "type": "module",
   "bin": {
