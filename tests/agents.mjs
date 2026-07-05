@@ -160,7 +160,7 @@ console.log('\n== I12 phase C2: agent install dialog ==');
   check('C2 dialog: shows the role', /summarizer/.test(html));
   check('C2 dialog: shows the vault namespaces', /summary-cache/.test(html));
   check('C2 dialog: shows a system-prompt preview', /summarize sections concisely/.test(html));
-  check('C2 dialog: a verified agent offers an install button', !!card && !!card.querySelector('[data-act=install]'));
+  check('C2 dialog: a verified agent offers the Use-this-AI button', !!card && !!card.querySelector('[data-act=use]'));
   const cx = card && card.querySelector('[data-act=cancel]'); if (cx) cx.onclick();
   // a tampered (unverified) record: no install button, the reason is shown
   const env = await signAgent(k, { role: 'tampered-ui' });
@@ -168,7 +168,7 @@ console.log('\n== I12 phase C2: agent install dialog ==');
   w.runtime.agents.showInstallDialog(bad);
   await new Promise(r => setTimeout(r, 30));
   const card2 = w.document.getElementById('rwa-agent-install');
-  check('C2 dialog: an unverified (tampered) agent suppresses the install button', !!card2 && !card2.querySelector('[data-act=install]'));
+  check('C2 dialog: an unverified (tampered) agent suppresses the Use-this-AI button', !!card2 && !card2.querySelector('[data-act=use]'));
   check('C2 dialog: the tampered record explains the signature does not verify', card2 && /does NOT verify/i.test(card2.innerHTML));
   const cx2 = card2 && card2.querySelector('[data-act=cancel]'); if (cx2) cx2.onclick();
 }
