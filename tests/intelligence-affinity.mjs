@@ -77,6 +77,9 @@ console.log('== intelligence/0.2 I-D: advisory affinity ==');
   // Advisory ONLY — a mismatched role still activates (never blocked).
   let threw = false; try { w.runtime.agents.setActive('proser'); } catch (_) { threw = true; }
   check('B1: activating a mismatched role is NOT blocked', !threw && (w.runtime.agents.active() || {}).role === 'proser');
+  // The status-bar chip surfaces the mismatch as a '!' suffix (renderAiChip's affinity branch),
+  // so the warning is visible without opening the panel — the whole point of the affinity note.
+  check("B2: the chip carries '!' on affinity mismatch", /◆.*!/.test(w.document.getElementById('rwa-st-ai').textContent));
 }
 
 // Panel surfaces affinity in the role meta (the AI panel — status-bar ◇ AI chip)
