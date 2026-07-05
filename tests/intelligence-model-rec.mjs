@@ -118,15 +118,15 @@ console.log('== intelligence/0.2 I-A: recommended model on activation ==');
   check('N2: no offer when the recommendation already equals the current model', !w2.document.getElementById('rwa-model-offer'));
 }
 
-// D — the Activity panel lists installed intelligences; activating one offers its model
+// D — the AI panel (status-bar ◇ AI chip) lists installed intelligences; activating one offers its model
 {
   const w = await boot(article);
   w.sessionStorage.setItem('rwa_model', 'google/gemini-3.5-flash');
   await w.runtime.agents.install(await makeSignedAgent('tightener', { recommended_model: 'anthropic/claude-sonnet-4-6' }));
-  w.runtime.setMode('actions');
+  w.document.getElementById('rwa-st-ai').click();
   await new Promise(r => setTimeout(r, 150));
-  const panel = w.document.getElementById('rwa-mode-panel');
-  check('D1: the Activity panel lists the intelligence (tightener)', !!panel && /tightener/.test(panel.textContent) && /Intelligences/.test(panel.textContent));
+  const panel = w.document.getElementById('rwa-ai-panel');
+  check('D1: the AI panel lists the intelligence (tightener)', !!panel && panel.classList.contains('open') && /tightener/.test(panel.textContent));
   const onBtn = panel && panel.querySelector('[data-agent-on]');
   check('D2: a verified role offers an Activate button', !!onBtn);
   onBtn.click();

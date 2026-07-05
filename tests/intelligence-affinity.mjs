@@ -79,14 +79,14 @@ console.log('== intelligence/0.2 I-D: advisory affinity ==');
   check('B1: activating a mismatched role is NOT blocked', !threw && (w.runtime.agents.active() || {}).role === 'proser');
 }
 
-// Panel surfaces affinity in the role meta
+// Panel surfaces affinity in the role meta (the AI panel — status-bar ◇ AI chip)
 {
   const w = await boot();
   await w.runtime.agents.install(await makeSignedAgent('proser', { affinity: ['document'] }));
-  w.runtime.setMode('actions');
+  w.document.getElementById('rwa-st-ai').click();
   await new Promise(r => setTimeout(r, 150));
-  const panel = w.document.getElementById('rwa-mode-panel');
-  check('P1: the panel shows the role’s affinity', !!panel && /document/.test(panel.textContent));
+  const panel = w.document.getElementById('rwa-ai-panel');
+  check('P1: the panel shows the role’s affinity', !!panel && panel.classList.contains('open') && /for document/.test(panel.textContent));
 }
 
 console.log(`\n== ${pass} pass, ${fail} fail ==`);

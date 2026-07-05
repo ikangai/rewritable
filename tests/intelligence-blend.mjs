@@ -102,19 +102,19 @@ console.log('== intelligence/0.2 I-E: blended overlays ==');
   check('E2: with no primary, advisors still layer (block present, actor not an agent)', /advisory lenses/i.test(w.__rwaResolveSystemPrompt()) && w.__rwaGetActiveActor().indexOf('agents:') !== 0);
 }
 
-// Panel — Intelligences section shows primary/advisor controls
+// Panel — the AI panel (status-bar ◇ AI chip) shows primary/advisor controls
 {
   const w = await boot(article);
   await w.runtime.agents.install(await makeSignedAgent('concise', { prompt: 'Be concise.' }));
   await w.runtime.agents.install(await makeSignedAgent('legal', { prompt: 'Legal tone.' }));
   w.runtime.agents.setActive('concise');
   w.runtime.agents.addAdvisor('legal');
-  w.runtime.setMode('actions');
+  w.document.getElementById('rwa-st-ai').click();
   await new Promise(r => setTimeout(r, 150));
-  const panel = w.document.getElementById('rwa-mode-panel');
-  check('P1: panel lists both roles under Intelligences', !!panel && /Intelligences/.test(panel.textContent) && /concise/.test(panel.textContent) && /legal/.test(panel.textContent));
+  const panel = w.document.getElementById('rwa-ai-panel');
+  check('P1: the AI panel lists both roles', !!panel && panel.classList.contains('open') && /concise/.test(panel.textContent) && /legal/.test(panel.textContent));
   check('P2: a Deactivate (primary) and a remove-advisor control are present', !!panel && /Deactivate/.test(panel.textContent) && !!panel.querySelector('[data-agent-advoff]'));
-  check('P3: a not-yet-used verified role would offer Add advisor', !!panel && /advisor/i.test(panel.textContent));
+  check('P3: a not-yet-used verified role would offer Add as advisor AI', !!panel && /advisor/i.test(panel.textContent));
 }
 
 console.log(`\n== ${pass} pass, ${fail} fail ==`);
