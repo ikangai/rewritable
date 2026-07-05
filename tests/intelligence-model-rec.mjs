@@ -92,6 +92,7 @@ console.log('== intelligence/0.2 I-A: recommended model on activation ==');
   const dlg = w.document.getElementById('rwa-model-offer');
   check('C1: activating offers the recommended model (consent dialog)', !!dlg);
   check('C2: the dialog names the recommended model', !!dlg && /claude-sonnet-4-6/.test(dlg.textContent));
+  check("C2b: the dialog title uses the user-facing 'AI' term (not 'intelligence')", !!dlg && /Use this AI’s recommended/.test(dlg.textContent) && !/intelligence/i.test(dlg.textContent));
   check('C3: nothing applied before consent (current model unchanged)', w.sessionStorage.getItem('rwa_model') === 'google/gemini-3.5-flash');
   const apply = dlg && dlg.querySelector('[data-act=apply]');
   check('C4: an apply (consent) button is present', !!apply);

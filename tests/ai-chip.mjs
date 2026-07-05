@@ -320,5 +320,62 @@ console.log('== AI chip + AI panel ==');
   check('D8: the consent dialog is now mounted', !!w.document.getElementById('rwa-agent-install'));
 }
 
+// E — panel Activate runs a connect check. Flipping the chip to a role does NOT make ⌘K runnable:
+// key/model are sessionStorage-only, so a fresh session (openrouter, no key) still can't run. WHY it
+// matters: without this the chip says '◆ role' but the next ⌘K silently fails the guard; the user gets
+// no signal that they still owe a connection. Activation now mirrors the ⌘K no-key path — it drops the
+// AI panel and raises the (AI-aware) drop-invitation card naming the role just activated.
+{
+  const w = await boot({ kind: 'skill-host' }); // no session key
+  await w.runtime.agents.install(await makeSignedAgent('connector', { description: 'Needs a key.' }));
+  const chip = w.document.getElementById('rwa-st-ai');
+  const panel = w.document.getElementById('rwa-ai-panel');
+  if (chip) chip.click();
+  await tick();
+  const onBtn = panel && panel.querySelector('[data-agent-on="connector"]');
+  check('E1: the inactive role lists an Activate button (setup)', !!onBtn);
+  if (onBtn) onBtn.click();
+  await tick(60);
+  check('E1: Activate flips the active role', (w.runtime.agents.active() || {}).role === 'connector');
+  const invite = w.document.getElementById('rwa-ai-invite');
+  check('E1: with no key, activation raises the drop-invitation card', !!invite);
+  check('E1: the invite is AI-aware — names the activated role', !!invite && /connector/.test(invite.textContent));
+  check('E1: and the AI panel is closed (it made way for the invite)', !panel.classList.contains('open'));
+}
+
+// E2 — the negative control: a working session (key present) activates WITHOUT the invite. Proves the
+// connect check fires only when the session genuinely can't run, not on every Activate.
+{
+  const w = await boot({ kind: 'skill-host', sessionKey: true }); // rwa_apikey + rwa_model set
+  await w.runtime.agents.install(await makeSignedAgent('ready', {}));
+  const chip = w.document.getElementById('rwa-st-ai');
+  const panel = w.document.getElementById('rwa-ai-panel');
+  if (chip) chip.click();
+  await tick();
+  const onBtn = panel && panel.querySelector('[data-agent-on="ready"]');
+  if (onBtn) onBtn.click();
+  await tick(60);
+  check('E2: activation sets the role active', (w.runtime.agents.active() || {}).role === 'ready');
+  check('E2: with a key, activation does NOT raise the invite', !w.document.getElementById('rwa-ai-invite'));
+  check('E2: and the AI panel stays open', panel.classList.contains('open'));
+}
+
+// F — bridge-aware status line. The bridge backend shells to `claude -p`; the sessionStorage model is
+// ignored, so 'using <model> via bridge' would be a lie. The active-role card names only the backend.
+{
+  const w = await boot({ kind: 'skill-host' });
+  await w.runtime.agents.install(w.__rwaExtractAgentCarrier(carrierHtml)[0]);
+  w.runtime.agents.setActive('concise-editor');
+  w.sessionStorage.setItem('rwa_backend', 'bridge');
+  w.sessionStorage.setItem('rwa_model', 'should-not-appear');
+  const chip = w.document.getElementById('rwa-st-ai');
+  const panel = w.document.getElementById('rwa-ai-panel');
+  if (chip) chip.click();
+  await tick();
+  check('F1: bridge status names the backend (using bridge)', !!panel && /using bridge/.test(panel.textContent));
+  check('F1: bridge status omits the model claim', !!panel && !/should-not-appear/.test(panel.textContent));
+  check("F1: bridge status drops the 'via <backend>' model framing", !!panel && !/via bridge/.test(panel.textContent));
+}
+
 console.log(`\n== ${pass} pass, ${fail} fail ==`);
 process.exit(fail ? 1 : 0);
