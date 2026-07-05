@@ -30,15 +30,20 @@ const check = (m, c) => { if (c) { pass++; console.log('  OK  ' + m); } else { f
 const tick = (ms = 20) => new Promise(r => setTimeout(r, ms));
 
 // Second installed role for B4 — a fresh signed rwa-agent/1 envelope (same helper pattern as
-// tests/intelligence-blend.mjs). No recommendation on purpose: activating it must not depend on
-// the model-offer dialog (the test still cleans one up defensively).
+// tests/intelligence-blend.mjs). No recommendation by default: activating it must not depend on
+// the model-offer dialog (the test still cleans one up defensively). A recommended_model /
+// recommended_backend in opts rides on the ENVELOPE (outside the signed `agent`, so the signature
+// still verifies — intelligence/0.2 I-A), exercising the model-offer-open path in block G.
 async function makeSignedAgent(role, opts) {
   const o = opts || {};
   const kp = await webcrypto.subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify']);
   const author_pubkey = Buffer.from(new Uint8Array(await webcrypto.subtle.exportKey('raw', kp.publicKey))).toString('base64');
   const agent = { author_pubkey, description: o.description || (role + ' description'), role, system_prompt: o.prompt || ('Lens ' + role + '.'), vault_namespace_set: [], version: 'rwa-agent/1' };
   const sig = new Uint8Array(await webcrypto.subtle.sign({ name: 'Ed25519' }, kp.privateKey, agentSigningMessage(agent)));
-  return { agent, signature: Buffer.from(sig).toString('base64') };
+  const env = { agent, signature: Buffer.from(sig).toString('base64') };
+  if (o.recommended_model) env.recommended_model = o.recommended_model;
+  if (o.recommended_backend) env.recommended_backend = o.recommended_backend;
+  return env;
 }
 
 async function boot({ kind = 'document', body = '<article><h1>Target</h1><p data-rwa-id="aichip">Hello</p></article>\n', sessionKey = false } = {}) {
@@ -375,6 +380,31 @@ console.log('== AI chip + AI panel ==');
   check('F1: bridge status names the backend (using bridge)', !!panel && /using bridge/.test(panel.textContent));
   check('F1: bridge status omits the model claim', !!panel && !/should-not-appear/.test(panel.textContent));
   check("F1: bridge status drops the 'via <backend>' model framing", !!panel && !/via bridge/.test(panel.textContent));
+}
+
+// G — the connect check DEFERS to an open model-offer. WHY it matters (both reviewers, real case): the
+// shipped concise-editor carrier recommends a model, so activating it in a fresh unconnected session
+// synchronously mounts #rwa-model-offer. Without the guard the connect check would ALSO stack
+// #rwa-ai-invite on top (double modal); worse, if the offer switches to a keyless backend the invite is
+// a false alarm. The offer is the user's next decision — if the session still can't run after they
+// dismiss it, the next ⌘K's own no-key guard recovers the invite. Here: activate a rec-bearing role,
+// unconnected → the model-offer is up AND the connect-check invite is suppressed.
+{
+  const w = await boot({ kind: 'skill-host' }); // no session key (openrouter requiresKey)
+  await w.runtime.agents.install(await makeSignedAgent('recommender', {
+    recommended_model: 'anthropic/claude-sonnet-4-6', recommended_backend: 'openrouter',
+  }));
+  const chip = w.document.getElementById('rwa-st-ai');
+  const panel = w.document.getElementById('rwa-ai-panel');
+  if (chip) chip.click();
+  await tick();
+  const onBtn = panel && panel.querySelector('[data-agent-on="recommender"]');
+  check('G1: the rec-bearing role lists an Activate button (setup)', !!onBtn);
+  if (onBtn) onBtn.click();
+  await tick(60);
+  check('G1: Activate flips the active role', (w.runtime.agents.active() || {}).role === 'recommender');
+  check('G1: the recommended-model offer is open', !!w.document.getElementById('rwa-model-offer'));
+  check('G1: the connect check defers — NO stacked drop-invitation card', !w.document.getElementById('rwa-ai-invite'));
 }
 
 console.log(`\n== ${pass} pass, ${fail} fail ==`);

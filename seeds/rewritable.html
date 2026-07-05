@@ -2475,7 +2475,10 @@ function renderAiPanel(panel) {
     // recommended-model consent that switches to a keyless backend is handled by the next ⌘K's own guard.
     let canRun = true;
     try { const cfg = (typeof resolveBackendConfig === 'function') ? resolveBackendConfig() : { requiresKey: false }; canRun = !cfg.requiresKey || !!cfg.apiKey; } catch (_) {}
-    if (!canRun && typeof showAiInvite === 'function') { panel.classList.remove('open'); showAiInvite(); }
+    // Defer to an open recommended-model offer (mounted synchronously inside offerRecommendedModel just
+    // above) — don't stack a second modal, and the offer may switch to a keyless backend (invite would be
+    // a false alarm). If the session still can't run once the offer is dismissed, the next ⌘K's own guard raises the invite.
+    if (!canRun && !document.getElementById('rwa-model-offer') && typeof showAiInvite === 'function') { panel.classList.remove('open'); showAiInvite(); }
   }));
   const agentOff = panel.querySelector('[data-agent-off]');
   if (agentOff) agentOff.addEventListener('click', () => { runtimeSetActiveAgent(null); renderAiChip(); renderAiPanel(panel); });
