@@ -8095,9 +8095,12 @@ function showAgentInstallDialog(envelope) {
     // get their BACKEND_META setup hint; bridge/bridge-session get the hint only (no probe in v1).
     const connectEl = card.querySelector('[data-ai-connect]');
     const useBtn = card.querySelector('[data-act=use]');
+    const setUseDisabled = (d) => { if (!useBtn) return; useBtn.disabled = d; useBtn.style.opacity = d ? '.5' : ''; useBtn.style.cursor = d ? 'default' : 'pointer'; };
     const chosenChoice = () => { const r = card.querySelector('[data-ai-modelchoice]:checked'); return r ? r.value : 'rec'; };
     const chosenBackend = () => (chosenChoice() === 'keep') ? curBackend : ((rec && rec.backend) || curBackend);
+    let keyDraft = ''; // a typed key survives connect-zone re-renders (rec → keep → rec)
     const syncConnect = () => {
+      const cur = connectEl.querySelector('[data-ai-key]'); if (cur) keyDraft = cur.value;
       const b = chosenBackend();
       let html = '';
       if (b === 'openrouter' && !sessionStorage.getItem(RWA.K_API)) {
@@ -8108,19 +8111,22 @@ function showAgentInstallDialog(envelope) {
       }
       connectEl.innerHTML = html ? '<p style="margin:1em 0 .2em"><strong>Connect</strong></p>' + html : '';
       const kf = connectEl.querySelector('[data-ai-key]');
-      const syncBtn = () => { if (useBtn) useBtn.disabled = !!kf && !kf.value.trim(); };
-      if (kf) kf.addEventListener('input', syncBtn);
+      if (kf && keyDraft) kf.value = keyDraft;
+      const syncBtn = () => setUseDisabled(!!kf && !kf.value.trim());
+      if (kf) kf.addEventListener('input', () => { keyDraft = kf.value; syncBtn(); });
       syncBtn();
     };
     syncConnect();
     for (const r of card.querySelectorAll('[data-ai-modelchoice]')) r.addEventListener('change', syncConnect);
     const close = (r) => { overlay.remove(); resolve(r); };
-    card.querySelector('[data-act=cancel]').onclick = () => close({ ok: false, errors: ['cancelled'] });
+    const cancelBtn = card.querySelector('[data-act=cancel]');
+    cancelBtn.onclick = () => close({ ok: false, errors: ['cancelled'] });
     if (useBtn) useBtn.onclick = async () => {
+      setUseDisabled(true); cancelBtn.disabled = true; // in-flight lock: no use-then-cancel race while install lands
       const res = await runtimeInstallAgent(envelope);
       if (res.ok) {
         try { runtimeSetActiveAgent(agent.role); } catch (_) {} // can't throw for a verified record, but never block the close
-        if (rec && chosenChoice() !== 'keep') applyRecommendation(rec);
+        if (recDiffers && chosenChoice() !== 'keep') applyRecommendation(rec); // a matching rec must not flip implicit defaults into explicit sessionStorage
         const kf = card.querySelector('[data-ai-key]');
         if (kf && kf.value.trim()) {
           sessionStorage.setItem(RWA.K_API, kf.value.trim());

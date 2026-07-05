@@ -141,6 +141,10 @@ console.log('== intelligence/0.2 file-drop bridge ==');
   if (keyInput) { keyInput.value = 'sk-or-test-123'; keyInput.dispatchEvent(new w.Event('input')); }
   check('F6 button enables once key present', !!useBtn && !useBtn.disabled);
   if (useBtn) useBtn.click();
+  // In-flight lock: install is async — use AND cancel must freeze IMMEDIATELY on click, or a
+  // cancel-after-use resolves {ok:false,cancelled} while install/activate/model/key still land.
+  const cancelBtn = dlg && dlg.querySelector('[data-act=cancel]');
+  check('F6b in-flight: use + cancel lock immediately on click', !!useBtn && useBtn.disabled && !!cancelBtn && cancelBtn.disabled);
   await new Promise(r => setTimeout(r, 200));
   const roles = w.runtime.agents.list();
   check('F7 installed', roles.some(a => a.role === 'concise-editor' && a.verified));
@@ -172,14 +176,40 @@ console.log('== intelligence/0.2 file-drop bridge ==');
   check('F14 explicit different setup → two radios, recommended checked', radios.length === 2 && radios[0].value === 'rec' && radios[0].checked);
   const useBtn = dlg && dlg.querySelector('[data-act=use]');
   check('F14b rec choice needs an openrouter key → field shown, button disabled', !!(dlg && dlg.querySelector('[data-ai-key]')) && !!useBtn && useBtn.disabled);
+  // A typed key must survive the radio round-trip (rec → keep → rec re-renders the connect zone).
+  const kf0 = dlg && dlg.querySelector('[data-ai-key]');
+  if (kf0) { kf0.value = 'sk-or-keep-me'; kf0.dispatchEvent(new w.Event('input')); }
   const keep = dlg && dlg.querySelector('[data-ai-modelchoice][value=keep]');
   if (keep) { keep.checked = true; keep.dispatchEvent(new w.Event('change')); }
   check('F15 keep → connect zone re-renders for the kept backend (lmstudio hint, no key field)', !!dlg && !dlg.querySelector('[data-ai-key]') && /LM Studio/i.test(dlg.textContent));
   check('F15b keep → button enabled (no key needed)', !!useBtn && !useBtn.disabled);
+  const recRadio = dlg && dlg.querySelector('[data-ai-modelchoice][value=rec]');
+  if (recRadio) { recRadio.checked = true; recRadio.dispatchEvent(new w.Event('change')); }
+  const kf1 = dlg && dlg.querySelector('[data-ai-key]');
+  check('F15c back to rec → the typed key survived the round-trip', !!kf1 && kf1.value === 'sk-or-keep-me');
+  if (keep) { keep.checked = true; keep.dispatchEvent(new w.Event('change')); }
   if (useBtn) useBtn.click();
   await new Promise(r => setTimeout(r, 200));
   check('F16 keep → session model/backend untouched', w.sessionStorage.getItem('rwa_model') === 'my/custom-model' && w.sessionStorage.getItem('rwa_backend') === 'lmstudio');
   check('F16b keep still installs + activates', (w.runtime.agents.active() || {}).role === 'concise-editor');
+}
+// F17 — a rec that MATCHES the current session is treated as no-rec: no radios, and the use-click
+// must NOT write value-identical model/backend into sessionStorage (implicit defaults must stay
+// implicit — an explicit rwa_backend here would flip explicitSetup for the NEXT drop's dialog).
+{
+  const w = await boot(article);
+  const env0 = w.__rwaExtractAgentCarrier(carrierHtml)[0];
+  w.sessionStorage.setItem('rwa_model', env0.recommended_model); // backend stays the implicit default (openrouter)
+  await w.__rwaInstallFromText(carrierHtml);
+  await new Promise(r => setTimeout(r, 50));
+  const dlg = w.document.getElementById('rwa-agent-install');
+  check('F17 rec matching the current session → no radios (treated as no-rec)', !!dlg && dlg.querySelectorAll('[data-ai-modelchoice]').length === 0);
+  const keyInput = dlg && dlg.querySelector('[data-ai-key]');
+  if (keyInput) { keyInput.value = 'sk-or-x'; keyInput.dispatchEvent(new w.Event('input')); }
+  const useBtn = dlg && dlg.querySelector('[data-act=use]');
+  if (useBtn) useBtn.click();
+  await new Promise(r => setTimeout(r, 200));
+  check('F17b matching rec is NOT re-written (rwa_backend stays unset)', (w.runtime.agents.active() || {}).role === 'concise-editor' && w.sessionStorage.getItem('rwa_backend') === null);
 }
 
 console.log(`\n== ${pass} pass, ${fail} fail ==`);
