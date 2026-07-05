@@ -94,9 +94,12 @@ console.log('== intelligence/0.2 file-drop bridge ==');
   const overlay = w.document.getElementById('rwa-agent-install');
   check('D1: dropping a carrier opens the agent consent dialog', !!overlay);
   check('D2: the dialog names the concise-editor role', !!overlay && /concise-editor/.test(overlay.textContent));
-  const installBtn = overlay && overlay.querySelector('[data-act=install]');
-  check('D3: a verified role offers an install button (the consent action)', !!installBtn);
-  installBtn.click();
+  const useBtn = overlay && overlay.querySelector('[data-act=use]');
+  check('D3: a verified role offers the Use-this-AI button (the consent action)', !!useBtn);
+  // The unified dialog gates the button on connect (openrouter recommended, no session key yet).
+  const dKey = overlay && overlay.querySelector('[data-ai-key]');
+  if (dKey) { dKey.value = 'sk-or-test'; dKey.dispatchEvent(new w.Event('input')); }
+  if (useBtn) useBtn.click();
   await new Promise(r => setTimeout(r, 120));
   const a = w.runtime.agents.list().find(x => x.role === 'concise-editor');
   check('D4: consenting installs the intelligence (verified)', !!a && a.verified === true);
@@ -117,6 +120,66 @@ console.log('== intelligence/0.2 file-drop bridge ==');
     await new Promise(r => setTimeout(r, 120));
     return !!w.document.getElementById('rwa-agent-install');
   })());
+}
+
+// F — unified "Use this AI" dialog: one confirm = install + activate + model + key
+// (docs/plans/2026-07-05-drop-in-ai-ux-design.md §3). The consent dialog carries all four zones;
+// clicking the one button leaves the runtime READY (active role, session model/backend/key set).
+{
+  const w = await boot(article);
+  await w.__rwaInstallFromText(carrierHtml); // opens the dialog (fire-and-forget)
+  await new Promise(r => setTimeout(r, 50));
+  const dlg = w.document.getElementById('rwa-agent-install');
+  check('F1 dialog present', !!dlg);
+  check('F2 dialog title says Use this AI', !!dlg && /Use this AI/i.test(dlg.textContent));
+  const env0 = w.__rwaExtractAgentCarrier(carrierHtml)[0];
+  check('F3 model zone shows the recommendation', !!dlg && dlg.textContent.includes(env0.recommended_model) && dlg.textContent.includes('openrouter'));
+  const keyInput = dlg && dlg.querySelector('[data-ai-key]');
+  check('F4 connect zone: key field present (openrouter recommended, no session key)', !!keyInput);
+  const useBtn = dlg && dlg.querySelector('[data-act=use]');
+  check('F5 primary button disabled until key entered', !!useBtn && useBtn.disabled);
+  if (keyInput) { keyInput.value = 'sk-or-test-123'; keyInput.dispatchEvent(new w.Event('input')); }
+  check('F6 button enables once key present', !!useBtn && !useBtn.disabled);
+  if (useBtn) useBtn.click();
+  await new Promise(r => setTimeout(r, 200));
+  const roles = w.runtime.agents.list();
+  check('F7 installed', roles.some(a => a.role === 'concise-editor' && a.verified));
+  check('F8 activated', (w.runtime.agents.active() || {}).role === 'concise-editor');
+  check('F9 model applied', w.sessionStorage.getItem('rwa_model') === env0.recommended_model);
+  check('F10 backend applied', w.sessionStorage.getItem('rwa_backend') === 'openrouter');
+  check('F11 key stored (session only)', w.sessionStorage.getItem('rwa_apikey') === 'sk-or-test-123');
+  check('F12 no second model-offer dialog', !w.document.getElementById('rwa-model-offer'));
+}
+// F13 — cancel is inert: nothing installed, nothing written
+{
+  const w = await boot(article);
+  await w.__rwaInstallFromText(carrierHtml);
+  await new Promise(r => setTimeout(r, 50));
+  w.document.querySelector('#rwa-agent-install [data-act=cancel]').click();
+  await new Promise(r => setTimeout(r, 50));
+  check('F13 cancel installs nothing', w.runtime.agents.list().length === 0 && !w.sessionStorage.getItem('rwa_apikey') && !w.sessionStorage.getItem('rwa_model'));
+}
+// F14–F16 — an EXPLICIT different session setup gets radios; "keep" re-renders the connect zone
+// for the kept backend and leaves the session model/backend untouched (still installs+activates).
+{
+  const w = await boot(article);
+  w.sessionStorage.setItem('rwa_model', 'my/custom-model');
+  w.sessionStorage.setItem('rwa_backend', 'lmstudio');
+  await w.__rwaInstallFromText(carrierHtml);
+  await new Promise(r => setTimeout(r, 50));
+  const dlg = w.document.getElementById('rwa-agent-install');
+  const radios = dlg ? dlg.querySelectorAll('[data-ai-modelchoice]') : [];
+  check('F14 explicit different setup → two radios, recommended checked', radios.length === 2 && radios[0].value === 'rec' && radios[0].checked);
+  const useBtn = dlg && dlg.querySelector('[data-act=use]');
+  check('F14b rec choice needs an openrouter key → field shown, button disabled', !!(dlg && dlg.querySelector('[data-ai-key]')) && !!useBtn && useBtn.disabled);
+  const keep = dlg && dlg.querySelector('[data-ai-modelchoice][value=keep]');
+  if (keep) { keep.checked = true; keep.dispatchEvent(new w.Event('change')); }
+  check('F15 keep → connect zone re-renders for the kept backend (lmstudio hint, no key field)', !!dlg && !dlg.querySelector('[data-ai-key]') && /LM Studio/i.test(dlg.textContent));
+  check('F15b keep → button enabled (no key needed)', !!useBtn && !useBtn.disabled);
+  if (useBtn) useBtn.click();
+  await new Promise(r => setTimeout(r, 200));
+  check('F16 keep → session model/backend untouched', w.sessionStorage.getItem('rwa_model') === 'my/custom-model' && w.sessionStorage.getItem('rwa_backend') === 'lmstudio');
+  check('F16b keep still installs + activates', (w.runtime.agents.active() || {}).role === 'concise-editor');
 }
 
 console.log(`\n== ${pass} pass, ${fail} fail ==`);
