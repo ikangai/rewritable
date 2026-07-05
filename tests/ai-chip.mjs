@@ -245,5 +245,80 @@ console.log('== AI chip + AI panel ==');
   check('D5: with a key, modify proceeds past the guard — no invite appears', !w.document.getElementById('rwa-ai-invite'));
 }
 
+// D6 — the REAL every-new-session case: a single verified role installed but NOT active in-session
+// (activeAgentRole isn't persisted across sessions, so runtimeAgentActive() is null on a fresh open).
+// WHY this test exists: D4 masked the bug by pre-calling setActive. Here Connect must ACTIVATE the
+// named role, not just store the key — otherwise the card promises "'<role>' is ready" but ⌘K then
+// runs the plain editor with an empty chip.
+{
+  const w = await boot({ kind: 'skill-host' });
+  await w.runtime.agents.install(w.__rwaExtractAgentCarrier(carrierHtml)[0]);
+  // deliberately NO setActive — this is the inactive branch
+  w.sessionStorage.removeItem('rwa_apikey');
+  check('D6: precondition — no active role in this session', w.runtime.agents.active() === null);
+  try { await w.modify('x'); } catch (_) {}
+  await tick();
+  const invite = w.document.getElementById('rwa-ai-invite');
+  check('D6: a single inactive verified role still yields the AI-aware invite', !!invite);
+  check('D6: invite names the inactive role', !!invite && /concise-editor/.test(invite.textContent));
+  const connect = invite && invite.querySelector('[data-ai-invite-connect]');
+  check('D6: Connect is DISABLED before a key is typed', !!connect && connect.disabled === true);
+  const field = invite && invite.querySelector('[data-ai-key]');
+  if (field) { field.value = 'sk-or-live'; field.dispatchEvent(new w.Event('input')); }
+  check('D6: Connect enables once a key is typed', !!connect && connect.disabled === false);
+  if (connect) connect.click();
+  await tick();
+  check('D6: Connect ACTIVATES the named role (the branch D4 masked)', (w.runtime.agents.active() || {}).role === 'concise-editor');
+  check('D6: Connect stores the key in sessionStorage', w.sessionStorage.getItem('rwa_apikey') === 'sk-or-live');
+  check('D6: Connect removes the invite', !w.document.getElementById('rwa-ai-invite'));
+}
+
+// D6b — the AI-aware variant has a neutral dismiss (parity with the generic card): a Close button
+// that just removes the invite without connecting or activating.
+{
+  const w = await boot({ kind: 'skill-host' });
+  await w.runtime.agents.install(w.__rwaExtractAgentCarrier(carrierHtml)[0]);
+  w.sessionStorage.removeItem('rwa_apikey');
+  try { await w.modify('x'); } catch (_) {}
+  await tick();
+  const invite = w.document.getElementById('rwa-ai-invite');
+  const closeBtn = invite && invite.querySelector('[data-act=cancel]');
+  check('D6b: AI-aware invite offers a neutral Close button', !!closeBtn && /Close/i.test(closeBtn.textContent));
+  if (closeBtn) closeBtn.click();
+  await tick();
+  check('D6b: Close removes the invite without connecting', !w.document.getElementById('rwa-ai-invite') && w.sessionStorage.getItem('rwa_apikey') == null);
+  check('D6b: Close does not activate a role', w.runtime.agents.active() === null);
+}
+
+// D7 — ambiguity fallback: TWO verified inactive roles → GENERIC invite (no single role to name).
+{
+  const w = await boot({ kind: 'skill-host' });
+  await w.runtime.agents.install(await makeSignedAgent('alpha', {}));
+  await w.runtime.agents.install(await makeSignedAgent('beta', {}));
+  w.sessionStorage.removeItem('rwa_apikey');
+  try { await w.modify('x'); } catch (_) {}
+  await tick();
+  const invite = w.document.getElementById('rwa-ai-invite');
+  check('D7: invite appears with two inactive verified roles', !!invite);
+  check('D7: it falls back to the GENERIC variant (names no single role)', !!invite && /no AI connected/i.test(invite.textContent) && !/alpha|beta/.test(invite.textContent));
+  check('D7: the generic invite still carries the gallery link', !!invite && !!invite.querySelector('a[href*="/ai"]'));
+}
+
+// D8 — a drop supersedes an open invite: showAgentInstallDialog removes any mounted #rwa-ai-invite so
+// the consent card doesn't stack a second overlay behind it.
+{
+  const w = await boot({ kind: 'skill-host' });
+  const env = w.__rwaExtractAgentCarrier(carrierHtml)[0];
+  await w.runtime.agents.install(env);
+  w.sessionStorage.removeItem('rwa_apikey');
+  try { await w.modify('x'); } catch (_) {}
+  await tick();
+  check('D8: the invite is open (setup)', !!w.document.getElementById('rwa-ai-invite'));
+  w.showAgentInstallDialog(env); // fire-and-forget: opens the consent dialog
+  await tick(80);
+  check('D8: the drop dialog removes the stale invite', !w.document.getElementById('rwa-ai-invite'));
+  check('D8: the consent dialog is now mounted', !!w.document.getElementById('rwa-agent-install'));
+}
+
 console.log(`\n== ${pass} pass, ${fail} fail ==`);
 process.exit(fail ? 1 : 0);

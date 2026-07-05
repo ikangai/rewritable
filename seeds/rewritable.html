@@ -8143,6 +8143,7 @@ function _aiConnectZoneHtml(backend) {
 function showAgentInstallDialog(envelope) {
   const agent = (envelope && envelope.agent) || {};
   const signed = !!(envelope && envelope.signature);
+  const _pi = document.getElementById('rwa-ai-invite'); if (_pi) _pi.remove(); // a drop supersedes an open drop-invitation card
   return Promise.resolve(_agVerify(envelope)).then(verified => new Promise(resolve => {
     const gates = _agValidateInstall(agent, signed);
     const prev = document.getElementById('rwa-agent-install'); if (prev) prev.remove();
@@ -8247,8 +8248,13 @@ function showAgentInstallDialog(envelope) {
 // requiresKey backend, i.e. the sole backend whose no-key guard reaches here.
 function showAiInvite() {
   const prev = document.getElementById('rwa-ai-invite'); if (prev) prev.remove();
+  // Target pick — AI-aware ONLY when the role to connect is unambiguous: the active role, else a
+  // single verified install. activeAgentRole isn't persisted across sessions, so the every-new-session
+  // case has runtimeAgentActive()===null and falls to the lone verified install; 2+ inactive verified
+  // roles are ambiguous (which one does "Connect" mean?) → the generic variant.
   const act = (typeof runtimeAgentActive === 'function' && runtimeAgentActive()) || null;
-  const installed = act || Array.from(installedAgents.values()).find(a => a.verified) || null;
+  const verifiedRoles = Array.from(installedAgents.values()).filter(a => a.verified);
+  const installed = act || (verifiedRoles.length === 1 ? verifiedRoles[0] : null);
   const overlay = document.createElement('div'); overlay.id = 'rwa-ai-invite';
   overlay.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;';
   const card = document.createElement('div');
@@ -8263,6 +8269,7 @@ function showAiInvite() {
       '<p style="margin:.2em 0 1em;color:#444">No AI connected in this browser session yet. Connect a model to run “' + roleName + '”, or drop a different AI file anywhere on this page.</p>' +
       '<div data-ai-invite-body><p style="margin:1em 0 .2em"><strong>Connect</strong></p>' + _aiConnectZoneHtml('openrouter') + '</div>' +
       '<div style="display:flex;gap:10px;margin-top:1.2em;justify-content:flex-end">' +
+        '<button data-act="cancel" style="padding:9px 16px;border:1px solid #ccc;border-radius:10px;background:#fff;cursor:pointer">Close</button>' +
         manualBtn +
         '<button data-ai-invite-connect style="padding:9px 16px;border:none;border-radius:10px;background:var(--gray-900,#111);color:#fff;cursor:pointer">Connect</button>' +
       '</div>';
@@ -8294,6 +8301,10 @@ function showAiInvite() {
     if (field) field.addEventListener('input', syncBtn);
     syncBtn();
     connectBtn.onclick = () => {
+      // Deliver on the copy: the card says "<role> is ready" — Connect makes it ACTIVE (not just
+      // connected) so the next ⌘K runs THIS role, not the plain editor. installed is verified here
+      // (the AI-aware branch only fires for a verified target), so setActive can't throw.
+      try { runtimeSetActiveAgent(installed.role); } catch (_) {}
       if (field && field.value.trim()) {
         sessionStorage.setItem(RWA.K_API, field.value.trim());
         try { const ki = document.getElementById('rwa-key'); if (ki) ki.value = field.value.trim(); } catch (_) {}
