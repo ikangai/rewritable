@@ -175,5 +175,75 @@ console.log('== AI chip + AI panel ==');
   check("C1: it no longer contains an 'Intelligences' section", !!panel && !/Intelligences/.test(panel.textContent) && !panel.querySelector('[data-agent-on]'));
 }
 
+// D — the no-key ⌘K path invites an AI drop instead of auto-opening ⚙ settings (plan task 1.5).
+// The first ⌘K on a fresh openrouter rewritable with no session key used to answer 'no API key —
+// open ⚙ settings' and AUTO-OPEN the developer settings form. WHY it matters: the tangible
+// alternative — drop an AI file — was undiscoverable; the guard shoved the user into a raw dev
+// form instead of surfacing the drop gesture. It now shows #rwa-ai-invite (a drop-invitation card),
+// with the settings form demoted to an explicit 'set up manually' escape hatch.
+{
+  // D1 — generic invite (no AI installed, no key): modify() must NOT auto-open settings; it invites.
+  const w = await boot(); // document kind, openrouter default, no rwa_apikey
+  try { await w.modify('x'); } catch (_) {}
+  await tick();
+  const setPanel = w.document.getElementById('rwa-set-panel');
+  check('D1: no-key modify does NOT auto-open the developer settings form', !setPanel.classList.contains('open'));
+  const invite = w.document.getElementById('rwa-ai-invite');
+  check('D1: a drop-invitation card #rwa-ai-invite appears instead', !!invite);
+
+  // D2 — invite copy: no AI connected, the drop gesture, a gallery link to /ai
+  check('D2: invite says no AI is connected', !!invite && /no AI connected/i.test(invite.textContent));
+  check('D2: invite invites the drop gesture', !!invite && /Drop an AI file/i.test(invite.textContent));
+  const gal = invite && invite.querySelector('a[href*="/ai"]');
+  check("D2: invite carries a gallery link whose href contains '/ai'", !!gal);
+
+  // D3 — escape hatch: [data-ai-manual] removes the invite + opens settings (the OLD guard behavior,
+  // now behind an explicit choice rather than forced).
+  const manual = invite && invite.querySelector('[data-ai-manual]');
+  check("D3: invite offers a 'set up manually' control", !!manual && /set up manually/i.test(manual.textContent));
+  if (manual) manual.click();
+  await tick();
+  check('D3: set-up-manually removes the invite', !w.document.getElementById('rwa-ai-invite'));
+  check('D3: and opens the developer settings form', setPanel.classList.contains('open'));
+}
+
+// D4 — AI-aware variant: an installed+active role but no session key (the every-new-session case,
+// since key/model are sessionStorage-only). The invite names the role and offers the key inline.
+{
+  const w = await boot({ kind: 'skill-host' });
+  const env = w.__rwaExtractAgentCarrier(carrierHtml)[0];
+  await w.runtime.agents.install(env);
+  w.runtime.agents.setActive('concise-editor');
+  await tick();
+  const offer0 = w.document.getElementById('rwa-model-offer'); // defensive: clear any model-offer overlay
+  if (offer0) { const k = offer0.querySelector('[data-act=keep]'); if (k) k.click(); await tick(); }
+  w.sessionStorage.removeItem('rwa_apikey');
+  try { await w.modify('x'); } catch (_) {}
+  await tick();
+  const invite = w.document.getElementById('rwa-ai-invite');
+  check('D4: AI-aware invite appears', !!invite);
+  check('D4: invite names the installed role', !!invite && /concise-editor/.test(invite.textContent));
+  check('D4: invite says to connect a model', !!invite && /connect a model/i.test(invite.textContent));
+  const field = invite && invite.querySelector('[data-ai-key]');
+  check('D4: invite has an inline key field', !!field);
+  const connect = invite && invite.querySelector('[data-ai-invite-connect]');
+  check('D4: invite has a connect button', !!connect);
+  if (field) { field.value = 'sk-or-typed'; field.dispatchEvent(new w.Event('input')); }
+  if (connect) connect.click();
+  await tick();
+  check("D4: connect stores the key in sessionStorage (rwa_apikey)", w.sessionStorage.getItem('rwa_apikey') === 'sk-or-typed');
+  check('D4: connect removes the invite', !w.document.getElementById('rwa-ai-invite'));
+}
+
+// D5 — a working session (key present) proceeds PAST the guard: no invite. (modify then hits the
+// fake-network path and rejects — that's expected; we assert only on the invite's absence.)
+{
+  const w = await boot();
+  w.sessionStorage.setItem('rwa_apikey', 'sk-or-test');
+  try { await w.modify('x'); } catch (_) {}
+  await tick();
+  check('D5: with a key, modify proceeds past the guard — no invite appears', !w.document.getElementById('rwa-ai-invite'));
+}
+
 console.log(`\n== ${pass} pass, ${fail} fail ==`);
 process.exit(fail ? 1 : 0);
