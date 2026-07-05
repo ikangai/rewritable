@@ -8117,6 +8117,22 @@ function showSkillInstallDialog(envelope) {
   }));
 }
 // I12 (v0.9 §12) + drop-in AI UX (docs/plans/2026-07-05-drop-in-ai-ux-design.md §3) — the unified
+// Shared Connect-zone field markup (drop-in AI UX §2/§3) — the fields a not-yet-usable backend
+// needs, WITHOUT a heading (each caller wraps it with its own 'Connect' label). openrouter without a
+// session key → an inline [data-ai-key] password field + the session-only reassurance; a local
+// backend → its BACKEND_META setup hint; anything already usable (or bridge) → '' (no field). Used
+// by BOTH the "Use this AI" dialog (syncConnect) and the drop-invitation card (showAiInvite) so the
+// key-field markup + trust line stay byte-identical across the two surfaces.
+function _aiConnectZoneHtml(backend) {
+  if (backend === 'openrouter' && !sessionStorage.getItem(RWA.K_API)) {
+    return '<input type="password" data-ai-key placeholder="sk-or-..." autocomplete="off" style="width:100%;box-sizing:border-box;margin:.2em 0;padding:8px 10px;border:1px solid #ccc;border-radius:8px;font:13px/1.4 var(--font-mono,monospace)">' +
+      '<p style="margin:.2em 0;color:#555">Your key stays in this browser session — never in the file.</p>';
+  }
+  if (BACKEND_META[backend] && BACKEND_META[backend].hintHTML) {
+    return '<p style="margin:.2em 0;color:#555">' + BACKEND_META[backend].hintHTML + '</p>';
+  }
+  return '';
+}
 // "Use this AI" consent dialog. ONE confirm = install + activate + (optional) recommended
 // model/backend + connect (openrouter key / local-backend setup hint). Four zones; the identity
 // zone is the I12 review verbatim (role + author key + vault namespaces + ≤200-char prompt
@@ -8192,13 +8208,7 @@ function showAgentInstallDialog(envelope) {
     const syncConnect = () => {
       const cur = connectEl.querySelector('[data-ai-key]'); if (cur) keyDraft = cur.value;
       const b = chosenBackend();
-      let html = '';
-      if (b === 'openrouter' && !sessionStorage.getItem(RWA.K_API)) {
-        html = '<input type="password" data-ai-key placeholder="sk-or-..." autocomplete="off" style="width:100%;box-sizing:border-box;margin:.2em 0;padding:8px 10px;border:1px solid #ccc;border-radius:8px;font:13px/1.4 var(--font-mono,monospace)">' +
-          '<p style="margin:.2em 0;color:#555">Your key stays in this browser session — never in the file.</p>';
-      } else if (BACKEND_META[b] && BACKEND_META[b].hintHTML) {
-        html = '<p style="margin:.2em 0;color:#555">' + BACKEND_META[b].hintHTML + '</p>';
-      }
+      const html = _aiConnectZoneHtml(b);
       connectEl.innerHTML = html ? '<p style="margin:1em 0 .2em"><strong>Connect</strong></p>' + html : '';
       const kf = connectEl.querySelector('[data-ai-key]');
       if (kf && keyDraft) kf.value = keyDraft;
@@ -8226,6 +8236,72 @@ function showAgentInstallDialog(envelope) {
       close(res);
     };
   }));
+}
+// Drop-invitation card (drop-in AI UX §2, plan task 1.5) — shown when the first ⌘K has no usable
+// backend (openrouter without a session key). Replaces the old 'no API key — open ⚙ settings'
+// auto-open: the tangible path (drop an AI file) leads, the developer settings form is demoted to an
+// explicit 'set up manually' escape hatch. Two variants: GENERIC (no AI installed anywhere) invites
+// the drop gesture + the AI Gallery; AI-AWARE (a verified role IS installed but this session has no
+// key — the every-new-session case, since key/model are sessionStorage-only) names the role and
+// offers the key inline via the shared Connect zone. openrouter is hard-wired because it's the only
+// requiresKey backend, i.e. the sole backend whose no-key guard reaches here.
+function showAiInvite() {
+  const prev = document.getElementById('rwa-ai-invite'); if (prev) prev.remove();
+  const act = (typeof runtimeAgentActive === 'function' && runtimeAgentActive()) || null;
+  const installed = act || Array.from(installedAgents.values()).find(a => a.verified) || null;
+  const overlay = document.createElement('div'); overlay.id = 'rwa-ai-invite';
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;';
+  const card = document.createElement('div');
+  card.style.cssText = 'background:#fff;max-width:560px;width:92%;max-height:86vh;overflow:auto;border-radius:18px;padding:26px 28px;font:14px/1.5 var(--font-ui,system-ui);box-shadow:0 12px 48px rgba(0,0,0,.28);';
+  const roleName = installed ? _skEsc(installed.role) : '';
+  const gallery = '<a href="https://rewritable.ikangai.com/ai" target="_blank" rel="noopener">AI Gallery</a>';
+  const manualBtn = '<button data-ai-manual style="padding:9px 16px;border:1px solid #ccc;border-radius:10px;background:#fff;cursor:pointer">set up manually (⚙)</button>';
+  if (installed) {
+    // AI-aware — a role is ready but this session has no model connection. Offer the key inline.
+    card.innerHTML =
+      '<h2 style="margin:0 0 .4em;font-size:1.25rem">“' + roleName + '” is ready — connect a model to run it</h2>' +
+      '<p style="margin:.2em 0 1em;color:#444">No AI connected in this browser session yet. Connect a model to run “' + roleName + '”, or drop a different AI file anywhere on this page.</p>' +
+      '<div data-ai-invite-body><p style="margin:1em 0 .2em"><strong>Connect</strong></p>' + _aiConnectZoneHtml('openrouter') + '</div>' +
+      '<div style="display:flex;gap:10px;margin-top:1.2em;justify-content:flex-end">' +
+        manualBtn +
+        '<button data-ai-invite-connect style="padding:9px 16px;border:none;border-radius:10px;background:var(--gray-900,#111);color:#fff;cursor:pointer">Connect</button>' +
+      '</div>';
+  } else {
+    card.innerHTML =
+      '<h2 style="margin:0 0 .4em;font-size:1.25rem">This document has no AI connected</h2>' +
+      '<p style="margin:.2em 0 1em;color:#444">Drop an AI file anywhere on this page — it installs behind a consent card. Or browse the ' + gallery + ', or set up a model manually.</p>' +
+      '<div style="display:flex;gap:10px;margin-top:1.2em;justify-content:flex-end">' +
+        '<button data-act="cancel" style="padding:9px 16px;border:1px solid #ccc;border-radius:10px;background:#fff;cursor:pointer">Close</button>' +
+        manualBtn +
+      '</div>';
+  }
+  overlay.appendChild(card); document.body.appendChild(overlay);
+  const close = () => overlay.remove();
+  // Escape hatch — the OLD guard behavior (open ⚙ + focus the key field), now behind a choice.
+  const manual = card.querySelector('[data-ai-manual]');
+  if (manual) manual.onclick = () => {
+    close();
+    const setP = document.getElementById('rwa-set-panel'); if (setP) setP.classList.add('open');
+    try { const key = document.getElementById('rwa-key'); if (key) key.focus(); } catch (_) {}
+  };
+  const cancelBtn = card.querySelector('[data-act=cancel]');
+  if (cancelBtn) cancelBtn.onclick = close;
+  // AI-aware Connect — store the typed key (sessionStorage, the same slot ⚙ writes), sync #rwa-key.
+  const field = card.querySelector('[data-ai-key]');
+  const connectBtn = card.querySelector('[data-ai-invite-connect]');
+  if (connectBtn) {
+    const syncBtn = () => { const d = !!field && !field.value.trim(); connectBtn.disabled = d; connectBtn.style.opacity = d ? '.5' : ''; connectBtn.style.cursor = d ? 'default' : 'pointer'; };
+    if (field) field.addEventListener('input', syncBtn);
+    syncBtn();
+    connectBtn.onclick = () => {
+      if (field && field.value.trim()) {
+        sessionStorage.setItem(RWA.K_API, field.value.trim());
+        try { const ki = document.getElementById('rwa-key'); if (ki) ki.value = field.value.trim(); } catch (_) {}
+      }
+      close();
+      try { typeof renderAiChip === 'function' && renderAiChip(); } catch (_) {}
+    };
+  }
 }
 // §1.3 / §12 — install trigger: pick a .rwa-skill.json / .rwa-agent.json envelope OR an
 // intelligence carrier .html (a rewritable carrying a signed rwa-agent/1 record), then route.
@@ -9114,10 +9190,9 @@ async function modify(instr, lensMeta = null, opts = null) {
 
   const model = sessionStorage.getItem(RWA.K_MODEL) || RWA.MODEL;
   if (cfg.requiresKey && !cfg.apiKey) {
-    setPalSt('err', 'no API key — open ⚙ settings');
-    setLensProgress('error', 'no API key — open ⚙ settings');
-    document.getElementById('rwa-set-panel').classList.add('open');
-    document.getElementById('rwa-key').focus();
+    setPalSt('err', 'no AI connected — drop one in');
+    setLensProgress('error', 'no AI connected — drop one in');
+    showAiInvite();
     return;
   }
 
