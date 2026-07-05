@@ -2422,9 +2422,13 @@ function renderAiPanel(panel) {
     connected = !cfg.requiresKey || !!cfg.apiKey;
     const model = sessionStorage.getItem(RWA.K_MODEL) || RWA.MODEL;
     const backend = sessionStorage.getItem(RWA.K_BACKEND) || 'openrouter';
+    const bridgeKind = cfg.kind === 'bridge' || cfg.kind === 'bridge-session';
     const aff = (active.affinity && active.affinity.length) ? ' · for ' + active.affinity.join('/') : '';
     const desc = active.description ? '<div>' + escRuntimeHtml(active.description) + '</div>' : '';
-    const status = connected ? escRuntimeHtml('using ' + model + ' via ' + backend) : 'not connected';
+    // Bridge shells to `claude -p`; the sessionStorage model is ignored — naming it would be a lie.
+    const status = !connected ? 'not connected'
+      : bridgeKind ? escRuntimeHtml('using ' + backend)
+      : escRuntimeHtml('using ' + model + ' via ' + backend);
     const btns = (connected ? '' : '<button type="button" data-ai-connect="1">Connect</button>')
       + '<button type="button" data-agent-off="1">Deactivate</button>';
     rows.push('<div class="rwa-mode-row"><div><div class="rwa-mode-title">' + escRuntimeHtml(active.role) + '</div>' + desc
@@ -2465,6 +2469,13 @@ function renderAiPanel(panel) {
     try { runtimeActivateAgent(role); const aw = affinityWarning(role); if (aw && typeof setStatus === 'function') setStatus('', aw); } // setActive + offer model; advisory affinity warn (I-D)
     catch (e) { if (typeof setStatus === 'function') setStatus('err', '✗ ' + (e && (e.code || e.message))); }
     renderAiChip(); renderAiPanel(panel);
+    // Connect check — activation flips the chip, but a session with no reachable model still can't run
+    // ⌘K (key/model are sessionStorage-only). If so, drop this panel and raise the AI-aware drop
+    // invitation naming the role we just activated. Read the CURRENT session synchronously — a pending
+    // recommended-model consent that switches to a keyless backend is handled by the next ⌘K's own guard.
+    let canRun = true;
+    try { const cfg = (typeof resolveBackendConfig === 'function') ? resolveBackendConfig() : { requiresKey: false }; canRun = !cfg.requiresKey || !!cfg.apiKey; } catch (_) {}
+    if (!canRun && typeof showAiInvite === 'function') { panel.classList.remove('open'); showAiInvite(); }
   }));
   const agentOff = panel.querySelector('[data-agent-off]');
   if (agentOff) agentOff.addEventListener('click', () => { runtimeSetActiveAgent(null); renderAiChip(); renderAiPanel(panel); });
@@ -8370,7 +8381,7 @@ async function routeInstallFromText(text) {
   if (c.kind === 'json-agent') showAgentInstallDialog(c.envelope);
   else if (c.kind === 'json-skill') showSkillInstallDialog(c.envelope);
   else if (c.kind === 'agent-carrier') { (async () => { for (const env of c.envelopes) { await showAgentInstallDialog(env); } })(); }
-  else if (typeof setStatus === 'function') setStatus('err', 'no installable skill or intelligence found in that file');
+  else if (typeof setStatus === 'function') setStatus('err', 'no installable skill or AI found in that file');
   return c;
 }
 async function _readDroppedText(file) {
@@ -8388,7 +8399,7 @@ async function handleCarrierDrop(e) {
   if (!carrier) return; // not a carrier — let the image/other drop handlers run
   if (e.preventDefault) e.preventDefault();
   if (e.stopPropagation) e.stopPropagation();
-  if (carrier.size > CARRIER_MAX_BYTES) { if (typeof setStatus === 'function') setStatus('err', 'that file is too large to be an intelligence carrier (' + Math.round(carrier.size / 1048576) + ' MB)'); return; }
+  if (carrier.size > CARRIER_MAX_BYTES) { if (typeof setStatus === 'function') setStatus('err', 'that file is too large to be an AI carrier (' + Math.round(carrier.size / 1048576) + ' MB)'); return; }
   try { await routeInstallFromText(await _readDroppedText(carrier)); }
   catch (_) { if (typeof setStatus === 'function') setStatus('err', 'could not read the dropped file'); }
 }
@@ -8464,7 +8475,7 @@ function offerRecommendedModel(role) {
     card.style.cssText = 'background:#fff;max-width:480px;width:92%;border-radius:18px;padding:24px 26px;font:14px/1.5 var(--font-ui,system-ui);box-shadow:0 12px 48px rgba(0,0,0,.28);';
     const what = [rec.model ? 'model <code>' + _skEsc(rec.model) + '</code>' : '', rec.backend ? 'backend <code>' + _skEsc(rec.backend) + '</code>' : ''].filter(Boolean).join(' on ');
     card.innerHTML =
-      '<h2 style="margin:0 0 .4em;font-size:1.15rem">Use this intelligence’s recommended ' + (rec.model ? 'model' : 'backend') + '?</h2>' +
+      '<h2 style="margin:0 0 .4em;font-size:1.15rem">Use this AI’s recommended ' + (rec.model ? 'model' : 'backend') + '?</h2>' +
       '<p style="margin:.2em 0;color:#444">The <strong>' + _skEsc(role) + '</strong> role suggests ' + what + ' for ⌘K. This is a <em>recommendation</em> (not part of the signed role) — applying it changes only your session’s model/backend selection. Your API key is untouched.</p>' +
       '<div style="display:flex;gap:10px;margin-top:1.2em;justify-content:flex-end">' +
         '<button data-act="keep" style="padding:9px 16px;border:1px solid #ccc;border-radius:10px;background:#fff;cursor:pointer">Keep current</button>' +
