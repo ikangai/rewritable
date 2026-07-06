@@ -4,7 +4,7 @@
 Each carrier is a self-contained `skill-host` rewritable that carries a signed
 `rwa-agent/1` record (an *intelligence* — `docs/specs/rwa-intelligence-spec.md`,
 `intelligence/0.2`). A user drops a carrier onto any rewritable to install its AI,
-then activates it from the Activity panel's *Intelligences* section. Because a
+then activates it from the "AI" chip in the status bar. Because a
 carrier is itself a skill-host, the role is already installed in the carrier —
 open one and try it directly.
 
