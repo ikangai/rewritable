@@ -8448,7 +8448,6 @@ async function classifyArtifact(input) {
 // keeps its DIFFERENT context, carried in ctx (routing on cls.class = design §1's integration semantics):
 //   install — any mode, window-wide; routeInstall(cls.payload) reuses the classification classifyArtifact
 //             already made (cls.payload IS the classifyInstallText result), so the carrier is parsed ONCE.
-//             Falls back to re-parsing ctx.text only if a caller dispatches install WITHOUT a payload.
 //   ingest  — Edit-mode + mount-target ONLY; ctx.{mode,target} carry handleMountDrop's gate snapshot
 //             and drop position. The Edit-mode gate is RE-ASSERTED here (mirroring handleMountDrop) so
 //             a direct dispatch can't bypass it — a Document-mode ingest must never mutate the doc.
@@ -8460,7 +8459,7 @@ async function classifyArtifact(input) {
 async function dispatchArtifact(cls, ctx) {
   ctx = ctx || {};
   const kind = cls && cls.class;
-  if (kind === 'install') return cls.payload ? routeInstall(cls.payload) : routeInstallFromText(ctx.text || '');
+  if (kind === 'install') return routeInstall(cls.payload);   // classifyArtifact always sets an install payload
   if (kind === 'ingest') {
     if (ctx.mode !== 'edit' || activeView || modifyMutex) return false;   // mirrors handleMountDrop's gate
     return insertImageFiles((cls.payload && cls.payload.files) || [], ctx.target || null, 'user:image-drop');

@@ -346,6 +346,28 @@ console.log('== artifact drop bus — classifier ==');
     check('D3: direct compose dispatch with an unknown preset returns false (fail loud)', ret === false);
     check('D3b: guard made no commit (doc intact)', (await readStore(w, 'rwa_doc')) === base);
   }
+
+  // D4 — the INSTALL-MISS all-null branch, end-to-end: a plain .html (NO #rwa-agents zone, NO rwa-artifact tag)
+  // dropped through handleCarrierDrop → classifyArtifact class:null → dispatch null → the "not a recognized
+  // artifact" status. AB3 made the classifier load-bearing on the carrier path, so this plain-.html message
+  // CHANGED from the pre-AB3 "no installable skill or AI found in that file" (design §6 mandates the new string).
+  // Locks that user-visible message + no side effect, so a future refactor can't silently regress it.
+  {
+    const w = await boot(article);
+    const base = '<article>\n<p data-rwa-id="d4">intact</p>\n</article>';
+    await w.__setDocForTest(base);
+    const hB = ((await readStore(w, 'rwa_hist')) || []).length;
+    const plainHtml = '<!doctype html><html><head><title>Just a page</title></head><body><div id="rwa-doc-mount"><article><h1>Plain</h1><p>No agent zone, no artifact tag.</p></article></div></body></html>';
+    const file = new w.File([plainHtml], 'plain.html', { type: 'text/html' });
+    await w.__rwaHandleCarrierDrop({ dataTransfer: { files: [file], items: [{ kind: 'file' }], types: ['Files'] }, preventDefault() {}, stopPropagation() {} });
+    await new Promise(r => setTimeout(r, 150));
+    const st = w.document.getElementById('rwa-st-status');
+    check('D4: plain .html drop (install-miss) sets the "not a recognized artifact" status', !!st && /not a recognized artifact/.test(st.textContent));
+    check('D4b: plain .html drop has no side effect (doc intact, no commit, no install dialog)',
+      (await readStore(w, 'rwa_doc')) === base
+      && ((await readStore(w, 'rwa_hist')) || []).length - hB === 0
+      && !w.document.getElementById('rwa-agent-install'));
+  }
 }
 
 console.log(`\n== ${pass} pass, ${fail} fail ==`);
