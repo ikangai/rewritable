@@ -33,8 +33,8 @@ exists** and adds one new class to test whether adding a class is easy — the w
    `file.type`/extension. One classifier, two lookup strategies. Extensible without forcing
    raw files through a wrapping step.
 2. **`accepts` teeth — advisory default, author opt-in strict.** By default an unlisted
-   class still works but the consent shell shows a soft note; an author can mark a class
-   `strict:true` (or freeze the doc) to actually refuse it. Mirrors the AI kind-affinity
+   class still works but the consent shell shows a soft note; an author sets a doc-level
+   `strict` to actually refuse unlisted classes. Mirrors the AI kind-affinity
    decision — never lock an author out of their own document unless they declared the lock.
 3. **Consent scaffold — shared shell, per-class body.** One modal shell (overlay, title,
    provenance row, cancel/confirm, in-flight lock, escaping — the hard-won "Use this AI"
@@ -137,7 +137,7 @@ Each class keeps its own trust model; the bus routes to them, never weakens them
   url/@import/script tags) (unchanged).
 
 An unclassifiable drop → a clear "not a recognized artifact" status (today's `kind:'none'`).
-The only hard blocks are `strict`-refusal and frozen-doc. No new external surface; the bus
+The only hard block is a `strict`-refusal of an unlisted class. No new external surface; the bus
 is client-side only; the single-file invariant is intact.
 
 ## §7 Testing
@@ -193,6 +193,22 @@ landed clean (all seed-only, pinned by `tests/artifact-bus.mjs`):
    `cli/src/identity.mjs` mirror + seed `runtimeDescribe`, with the `identity.test.mjs`
    deep-equal pins) is the heaviest part and is not required for the bus to work. So
    `rwa doc --json` / `runtime.describe()` do not yet report what a document accepts.
+
+3. **`accepts` gates the DROP gesture (inbound artifacts), not every entry point — by
+   design, with one install follow-up.** `resolveAccepts()` is consulted inside
+   `dispatchArtifact`, which both drop handlers funnel through. Deliberate *self-authoring*
+   gestures on the user's own document are exempt and should stay so — image paste, the
+   file-picker image insert, the `/skin` lens, the ✦ gallery — they add content/style to
+   your own doc, they are not inbound artifacts. **The one seam to close in a fast-follow:**
+   the install **file-picker** (`runtimePromptInstall` → `routeInstallFromText`, the
+   skill-host "Install skill…" button) reaches the install handler *without* passing through
+   `dispatchArtifact`, so a *picked* AI/skill skips the `accepts` gate a *dropped* one is
+   subject to. It is advisory-grade (install still runs full signature-verify + consent; the
+   bus never weakens a class's trust model), so it does not block v1 — but routing the picker
+   through the bus (or explicitly exempting it) is a considered change: it would make the
+   picker an artifact-picker (a picked skin-`.html` would then compose) and would let a
+   self-contradictory `strict`-no-install skill-host refuse its own picker. Tracked as the
+   accepts-parity follow-up; also collapses the drop-vs-pick "unrecognized" status message.
 
 Also still deferred per §8: rwa-onto-rwa compose (the prize), the `transform` class, and a
 full `rwa-artifact/1` wire spec.
