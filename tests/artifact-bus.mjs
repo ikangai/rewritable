@@ -370,5 +370,127 @@ console.log('== artifact drop bus — classifier ==');
   }
 }
 
+// F — the `accepts` declaration gate (docs/plans/2026-07-06-artifact-bus-design.md §3, plan Task 4.1).
+// A rewritable can DECLARE which artifact classes it welcomes, via the SAME edit-unreachable
+// #rwa-affordances declaration self-description reads: an `accepts` array of class-name strings plus an
+// optional doc-level `strict` boolean. resolveAccepts() → {classes, strict}; dispatchArtifact consults it
+// BEFORE routing every real class (install/ingest/compose):
+//   - no declaration / no accepts key (classes:null) → accept-all, advisory (everything welcome — default).
+//   - class listed              → proceed silently.
+//   - class unlisted + !strict  → PROCEED, but show a soft note (advisory; never blocks).
+//   - class unlisted + strict   → REFUSE (clear status, return false, NO side effect).
+// WHY (Rule 9): the gate mirrors the AI kind-affinity decision — advisory by default so an author is never
+// locked out of their own document; strict only on explicit opt-in. And the declaration must be
+// edit-UNREACHABLE (frozen / outside the mount): a driftable declaration a lens/agent could FORGE must NOT
+// gate (F6), or a compromised doc could refuse — or silently green-light — drops the author never sanctioned.
+{
+  console.log('-- F: accepts declaration gate --');
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+  const statusText = (w) => ((w.document.getElementById('rwa-st-status') || {}).textContent || '');
+  const skinJson = (name) => JSON.stringify({ format: 'rwa-artifact/1', class: 'compose', artifact: 'skin', skin: { name } });
+  // A FROZEN (edit-unreachable → trustworthy) declaration carrying `accepts` (+ optional doc-level strict).
+  // The raw </script> is escaped by replaceInlineDoc's escapeTL when baked into INLINE_DOC; at boot the seed
+  // renders it into #rwa-doc-mount, where its data-rwa-frozen makes it edit-unreachable (isEditUnreachable).
+  const declBody = (accepts, strict) =>
+    '<article>\n<p data-rwa-id="acc">A document that declares which artifacts it accepts.</p>\n' +
+    '<script type="application/rwa-affordances+json" id="rwa-affordances" data-rwa-frozen>' +
+    JSON.stringify(Object.assign({ rwa: 'self-description/1', kind: 'skill-host', accepts }, strict ? { strict: true } : {})) +
+    '</script>\n</article>\n';
+  // The SAME declaration but edit-REACHABLE (inside the mount, NO data-rwa-frozen) — a forgeable, driftable
+  // claim the gate must ignore (a lens/agent could have written it).
+  const driftBody = (accepts, strict) =>
+    '<article>\n<p data-rwa-id="acc">Driftable declaration (not frozen).</p>\n' +
+    '<script type="application/rwa-affordances+json" id="rwa-affordances">' +
+    JSON.stringify({ rwa: 'self-description/1', kind: 'skill-host', accepts, strict: !!strict }) +
+    '</script>\n</article>\n';
+
+  // F1 — NO declaration → the pre-accepts behavior is byte-unchanged: an install drop still opens the consent
+  // dialog and NO advisory/refusal note is shown (regression guard: the gate is inert without a declaration).
+  {
+    const w = await boot(article);
+    const cls = await w.__rwaClassifyArtifact(carrierHtml);
+    const ret = await w.__rwaDispatchArtifact(cls, { text: carrierHtml });
+    await sleep(150);
+    check('F1: no declaration → install dispatch opens the consent dialog', !!w.document.getElementById('rwa-agent-install'));
+    check('F1b: no declaration → NO advisory / refusal note', !/(doesn't usually take|does not accept)/.test(statusText(w)));
+    check('F1c: no declaration → install not refused (dispatch !== false)', ret !== false);
+  }
+
+  // F2 — declaration accepts:["compose"], dispatch a COMPOSE (skin) → proceeds silently (skin lands, dispatch
+  // returns true), NO advisory note. A listed class is indistinguishable from the no-declaration case.
+  {
+    const w = await boot(declBody(['compose'], false));
+    w.sessionStorage.setItem('rwa_apikey', 'test-key');
+    w.sessionStorage.setItem('rwa_model', 'test-model');
+    const cls = await w.__rwaClassifyArtifact(skinJson('linear-dark'));
+    const ret = await w.__rwaDispatchArtifact(cls, {});
+    await sleep(250);
+    check('F2: accepted compose proceeds (dispatch returns true)', ret === true);
+    check('F2b: accepted compose applied the theme (side effect ran)', /<style data-rwa-skin="linear-dark">/.test((await readStore(w, 'rwa_doc')) || ''));
+    check('F2c: accepted compose shows NO advisory note', !/doesn't usually take/.test(statusText(w)));
+  }
+
+  // F3 — declaration accepts:["compose"], dispatch an INSTALL (unlisted, !strict) → ADVISORY: the install
+  // still proceeds (consent dialog opens) AND a soft note is shown. Advisory never blocks.
+  {
+    const w = await boot(declBody(['compose'], false));
+    const cls = await w.__rwaClassifyArtifact(carrierHtml);
+    const ret = await w.__rwaDispatchArtifact(cls, { text: carrierHtml });
+    await sleep(150);
+    check('F3: unlisted install (advisory) still opens the consent dialog', !!w.document.getElementById('rwa-agent-install'));
+    check('F3b: unlisted install (advisory) shows the soft note', /this document doesn't usually take install/.test(statusText(w)));
+    check('F3c: advisory does not refuse (dispatch !== false)', ret !== false);
+  }
+
+  // F4 — declaration accepts:["compose"], strict:true, dispatch an INSTALL → REFUSED: clear status, dispatch
+  // returns false, NO side effect — the consent dialog never opens (the install handler is never reached).
+  {
+    const w = await boot(declBody(['compose'], true));
+    const cls = await w.__rwaClassifyArtifact(carrierHtml);
+    const ret = await w.__rwaDispatchArtifact(cls, { text: carrierHtml });
+    await sleep(150);
+    check('F4: strict-unlisted install is REFUSED (dispatch returns false)', ret === false);
+    check('F4b: strict refusal shows a clear reason', /this document does not accept install/.test(statusText(w)));
+    check('F4c: strict refusal has NO side effect (no consent dialog)', !w.document.getElementById('rwa-agent-install'));
+  }
+
+  // F5 — declaration accepts:["install","compose"]: BOTH listed classes proceed silently; the unlisted INGEST
+  // gets the advisory note. Pins that the gate reads the FULL list, not just the first entry.
+  {
+    const w = await boot(declBody(['install', 'compose'], false));
+    const rInstall = await w.__rwaDispatchArtifact(await w.__rwaClassifyArtifact(carrierHtml), { text: carrierHtml });
+    await sleep(150);
+    check('F5: listed install proceeds — consent dialog opens', !!w.document.getElementById('rwa-agent-install'));
+    check('F5b: listed install shows NO advisory note (dispatch !== false)', !/doesn't usually take/.test(statusText(w)) && rInstall !== false);
+    w.sessionStorage.setItem('rwa_apikey', 'test-key');
+    w.sessionStorage.setItem('rwa_model', 'test-model');
+    const rCompose = await w.__rwaDispatchArtifact(await w.__rwaClassifyArtifact(skinJson('linear-dark')), {});
+    await sleep(250);
+    check('F5c: listed compose proceeds silently (returns true, no advisory note)',
+      rCompose === true && !/doesn't usually take/.test(statusText(w)));
+    // ingest (unlisted) — advisory note. Dispatched in Document mode: the accepts note is set BEFORE the
+    // Edit-mode ingest gate short-circuits, so the status shows the advisory (the mode gate is B3's concern).
+    await w.__rwaDispatchArtifact(await w.__rwaClassifyArtifact({ name: 'x.png', type: 'image/png', size: 6 }), { mode: 'document', target: null });
+    check('F5d: unlisted ingest shows the advisory note', /this document doesn't usually take ingest/.test(statusText(w)));
+  }
+
+  // F6 — the FORGERY safeguard (load-bearing, Rule 12): an EDIT-REACHABLE #rwa-affordances (inside the mount,
+  // NO data-rwa-frozen) declaring accepts:["compose"] strict:true must be IGNORED — treated as no declaration.
+  // A lens/agent could have written it, so it must NOT gate: the install drop PROCEEDS (dialog opens), NOT
+  // refused. If this regressed, a compromised document could refuse — or silently green-light — drops the
+  // author never sanctioned.
+  {
+    const w = await boot(driftBody(['compose'], true));
+    const declEl = w.document.getElementById('rwa-affordances');
+    check('F6-precondition: a driftable (non-frozen, in-mount) declaration IS present', !!declEl && !declEl.closest('[data-rwa-frozen]'));
+    const cls = await w.__rwaClassifyArtifact(carrierHtml);
+    const ret = await w.__rwaDispatchArtifact(cls, { text: carrierHtml });
+    await sleep(150);
+    check('F6: driftable strict declaration is IGNORED → install proceeds (dialog opens)', !!w.document.getElementById('rwa-agent-install'));
+    check('F6b: driftable declaration does not refuse (dispatch !== false)', ret !== false);
+    check('F6c: driftable declaration shows no refusal note', !/does not accept/.test(statusText(w)));
+  }
+}
+
 console.log(`\n== ${pass} pass, ${fail} fail ==`);
 process.exit(fail ? 1 : 0);
