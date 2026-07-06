@@ -4646,7 +4646,7 @@ function handleMountDrop(e) {
     return;
   }
   // Route the ingest batch through the bus, carrying the mount handler's mode + drop target.
-  dispatchArtifact({ class: 'ingest', semantics: 'ingest', source: 'sniffed', payload: { files } }, { mode: rwaMode, target });
+  dispatchArtifact({ class: 'ingest', source: 'sniffed', payload: { files } }, { mode: rwaMode, target });
 }
 
 // ── paste (a screenshot is the #1 case) ──
@@ -8403,19 +8403,21 @@ async function _readDroppedText(file) {
 // recognized artifact" shape (today's kind:'none'). Additive: classifyInstallText, ingestImageFile, and
 // both drop handlers stay byte-unchanged; the dispatcher + accepts declaration land in later tasks.
 // Accepts a File (.type/.name/.text()) or a raw string; async because it may read a File's text.
+// The `class` field IS the integration semantics (design §1 is 1:1 — install/ingest/compose/transform
+// each map to exactly one semantics), so there is no separate `semantics` field to drift out of sync.
 async function classifyArtifact(input) {
   const isFile = !!input && typeof input === 'object';
   if (isFile && /^image\//.test(input.type || ''))                 // sniff: no reading needed for images
-    return { class: 'ingest', semantics: 'ingest', source: 'sniffed', payload: { files: [input] } };
+    return { class: 'ingest', source: 'sniffed', payload: { files: [input] } };
   const text = isFile ? await _readDroppedText(input) : String(input || '');
   const c = classifyInstallText(text);
   if (c.kind === 'json-agent' || c.kind === 'json-skill' || c.kind === 'agent-carrier')
-    return { class: 'install', semantics: 'install', source: 'declared', payload: c };
-  return { class: null, semantics: null, source: null };
+    return { class: 'install', source: 'declared', payload: c };
+  return { class: null, source: null };
 }
 // The dispatcher — route a classifyArtifact result to its class handler (design §2, plan Task 1.2).
 // The bus COMPOSES the existing per-class machinery; it never reimplements or weakens it. Each class
-// keeps its DIFFERENT context, carried in ctx:
+// keeps its DIFFERENT context, carried in ctx (routing on cls.class = design §1's integration semantics):
 //   install — any mode, window-wide; ctx.text is the read carrier/envelope bytes. routeInstallFromText
 //             re-classifies the text (unchanged), so its "no installable skill or AI found" message
 //             still fires here for an .html that carries nothing installable.
@@ -8426,9 +8428,9 @@ async function classifyArtifact(input) {
 // An unclassifiable drop → the "not a recognized artifact" status, no side effect (today's kind:'none').
 async function dispatchArtifact(cls, ctx) {
   ctx = ctx || {};
-  const semantics = cls && cls.semantics;
-  if (semantics === 'install') return routeInstallFromText(ctx.text);
-  if (semantics === 'ingest') {
+  const kind = cls && cls.class;
+  if (kind === 'install') return routeInstallFromText(ctx.text);
+  if (kind === 'ingest') {
     if (ctx.mode !== 'edit' || activeView || modifyMutex) return false;   // mirrors handleMountDrop's gate
     return insertImageFiles((cls.payload && cls.payload.files) || [], ctx.target || null, 'user:image-drop');
   }
@@ -8452,12 +8454,11 @@ async function handleCarrierDrop(e) {
   if (e.stopPropagation) e.stopPropagation();
   if (carrier.size > CARRIER_MAX_BYTES) { if (typeof setStatus === 'function') setStatus('err', 'that file is too large to be an AI carrier (' + Math.round(carrier.size / 1048576) + ' MB)'); return; }
   try {
-    const text = await _readDroppedText(carrier);
-    const cls = await classifyArtifact(text);
-    // The claim already committed this .html to the install class; route it there regardless of the
-    // async result. A real carrier / bare envelope opens the consent dialog; a plain .html reaches
-    // routeInstallFromText's "no installable skill or AI found" message, where it currently fires.
-    await dispatchArtifact(cls.semantics === 'install' ? cls : { class: 'install', semantics: 'install' }, { text });
+    // The claim already committed this .html to the install class synchronously (the .html sniff), so
+    // route straight to install — routeInstallFromText opens the consent dialog for a real carrier /
+    // bare envelope, or emits "no installable skill or AI found" for a plain .html. AB3 (Increment 2)
+    // re-introduces carrier-path classification as the real install-vs-compose routing seam.
+    await dispatchArtifact({ class: 'install' }, { text: await _readDroppedText(carrier) });
   } catch (_) { if (typeof setStatus === 'function') setStatus('err', 'could not read the dropped file'); }
 }
 function handleCarrierDragOver(e) {

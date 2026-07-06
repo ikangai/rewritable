@@ -4,14 +4,14 @@
 // and a #rwa-doc-mount drop that ingests IMAGE files. We unify them behind ONE classifier.
 //
 // This block covers ONLY classifyArtifact — a pure, additive function returning
-//   {class, semantics, source, payload}
+//   {class, source, payload}
 // It has TWO lookup strategies: a DECLARED branch (a carrier .html / bare envelope JSON →
 // install, delegating to the unchanged classifyInstallText) and a SNIFF branch (an image
 // file by file.type → ingest). Declared beats sniff. An unclassifiable drop → the all-null
 // "not a recognized artifact" shape. The dispatcher + accepts declaration are LATER tasks.
 //
 // Seed surface under test (test hook):
-//   window.__rwaClassifyArtifact(file|text)  -> async {class, semantics, source, payload}
+//   window.__rwaClassifyArtifact(file|text)  -> async {class, source, payload}
 import jsdomPkg from 'jsdom';
 import { indexedDB, IDBKeyRange } from 'fake-indexeddb';
 import fs from 'node:fs';
@@ -64,8 +64,9 @@ const FAKE_URI = 'data:image/png;base64,QUJDREVG';
 
 console.log('== artifact drop bus — classifier ==');
 
-// A — classifyArtifact: the unified drop classifier. Every case asserts class/semantics/source
-// (the type-system fields the dispatcher will route on), not mere presence.
+// A — classifyArtifact: the unified drop classifier. Every case asserts class/source (the type-system
+// fields the dispatcher routes on), not mere presence. `class` IS the integration semantics (design §1
+// is 1:1), so there is deliberately NO separate `semantics` field — A1b/A3b pin that collapse.
 {
   const w = await boot(article);
 
@@ -73,7 +74,7 @@ console.log('== artifact drop bus — classifier ==');
   // (the classifyInstallText result: kind + extracted envelopes) so the dispatcher can route it.
   const rCarrier = await w.__rwaClassifyArtifact(carrierHtml);
   check('A1: carrier .html → class=install', rCarrier.class === 'install');
-  check('A1b: carrier .html → semantics=install', rCarrier.semantics === 'install');
+  check('A1b: no separate semantics field (class IS the semantics)', rCarrier.semantics === undefined);
   check('A1c: carrier .html → source=declared', rCarrier.source === 'declared');
   check('A1d: payload IS the install classification (agent-carrier + 1 envelope)',
     !!rCarrier.payload && rCarrier.payload.kind === 'agent-carrier'
@@ -82,34 +83,34 @@ console.log('== artifact drop bus — classifier ==');
   // A2 — a bare rwa-agent/1 envelope string → install, DECLARED (json-agent).
   const env = w.__rwaExtractAgentCarrier(carrierHtml)[0];
   const rAgent = await w.__rwaClassifyArtifact(JSON.stringify(env));
-  check('A2: bare json-agent → install/install/declared',
-    rAgent.class === 'install' && rAgent.semantics === 'install' && rAgent.source === 'declared');
+  check('A2: bare json-agent → install/declared',
+    rAgent.class === 'install' && rAgent.source === 'declared');
   check('A2b: payload is the json-agent classification', !!rAgent.payload && rAgent.payload.kind === 'json-agent');
 
   // A2c — a bare rwa-skill/1 envelope string → install, DECLARED (json-skill).
   const rSkill = await w.__rwaClassifyArtifact(JSON.stringify({ format: 'rwa-skill/1', skill: { name: 'x' } }));
-  check('A2c: bare json-skill → install/install/declared',
-    rSkill.class === 'install' && rSkill.semantics === 'install' && rSkill.source === 'declared');
+  check('A2c: bare json-skill → install/declared',
+    rSkill.class === 'install' && rSkill.source === 'declared');
   check('A2d: payload is the json-skill classification', !!rSkill.payload && rSkill.payload.kind === 'json-skill');
 
   // A3 — an image File-like → ingest, SNIFFED by file.type (no reading of image bytes).
   const img = { name: 'x.png', type: 'image/png', size: 1234 };
   const rImg = await w.__rwaClassifyArtifact(img);
   check('A3: image file → class=ingest', rImg.class === 'ingest');
-  check('A3b: image file → semantics=ingest', rImg.semantics === 'ingest');
+  check('A3b: no separate semantics field (class IS the semantics)', rImg.semantics === undefined);
   check('A3c: image file → source=sniffed', rImg.source === 'sniffed');
   check('A3d: ingest payload carries the file(s) verbatim',
     !!rImg.payload && Array.isArray(rImg.payload.files) && rImg.payload.files[0] === img);
 
-  // A4 — unknown text → the all-null "not a recognized artifact" shape (today's kind:'none').
+  // A4 — unknown text → the "not a recognized artifact" shape (today's kind:'none').
   const rNoneText = await w.__rwaClassifyArtifact('<html><body><p>just a page</p></body></html>');
-  check('A4: unknown text → {class:null, semantics:null, source:null}',
-    rNoneText.class === null && rNoneText.semantics === null && rNoneText.source === null);
+  check('A4: unknown text → {class:null, source:null} (no semantics field)',
+    rNoneText.class === null && rNoneText.source === null && rNoneText.semantics === undefined);
 
   // A4b — unknown file type (not image, not a carrier) → all-null.
   const rNoneFile = await w.__rwaClassifyArtifact({ name: 'data.bin', type: 'application/octet-stream', text: async () => 'not json, not a carrier' });
-  check('A4b: unknown file type → all-null',
-    rNoneFile.class === null && rNoneFile.semantics === null && rNoneFile.source === null);
+  check('A4b: unknown file type → {class:null, source:null}',
+    rNoneFile.class === null && rNoneFile.source === null);
 
   // A5 — PRECEDENCE: a carrier delivered AS A FILE (type text/html, not image) classifies install
   // (declared) — declared beats sniff. WHY it matters: an artifact that self-declares must never be
@@ -117,7 +118,7 @@ console.log('== artifact drop bus — classifier ==');
   const carrierFile = new w.File([carrierHtml], 'concise-editor.html', { type: 'text/html' });
   const rPrec = await w.__rwaClassifyArtifact(carrierFile);
   check('A5: carrier File (text/html) → install/declared, NOT ingest (declared beats sniff)',
-    rPrec.class === 'install' && rPrec.semantics === 'install' && rPrec.source === 'declared');
+    rPrec.class === 'install' && rPrec.source === 'declared');
 }
 
 // B — dispatchArtifact: route a classified artifact to its class handler (plan Task 1.2). The bus
@@ -198,6 +199,32 @@ console.log('== artifact drop bus — classifier ==');
     check('B4b: unknown-class dispatch has no side effect (doc intact, no install dialog)',
       (await readStore(w, 'rwa_doc')) === base && !w.document.getElementById('rwa-agent-install'));
     if (typeof dispatch === 'function') check('B4c: unknown-class dispatch returns false', ret === false);
+  }
+
+  // B5 — ingest gate: the OTHER arm. B3 exercises the mode arm (ctx.mode!=='edit' short-circuits the
+  // OR before activeView/modifyMutex are read). Here ctx.mode='edit' PASSES the mode arm, but an ACTIVE
+  // view is standing → the activeView arm must still refuse: no insert, returns false, doc byte-intact.
+  // (A view is a read-only render projection; an ingest committing under it would corrupt that contract.)
+  {
+    const w = await boot(article);
+    const dispatch = w.__rwaDispatchArtifact;
+    w.__rwaIngestImage = async (f) => ({ dataUri: FAKE_URI, bytes: 6, name: (f && f.name) || 'x.png', resizedFrom: null });
+    const base = '<article>\n<p data-rwa-id="b5">view-active</p>\n</article>';
+    await w.__setDocForTest(base);
+    // Register + activate a trivial view so activeView is truthy (the reachable gate arm in jsdom;
+    // modifyMutex has no independent test seam and shares the identical OR, so pinning activeView
+    // covers the arm's presence).
+    w.runtime.provide('view', { kind: 'view', name: 'tv', label: 'TV', render: () => '<p>tv</p>' });
+    w.runtime.setView('tv');
+    await new Promise(r => setTimeout(r, 60));
+    const viewActive = /tv/.test((w.document.getElementById('rwa-doc-mount') || {}).textContent || '');
+    check('B5-precondition: a view is actually active (mount renders it)', viewActive);
+    const cls = await w.__rwaClassifyArtifact({ name: 'shot.png', type: 'image/png', size: 6 });
+    let ret = 'unset';
+    if (typeof dispatch === 'function') { ret = await dispatch(cls, { mode: 'edit', target: null }); await new Promise(r => setTimeout(r, 100)); }
+    check('B5: ingest dispatch with an ACTIVE view is refused (activeView gate arm)',
+      (await readStore(w, 'rwa_doc')) === base);
+    if (typeof dispatch === 'function') check('B5b: view-refused ingest returns false', ret === false);
   }
 }
 
