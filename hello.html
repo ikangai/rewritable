@@ -53,8 +53,12 @@ body{font-family:var(--font-ui);background:var(--bg);color:var(--text);min-heigh
 .rwa-st-btn.run{color:var(--gray-700);border-color:var(--gray-300);background:var(--gray-50);}
 .rwa-st-btn.err{color:var(--red);border-color:var(--red);background:var(--white);}
 .rwa-st-btn.ok{color:var(--green);border-color:var(--green);background:var(--white);}
+#rwa-st-ai.none{color:var(--gray-400);}
 #rwa-set-panel{position:fixed;top:50px;right:12px;background:var(--white);border:1px solid var(--gray-200);border-radius:var(--radius-sm);padding:14px;display:none;width:340px;max-width:calc(100vw - 24px);z-index:999;box-shadow:0 4px 16px rgba(0,0,0,0.08);}
 #rwa-set-panel.open{display:block;}
+#rwa-ai-panel{position:fixed;top:50px;right:12px;background:var(--white);border:1px solid var(--gray-200);border-radius:var(--radius-sm);padding:14px;display:none;width:340px;max-width:calc(100vw - 24px);z-index:999;box-shadow:0 4px 16px rgba(0,0,0,0.08);font-family:var(--font-ui);font-size:13px;line-height:1.5;color:var(--gray-700);}
+#rwa-ai-panel.open{display:block;}
+#rwa-ai-panel p{margin:0 0 10px;}
 #rwa-st-menu-panel{position:fixed;top:50px;right:12px;background:var(--white);border:1px solid var(--gray-200);border-radius:var(--radius-sm);padding:6px;display:flex;flex-direction:column;gap:2px;min-width:172px;z-index:999;box-shadow:0 4px 16px rgba(0,0,0,0.08);}
 #rwa-st-menu-panel[hidden]{display:none;}
 .rwa-st-menu-item{display:flex;align-items:center;gap:10px;background:transparent;border:0;border-radius:6px;padding:8px 10px;font:500 13px var(--font-ui);color:var(--gray-800);cursor:pointer;text-align:left;text-transform:none;letter-spacing:0;}
@@ -1026,7 +1030,7 @@ function isRwaSkillHost() {
 }
 
 function closeRuntimePanels() {
-  for (const id of ['rwa-set-panel', 'rwa-info-panel', 'rwa-skin-panel', 'rwa-share-panel', 'rwa-mode-panel']) {
+  for (const id of ['rwa-set-panel', 'rwa-info-panel', 'rwa-skin-panel', 'rwa-share-panel', 'rwa-ai-panel', 'rwa-mode-panel']) {
     const el = document.getElementById(id);
     if (el) el.classList.remove('open');
   }
@@ -1495,6 +1499,79 @@ function buildFile(doc) {
 }
 
 // ─── Runtime UI ─────────────────────────────────────────────────────
+// Backend metadata + curated model suggestions live at module scope (not inside buildUI) because
+// the unified "Use this AI" install dialog also reads BACKEND_META hint text. Pure hoist — the
+// ⚙ settings panel consumes both unchanged.
+  const BACKEND_META = {
+    openrouter: {
+      showKey: true, showBaseUrl: false, showModel: true, showHint: false,
+      hintHTML: '',
+    },
+    ollama: {
+      showKey: false, showBaseUrl: true, showModel: true, showHint: true,
+      hintHTML: 'Local Ollama needs CORS allowed. Before <code>ollama serve</code>, set <code>OLLAMA_ORIGINS=*</code> (or just your site origin). On macOS, persist with <code>launchctl setenv OLLAMA_ORIGINS "*"</code> and restart the Ollama app.',
+      defaultUrl: RWA.DEFAULT_OLLAMA_URL,
+      storageKey: RWA.K_BASE_URL_OLLAMA,
+    },
+    lmstudio: {
+      showKey: false, showBaseUrl: true, showModel: true, showHint: true,
+      hintHTML: 'In LM Studio, open the <strong>Developer</strong> tab → enable <code>CORS</code> → click <code>Start Server</code>. Without this, the browser blocks requests from this page.',
+      defaultUrl: RWA.DEFAULT_LMSTUDIO_URL,
+      storageKey: RWA.K_BASE_URL_LMSTUDIO,
+    },
+    atomic: {
+      showKey: false, showBaseUrl: true, showModel: true, showHint: true,
+      hintHTML: 'atomic.chat serves an OpenAI-compatible API on <code>127.0.0.1:1337</code>, no key needed — use <code>Test</code> to list its models. CORS allows http(s) page origins out of the box but <strong>not <code>file://</code> pages</strong> (the null origin): open this container from a local web server or a hosted projection to use it.',
+      defaultUrl: RWA.DEFAULT_ATOMIC_URL,
+      storageKey: RWA.K_BASE_URL_ATOMIC,
+    },
+    bridge: {
+      showKey: false, showBaseUrl: false, showModel: false, showHint: false,
+      hintHTML: '',
+    },
+    'bridge-session': {
+      showKey: false, showBaseUrl: false, showModel: false, showHint: true,
+      showBridgeToken: true, showBridgeCwd: true,
+      hintHTML: 'Persistent claude session via <code>web_cli_bridge</code> /session/*. Run the bridge with <code>WEB_CLI_BRIDGE_TOKEN</code> (paste it as the Bridge Token above) and <code>WCB_ALLOWED_ORIGINS</code> set to this page&#39;s origin (<code>' + (location.origin || 'null') + '</code>). Session Dir is a path on the bridge host where the claude session runs.',
+    },
+  };
+
+  // Curated OpenRouter model suggestions. Populated into the datalist when the
+  // OpenRouter backend is selected so the model input gets autocomplete out of
+  // the box (local backends populate from `/v1/models` via the Test button).
+  // Default (RWA.MODEL) leads; others are models exercised in benchmark/results.
+  const OPENROUTER_MODEL_SUGGESTIONS = [
+    'google/gemini-3.5-flash',
+    'google/gemini-3.1-flash-lite',
+    'google/gemini-3.1-pro-preview',
+    'google/gemini-3.1-flash-lite-preview',
+    'google/gemini-3-flash-preview',
+    'anthropic/claude-opus-4-7',
+    'anthropic/claude-sonnet-4-6',
+    'anthropic/claude-haiku-4-5',
+  ];
+
+// AI chip — persistent status-bar identity for the document's AI (drop-in AI UX §2).
+// '◇ AI' muted when no role is active; '◆ <role>' when one is. Defensive throughout: the chip
+// renders before the agents block state settles, so every collaborator is typeof-guarded.
+function renderAiChip() {
+  const chip = document.getElementById('rwa-st-ai');
+  if (!chip) return;
+  let act = null;
+  try { act = (typeof runtimeAgentActive === 'function') ? runtimeAgentActive() : null; } catch (_) { act = null; }
+  if (act && act.role) {
+    let warn = null;
+    try { warn = (typeof affinityWarning === 'function') ? affinityWarning(act.role) : null; } catch (_) { warn = null; }
+    chip.textContent = '◆ ' + act.role + (warn ? ' !' : '');
+    chip.title = warn || ('AI — ' + act.role);
+    chip.classList.remove('none');
+  } else {
+    chip.textContent = '◇ AI';
+    chip.title = 'AI — drop one in, or manage';
+    chip.classList.add('none');
+  }
+}
+
 function buildUI() {
   document.getElementById('rwa-runtime').innerHTML = `
 <div id="rwa-set">
@@ -1503,6 +1580,7 @@ function buildUI() {
     <button class="rwa-seg" type="button" id="rwa-st-view" data-rwa-mode-target="document" aria-pressed="true" title="Reading view">View</button>
     <button class="rwa-seg" type="button" id="rwa-st-edit" data-rwa-mode-target="edit" aria-pressed="false" title="Edit — format and edit in place">Edit</button>
   </div>
+  <button class="rwa-st-btn none" id="rwa-st-ai" title="AI — drop one in, or manage" aria-haspopup="true">◇ AI</button>
   <button class="rwa-st-btn" id="rwa-st-menu" title="Menu" aria-label="menu" aria-haspopup="true" aria-expanded="false">⋯</button>
   <button class="rwa-st-btn pri" id="rwa-st-commit" title="Save (⌘S)" hidden>⌘S</button>
 </div>
@@ -1527,6 +1605,7 @@ function buildUI() {
 <div id="rwa-info-panel"></div>
 <div id="rwa-skin-panel"></div>
 <div id="rwa-share-panel"></div>
+<div id="rwa-ai-panel"></div>
 <div id="rwa-mode-panel"></div>
 <div id="rwa-pal">
   <div id="rwa-pal-box">
@@ -1628,55 +1707,6 @@ function buildUI() {
   const baseUrlResultEl = document.getElementById('rwa-base-url-result');
   const hintEl = document.getElementById('rwa-backend-hint');
   const modelOptsEl = document.getElementById('rwa-model-options');
-
-  const BACKEND_META = {
-    openrouter: {
-      showKey: true, showBaseUrl: false, showModel: true, showHint: false,
-      hintHTML: '',
-    },
-    ollama: {
-      showKey: false, showBaseUrl: true, showModel: true, showHint: true,
-      hintHTML: 'Local Ollama needs CORS allowed. Before <code>ollama serve</code>, set <code>OLLAMA_ORIGINS=*</code> (or just your site origin). On macOS, persist with <code>launchctl setenv OLLAMA_ORIGINS "*"</code> and restart the Ollama app.',
-      defaultUrl: RWA.DEFAULT_OLLAMA_URL,
-      storageKey: RWA.K_BASE_URL_OLLAMA,
-    },
-    lmstudio: {
-      showKey: false, showBaseUrl: true, showModel: true, showHint: true,
-      hintHTML: 'In LM Studio, open the <strong>Developer</strong> tab → enable <code>CORS</code> → click <code>Start Server</code>. Without this, the browser blocks requests from this page.',
-      defaultUrl: RWA.DEFAULT_LMSTUDIO_URL,
-      storageKey: RWA.K_BASE_URL_LMSTUDIO,
-    },
-    atomic: {
-      showKey: false, showBaseUrl: true, showModel: true, showHint: true,
-      hintHTML: 'atomic.chat serves an OpenAI-compatible API on <code>127.0.0.1:1337</code>, no key needed — use <code>Test</code> to list its models. CORS allows http(s) page origins out of the box but <strong>not <code>file://</code> pages</strong> (the null origin): open this container from a local web server or a hosted projection to use it.',
-      defaultUrl: RWA.DEFAULT_ATOMIC_URL,
-      storageKey: RWA.K_BASE_URL_ATOMIC,
-    },
-    bridge: {
-      showKey: false, showBaseUrl: false, showModel: false, showHint: false,
-      hintHTML: '',
-    },
-    'bridge-session': {
-      showKey: false, showBaseUrl: false, showModel: false, showHint: true,
-      showBridgeToken: true, showBridgeCwd: true,
-      hintHTML: 'Persistent claude session via <code>web_cli_bridge</code> /session/*. Run the bridge with <code>WEB_CLI_BRIDGE_TOKEN</code> (paste it as the Bridge Token above) and <code>WCB_ALLOWED_ORIGINS</code> set to this page&#39;s origin (<code>' + (location.origin || 'null') + '</code>). Session Dir is a path on the bridge host where the claude session runs.',
-    },
-  };
-
-  // Curated OpenRouter model suggestions. Populated into the datalist when the
-  // OpenRouter backend is selected so the model input gets autocomplete out of
-  // the box (local backends populate from `/v1/models` via the Test button).
-  // Default (RWA.MODEL) leads; others are models exercised in benchmark/results.
-  const OPENROUTER_MODEL_SUGGESTIONS = [
-    'google/gemini-3.5-flash',
-    'google/gemini-3.1-flash-lite',
-    'google/gemini-3.1-pro-preview',
-    'google/gemini-3.1-flash-lite-preview',
-    'google/gemini-3-flash-preview',
-    'anthropic/claude-opus-4-7',
-    'anthropic/claude-sonnet-4-6',
-    'anthropic/claude-haiku-4-5',
-  ];
 
   const syncBackendRows = () => {
     const meta = BACKEND_META[backendEl.value] || BACKEND_META.openrouter;
@@ -1786,8 +1816,22 @@ function buildUI() {
     document.getElementById('rwa-info-panel').classList.remove('open');   // panels are mutually exclusive
     document.getElementById('rwa-skin-panel').classList.remove('open');
     document.getElementById('rwa-share-panel').classList.remove('open');
+    document.getElementById('rwa-ai-panel').classList.remove('open');
     document.getElementById('rwa-mode-panel').classList.remove('open');
     document.getElementById('rwa-set-panel').classList.toggle('open');
+  };
+  // ◇/◆ AI chip — toggle the AI panel (drop-in AI UX §2). Mutually exclusive with the
+  // other panels; the panel re-renders on every open so it reflects live session state.
+  document.getElementById('rwa-st-ai').onclick = () => {
+    document.getElementById('rwa-set-panel').classList.remove('open');
+    document.getElementById('rwa-info-panel').classList.remove('open');
+    document.getElementById('rwa-skin-panel').classList.remove('open');
+    document.getElementById('rwa-share-panel').classList.remove('open');
+    document.getElementById('rwa-mode-panel').classList.remove('open');
+    const panel = document.getElementById('rwa-ai-panel');
+    if (panel.classList.contains('open')) { panel.classList.remove('open'); return; }
+    renderAiPanel(panel);
+    panel.classList.add('open');
   };
   // Vault KDF upgrade (I9 §13) — skill-host only. Argon2id migration needs the passphrase
   // (to derive the old key), so prompt for it; the ~1–2s derive runs in a blob: Worker.
@@ -1811,6 +1855,7 @@ function buildUI() {
     document.getElementById('rwa-set-panel').classList.remove('open');
     document.getElementById('rwa-skin-panel').classList.remove('open');
     document.getElementById('rwa-share-panel').classList.remove('open');
+    document.getElementById('rwa-ai-panel').classList.remove('open');
     document.getElementById('rwa-mode-panel').classList.remove('open');
     const panel = document.getElementById('rwa-info-panel');
     if (!panel.classList.contains('open')) panel.innerHTML = renderInfoPanel();
@@ -1831,6 +1876,7 @@ function buildUI() {
     document.getElementById('rwa-set-panel').classList.remove('open');
     document.getElementById('rwa-info-panel').classList.remove('open');
     document.getElementById('rwa-skin-panel').classList.remove('open');
+    document.getElementById('rwa-ai-panel').classList.remove('open');
     document.getElementById('rwa-mode-panel').classList.remove('open');
     renderSharePanel().then(() => panel.classList.add('open'));
   };
@@ -2322,28 +2368,6 @@ async function renderActionsModePanel(panel) {
   const skillRows = skillAffs.length ? skillAffs.map(a =>
     '<div class="rwa-mode-row"><div><div class="rwa-mode-title">' + escRuntimeHtml(a.name) + '</div><div class="rwa-mode-meta">' + escRuntimeHtml(a.kind || 'skill') + ' · ' + escRuntimeHtml(a.skillId) + '</div></div><button type="button" data-action-skill="' + escRuntimeHtml(a.skillId) + '">Open in Skills</button></div>'
   ).join('') : '<div class="rwa-mode-empty">No installed skills.</div>';
-  // Intelligences (rwa-agent/1 roles) — list + activate/deactivate. Activating offers the role's
-  // recommended model (intelligence/0.2 I-A). A verified role can be activated; unverified cannot.
-  const agentList = (typeof runtimeListAgents === 'function') ? runtimeListAgents() : [];
-  const activeRole = (runtimeAgentActive() || {}).role || null;
-  const advisorSet = (typeof runtimeListAdvisors === 'function') ? runtimeListAdvisors() : [];
-  const advisorFull = advisorSet.length >= 3;
-  const agentRows = agentList.length ? agentList.map(a => {
-    const isActive = a.role === activeRole;
-    const isAdvisor = advisorSet.indexOf(a.role) >= 0;
-    const state = isActive ? 'primary' : (isAdvisor ? 'advisor' : '');
-    const aff = (a.affinity && a.affinity.length) ? ' · for ' + a.affinity.join('/') : '';
-    const meta = (a.verified ? 'verified' : 'unverified') + (state ? ' · ' + state : '') + aff;
-    let btns = '';
-    if (a.verified) {
-      const r = escRuntimeHtml(a.role);
-      if (isActive) btns = '<button type="button" data-agent-off="1">Deactivate</button>';
-      else if (isAdvisor) btns = '<button type="button" data-agent-advoff="' + r + '">Remove advisor</button>';
-      else btns = '<button type="button" data-agent-on="' + r + '">Activate</button>'
-        + (advisorFull ? '<button type="button" disabled title="advisor limit reached">Add advisor</button>' : '<button type="button" data-agent-advon="' + r + '">Add advisor</button>');
-    }
-    return '<div class="rwa-mode-row"><div><div class="rwa-mode-title">' + escRuntimeHtml(a.role) + '</div><div class="rwa-mode-meta">' + escRuntimeHtml('intelligence · ' + meta) + '</div></div>' + btns + '</div>';
-  }).join('') : '<div class="rwa-mode-empty">No intelligences installed.</div>';
   panel.innerHTML = [
     '<div class="rwa-mode-section">',
     '<div class="rwa-mode-kicker">Activity</div>',
@@ -2358,7 +2382,6 @@ async function renderActionsModePanel(panel) {
     '<div class="rwa-mode-section"><div class="rwa-mode-kicker">Recent runs</div>' + histRows + '</div>',
     '<div class="rwa-mode-section"><div class="rwa-mode-kicker">Live affordances</div>' + affRows + '</div>',
     '<div class="rwa-mode-section"><div class="rwa-mode-kicker">Installed skill actions</div>' + skillRows + '</div>',
-    '<div class="rwa-mode-section"><div class="rwa-mode-kicker">Intelligences</div>' + agentRows + '</div>',
   ].join('');
   const undoBtn = panel.querySelector('#rwa-actions-undo');
   if (undoBtn) undoBtn.addEventListener('click', () => runtimeUndo());
@@ -2375,21 +2398,97 @@ async function renderActionsModePanel(panel) {
   panel.querySelectorAll('[data-action-skill]').forEach(btn => {
     btn.addEventListener('click', () => runtimeSetMode('skills'));
   });
+}
+
+// AI panel (drop-in AI UX §2) — the chip-click surface that absorbed the Activity panel's
+// "Intelligences" section. The active role renders first as a card (name, description,
+// connection status from the live session); other installed roles keep the Activate /
+// advisor button contracts (data-agent-on/off/advon/advoff) verbatim. Activating offers the
+// role's recommended model (intelligence/0.2 I-A). A verified role can be activated;
+// unverified cannot. The footer always invites the drop gesture + the AI Gallery, with the
+// ⚙ settings form as the manual escape hatch (v1: Connect = open settings too).
+function renderAiPanel(panel) {
+  if (!panel) return;
+  const agentList = (typeof runtimeListAgents === 'function') ? runtimeListAgents() : [];
+  const activeRole = ((typeof runtimeAgentActive === 'function' && runtimeAgentActive()) || {}).role || null;
+  const advisorSet = (typeof runtimeListAdvisors === 'function') ? runtimeListAdvisors() : [];
+  const advisorFull = advisorSet.length >= 3;
+  const rows = [];
+  const active = agentList.find(a => a.role === activeRole) || null;
+  let connected = false;
+  if (active) {
+    let cfg = { requiresKey: true, apiKey: null };
+    try { cfg = (typeof resolveBackendConfig === 'function') ? resolveBackendConfig() : cfg; } catch (_) {}
+    connected = !cfg.requiresKey || !!cfg.apiKey;
+    const model = sessionStorage.getItem(RWA.K_MODEL) || RWA.MODEL;
+    const backend = sessionStorage.getItem(RWA.K_BACKEND) || 'openrouter';
+    const bridgeKind = cfg.kind === 'bridge' || cfg.kind === 'bridge-session';
+    const aff = (active.affinity && active.affinity.length) ? ' · for ' + active.affinity.join('/') : '';
+    const desc = active.description ? '<div>' + escRuntimeHtml(active.description) + '</div>' : '';
+    // Bridge shells to `claude -p`; the sessionStorage model is ignored — naming it would be a lie.
+    const status = !connected ? 'not connected'
+      : bridgeKind ? escRuntimeHtml('using ' + backend)
+      : escRuntimeHtml('using ' + model + ' via ' + backend);
+    const btns = (connected ? '' : '<button type="button" data-ai-connect="1">Connect</button>')
+      + '<button type="button" data-agent-off="1">Deactivate</button>';
+    rows.push('<div class="rwa-mode-row"><div><div class="rwa-mode-title">' + escRuntimeHtml(active.role) + '</div>' + desc
+      + '<div class="rwa-mode-meta">' + escRuntimeHtml('AI · ' + (active.verified ? 'verified' : 'unverified') + ' · primary' + aff) + '</div>'
+      + '<div class="rwa-mode-meta">' + status + '</div></div>' + btns + '</div>');
+  }
+  for (const a of agentList) {
+    if (active && a.role === active.role) continue;
+    const isAdvisor = advisorSet.indexOf(a.role) >= 0;
+    const aff = (a.affinity && a.affinity.length) ? ' · for ' + a.affinity.join('/') : '';
+    const meta = 'AI · ' + (a.verified ? 'verified' : 'unverified') + (isAdvisor ? ' · advisor' : '') + aff;
+    let btns = '';
+    if (a.verified) {
+      const r = escRuntimeHtml(a.role);
+      if (isAdvisor) btns = '<button type="button" data-agent-advoff="' + r + '">Remove advisor</button>';
+      else btns = '<button type="button" data-agent-on="' + r + '">Activate</button>'
+        + (advisorFull ? '<button type="button" disabled title="advisor limit reached">Add as advisor AI</button>' : '<button type="button" data-agent-advon="' + r + '">Add as advisor AI</button>');
+    }
+    const desc = a.description ? '<div>' + escRuntimeHtml(a.description) + '</div>' : '';
+    rows.push('<div class="rwa-mode-row"><div><div class="rwa-mode-title">' + escRuntimeHtml(a.role) + '</div>' + desc + '<div class="rwa-mode-meta">' + escRuntimeHtml(meta) + '</div></div>' + btns + '</div>');
+  }
+  panel.innerHTML = [
+    '<div class="rwa-mode-section"><div class="rwa-mode-kicker">AI</div>' + (rows.length ? rows.join('') : '<div class="rwa-mode-empty">No AI installed yet.</div>') + '</div>',
+    '<div class="rwa-mode-section"><p>Drop an AI file anywhere on this page — or browse the <a href="https://rewritable.ikangai.com/ai" target="_blank" rel="noopener">AI Gallery</a>.</p>',
+    '<div class="rwa-mode-actions"><button type="button" id="rwa-ai-manual">set up manually (⚙)</button></div></div>',
+  ].join('');
+  const openSettings = () => {
+    panel.classList.remove('open');
+    const setP = document.getElementById('rwa-set-panel'); if (setP) setP.classList.add('open');
+    const key = document.getElementById('rwa-key'); if (key) key.focus();
+  };
+  const manualBtn = panel.querySelector('#rwa-ai-manual');
+  if (manualBtn) manualBtn.addEventListener('click', openSettings);
+  const connectBtn = panel.querySelector('[data-ai-connect]');
+  if (connectBtn) connectBtn.addEventListener('click', openSettings); // v1: Connect = the ⚙ form (the slim connect card is the invite's job)
   panel.querySelectorAll('[data-agent-on]').forEach(btn => btn.addEventListener('click', () => {
     const role = btn.getAttribute('data-agent-on');
     try { runtimeActivateAgent(role); const aw = affinityWarning(role); if (aw && typeof setStatus === 'function') setStatus('', aw); } // setActive + offer model; advisory affinity warn (I-D)
     catch (e) { if (typeof setStatus === 'function') setStatus('err', '✗ ' + (e && (e.code || e.message))); }
-    renderActionsModePanel(panel);
+    renderAiChip(); renderAiPanel(panel);
+    // Connect check — activation flips the chip, but a session with no reachable model still can't run
+    // ⌘K (key/model are sessionStorage-only). If so, drop this panel and raise the AI-aware drop
+    // invitation naming the role we just activated. Read the CURRENT session synchronously — a pending
+    // recommended-model consent that switches to a keyless backend is handled by the next ⌘K's own guard.
+    let canRun = true;
+    try { const cfg = (typeof resolveBackendConfig === 'function') ? resolveBackendConfig() : { requiresKey: false }; canRun = !cfg.requiresKey || !!cfg.apiKey; } catch (_) {}
+    // Defer to an open recommended-model offer (mounted synchronously inside offerRecommendedModel just
+    // above) — don't stack a second modal, and the offer may switch to a keyless backend (invite would be
+    // a false alarm). If the session still can't run once the offer is dismissed, the next ⌘K's own guard raises the invite.
+    if (!canRun && !document.getElementById('rwa-model-offer') && typeof showAiInvite === 'function') { panel.classList.remove('open'); showAiInvite(); }
   }));
   const agentOff = panel.querySelector('[data-agent-off]');
-  if (agentOff) agentOff.addEventListener('click', () => { runtimeSetActiveAgent(null); renderActionsModePanel(panel); });
+  if (agentOff) agentOff.addEventListener('click', () => { runtimeSetActiveAgent(null); renderAiChip(); renderAiPanel(panel); });
   panel.querySelectorAll('[data-agent-advon]').forEach(btn => btn.addEventListener('click', () => {
     const role = btn.getAttribute('data-agent-advon');
     try { runtimeAddAdvisor(role); const aw = affinityWarning(role); if (aw && typeof setStatus === 'function') setStatus('', aw); } // I-E: layer an advisory lens; I-D affinity warn
     catch (e) { if (typeof setStatus === 'function') setStatus('err', '✗ ' + (e && (e.code || e.message))); }
-    renderActionsModePanel(panel);
+    renderAiChip(); renderAiPanel(panel);
   }));
-  panel.querySelectorAll('[data-agent-advoff]').forEach(btn => btn.addEventListener('click', () => { runtimeRemoveAdvisor(btn.getAttribute('data-agent-advoff')); renderActionsModePanel(panel); }));
+  panel.querySelectorAll('[data-agent-advoff]').forEach(btn => btn.addEventListener('click', () => { runtimeRemoveAdvisor(btn.getAttribute('data-agent-advoff')); renderAiChip(); renderAiPanel(panel); }));
 }
 
 // ─── Agent (rwa-edit/1) ─────────────────────────────────────────────
@@ -5516,6 +5615,7 @@ HARD RULES: colors are hex strings only (e.g. "#c0392b"); fonts are ONE of the f
     const setP = document.getElementById('rwa-set-panel'); if (setP) setP.classList.remove('open');
     const infoP = document.getElementById('rwa-info-panel'); if (infoP) infoP.classList.remove('open');
     const shareP = document.getElementById('rwa-share-panel'); if (shareP) shareP.classList.remove('open');
+    const aiP = document.getElementById('rwa-ai-panel'); if (aiP) aiP.classList.remove('open');
     const modeP = document.getElementById('rwa-mode-panel'); if (modeP) modeP.classList.remove('open');
     const active = currentSkinName();
     panel.innerHTML =
@@ -7847,7 +7947,7 @@ function _agAgentsRegion() {
   };
 }
 function runtimeListAgents() {
-  return Array.from(installedAgents.values()).map(a => ({ role: a.role, author_pubkey: a.manifest && a.manifest.author_pubkey, verified: a.verified, affinity: getAffinity(a.envelope) }));
+  return Array.from(installedAgents.values()).map(a => ({ role: a.role, author_pubkey: a.manifest && a.manifest.author_pubkey, verified: a.verified, affinity: getAffinity(a.envelope), description: a.manifest && a.manifest.description }));
 }
 function runtimeAgentActive() {
   if (!activeAgentRole) return null;
@@ -7857,11 +7957,16 @@ function runtimeAgentActive() {
 // Switch the active role. The trust anchor is the signature: an unverified (tampered) agent can be
 // installed but NEVER activated (unverified_agent), so a tampered prompt can't drive modify().
 function runtimeSetActiveAgent(role) {
-  if (role == null) { activeAgentRole = null; return; }
+  if (role == null) {
+    activeAgentRole = null;
+    try { typeof renderAiChip === 'function' && renderAiChip(); } catch (_) {}
+    return;
+  }
   const rec = Array.from(installedAgents.values()).find(a => a.role === role);
   if (!rec) throw new RwaEditError('agent_not_found', null, { role });
   if (!rec.verified) throw new RwaEditError('unverified_agent', null, { role });
   activeAgentRole = role;
+  try { typeof renderAiChip === 'function' && renderAiChip(); } catch (_) {}
 }
 // I-E — add/remove an advisory role. Verified-only (its prompt drives modify), not-the-primary,
 // capped. Checks order so unverified/not-found beat the cap. Returns the current advisor list.
@@ -7894,6 +7999,7 @@ async function runtimeInstallAgent(envelope) {
     if (prev) installedAgents.set(id, prev); else installedAgents.delete(id);
     return { ok: false, errors: [(e && e.code) || (e && e.message) || 'persist_failed'] };
   }
+  try { typeof renderAiChip === 'function' && renderAiChip(); } catch (_) {}
   return { ok: true, agentId: id, verified };
 }
 async function runtimeUninstallAgent(agentId) {
@@ -7908,6 +8014,7 @@ async function runtimeUninstallAgent(agentId) {
     installedAgents.set(agentId, prev);
     return { ok: false, errors: [(e && e.code) || (e && e.message) || 'persist_failed'] };
   }
+  try { typeof renderAiChip === 'function' && renderAiChip(); } catch (_) {}
   return { ok: true };
 }
 // ── I8 (v0.9 §9) — hook firing. Installed `hook` skills that declare hook:<event> run (compute-only,
@@ -8023,13 +8130,34 @@ function showSkillInstallDialog(envelope) {
     const ib = card.querySelector('[data-act=install]'); if (ib) ib.onclick = async () => close(await runtimeInstallSkill(envelope));
   }));
 }
-// I12 (v0.9 §12) — the AGENT install dialog (SHOULD): role + author key + vault namespaces +
-// a system-prompt preview (≤200 chars). The install button is offered only for a VERIFIED agent
-// whose record passes the gates; a tampered (unverified) or gate-failing record shows the reason
-// and suppresses install. The trust anchor is the key, not the role.
+// I12 (v0.9 §12) + drop-in AI UX (docs/plans/2026-07-05-drop-in-ai-ux-design.md §3) — the unified
+// Shared Connect-zone field markup (drop-in AI UX §2/§3) — the fields a not-yet-usable backend
+// needs, WITHOUT a heading (each caller wraps it with its own 'Connect' label). openrouter without a
+// session key → an inline [data-ai-key] password field + the session-only reassurance; a local
+// backend → its BACKEND_META setup hint; anything already usable (or bridge) → '' (no field). Used
+// by BOTH the "Use this AI" dialog (syncConnect) and the drop-invitation card (showAiInvite) so the
+// key-field markup + trust line stay byte-identical across the two surfaces.
+function _aiConnectZoneHtml(backend) {
+  if (backend === 'openrouter' && !sessionStorage.getItem(RWA.K_API)) {
+    return '<input type="password" data-ai-key placeholder="sk-or-..." autocomplete="off" style="width:100%;box-sizing:border-box;margin:.2em 0;padding:8px 10px;border:1px solid #ccc;border-radius:8px;font:13px/1.4 var(--font-mono,monospace)">' +
+      '<p style="margin:.2em 0;color:#555">Your key stays in this browser session — never in the file.</p>';
+  }
+  if (BACKEND_META[backend] && BACKEND_META[backend].hintHTML) {
+    return '<p style="margin:.2em 0;color:#555">' + BACKEND_META[backend].hintHTML + '</p>';
+  }
+  return '';
+}
+// "Use this AI" consent dialog. ONE confirm = install + activate + (optional) recommended
+// model/backend + connect (openrouter key / local-backend setup hint). Four zones; the identity
+// zone is the I12 review verbatim (role + author key + vault namespaces + ≤200-char prompt
+// preview). The button is offered only for a VERIFIED agent whose record passes the gates; a
+// tampered (unverified) or gate-failing record shows the reason and suppresses it. The trust
+// anchor is the key, not the role. The API key stays sessionStorage-only (never the file); the
+// recommendation applies model/backend only (never key/base-URL).
 function showAgentInstallDialog(envelope) {
   const agent = (envelope && envelope.agent) || {};
   const signed = !!(envelope && envelope.signature);
+  const _pi = document.getElementById('rwa-ai-invite'); if (_pi) _pi.remove(); // a drop supersedes an open drop-invitation card
   return Promise.resolve(_agVerify(envelope)).then(verified => new Promise(resolve => {
     const gates = _agValidateInstall(agent, signed);
     const prev = document.getElementById('rwa-agent-install'); if (prev) prev.remove();
@@ -8043,24 +8171,162 @@ function showAgentInstallDialog(envelope) {
     const authorHtml = signed
       ? (verified ? 'Signed by key <code>' + _skEsc(String(agent.author_pubkey).slice(0, 12)) + '…</code>' : '⚠ Signature does NOT verify — this record was modified. It cannot be activated.')
       : '⚠ Unsigned — agents must be signed; this cannot be installed.';
+    // I-D — advisory kind-affinity, PRE-install (affinityWarning reads installedAgents, so its
+    // shape is inlined here from the envelope). A mismatch only notes — never blocks.
+    const aff = getAffinity(envelope);
+    const affinityHtml = (aff.length && aff.indexOf(PRODUCT_KIND) < 0)
+      ? '<p style="background:#fef3c7;border-radius:8px;padding:8px 10px;margin:.6em 0">⚠ “' + _skEsc(agent.role) + '” is tuned for ' + _skEsc(aff.join('/')) + ' documents, but this is a ' + _skEsc(PRODUCT_KIND) + '. You can still use it.</p>'
+      : '';
+    // Model zone — the carrier's recommendation vs the current session (same comparison as
+    // offerRecommendedModel). A rec matching the current setup renders as no-rec; radios appear
+    // only when the session has an EXPLICIT different setup worth keeping.
+    const rec = getRecommendation(envelope);
+    const curModel = sessionStorage.getItem(RWA.K_MODEL) || RWA.MODEL;
+    const curBackend = sessionStorage.getItem(RWA.K_BACKEND) || 'openrouter';
+    const recDiffers = !!rec && !((!rec.model || rec.model === curModel) && (!rec.backend || rec.backend === curBackend));
+    const explicitSetup = !!(sessionStorage.getItem(RWA.K_MODEL) || sessionStorage.getItem(RWA.K_BACKEND));
+    const recModel = (rec && rec.model) || curModel;
+    const recBackend = (rec && rec.backend) || curBackend;
+    const modelHtml = !recDiffers
+      ? '<p style="margin:.2em 0;color:#555">Uses your current model/backend.</p>'
+      : '<p style="margin:.2em 0">Wants to use <code>' + _skEsc(recModel) + '</code> via <code>' + _skEsc(recBackend) + '</code>.</p>' +
+        (explicitSetup
+          ? '<label style="display:block;margin:.2em 0"><input type="radio" name="rwa-ai-modelchoice" data-ai-modelchoice value="rec" checked> Use the recommended <code>' + _skEsc(recModel) + '</code> (' + _skEsc(recBackend) + ')</label>' +
+            '<label style="display:block;margin:.2em 0"><input type="radio" name="rwa-ai-modelchoice" data-ai-modelchoice value="keep"> Keep my current <code>' + _skEsc(curModel) + '</code> (' + _skEsc(curBackend) + ')</label>'
+          : '');
     const canInstall = gates.ok && verified;
     card.innerHTML =
-      '<h2 style="margin:0 0 .2em;font-size:1.25rem">Install agent role “' + _skEsc(agent.role) + '”?</h2>' +
+      '<h2 style="margin:0 0 .2em;font-size:1.25rem">Use this AI — “' + _skEsc(agent.role) + '”?</h2>' +
       '<p style="margin:.2em 0 1em;color:#444"><strong>Purpose.</strong> ' + _skEsc(agent.description || '(no description provided)') + '</p>' +
       '<p style="margin:.2em 0"><strong>Author.</strong> ' + authorHtml + ' <em>The author is identified by the key, not the role name.</em></p>' +
+      affinityHtml +
       '<p style="margin:1em 0 .2em"><strong>Credentials this role can reach</strong></p>' + nsHtml +
       '<p style="margin:1em 0 .2em"><strong>Role instructions (preview)</strong></p><pre style="white-space:pre-wrap;background:#f6f6f6;border-radius:8px;padding:8px 10px;margin:.2em 0;color:#333;font:12px/1.5 var(--font-mono,monospace)">' + _skEsc(promptPreview) + (String(agent.system_prompt || '').length > 200 ? '…' : '') + '</pre>' +
+      '<p style="margin:1em 0 .2em"><strong>Model</strong></p>' + modelHtml +
+      '<div data-ai-connect></div>' +
       '<p style="margin:1.2em 0 .4em;color:#444"><strong>An active role drives edits with its own instructions and reaches only its declared credentials.</strong> The runtime shows you what the role <em>can</em> do, not whether it <em>should</em>.</p>' +
       (gates.ok ? '' : '<p style="background:#fee2e2;border-radius:8px;padding:8px 10px;margin:.6em 0">Cannot install: ' + _skEsc(gates.errors.join(', ')) + '</p>') +
       '<div style="display:flex;gap:10px;margin-top:1.2em;justify-content:flex-end">' +
         '<button data-act="cancel" style="padding:9px 16px;border:1px solid #ccc;border-radius:10px;background:#fff;cursor:pointer">Cancel</button>' +
-        (canInstall ? '<button data-act="install" style="padding:9px 16px;border:none;border-radius:10px;background:var(--gray-900,#111);color:#fff;cursor:pointer">I have reviewed this role and want to install it</button>' : '') +
+        (canInstall ? '<button data-act="use" style="padding:9px 16px;border:none;border-radius:10px;background:var(--gray-900,#111);color:#fff;cursor:pointer">Use this AI</button>' : '') +
       '</div>';
     overlay.appendChild(card); document.body.appendChild(overlay);
+    // Connect zone — recomputed whenever the model choice changes. Openrouter without a session
+    // key asks for the key up front (the button stays disabled until it's typed); local backends
+    // get their BACKEND_META setup hint; bridge/bridge-session get the hint only (no probe in v1).
+    const connectEl = card.querySelector('[data-ai-connect]');
+    const useBtn = card.querySelector('[data-act=use]');
+    const setUseDisabled = (d) => { if (!useBtn) return; useBtn.disabled = d; useBtn.style.opacity = d ? '.5' : ''; useBtn.style.cursor = d ? 'default' : 'pointer'; };
+    const chosenChoice = () => { const r = card.querySelector('[data-ai-modelchoice]:checked'); return r ? r.value : 'rec'; };
+    const chosenBackend = () => (chosenChoice() === 'keep') ? curBackend : ((rec && rec.backend) || curBackend);
+    let keyDraft = ''; // a typed key survives connect-zone re-renders (rec → keep → rec)
+    const syncConnect = () => {
+      const cur = connectEl.querySelector('[data-ai-key]'); if (cur) keyDraft = cur.value;
+      const b = chosenBackend();
+      const html = _aiConnectZoneHtml(b);
+      connectEl.innerHTML = html ? '<p style="margin:1em 0 .2em"><strong>Connect</strong></p>' + html : '';
+      const kf = connectEl.querySelector('[data-ai-key]');
+      if (kf && keyDraft) kf.value = keyDraft;
+      const syncBtn = () => setUseDisabled(!!kf && !kf.value.trim());
+      if (kf) kf.addEventListener('input', () => { keyDraft = kf.value; syncBtn(); });
+      syncBtn();
+    };
+    syncConnect();
+    for (const r of card.querySelectorAll('[data-ai-modelchoice]')) r.addEventListener('change', syncConnect);
     const close = (r) => { overlay.remove(); resolve(r); };
-    card.querySelector('[data-act=cancel]').onclick = () => close({ ok: false, errors: ['cancelled'] });
-    const ib = card.querySelector('[data-act=install]'); if (ib) ib.onclick = async () => close(await runtimeInstallAgent(envelope));
+    const cancelBtn = card.querySelector('[data-act=cancel]');
+    cancelBtn.onclick = () => close({ ok: false, errors: ['cancelled'] });
+    if (useBtn) useBtn.onclick = async () => {
+      setUseDisabled(true); cancelBtn.disabled = true; // in-flight lock: no use-then-cancel race while install lands
+      const res = await runtimeInstallAgent(envelope);
+      if (res.ok) {
+        try { runtimeSetActiveAgent(agent.role); } catch (_) {} // can't throw for a verified record, but never block the close
+        if (recDiffers && chosenChoice() !== 'keep') applyRecommendation(rec); // a matching rec must not flip implicit defaults into explicit sessionStorage
+        const kf = card.querySelector('[data-ai-key]');
+        if (kf && kf.value.trim()) {
+          sessionStorage.setItem(RWA.K_API, kf.value.trim());
+          try { const ki = document.getElementById('rwa-key'); if (ki) ki.value = kf.value.trim(); } catch (_) {}
+        }
+      }
+      close(res);
+    };
   }));
+}
+// Drop-invitation card (drop-in AI UX §2, plan task 1.5) — shown when the first ⌘K has no usable
+// backend (openrouter without a session key). Replaces the old 'no API key — open ⚙ settings'
+// auto-open: the tangible path (drop an AI file) leads, the developer settings form is demoted to an
+// explicit 'set up manually' escape hatch. Two variants: GENERIC (no AI installed anywhere) invites
+// the drop gesture + the AI Gallery; AI-AWARE (a verified role IS installed but this session has no
+// key — the every-new-session case, since key/model are sessionStorage-only) names the role and
+// offers the key inline via the shared Connect zone. openrouter is hard-wired because it's the only
+// requiresKey backend, i.e. the sole backend whose no-key guard reaches here.
+function showAiInvite() {
+  const prev = document.getElementById('rwa-ai-invite'); if (prev) prev.remove();
+  // Target pick — AI-aware ONLY when the role to connect is unambiguous: the active role, else a
+  // single verified install. activeAgentRole isn't persisted across sessions, so the every-new-session
+  // case has runtimeAgentActive()===null and falls to the lone verified install; 2+ inactive verified
+  // roles are ambiguous (which one does "Connect" mean?) → the generic variant.
+  const act = (typeof runtimeAgentActive === 'function' && runtimeAgentActive()) || null;
+  const verifiedRoles = Array.from(installedAgents.values()).filter(a => a.verified);
+  const installed = act || (verifiedRoles.length === 1 ? verifiedRoles[0] : null);
+  const overlay = document.createElement('div'); overlay.id = 'rwa-ai-invite';
+  overlay.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;';
+  const card = document.createElement('div');
+  card.style.cssText = 'background:#fff;max-width:560px;width:92%;max-height:86vh;overflow:auto;border-radius:18px;padding:26px 28px;font:14px/1.5 var(--font-ui,system-ui);box-shadow:0 12px 48px rgba(0,0,0,.28);';
+  const roleName = installed ? _skEsc(installed.role) : '';
+  const gallery = '<a href="https://rewritable.ikangai.com/ai" target="_blank" rel="noopener">AI Gallery</a>';
+  const manualBtn = '<button data-ai-manual style="padding:9px 16px;border:1px solid #ccc;border-radius:10px;background:#fff;cursor:pointer">set up manually (⚙)</button>';
+  if (installed) {
+    // AI-aware — a role is ready but this session has no model connection. Offer the key inline.
+    card.innerHTML =
+      '<h2 style="margin:0 0 .4em;font-size:1.25rem">“' + roleName + '” is ready — connect a model to run it</h2>' +
+      '<p style="margin:.2em 0 1em;color:#444">No AI connected in this browser session yet. Connect a model to run “' + roleName + '”, or drop a different AI file anywhere on this page.</p>' +
+      '<div data-ai-invite-body><p style="margin:1em 0 .2em"><strong>Connect</strong></p>' + _aiConnectZoneHtml('openrouter') + '</div>' +
+      '<div style="display:flex;gap:10px;margin-top:1.2em;justify-content:flex-end">' +
+        '<button data-act="cancel" style="padding:9px 16px;border:1px solid #ccc;border-radius:10px;background:#fff;cursor:pointer">Close</button>' +
+        manualBtn +
+        '<button data-ai-invite-connect style="padding:9px 16px;border:none;border-radius:10px;background:var(--gray-900,#111);color:#fff;cursor:pointer">Connect</button>' +
+      '</div>';
+  } else {
+    card.innerHTML =
+      '<h2 style="margin:0 0 .4em;font-size:1.25rem">This document has no AI connected</h2>' +
+      '<p style="margin:.2em 0 1em;color:#444">Drop an AI file anywhere on this page — it installs behind a consent card. Or browse the ' + gallery + ', or set up a model manually.</p>' +
+      '<div style="display:flex;gap:10px;margin-top:1.2em;justify-content:flex-end">' +
+        '<button data-act="cancel" style="padding:9px 16px;border:1px solid #ccc;border-radius:10px;background:#fff;cursor:pointer">Close</button>' +
+        manualBtn +
+      '</div>';
+  }
+  overlay.appendChild(card); document.body.appendChild(overlay);
+  const close = () => overlay.remove();
+  // Escape hatch — the OLD guard behavior (open ⚙ + focus the key field), now behind a choice.
+  const manual = card.querySelector('[data-ai-manual]');
+  if (manual) manual.onclick = () => {
+    close();
+    const setP = document.getElementById('rwa-set-panel'); if (setP) setP.classList.add('open');
+    try { const key = document.getElementById('rwa-key'); if (key) key.focus(); } catch (_) {}
+  };
+  const cancelBtn = card.querySelector('[data-act=cancel]');
+  if (cancelBtn) cancelBtn.onclick = close;
+  // AI-aware Connect — store the typed key (sessionStorage, the same slot ⚙ writes), sync #rwa-key.
+  const field = card.querySelector('[data-ai-key]');
+  const connectBtn = card.querySelector('[data-ai-invite-connect]');
+  if (connectBtn) {
+    const syncBtn = () => { const d = !!field && !field.value.trim(); connectBtn.disabled = d; connectBtn.style.opacity = d ? '.5' : ''; connectBtn.style.cursor = d ? 'default' : 'pointer'; };
+    if (field) field.addEventListener('input', syncBtn);
+    syncBtn();
+    connectBtn.onclick = () => {
+      // Deliver on the copy: the card says "<role> is ready" — Connect makes it ACTIVE (not just
+      // connected) so the next ⌘K runs THIS role, not the plain editor. installed is verified here
+      // (the AI-aware branch only fires for a verified target), so setActive can't throw.
+      try { runtimeSetActiveAgent(installed.role); } catch (_) {}
+      if (field && field.value.trim()) {
+        sessionStorage.setItem(RWA.K_API, field.value.trim());
+        try { const ki = document.getElementById('rwa-key'); if (ki) ki.value = field.value.trim(); } catch (_) {}
+      }
+      close();
+      try { typeof renderAiChip === 'function' && renderAiChip(); } catch (_) {}
+    };
+  }
 }
 // §1.3 / §12 — install trigger: pick a .rwa-skill.json / .rwa-agent.json envelope OR an
 // intelligence carrier .html (a rewritable carrying a signed rwa-agent/1 record), then route.
@@ -8118,7 +8384,7 @@ async function routeInstallFromText(text) {
   if (c.kind === 'json-agent') showAgentInstallDialog(c.envelope);
   else if (c.kind === 'json-skill') showSkillInstallDialog(c.envelope);
   else if (c.kind === 'agent-carrier') { (async () => { for (const env of c.envelopes) { await showAgentInstallDialog(env); } })(); }
-  else if (typeof setStatus === 'function') setStatus('err', 'no installable skill or intelligence found in that file');
+  else if (typeof setStatus === 'function') setStatus('err', 'no installable skill or AI found in that file');
   return c;
 }
 async function _readDroppedText(file) {
@@ -8136,7 +8402,7 @@ async function handleCarrierDrop(e) {
   if (!carrier) return; // not a carrier — let the image/other drop handlers run
   if (e.preventDefault) e.preventDefault();
   if (e.stopPropagation) e.stopPropagation();
-  if (carrier.size > CARRIER_MAX_BYTES) { if (typeof setStatus === 'function') setStatus('err', 'that file is too large to be an intelligence carrier (' + Math.round(carrier.size / 1048576) + ' MB)'); return; }
+  if (carrier.size > CARRIER_MAX_BYTES) { if (typeof setStatus === 'function') setStatus('err', 'that file is too large to be an AI carrier (' + Math.round(carrier.size / 1048576) + ' MB)'); return; }
   try { await routeInstallFromText(await _readDroppedText(carrier)); }
   catch (_) { if (typeof setStatus === 'function') setStatus('err', 'could not read the dropped file'); }
 }
@@ -8212,7 +8478,7 @@ function offerRecommendedModel(role) {
     card.style.cssText = 'background:#fff;max-width:480px;width:92%;border-radius:18px;padding:24px 26px;font:14px/1.5 var(--font-ui,system-ui);box-shadow:0 12px 48px rgba(0,0,0,.28);';
     const what = [rec.model ? 'model <code>' + _skEsc(rec.model) + '</code>' : '', rec.backend ? 'backend <code>' + _skEsc(rec.backend) + '</code>' : ''].filter(Boolean).join(' on ');
     card.innerHTML =
-      '<h2 style="margin:0 0 .4em;font-size:1.15rem">Use this intelligence’s recommended ' + (rec.model ? 'model' : 'backend') + '?</h2>' +
+      '<h2 style="margin:0 0 .4em;font-size:1.15rem">Use this AI’s recommended ' + (rec.model ? 'model' : 'backend') + '?</h2>' +
       '<p style="margin:.2em 0;color:#444">The <strong>' + _skEsc(role) + '</strong> role suggests ' + what + ' for ⌘K. This is a <em>recommendation</em> (not part of the signed role) — applying it changes only your session’s model/backend selection. Your API key is untouched.</p>' +
       '<div style="display:flex;gap:10px;margin-top:1.2em;justify-content:flex-end">' +
         '<button data-act="keep" style="padding:9px 16px;border:1px solid #ccc;border-radius:10px;background:#fff;cursor:pointer">Keep current</button>' +
@@ -8949,10 +9215,9 @@ async function modify(instr, lensMeta = null, opts = null) {
 
   const model = sessionStorage.getItem(RWA.K_MODEL) || RWA.MODEL;
   if (cfg.requiresKey && !cfg.apiKey) {
-    setPalSt('err', 'no API key — open ⚙ settings');
-    setLensProgress('error', 'no API key — open ⚙ settings');
-    document.getElementById('rwa-set-panel').classList.add('open');
-    document.getElementById('rwa-key').focus();
+    setPalSt('err', 'no AI connected — drop one in');
+    setLensProgress('error', 'no AI connected — drop one in');
+    showAiInvite();
     return;
   }
 
@@ -9710,6 +9975,7 @@ document.addEventListener('keydown', e => {
       const agMap = await readTrustworthyAgents(doc);
       installedAgents.clear();
       agMap.forEach((v, k) => installedAgents.set(k, v));
+      try { typeof renderAiChip === 'function' && renderAiChip(); } catch (_) {} // AI chip reflects the loaded registry (no role is active at boot)
       // I5 — reconcile the per-author name_history (rwa_sources) from the in-file manifests, so a
       // fresh load (or an IDB-cleared one) still knows the renames recorded in the frozen zone.
       await runtimeBuildSourceIndex();
