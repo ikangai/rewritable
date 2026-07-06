@@ -1343,6 +1343,31 @@ function contentTypeFor(name) {
   return 'application/octet-stream';
 }
 
+// GET /ai/template.html — the fresh skill-host carrier template the AI Maker
+// fetches and injects into (plan T3.2). The seed subs are the same ones the CLI
+// uses to scaffold an intelligence carrier (cli/src/intelligence.mjs), reached
+// here via the byte-identical ESM mirror in ./lib/seed.mjs. `applySeedSubs`
+// enforces exactly-one-match per region on the pristine SEED_TEMPLATE — the CLI
+// proves this combination succeeds on the same seed. The three RWA_MAKER_*
+// markers are placeholders the client string-replaces to assemble the carrier.
+async function handleAiTemplate(send) {
+  const { applySeedSubs, kindOverrides, replaceInlineDoc } = await import('./lib/seed.mjs');
+  const ov = kindOverrides('skill-host');
+  let t = applySeedSubs(SEED_TEMPLATE, {
+    uuid: crypto.randomUUID(),
+    title: 'Intelligence — RWA_MAKER_ROLE',
+    fileMeta: 'RWA_MAKER_ROLE.intelligence.html',
+    productKind: 'skill-host',
+    lensPlaceholder: ov.lensPlaceholder, palPlaceholder: ov.palPlaceholder,
+    productHeader: ov.productHeader, lensClickToAnchor: ov.lensClickToAnchor,
+  });
+  t = replaceInlineDoc(t, '<!--RWA_MAKER_CARD-->\n<!--RWA_MAKER_ZONE-->');
+  return send(200, {
+    'Content-Type': 'text/html; charset=utf-8',
+    'Cache-Control': 'no-store',
+  }, t);
+}
+
 const server = http.createServer((req, res) => {
   // Per RFC 9110 §9.3.2: HEAD must return identical headers to GET but no body.
   // Closure over `req.method` so every send() call honours this automatically.
@@ -1546,6 +1571,22 @@ const server = http.createServer((req, res) => {
       'Content-Type': 'text/html; charset=utf-8',
       'Cache-Control': 'public, max-age=300',
     }, AI_INDEX_HTML);
+  }
+  // The carrier TEMPLATE the AI Maker fetches, then string-replaces the three
+  // markers (card + #rwa-agents zone into INLINE_DOC, role into title/FILE) to
+  // assemble a signed intelligence client-side. A FRESH skill-host rewritable
+  // per request (new DOC_UUID) — no-store so two assemblies never collide.
+  // Explicit-before-general: matched here, ahead of the /ai/<role> carrier map.
+  // Delegated to an async helper because the seed subs live in an ESM lib the
+  // CJS main handler can only reach via `await import` (mirrors /publish, /r).
+  if (url === '/ai/template.html') {
+    handleAiTemplate(send).catch(err => {
+      console.error('ai: template unhandled error', err);
+      if (!res.headersSent) {
+        send(500, { 'Content-Type': 'text/plain; charset=utf-8' }, 'internal_error\n');
+      }
+    });
+    return;
   }
   if (url.startsWith('/ai/')) {
     const name = url.slice('/ai/'.length);
