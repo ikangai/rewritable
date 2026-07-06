@@ -8391,6 +8391,25 @@ async function _readDroppedText(file) {
   if (file && typeof file.text === 'function') return file.text();
   return new Promise((res, rej) => { const rd = new FileReader(); rd.onload = () => res(String(rd.result || '')); rd.onerror = rej; rd.readAsText(file); });
 }
+// The typed artifact drop bus — ONE classifier over both drop paths (docs/plans/2026-07-06-artifact-bus-design.md
+// §1-§2). Two lookup strategies: a DECLARED branch (a carrier .html / a bare rwa-agent|rwa-skill envelope
+// JSON → install, becomes behavior — delegates to the unchanged classifyInstallText) and a SNIFF branch
+// (an image file by file.type → ingest, becomes content). DECLARED BEATS SNIFF: an image file is the only
+// sniffable class today and can't self-declare, so an .html carrier always reaches the declared branch —
+// a self-declared artifact is never silently re-typed. An unclassifiable drop → the all-null "not a
+// recognized artifact" shape (today's kind:'none'). Additive: classifyInstallText, ingestImageFile, and
+// both drop handlers stay byte-unchanged; the dispatcher + accepts declaration land in later tasks.
+// Accepts a File (.type/.name/.text()) or a raw string; async because it may read a File's text.
+async function classifyArtifact(input) {
+  const isFile = !!input && typeof input === 'object';
+  if (isFile && /^image\//.test(input.type || ''))                 // sniff: no reading needed for images
+    return { class: 'ingest', semantics: 'ingest', source: 'sniffed', payload: { files: [input] } };
+  const text = isFile ? await _readDroppedText(input) : String(input || '');
+  const c = classifyInstallText(text);
+  if (c.kind === 'json-agent' || c.kind === 'json-skill' || c.kind === 'agent-carrier')
+    return { class: 'install', semantics: 'install', source: 'declared', payload: c };
+  return { class: null, semantics: null, source: null };
+}
 // Drop gesture — capture phase, so a carrier is claimed before the Edit-mode image-mount drop.
 // Acts only on an .html/.htm file; any other drop flows through untouched to existing handlers.
 // A carrier is a self-contained .html (seed + doc, ~0.6 MB; larger with embedded images); cap the
@@ -8417,6 +8436,7 @@ window.addEventListener('drop', handleCarrierDrop, true);
 // Automation/test hooks (mirror window.__ingestImageFile).
 window.__rwaExtractAgentCarrier = extractAgentEnvelopesFromCarrier;
 window.__rwaClassifyInstallText = classifyInstallText;
+window.__rwaClassifyArtifact = classifyArtifact;
 window.__rwaInstallFromText = routeInstallFromText;
 window.__rwaHandleCarrierDrop = handleCarrierDrop;
 
