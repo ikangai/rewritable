@@ -52,6 +52,16 @@ async function boot(body) {
 
 const carrierHtml = fs.readFileSync(CARRIER, 'utf8');
 
+async function readStore(w, name) {
+  const db = await w.openDB();
+  return new Promise(res => {
+    const r = db.transaction(name).objectStore(name).get('self');
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => res(undefined);
+  });
+}
+const FAKE_URI = 'data:image/png;base64,QUJDREVG';
+
 console.log('== artifact drop bus — classifier ==');
 
 // A — classifyArtifact: the unified drop classifier. Every case asserts class/semantics/source
@@ -108,6 +118,87 @@ console.log('== artifact drop bus — classifier ==');
   const rPrec = await w.__rwaClassifyArtifact(carrierFile);
   check('A5: carrier File (text/html) → install/declared, NOT ingest (declared beats sniff)',
     rPrec.class === 'install' && rPrec.semantics === 'install' && rPrec.source === 'declared');
+}
+
+// B — dispatchArtifact: route a classified artifact to its class handler (plan Task 1.2). The bus
+// COMPOSES the existing per-class machinery — routeInstallFromText (install) / insertImageFiles
+// (ingest) — it never reimplements or weakens them. Each class keeps its DIFFERENT context, carried
+// in ctx: install is any-mode + window-wide; ingest is Edit-mode + mount-target ONLY. The Edit-mode
+// gate is the load-bearing invariant (Rule 9): a dispatch outside Edit mode must NOT mutate the doc,
+// or an image drop could bypass the edit gate and rewrite a read-only view.
+{
+  console.log('-- B: dispatchArtifact routing --');
+
+  // B0/B1 — install-class dispatch reaches the install path: the consent dialog opens
+  // (routeInstallFromText → showAgentInstallDialog, exactly as a carrier drop does today).
+  {
+    const w = await boot(article);
+    const dispatch = w.__rwaDispatchArtifact;
+    check('B0: window.__rwaDispatchArtifact hook present', typeof dispatch === 'function');
+    const cls = await w.__rwaClassifyArtifact(carrierHtml);
+    if (typeof dispatch === 'function') {
+      await dispatch(cls, { text: carrierHtml });
+      await new Promise(r => setTimeout(r, 150)); // async file read + signature verify
+    }
+    check('B1: install-class dispatch opens the agent consent dialog',
+      !!w.document.getElementById('rwa-agent-install'));
+  }
+
+  // B2 — ingest-class dispatch with ctx.mode='edit' inserts the image via insertImageFiles, and
+  // attributes it user:image-drop / image:insert (the drop actor must survive the refactor).
+  {
+    const w = await boot(article);
+    const dispatch = w.__rwaDispatchArtifact;
+    w.__rwaIngestImage = async (f) => ({ dataUri: FAKE_URI, bytes: 6, name: (f && f.name) || 'x.png', resizedFrom: null });
+    await w.__setDocForTest('<article>\n<p data-rwa-id="b2">hello</p>\n</article>');
+    const cls = await w.__rwaClassifyArtifact({ name: 'shot.png', type: 'image/png', size: 6 });
+    if (typeof dispatch === 'function') {
+      await dispatch(cls, { mode: 'edit', target: null });
+      await new Promise(r => setTimeout(r, 150));
+    }
+    const doc = await readStore(w, 'rwa_doc');
+    check('B2: ingest dispatch (Edit mode) inserts the image figure',
+      typeof doc === 'string' && new RegExp('hello</p>\\n<figure[^>]*><img src="' + FAKE_URI + '"').test(doc));
+    const hist = (await readStore(w, 'rwa_hist') || [])[0];
+    check('B2b: ingest dispatch attributes user:image-drop / image:insert',
+      !!hist && hist.actor === 'user:image-drop' && hist.surface === 'image:insert');
+  }
+
+  // B3 — ingest-class dispatch with ctx.mode='document' is REFUSED by the Edit-mode gate: no insert,
+  // returns false. This is the gate that keeps handleMountDrop's Edit-only contract after the rewire.
+  {
+    const w = await boot(article);
+    const dispatch = w.__rwaDispatchArtifact;
+    w.__rwaIngestImage = async (f) => ({ dataUri: FAKE_URI, bytes: 6, name: (f && f.name) || 'x.png', resizedFrom: null });
+    const base = '<article>\n<p data-rwa-id="b3">unchanged</p>\n</article>';
+    await w.__setDocForTest(base);
+    const cls = await w.__rwaClassifyArtifact({ name: 'shot.png', type: 'image/png', size: 6 });
+    let ret = 'unset';
+    if (typeof dispatch === 'function') {
+      ret = await dispatch(cls, { mode: 'document', target: null });
+      await new Promise(r => setTimeout(r, 100));
+    }
+    check('B3: ingest dispatch in Document mode is a no-op (Edit-mode gate preserved)',
+      (await readStore(w, 'rwa_doc')) === base);
+    if (typeof dispatch === 'function') check('B3b: refused ingest returns false', ret === false);
+  }
+
+  // B4 — unknown class → the "not a recognized artifact" status, no side effect (today's kind:'none').
+  {
+    const w = await boot(article);
+    const dispatch = w.__rwaDispatchArtifact;
+    const base = '<article>\n<p data-rwa-id="b4">intact</p>\n</article>';
+    await w.__setDocForTest(base);
+    const cls = await w.__rwaClassifyArtifact('<html><body><p>just a page</p></body></html>'); // → all-null
+    let ret = 'unset';
+    if (typeof dispatch === 'function') { ret = await dispatch(cls, {}); await new Promise(r => setTimeout(r, 80)); }
+    const st = w.document.getElementById('rwa-st-status');
+    check('B4: unknown-class dispatch sets the "not a recognized artifact" status',
+      !!st && /not a recognized artifact/.test(st.textContent));
+    check('B4b: unknown-class dispatch has no side effect (doc intact, no install dialog)',
+      (await readStore(w, 'rwa_doc')) === base && !w.document.getElementById('rwa-agent-install'));
+    if (typeof dispatch === 'function') check('B4c: unknown-class dispatch returns false', ret === false);
+  }
 }
 
 console.log(`\n== ${pass} pass, ${fail} fail ==`);
