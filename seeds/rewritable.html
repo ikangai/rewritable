@@ -7159,6 +7159,24 @@ function readTrustworthyDeclaration() {
   return list.filter(a => a && typeof a.kind === 'string' && typeof a.name === 'string');
 }
 
+// resolveAccepts() — the artifact-bus `accepts` gate input (docs/plans/2026-07-06-artifact-bus-design.md §3).
+// Reads the SAME edit-unreachable #rwa-affordances declaration as readTrustworthyDeclaration (so a lens/agent
+// can't FORGE it — a driftable declaration is IGNORED, treated as no declaration), and extracts two optional
+// fields: `accepts` (an array of artifact class-name strings the doc welcomes) and a doc-level `strict`
+// boolean (default false). Returns {classes, strict}: classes===null means NO declaration / no `accepts` key
+// → accept-all advisory (the default — everything is welcome). Fails SOFT: a missing / driftable / malformed
+// declaration → {classes:null, strict:false}, so a broken declaration can never lock the author out.
+function resolveAccepts() {
+  let el;
+  try { el = document.getElementById('rwa-affordances'); } catch (_) { return { classes: null, strict: false }; }
+  if (!el || !isEditUnreachable(el)) return { classes: null, strict: false };
+  let parsed;
+  try { parsed = JSON.parse(el.textContent); } catch (_) { return { classes: null, strict: false }; }
+  if (!parsed || typeof parsed !== 'object') return { classes: null, strict: false };
+  const classes = Array.isArray(parsed.accepts) ? parsed.accepts.filter(c => typeof c === 'string') : null;
+  return { classes, strict: parsed.strict === true };
+}
+
 // ─── Skill runtime (shannon): parse + verify installed skills (v0.8 §3/§8) ────────
 // LIVE mirror of cli/src/skill-manifest.mjs (parseSkillZone + skillId/signingMessage/
 // verifyEnvelope) in async WebCrypto — must compute the SAME canonicalManifest /
@@ -8459,6 +8477,21 @@ async function classifyArtifact(input) {
 async function dispatchArtifact(cls, ctx) {
   ctx = ctx || {};
   const kind = cls && cls.class;
+  // The `accepts` gate (design §3) — consulted BEFORE routing every REAL class (install/ingest/compose). A
+  // doc may declare which classes it welcomes (resolveAccepts, from the edit-unreachable #rwa-affordances):
+  //   classes===null → accept-all (no declaration) — silent.  class listed → silent.
+  //   class unlisted + !strict → ADVISORY: continue AND show a soft note (never blocks).
+  //   class unlisted + strict  → REFUSE: clear status, return false, NO side effect (the handler is not run).
+  // Mirrors the AI kind-affinity decision: advisory by default, strict only on the author's explicit opt-in —
+  // an author is never locked out of their own document unless they declared the lock. The null/unknown branch
+  // below is untouched (an unclassifiable drop is "not a recognized artifact", not a refused class).
+  if (kind === 'install' || kind === 'ingest' || kind === 'compose') {
+    const acc = resolveAccepts();
+    if (acc.classes && acc.classes.indexOf(kind) === -1) {
+      if (acc.strict) { if (typeof setStatus === 'function') setStatus('err', 'this document does not accept ' + kind); return false; }
+      if (typeof setStatus === 'function') setStatus('', "this document doesn't usually take " + kind);
+    }
+  }
   if (kind === 'install') return routeInstall(cls.payload);   // classifyArtifact always sets an install payload
   if (kind === 'ingest') {
     if (ctx.mode !== 'edit' || activeView || modifyMutex) return false;   // mirrors handleMountDrop's gate
