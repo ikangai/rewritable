@@ -8379,37 +8379,65 @@ function classifyInstallText(text) {
   if (envelopes.length) return { kind: 'agent-carrier', envelopes };
   return { kind: 'none' };
 }
-// Route extracted content to the right consent dialog. Install stays behind the dialog (the trust
-// anchor); the dialog is fire-and-forget so the drop handler returns immediately. Multiple records
-// in one carrier are queued (each dialog awaits the previous close).
-async function routeInstallFromText(text) {
-  const c = classifyInstallText(text);
+// Route an ALREADY-classified install record (a classifyInstallText result) to the right consent dialog.
+// Install stays behind the dialog (the trust anchor); the dialog is fire-and-forget so the drop handler
+// returns immediately. Multiple records in one carrier are queued (each dialog awaits the previous close).
+// Split out of routeInstallFromText so the bus can THREAD the classification it already made
+// (classifyArtifact's install payload IS this record) — the carrier is parsed ONCE, not re-parsed here.
+function routeInstall(c) {
   if (c.kind === 'json-agent') showAgentInstallDialog(c.envelope);
   else if (c.kind === 'json-skill') showSkillInstallDialog(c.envelope);
   else if (c.kind === 'agent-carrier') { (async () => { for (const env of c.envelopes) { await showAgentInstallDialog(env); } })(); }
   else if (typeof setStatus === 'function') setStatus('err', 'no installable skill or AI found in that file');
   return c;
 }
+async function routeInstallFromText(text) {
+  return routeInstall(classifyInstallText(text));
+}
 async function _readDroppedText(file) {
   if (file && typeof file.text === 'function') return file.text();
   return new Promise((res, rej) => { const rd = new FileReader(); rd.onload = () => res(String(rd.result || '')); rd.onerror = rej; rd.readAsText(file); });
 }
+// An rwa-artifact/1 declaration (docs/plans/2026-07-06-artifact-bus-design.md §1/§5): a bare JSON object, or
+// a <script type="application/rwa-artifact+json"> tag embedded in a carrier .html. In a full carrier the tag
+// lives inside INLINE_DOC, so its closing tag is backslash-escaped — un-escape INLINE_DOC via _carrierDoc
+// first (the same path the agent-record extractor uses), then match. Returns the parsed envelope ONLY for a
+// recognized compose artifact (format+class gate); anything else → null (→ the caller falls through to the
+// install/image sniff). v1 carries the minimal tag only (no full rwa-artifact/1 wire spec yet).
+function readArtifactDeclaration(text) {
+  const s = String(text || '');
+  let o = null; try { o = JSON.parse(s); } catch (_) {}
+  if (!(o && typeof o === 'object')) {
+    const m = /<script\s+type="application\/rwa-artifact\+json">([\s\S]*?)<\/script>/.exec(_carrierDoc(s));
+    if (m) { try { o = JSON.parse(m[1].trim()); } catch (_) { o = null; } }
+  }
+  return (o && typeof o === 'object' && o.format === 'rwa-artifact/1' && o.class === 'compose') ? o : null;
+}
 // The typed artifact drop bus — ONE classifier over both drop paths (docs/plans/2026-07-06-artifact-bus-design.md
-// §1-§2). Two lookup strategies: a DECLARED branch (a carrier .html / a bare rwa-agent|rwa-skill envelope
-// JSON → install, becomes behavior — delegates to the unchanged classifyInstallText) and a SNIFF branch
-// (an image file by file.type → ingest, becomes content). DECLARED BEATS SNIFF: an image file is the only
-// sniffable class today and can't self-declare, so an .html carrier always reaches the declared branch —
-// a self-declared artifact is never silently re-typed. An unclassifiable drop → the all-null "not a
-// recognized artifact" shape (today's kind:'none'). Additive: classifyInstallText, ingestImageFile, and
-// both drop handlers stay byte-unchanged; the dispatcher + accepts declaration land in later tasks.
-// Accepts a File (.type/.name/.text()) or a raw string; async because it may read a File's text.
-// The `class` field IS the integration semantics (design §1 is 1:1 — install/ingest/compose/transform
-// each map to exactly one semantics), so there is no separate `semantics` field to drift out of sync.
+// §1-§2). Two lookup strategies: a DECLARED branch (an rwa-artifact/1 skin artifact → compose, layers over the
+// doc; a carrier .html / a bare rwa-agent|rwa-skill envelope JSON → install, becomes behavior — delegates to the
+// unchanged classifyInstallText) and a SNIFF branch (an image file by file.type → ingest, becomes content).
+// DECLARED BEATS SNIFF: an image file is the only sniffable class today and can't self-declare, so an .html
+// carrier always reaches the declared branch — a self-declared artifact is never silently re-typed. Within
+// declared, the ARTIFACT TAG is read before the agent/skill sniff (a skin is not an agent); a recognized
+// rwa-artifact/1 envelope we can't honor (unknown artifact kind / unknown preset) FAILS LOUD to all-null rather
+// than falling through — a broken artifact is not a different one. An unclassifiable drop → the all-null "not a
+// recognized artifact" shape (today's kind:'none'). Accepts a File (.type/.name/.text()) or a raw string; async
+// because it may read a File's text. The `class` field IS the integration semantics (design §1 is 1:1 —
+// install/ingest/compose/transform each map to exactly one semantics), so there is no separate `semantics` field.
 async function classifyArtifact(input) {
   const isFile = !!input && typeof input === 'object';
   if (isFile && /^image\//.test(input.type || ''))                 // sniff: no reading needed for images
     return { class: 'ingest', source: 'sniffed', payload: { files: [input] } };
   const text = isFile ? await _readDroppedText(input) : String(input || '');
+  // DECLARED (compose) — an rwa-artifact/1 skin artifact, BEFORE the agent/skill install sniff.
+  const art = readArtifactDeclaration(text);
+  if (art) {
+    if (art.artifact === 'skin' && art.skin && typeof art.skin.name === 'string' && RWA_SKINS[art.skin.name])
+      return { class: 'compose', source: 'declared', payload: { artifact: 'skin', skin: { name: art.skin.name } } };
+    return { class: null, source: null };  // recognized artifact envelope we can't honor → fail loud
+  }
+  // DECLARED (install) — an AI/skill carrier or bare envelope (delegates to the unchanged classifyInstallText).
   const c = classifyInstallText(text);
   if (c.kind === 'json-agent' || c.kind === 'json-skill' || c.kind === 'agent-carrier')
     return { class: 'install', source: 'declared', payload: c };
@@ -8418,21 +8446,32 @@ async function classifyArtifact(input) {
 // The dispatcher — route a classifyArtifact result to its class handler (design §2, plan Task 1.2).
 // The bus COMPOSES the existing per-class machinery; it never reimplements or weakens it. Each class
 // keeps its DIFFERENT context, carried in ctx (routing on cls.class = design §1's integration semantics):
-//   install — any mode, window-wide; ctx.text is the read carrier/envelope bytes. routeInstallFromText
-//             re-classifies the text (unchanged), so its "no installable skill or AI found" message
-//             still fires here for an .html that carries nothing installable.
+//   install — any mode, window-wide; routeInstall(cls.payload) reuses the classification classifyArtifact
+//             already made (cls.payload IS the classifyInstallText result), so the carrier is parsed ONCE.
+//             Falls back to re-parsing ctx.text only if a caller dispatches install WITHOUT a payload.
 //   ingest  — Edit-mode + mount-target ONLY; ctx.{mode,target} carry handleMountDrop's gate snapshot
 //             and drop position. The Edit-mode gate is RE-ASSERTED here (mirroring handleMountDrop) so
 //             a direct dispatch can't bypass it — a Document-mode ingest must never mutate the doc.
 //             Actor stays user:image-drop.
+//   compose — LAYERS over the doc, reversibly (design §1): applySkinL1(cls.payload.skin.name) — ONE
+//             compose-then-commit (one ⌘Z, actor skin:NAME). NO Edit-mode gate: matches the other skin
+//             entry points (/skin lens, ✦ gallery), which are document-global in any mode.
 // An unclassifiable drop → the "not a recognized artifact" status, no side effect (today's kind:'none').
 async function dispatchArtifact(cls, ctx) {
   ctx = ctx || {};
   const kind = cls && cls.class;
-  if (kind === 'install') return routeInstallFromText(ctx.text);
+  if (kind === 'install') return cls.payload ? routeInstall(cls.payload) : routeInstallFromText(ctx.text || '');
   if (kind === 'ingest') {
     if (ctx.mode !== 'edit' || activeView || modifyMutex) return false;   // mirrors handleMountDrop's gate
     return insertImageFiles((cls.payload && cls.payload.files) || [], ctx.target || null, 'user:image-drop');
+  }
+  if (kind === 'compose') {
+    // classifyArtifact already validated the preset, so this RWA_SKINS guard is fail-loud
+    // belt-and-suspenders: a malformed compose must set a clear status, never silently no-op.
+    const name = cls.payload && cls.payload.skin && cls.payload.skin.name;
+    if (!name || !RWA_SKINS[name]) { if (typeof setStatus === 'function') setStatus('err', 'not a recognized artifact'); return false; }
+    try { await applySkinL1(name); return true; }
+    catch (e) { if (typeof setStatus === 'function') setStatus('err', 'skin failed: ' + ((e && e.code) || e)); return false; }
   }
   if (typeof setStatus === 'function') setStatus('err', 'not a recognized artifact');
   return false;
@@ -8448,17 +8487,18 @@ async function handleCarrierDrop(e) {
   if (!carrier) return; // not a carrier — let the image/other drop handlers run
   // Claim SYNCHRONOUSLY, before any await: a capture-phase preventDefault must beat the mount
   // handler, and an async content read would resolve only AFTER the drop already propagated. So the
-  // .html/.htm signal is the install class's synchronous file-level sniff — it decides the CLAIM;
-  // classifyArtifact below only ROUTES (a claimed .html never falls through to the ingest handler).
+  // .html/.htm signal is the file-level sniff that decides the CLAIM; classifyArtifact below then
+  // ROUTES the claimed .html by CONTENT (a claimed .html never falls through to the ingest handler).
   if (e.preventDefault) e.preventDefault();
   if (e.stopPropagation) e.stopPropagation();
   if (carrier.size > CARRIER_MAX_BYTES) { if (typeof setStatus === 'function') setStatus('err', 'that file is too large to be an AI carrier (' + Math.round(carrier.size / 1048576) + ' MB)'); return; }
   try {
-    // The claim already committed this .html to the install class synchronously (the .html sniff), so
-    // route straight to install — routeInstallFromText opens the consent dialog for a real carrier /
-    // bare envelope, or emits "no installable skill or AI found" for a plain .html. AB3 (Increment 2)
-    // re-introduces carrier-path classification as the real install-vs-compose routing seam.
-    await dispatchArtifact({ class: 'install' }, { text: await _readDroppedText(carrier) });
+    // AB3 install-vs-compose seam: classify the claimed .html by content, then route. An AI/skill carrier
+    // → install (consent dialog); an rwa-artifact/1 skin artifact → compose (applySkinL1); a plain .html
+    // with nothing usable → the "not a recognized artifact" status. classifyArtifact parses the carrier
+    // ONCE; dispatchArtifact reuses that classification via cls.payload (no re-parse).
+    const text = await _readDroppedText(carrier);
+    await dispatchArtifact(await classifyArtifact(text), { text });
   } catch (_) { if (typeof setStatus === 'function') setStatus('err', 'could not read the dropped file'); }
 }
 function handleCarrierDragOver(e) {
