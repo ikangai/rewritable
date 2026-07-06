@@ -2,6 +2,14 @@
 
 Notable changes to `re-write-able`. The container format is versioned in `re-write-able-spec.md`; the edit protocol in `rwa-edit-spec.md`; the structural-transform DSL in `rwa-edit-dsl-spec.md`. The CLI follows semver in `cli/package.json`.
 
+## 2026-07-06 — drop-in AI + the typed artifact drop bus (cli 0.17.0)
+
+The emitted seed gains two seed-level features (browser-proven; `rwa new` now ships them).
+
+**Drop-in AI (`intelligence/0.3` §7).** Model selection becomes tangible: a status-bar **AI chip** + panel, a unified **"Use this AI"** consent card (install + activate + apply-recommended-model + connect in one gesture), and a **drop-invitation** replacing the no-key ⌘K settings auto-open. Online: an **AI Gallery** (`/ai`, five signed carriers) and a client-side **AI Maker** (`/ai/maker`, WebCrypto Ed25519 — the private key never leaves the browser). Deployed at `rewritable.ikangai.com`.
+
+**The typed artifact drop bus (`rwa-artifact/1`).** Generalizes the drop gesture into a small typed model: one `classifyArtifact`/`dispatchArtifact` over three classes — `install` (AI/skill carrier), `ingest` (image), `compose` (droppable **skin**) — each keeping its own trust model. A rewritable can declare which classes it `accepts` (advisory by default, author opt-in `strict`), gated via the edit-unreachable `#rwa-affordances` zone. Pinned by `tests/artifact-bus.mjs`; design at `docs/plans/2026-07-06-artifact-bus-design.md`.
+
 ## 2026-06-27 — intelligence/0.2 I-C + I-D: authoring scaffold & kind-affinity (cli 0.15.0)
 
 Two more §6 items, effectively closing intelligence/0.2's backlog (only I-B remains, and it is recommended *against* — carrying base-URL config reintroduces a key-redirection vector).
