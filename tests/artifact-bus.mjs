@@ -228,5 +228,125 @@ console.log('== artifact drop bus — classifier ==');
   }
 }
 
+// C — the compose class: a droppable SKIN (docs/plans/2026-07-06-artifact-bus-plan.md Task 2.1). This is the
+// EXTENSIBILITY test: adding a THIRD class must slot into the same classifier without disturbing install/ingest.
+// A skin artifact is a .html (or bare JSON) carrying
+//   <script type="application/rwa-artifact+json">{format:'rwa-artifact/1',class:'compose',artifact:'skin',skin:{name:<preset>}}</script>
+// classifyArtifact recognizes it as class=compose BEFORE the agent-carrier sniff (a skin is not an agent), and
+// FAILS LOUD (all-null) on an unknown preset / unknown artifact kind / malformed tag — never silently mis-routed
+// to install or ingest. WHY (Rule 9): a mis-typed artifact runs the WRONG trust model — a skin swallowed as an
+// install, or an unknown artifact silently ingested as document content.
+{
+  console.log('-- C: compose-class (skin) classification --');
+  const w = await boot(article);
+  const skinJson = (name) => JSON.stringify({ format: 'rwa-artifact/1', class: 'compose', artifact: 'skin', skin: { name } });
+  // a skin artifact as a full carrier .html: the tag lives INSIDE INLINE_DOC, so its closing </script> is
+  // backslash-escaped (exactly as buildFile emits) — classifyArtifact must un-escape via _carrierDoc, the same
+  // path the agent-record extractor uses. This pins that a skin artifact is a real, droppable file, not just JSON.
+  const skinHtml = (name) =>
+    'const INLINE_DOC = `<article><h1>' + name + ' theme</h1></article>' +
+    '<script type="application/rwa-artifact+json">' + skinJson(name) + '<\\/script>`;\n';
+
+  // C1 — bare JSON skin artifact (valid preset) → compose/declared; payload is the normalized {artifact,skin}.
+  const rJson = await w.__rwaClassifyArtifact(skinJson('linear-dark'));
+  check('C1: bare skin JSON → class=compose', rJson.class === 'compose');
+  check('C1b: skin artifact → source=declared', rJson.source === 'declared');
+  check('C1c: compose payload is {artifact:skin, skin:{name}}',
+    !!rJson.payload && rJson.payload.artifact === 'skin' && !!rJson.payload.skin && rJson.payload.skin.name === 'linear-dark');
+  check('C1d: no separate semantics field (class IS the semantics)', rJson.semantics === undefined);
+
+  // C1e — skin artifact as a full carrier .html (tag inside INLINE_DOC) → compose/declared.
+  const rHtml = await w.__rwaClassifyArtifact(skinHtml('notion-clean'));
+  check('C1e: skin-artifact .html → compose/declared',
+    rHtml.class === 'compose' && rHtml.source === 'declared' && !!rHtml.payload && rHtml.payload.skin.name === 'notion-clean');
+
+  // C2 — an UNKNOWN preset name → all-null (fail loud). A recognized rwa-artifact/1 envelope we cannot honor
+  // must NOT fall through to install/ingest — it is a BROKEN artifact, not a different one.
+  const rBadName = await w.__rwaClassifyArtifact(skinJson('no-such-skin'));
+  check('C2: unknown preset → {class:null} (fail loud, not mis-routed)',
+    rBadName.class === null && rBadName.source === null);
+
+  // C3 — an UNKNOWN artifact kind (a recognized rwa-artifact/1 compose envelope, but not a skin) → all-null.
+  const rBadKind = await w.__rwaClassifyArtifact(JSON.stringify({ format: 'rwa-artifact/1', class: 'compose', artifact: 'deck', deck: {} }));
+  check('C3: unknown artifact kind → {class:null}', rBadKind.class === null);
+
+  // C4 — a MALFORMED artifact tag (unparseable JSON in the tag) → all-null (not a crash, not a mis-route).
+  const rMalformed = await w.__rwaClassifyArtifact('const INLINE_DOC = `<script type="application/rwa-artifact+json">{ not json <\\/script>`;');
+  check('C4: malformed artifact tag → {class:null}', rMalformed.class === null);
+
+  // C5 — PRECEDENCE: an AI carrier .html still classifies INSTALL (it carries no artifact tag); a skin artifact
+  // classifies COMPOSE. The two are disjoint — adding compose did NOT steal the install path.
+  const rCarrier = await w.__rwaClassifyArtifact(carrierHtml);
+  const rSkin = await w.__rwaClassifyArtifact(skinJson('stripe-docs'));
+  check('C5: AI carrier stays install; skin artifact is compose (disjoint)',
+    rCarrier.class === 'install' && rSkin.class === 'compose');
+}
+
+// D — skin-drop END TO END (plan Task 2.2): dropping a skin artifact routes through the SAME capture-phase drop
+// → classifyArtifact → dispatchArtifact bus and reaches applySkinL1's compose-then-commit — ONE commit, actor
+// skin:NAME (the design's whole thesis: a new class rides the existing commit path + actor, unchanged). An
+// invalid skin FAILS LOUD (status, no commit) — never a silent no-op. WHY (Rule 9): a skin that silently
+// half-applied (a theme without the undo frame, or a commit without attribution) would corrupt ⌘Z / the audit.
+{
+  console.log('-- D: skin-drop end-to-end (compose) --');
+  const skinJson = (name) => JSON.stringify({ format: 'rwa-artifact/1', class: 'compose', artifact: 'skin', skin: { name } });
+  const skinHtml = (name) =>
+    'const INLINE_DOC = `<article><h1>' + name + '</h1></article>' +
+    '<script type="application/rwa-artifact+json">' + skinJson(name) + '<\\/script>`;\n';
+
+  // D1 — drop a valid skin artifact .html → applySkinL1 lands the theme as exactly ONE commit / ONE ⌘Z,
+  // attributed actor skin:NAME. A key is set so modify() runs the compose path (no key = early-return); the
+  // agent is unreachable (fetch throws), so it degrades to a theme-only commit — still ONE, still attributed.
+  {
+    const w = await boot(article);
+    w.sessionStorage.setItem('rwa_apikey', 'test-key');
+    w.sessionStorage.setItem('rwa_model', 'test-model');
+    await w.__setDocForTest('<article>\n<p data-rwa-id="d1">skin me</p>\n</article>');
+    const hB = ((await readStore(w, 'rwa_hist')) || []).length;
+    const uB = ((await readStore(w, 'rwa_undo')) || []).length;
+    const file = new w.File([skinHtml('linear-dark')], 'linear-dark.html', { type: 'text/html' });
+    const ev = { dataTransfer: { files: [file], items: [{ kind: 'file' }], types: ['Files'] }, preventDefault() {}, stopPropagation() {} };
+    await w.__rwaHandleCarrierDrop(ev);
+    await new Promise(r => setTimeout(r, 300)); // async read + classify + compose commit
+    const doc = await readStore(w, 'rwa_doc');
+    check('D1: skin-drop applied the linear-dark theme block', typeof doc === 'string' && /<style data-rwa-skin="linear-dark">/.test(doc));
+    const hist = (await readStore(w, 'rwa_hist')) || [];
+    check('D1b: skin-drop = exactly ONE commit', hist.length - hB === 1);
+    check('D1c: skin-drop = exactly ONE undo frame (one ⌘Z)', (((await readStore(w, 'rwa_undo')) || []).length) - uB === 1);
+    check('D1d: skin-drop commit attributed actor skin:linear-dark', !!hist[0] && hist[0].actor === 'skin:linear-dark');
+  }
+
+  // D2 — drop an INVALID-preset skin artifact → the "not a recognized artifact" status, NO commit, NO skin.
+  // classifyArtifact rejected it to all-null (C2), so the bus never touches the doc — fail loud, not silent.
+  {
+    const w = await boot(article);
+    w.sessionStorage.setItem('rwa_apikey', 'test-key');
+    const base = '<article>\n<p data-rwa-id="d2">intact</p>\n</article>';
+    await w.__setDocForTest(base);
+    const badHtml = 'const INLINE_DOC = `<script type="application/rwa-artifact+json">' + skinJson('no-such-skin') + '<\\/script>`;\n';
+    const hB = ((await readStore(w, 'rwa_hist')) || []).length;
+    const file = new w.File([badHtml], 'bad.html', { type: 'text/html' });
+    await w.__rwaHandleCarrierDrop({ dataTransfer: { files: [file], items: [{ kind: 'file' }], types: ['Files'] }, preventDefault() {}, stopPropagation() {} });
+    await new Promise(r => setTimeout(r, 150));
+    const st = w.document.getElementById('rwa-st-status');
+    check('D2: invalid-preset skin-drop sets the "not a recognized artifact" status', !!st && /not a recognized artifact/.test(st.textContent));
+    check('D2b: invalid-preset skin-drop makes NO commit (doc intact, no skin block)',
+      (await readStore(w, 'rwa_doc')) === base && ((await readStore(w, 'rwa_hist')) || []).length - hB === 0);
+  }
+
+  // D3 — the compose handler's fail-loud GUARD (dispatched directly): classifyArtifact pre-validates the preset,
+  // so this belt-and-suspenders guard pins that a hand-built/future compose cls with a bad name still fails loud
+  // (clear status, returns false) rather than crashing or silently no-op'ing.
+  {
+    const w = await boot(article);
+    const base = '<article>\n<p data-rwa-id="d3">intact</p>\n</article>';
+    await w.__setDocForTest(base);
+    const ret = await w.__rwaDispatchArtifact({ class: 'compose', source: 'declared', payload: { artifact: 'skin', skin: { name: 'no-such-skin' } } }, {});
+    await new Promise(r => setTimeout(r, 80));
+    check('D3: direct compose dispatch with an unknown preset returns false (fail loud)', ret === false);
+    check('D3b: guard made no commit (doc intact)', (await readStore(w, 'rwa_doc')) === base);
+  }
+}
+
 console.log(`\n== ${pass} pass, ${fail} fail ==`);
 process.exit(fail ? 1 : 0);
