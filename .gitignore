@@ -60,3 +60,10 @@ service/data/*
 /.import-current.png
 /blog post about rewrtiable
 /kanban board
+
+# Intelligence private keys. `rwa intelligence new` writes an Ed25519 private
+# key to a sibling `<name>.intelligence.key.json` (chmod 0600). These are the
+# author's signing identities and must NEVER enter version control — the
+# carrier .html ships only the public key + signature. Held offline by the
+# author; re-signing an update needs the matching key.
+*.key.json
