@@ -27,6 +27,20 @@ const TRIGGER_HTML = fs.readFileSync(path.join(PUBLIC_DIR, 'new.html'));
 const IMPORT_HTML = fs.readFileSync(path.join(PUBLIC_DIR, 'import.html'));
 const SEED_TEMPLATE = fs.readFileSync(path.join(SEEDS_DIR, 'rewritable.html'), 'utf8');
 
+// AI gallery (/ai). The static storefront page plus the downloadable
+// intelligence carriers under public/ai/carriers/. The carrier Map IS the
+// allowlist — a request-time path is never concatenated into a disk read, so
+// traversal (/ai/..%2fserver.js) is structurally impossible: the decoded key
+// simply isn't in the Map and the request falls through to 404.
+const AI_INDEX_HTML = fs.readFileSync(path.join(PUBLIC_DIR, 'ai', 'index.html'));
+const AI_CARRIERS = new Map();
+for (const f of fs.readdirSync(path.join(PUBLIC_DIR, 'ai', 'carriers'))) {
+  // role name is [a-z0-9-] (note hyphens: presentation-coach), suffix .intelligence.html
+  if (/^[a-z0-9-]+\.intelligence\.html$/.test(f)) {
+    AI_CARRIERS.set(f, fs.readFileSync(path.join(PUBLIC_DIR, 'ai', 'carriers', f)));
+  }
+}
+
 // Landing page (/). Embeds the rewritable-building SKILL.md inline so the
 // "Copy the rewritable skill" button works without an extra fetch. The skill
 // file is bundled at service/public/build-skill.md and overridable via
@@ -1524,6 +1538,27 @@ const server = http.createServer((req, res) => {
       'Content-Length': String(SKILL_ZIP.length),
       'Cache-Control': 'public, max-age=300',
     }, SKILL_ZIP);
+  }
+  // AI gallery. Apex-only by construction (the share-host branch already
+  // returned). The page at /ai; carriers at /ai/<role>.intelligence.html.
+  if (url === '/ai') {
+    return send(200, {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'public, max-age=300',
+    }, AI_INDEX_HTML);
+  }
+  if (url.startsWith('/ai/')) {
+    const name = url.slice('/ai/'.length);
+    const body = AI_CARRIERS.get(name);
+    if (body) {
+      return send(200, {
+        'Content-Type': 'text/html; charset=utf-8',
+        'Content-Disposition': 'attachment; filename="' + name + '"',
+        'Cache-Control': 'public, max-age=300',
+      }, body);
+    }
+    // A miss FALLS THROUGH (not an early 404) so later tasks can add sibling
+    // /ai/* routes (e.g. /ai/maker, /ai/template.html) after this block.
   }
   if (url === '/pdf/pdf.min.mjs') {
     return send(200, {
