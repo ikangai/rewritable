@@ -48,7 +48,7 @@ function loadMakerCanon() {
     atob: globalThis.atob,
   };
   vm.createContext(sandbox);
-  const epilogue = '\n;globalThis.__makerCanon = { canonicalAgent, agentSigningMessageBytes, b64, u8FromB64, escapeTL };\n';
+  const epilogue = '\n;globalThis.__makerCanon = { canonicalAgent, agentSigningMessageBytes, b64, u8FromB64, escapeTL, assembleCarrier, ROLE_RE, REC_MODEL_RE, REC_BACKENDS };\n';
   vm.runInContext(block + epilogue, sandbox, { filename: 'maker-canon.js' });
   return sandbox.__makerCanon;
 }
@@ -156,4 +156,52 @@ test('tampering a signed field after signing breaks lib verification', async () 
   const sig = new Uint8Array(await crypto.subtle.sign({ name: 'Ed25519' }, kp.privateKey, await maker.agentSigningMessageBytes(agent)));
   const tampered = { agent: { ...agent, system_prompt: 'INJECTED prompt' }, signature: maker.b64(sig) };
   assert.deepEqual(verifyAgentEnvelope(tampered), { signed: true, verified: false }, 'a post-sign edit must fail verification');
+});
+
+// ─── (c) assembleCarrier — the pure injection step, extracted for testability ─
+//
+// WHY (Rule 9): assembleCarrier is what turns the server template into the shipped
+// carrier. Two failure modes are load-bearing: (1) a happy path must actually LAND
+// the signed record + role (escapeTL-escaped, function-form replace so a literal $ is
+// not read as a backreference); (2) template DRIFT (a renamed/removed marker) must
+// THROW, not silently ship a blank carrier that boots but installs nothing while the
+// done panel claims success.
+
+test('assembleCarrier lands role + card + zone (escapeTL applied; $ not a backref)', () => {
+  const cardIn = 'A `t` ${x} $& end';                 // exercises escapeTL (backtick, ${) + function-form ($&)
+  const zoneIn = '<div data-rwa-frozen id="rwa-agents">ZONE</div>';
+  const tpl = 'HEAD RWA_MAKER_ROLE <!--RWA_MAKER_CARD-->\n<!--RWA_MAKER_ZONE--> TAIL RWA_MAKER_ROLE';
+  const out = maker.assembleCarrier(tpl, 'my-role', cardIn, zoneIn);
+  assert.ok(!out.includes('RWA_MAKER_ROLE'), 'role placeholder fully substituted');
+  assert.ok(!out.includes('<!--RWA_MAKER_CARD-->') && !out.includes('<!--RWA_MAKER_ZONE-->'), 'both markers consumed');
+  assert.equal((out.match(/my-role/g) || []).length, 2, 'both role sites substituted');
+  assert.ok(out.includes(maker.escapeTL(cardIn)), 'card injected escapeTL-escaped');
+  assert.ok(out.includes(maker.escapeTL(zoneIn)), 'zone injected escapeTL-escaped');
+  // The literal $& must survive verbatim (function-form replace, not a $-substitution).
+  assert.ok(out.includes('$& end'), 'a literal $ in content is not read as a replace backreference');
+});
+
+test('assembleCarrier THROWS on template drift (a missing marker)', () => {
+  const good = 'RWA_MAKER_ROLE <!--RWA_MAKER_CARD--> <!--RWA_MAKER_ZONE-->';
+  assert.throws(() => maker.assembleCarrier(good.replace('<!--RWA_MAKER_CARD-->', ''), 'r', 'c', 'z'), /missing marker/, 'missing card marker throws');
+  assert.throws(() => maker.assembleCarrier(good.replace('<!--RWA_MAKER_ZONE-->', ''), 'r', 'c', 'z'), /missing marker/, 'missing zone marker throws');
+  assert.throws(() => maker.assembleCarrier(good.replace('RWA_MAKER_ROLE', ''), 'r', 'c', 'z'), /missing RWA_MAKER_ROLE/, 'missing role placeholder throws');
+});
+
+// ─── (d) validation regexes pinned to cli/src/intelligence.mjs ───────────────
+//
+// WHY (Rule 9): these three gate what the maker accepts. A role/model the maker
+// admits but the CLI/seed rejects is a carrier that won't install — so they must be
+// byte-identical to the CLI's own literals, not merely "look similar".
+test('ROLE_RE / REC_MODEL_RE / REC_BACKENDS are byte-identical to cli/src/intelligence.mjs', () => {
+  const intel = readFileSync(join(__dirname, '..', '..', 'cli', 'src', 'intelligence.mjs'), 'utf8');
+  const roleLit = intel.match(/const ROLE_RE = (\/.*\/);/);
+  const modelLit = intel.match(/const REC_MODEL_RE = (\/.*\/);/);
+  const backendsLit = intel.match(/const REC_BACKENDS = (\[[^\]]*\]);/);
+  assert.ok(roleLit && modelLit && backendsLit, 'intelligence.mjs still declares all three literals');
+  assert.equal(maker.ROLE_RE.toString(), roleLit[1], 'ROLE_RE matches intelligence.mjs');
+  assert.equal(maker.REC_MODEL_RE.toString(), modelLit[1], 'REC_MODEL_RE matches intelligence.mjs');
+  // Spread into a main-realm array: maker.REC_BACKENDS is a vm-realm Array, and
+  // node:assert/strict deepEqual compares [[Prototype]] identity across realms.
+  assert.deepEqual([...maker.REC_BACKENDS], JSON.parse(backendsLit[1].replace(/'/g, '"')), 'REC_BACKENDS matches intelligence.mjs');
 });

@@ -160,7 +160,10 @@
   .done-file {
     display: flex; align-items: center; justify-content: space-between; gap: 12px;
     border: 1px solid var(--gray-200); border-radius: 10px; padding: 12px 14px;
+    text-decoration: none; color: inherit; cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
   }
+  .done-file:hover { border-color: var(--gray-400); background: var(--gray-50); }
   .done-file .fname { font-family: var(--font-mono); font-size: 12.5px; color: var(--gray-800); word-break: break-all; }
   .done-file .fmeta { font-size: 11.5px; color: var(--gray-400); }
   .hint-test { font-size: 13px; color: var(--gray-600); line-height: 1.55; margin-bottom: 22px; }
@@ -301,14 +304,15 @@
         </button>
         <span class="privacy">Ed25519 signed in-browser. Nothing is uploaded.</span>
       </div>
+      <div class="err" id="e-global" role="alert"></div>
 
     </form>
   </section>
 
   <section class="done" id="done">
     <div class="done-card">
-      <h2>Signed. Two files downloaded.</h2>
-      <p>Your intelligence is minted and signed with a fresh Ed25519 key. The carrier holds only your <em>public</em> key; the private key is in the separate <code>.key.json</code>.</p>
+      <h2>Signed. Your two files.</h2>
+      <p>Your intelligence is minted and signed with a fresh Ed25519 key. Both files should have downloaded automatically &mdash; if your browser didn&rsquo;t save them, use the download links below. The carrier holds only your <em>public</em> key; the private key is in the separate <code>.key.json</code>.</p>
 
       <div class="fingerprint" title="Ed25519 author fingerprint">
         <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l7 4v5c0 5-3.5 8.5-7 10-3.5-1.5-7-5-7-10V6z"/><path d="M9 12l2 2 4-4"/></svg>
@@ -324,14 +328,14 @@
       </div>
 
       <div class="done-files">
-        <div class="done-file">
+        <a class="done-file" id="dl-carrier" download>
           <span class="fname" id="done-carrier-name">role.intelligence.html</span>
-          <span class="fmeta">carrier &middot; drop-ready, public key only</span>
-        </div>
-        <div class="done-file">
+          <span class="fmeta">carrier &middot; click to download</span>
+        </a>
+        <a class="done-file" id="dl-key" download>
           <span class="fname" id="done-key-name">role.intelligence.key.json</span>
-          <span class="fmeta">SECRET &middot; keep offline</span>
-        </div>
+          <span class="fmeta">SECRET &middot; click to download &middot; keep offline</span>
+        </a>
       </div>
 
       <p class="hint-test">Test it: open <code id="done-open-name">role.intelligence.html</code> in a browser. The carrier is itself a skill-host, so the role is already installed &mdash; activate it from the Activity panel&rsquo;s <em>Intelligences</em> section. Then drop the same file onto any other rewritable to install the role there.</p>
@@ -411,12 +415,30 @@ const escapeTL = s => canonLF(s)
   .replace(/`/g, '\\`')
   .replace(/\$\{/g, '\\${')
   .replace(/<\/script/gi, '<\\/script');
-// rwa:maker-canon:end
-
-// ─── Validation (mirrors cli/src/intelligence.mjs) ───────────────────────────
+// Validation regexes/enum mirrored from cli/src/intelligence.mjs and PINNED by
+// maker-parity.test.mjs against the literals in that file — a role/model the maker
+// accepts but the CLI/seed would reject is a carrier that won't install.
 const ROLE_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 const REC_MODEL_RE = /^[A-Za-z0-9._:\/-]{1,200}$/;
 const REC_BACKENDS = ['openrouter', 'ollama', 'lmstudio', 'atomic', 'bridge', 'bridge-session'];
+// Assemble the carrier from the server template: GUARD the three injection markers
+// (template drift → throw, never silently ship a blank carrier), substitute the role,
+// then inject the card + zone with escapeTL via function-form .replace (so a literal $
+// in the escaped content is not read as a String.replace backreference).
+function assembleCarrier(template, role, cardHtml, zoneHtml) {
+  for (const mk of ['<!--RWA_MAKER_CARD-->', '<!--RWA_MAKER_ZONE-->']) {
+    if (!template.includes(mk)) throw new Error('template missing marker ' + mk);
+  }
+  if (!template.includes('RWA_MAKER_ROLE')) throw new Error('template missing RWA_MAKER_ROLE');
+  return template
+    .replaceAll('RWA_MAKER_ROLE', role)
+    .replace('<!--RWA_MAKER_CARD-->', () => escapeTL(cardHtml))
+    .replace('<!--RWA_MAKER_ZONE-->', () => escapeTL(zoneHtml));
+}
+// rwa:maker-canon:end
+
+// ─── Validation ──────────────────────────────────────────────────────────────
+// ROLE_RE / REC_MODEL_RE / REC_BACKENDS live in the pinned canon block above.
 // A vault namespace after the vault: prefix (mirrors skill-manifest VAULT_NS).
 const VAULT_NS_RE = /^[a-z0-9_](?:[a-z0-9_-]{0,62}[a-z0-9_])?$/;
 // A system_prompt is a runtime literal — reject the sequences that could break
@@ -426,11 +448,13 @@ function promptInjectionRisk(s) {
   return p.includes('`') || p.includes('${') || /<\/?DOC>/i.test(p);
 }
 
-// HTML-escape for card text (mirrors cli/src/intelligence.mjs `esc` — note it
-// does NOT escape quotes; card values are text/element content, not attributes).
+// HTML-escape for card text — UNPINNED hand-mirror of cli/src/intelligence.mjs `esc`
+// (re-check on an intelligence.mjs change; card cosmetics only, not verifiability).
+// Note it does NOT escape quotes; card values are text/element content, not attributes.
 const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
-// ─── The self-describing carrier card (verbatim port of intelligence.mjs buildCard) ──
+// ─── The self-describing carrier card — UNPINNED hand-mirror of intelligence.mjs
+// buildCard (re-check on an intelligence.mjs change; card cosmetics only, not verifiability). ──
 function buildCard({ role, prompt, model, backend, affinity, vault }) {
   const recLine = model ? '\n<li><strong>Recommended model:</strong> <code>' + esc(model) + '</code>' + (backend ? ' on <code>' + esc(backend) + '</code>' : '') + ' — offered on activation, behind consent (your session only; key untouched).</li>' : '';
   const affLine = affinity.length ? '\n<li><strong>Affinity:</strong> ' + esc(affinity.join(', ')) + ' (advisory — a mismatch only warns).</li>' : '';
@@ -540,20 +564,29 @@ function readForm() {
   return { role, desc, prompt, model: model || '', backend: backendClean, affinity, vault };
 }
 
-const enc = new TextEncoder();
 const hex = (u8) => { let s = ''; for (let i = 0; i < u8.length; i++) s += u8[i].toString(16).padStart(2, '0'); return s; };
 
-// Trigger a client-side download (Blob + a[download]); never uploads anything.
-function download(filename, text, mime) {
-  const blob = new Blob([text], { type: mime });
-  const url = URL.createObjectURL(blob);
+// Blob URLs are RETAINED for the done-panel session so the panel's re-download
+// links stay live even if an auto-download was dropped by the browser. They are
+// revoked on reset ("Make another"), not immediately — an early revoke would break
+// both the deferred key download and the manual fallback links.
+let retainedUrls = [];
+function makeBlobUrl(text, mime) {
+  const url = URL.createObjectURL(new Blob([text], { type: mime }));
+  retainedUrls.push(url);
+  return url;
+}
+function triggerDownload(url, filename) {
   const a = document.createElement('a');
   a.href = url;
   a.download = filename;
   document.body.appendChild(a);
   a.click();
   a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 4000);
+}
+function revokeRetained() {
+  for (const u of retainedUrls) { try { URL.revokeObjectURL(u); } catch (_) {} }
+  retainedUrls = [];
 }
 
 // Mint → sign → assemble → download. The private key is generated, used to
@@ -584,9 +617,8 @@ async function mintAndDownload(f) {
   if (f.backend) envelope.recommended_backend = f.backend;
   if (f.affinity.length) envelope.affinity = f.affinity;
 
-  // Fetch the fresh skill-host carrier template and inject the card + zone into
-  // its INLINE_DOC and the role into title/FILE. Function-form replacements so a
-  // literal $ in the escaped content is NOT read as a String.replace backreference.
+  // Fetch the fresh skill-host carrier template; assembleCarrier guards the markers
+  // and injects the card + zone (into INLINE_DOC) and the role (into title/FILE).
   const res = await fetch('/ai/template.html', { cache: 'no-store' });
   if (!res.ok) throw new Error('template fetch failed: ' + res.status);
   const template = await res.text();
@@ -594,10 +626,7 @@ async function mintAndDownload(f) {
   const cardHtml = buildCard({ role: f.role, prompt: f.prompt, model: f.model, backend: f.backend, affinity: f.affinity, vault: f.vault });
   const zoneHtml = buildZone(envelope);
 
-  const carrier = template
-    .replaceAll('RWA_MAKER_ROLE', f.role)
-    .replace('<!--RWA_MAKER_CARD-->', () => escapeTL(cardHtml))
-    .replace('<!--RWA_MAKER_ZONE-->', () => escapeTL(zoneHtml));
+  const carrier = assembleCarrier(template, f.role, cardHtml, zoneHtml);
 
   const fingerprint = hex(new Uint8Array(await crypto.subtle.digest('SHA-256', rawPub))).slice(0, 16);
   const pkcs8 = new Uint8Array(await crypto.subtle.exportKey('pkcs8', kp.privateKey));
@@ -611,10 +640,18 @@ async function mintAndDownload(f) {
 
   const carrierName = f.role + '.intelligence.html';
   const keyName = f.role + '.intelligence.key.json';
-  download(carrierName, carrier, 'text/html');
-  download(keyName, JSON.stringify(keyFile, null, 2) + '\n', 'application/json');
+  // Fresh mint: drop any URLs retained from a previous panel session.
+  revokeRetained();
+  const carrierUrl = makeBlobUrl(carrier, 'text/html');
+  const keyUrl = makeBlobUrl(JSON.stringify(keyFile, null, 2) + '\n', 'application/json');
+  // Auto-download the carrier now; STAGGER the key by 300ms. Firing two downloads
+  // back-to-back can make some browsers (Safari) silently drop the second — and the
+  // second is the unrecoverable .key.json. The done panel also links both, so even a
+  // dropped auto-download has a visible manual fallback.
+  triggerDownload(carrierUrl, carrierName);
+  setTimeout(() => triggerDownload(keyUrl, keyName), 300);
 
-  return { fingerprint, carrierName, keyName };
+  return { fingerprint, carrierName, keyName, carrierUrl, keyUrl };
 }
 
 function showDone(r) {
@@ -623,20 +660,33 @@ function showDone(r) {
   $('done-key-name').textContent = r.keyName;
   $('done-open-name').textContent = r.carrierName;
   $('done-keyname').textContent = r.keyName;
+  // Wire the panel's re-download links to the retained blob URLs (manual fallback).
+  const dlC = $('dl-carrier'); dlC.href = r.carrierUrl; dlC.download = r.carrierName;
+  const dlK = $('dl-key'); dlK.href = r.keyUrl; dlK.download = r.keyName;
   $('form-wrap').style.display = 'none';
   $('done').classList.add('show');
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
 $('another-btn').addEventListener('click', () => {
+  // Revoke retained blob URLs and clear the form so re-minting starts clean —
+  // re-minting the same role otherwise silently overwrites the prior identity
+  // under the same filename.
+  revokeRetained();
+  $('dl-carrier').removeAttribute('href');
+  $('dl-key').removeAttribute('href');
+  $('maker-form').reset();
+  for (const id of ['e-role', 'e-prompt', 'e-model', 'e-vault', 'e-global']) showErr(id, '');
   $('done').classList.remove('show');
   $('form-wrap').style.display = '';
+  $('f-role').focus();
   window.scrollTo({ top: 0, behavior: 'smooth' });
 });
 
 $('maker-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const btn = $('mint-btn');
+  showErr('e-global', '');
   const f = readForm();
   if (!f) return;
   btn.disabled = true;
@@ -647,7 +697,7 @@ $('maker-form').addEventListener('submit', async (e) => {
     showDone(r);
   } catch (err) {
     console.error('mint failed:', err);
-    showErr('e-role', 'Could not mint the AI: ' + (err && err.message || err) + '. Reload and try again.');
+    showErr('e-global', 'Could not mint the AI: ' + (err && err.message || err) + '. Reload and try again.');
   } finally {
     btn.disabled = false;
     btn.innerHTML = label;
