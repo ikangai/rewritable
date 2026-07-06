@@ -23,6 +23,16 @@ const refs = [
   // record in its frozen #rwa-agents zone; the record is part of INLINE_DOC and
   // survives regen unchanged (it depends only on the agent canon, not seed bytes).
   { path: path.join(repoRoot, 'examples', 'intelligence-carrier', 'concise-editor.html'), file: 'concise-editor.html', kind: 'skill-host' },
+  // The curated AI Gallery carriers (service/public/ai/carriers/). Each is a
+  // skill-host rwa carrying one signed rwa-agent/1 record in its frozen
+  // #rwa-agents zone — same discipline as the example above: the record lives in
+  // INLINE_DOC and survives regen unchanged (it depends only on the agent canon,
+  // not the seed bytes). Re-sign only when the RECORD changes, never for a seed bump.
+  { path: path.join(repoRoot, 'service', 'public', 'ai', 'carriers', 'concise-editor.intelligence.html'), file: 'concise-editor.intelligence.html', kind: 'skill-host' },
+  { path: path.join(repoRoot, 'service', 'public', 'ai', 'carriers', 'proofreader.intelligence.html'), file: 'proofreader.intelligence.html', kind: 'skill-host' },
+  { path: path.join(repoRoot, 'service', 'public', 'ai', 'carriers', 'translator.intelligence.html'), file: 'translator.intelligence.html', kind: 'skill-host' },
+  { path: path.join(repoRoot, 'service', 'public', 'ai', 'carriers', 'presentation-coach.intelligence.html'), file: 'presentation-coach.intelligence.html', kind: 'skill-host' },
+  { path: path.join(repoRoot, 'service', 'public', 'ai', 'carriers', 'playful-rewriter.intelligence.html'), file: 'playful-rewriter.intelligence.html', kind: 'skill-host' },
 ];
 
 const seed = fs.readFileSync(seedPath, 'utf8');
