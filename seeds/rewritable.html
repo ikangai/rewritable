@@ -4638,12 +4638,15 @@ function handleMountDrop(e) {
   e.preventDefault();
   const target = findImageDropTarget(e);
   clearDropMark();
+  // The image/* filter IS the ingest sniff (same test as classifyArtifact). Keep it: it drives the
+  // "only image files" message and the batch insert (all files together, first at target, rest EOF).
   const files = Array.from((e.dataTransfer && e.dataTransfer.files) || []).filter(f => /^image\//.test(f.type || ''));
   if (files.length === 0) {
     showAffordance('only image files can be dropped here');
     return;
   }
-  insertImageFiles(files, target, 'user:image-drop');
+  // Route the ingest batch through the bus, carrying the mount handler's mode + drop target.
+  dispatchArtifact({ class: 'ingest', semantics: 'ingest', source: 'sniffed', payload: { files } }, { mode: rwaMode, target });
 }
 
 // ── paste (a screenshot is the #1 case) ──
@@ -8410,6 +8413,28 @@ async function classifyArtifact(input) {
     return { class: 'install', semantics: 'install', source: 'declared', payload: c };
   return { class: null, semantics: null, source: null };
 }
+// The dispatcher — route a classifyArtifact result to its class handler (design §2, plan Task 1.2).
+// The bus COMPOSES the existing per-class machinery; it never reimplements or weakens it. Each class
+// keeps its DIFFERENT context, carried in ctx:
+//   install — any mode, window-wide; ctx.text is the read carrier/envelope bytes. routeInstallFromText
+//             re-classifies the text (unchanged), so its "no installable skill or AI found" message
+//             still fires here for an .html that carries nothing installable.
+//   ingest  — Edit-mode + mount-target ONLY; ctx.{mode,target} carry handleMountDrop's gate snapshot
+//             and drop position. The Edit-mode gate is RE-ASSERTED here (mirroring handleMountDrop) so
+//             a direct dispatch can't bypass it — a Document-mode ingest must never mutate the doc.
+//             Actor stays user:image-drop.
+// An unclassifiable drop → the "not a recognized artifact" status, no side effect (today's kind:'none').
+async function dispatchArtifact(cls, ctx) {
+  ctx = ctx || {};
+  const semantics = cls && cls.semantics;
+  if (semantics === 'install') return routeInstallFromText(ctx.text);
+  if (semantics === 'ingest') {
+    if (ctx.mode !== 'edit' || activeView || modifyMutex) return false;   // mirrors handleMountDrop's gate
+    return insertImageFiles((cls.payload && cls.payload.files) || [], ctx.target || null, 'user:image-drop');
+  }
+  if (typeof setStatus === 'function') setStatus('err', 'not a recognized artifact');
+  return false;
+}
 // Drop gesture — capture phase, so a carrier is claimed before the Edit-mode image-mount drop.
 // Acts only on an .html/.htm file; any other drop flows through untouched to existing handlers.
 // A carrier is a self-contained .html (seed + doc, ~0.6 MB; larger with embedded images); cap the
@@ -8419,11 +8444,21 @@ async function handleCarrierDrop(e) {
   const files = Array.from((e && e.dataTransfer && e.dataTransfer.files) || []);
   const carrier = files.find(f => /text\/html/i.test(f.type || '') || /\.html?$/i.test(f.name || ''));
   if (!carrier) return; // not a carrier — let the image/other drop handlers run
+  // Claim SYNCHRONOUSLY, before any await: a capture-phase preventDefault must beat the mount
+  // handler, and an async content read would resolve only AFTER the drop already propagated. So the
+  // .html/.htm signal is the install class's synchronous file-level sniff — it decides the CLAIM;
+  // classifyArtifact below only ROUTES (a claimed .html never falls through to the ingest handler).
   if (e.preventDefault) e.preventDefault();
   if (e.stopPropagation) e.stopPropagation();
   if (carrier.size > CARRIER_MAX_BYTES) { if (typeof setStatus === 'function') setStatus('err', 'that file is too large to be an AI carrier (' + Math.round(carrier.size / 1048576) + ' MB)'); return; }
-  try { await routeInstallFromText(await _readDroppedText(carrier)); }
-  catch (_) { if (typeof setStatus === 'function') setStatus('err', 'could not read the dropped file'); }
+  try {
+    const text = await _readDroppedText(carrier);
+    const cls = await classifyArtifact(text);
+    // The claim already committed this .html to the install class; route it there regardless of the
+    // async result. A real carrier / bare envelope opens the consent dialog; a plain .html reaches
+    // routeInstallFromText's "no installable skill or AI found" message, where it currently fires.
+    await dispatchArtifact(cls.semantics === 'install' ? cls : { class: 'install', semantics: 'install' }, { text });
+  } catch (_) { if (typeof setStatus === 'function') setStatus('err', 'could not read the dropped file'); }
 }
 function handleCarrierDragOver(e) {
   // Let a file drop fire anywhere on the page (a carrier can be dropped onto the document, not only
@@ -8437,6 +8472,7 @@ window.addEventListener('drop', handleCarrierDrop, true);
 window.__rwaExtractAgentCarrier = extractAgentEnvelopesFromCarrier;
 window.__rwaClassifyInstallText = classifyInstallText;
 window.__rwaClassifyArtifact = classifyArtifact;
+window.__rwaDispatchArtifact = dispatchArtifact;
 window.__rwaInstallFromText = routeInstallFromText;
 window.__rwaHandleCarrierDrop = handleCarrierDrop;
 
