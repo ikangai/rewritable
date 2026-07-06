@@ -33,6 +33,10 @@ const SEED_TEMPLATE = fs.readFileSync(path.join(SEEDS_DIR, 'rewritable.html'), '
 // traversal (/ai/..%2fserver.js) is structurally impossible: the decoded key
 // simply isn't in the Map and the request falls through to 404.
 const AI_INDEX_HTML = fs.readFileSync(path.join(PUBLIC_DIR, 'ai', 'index.html'));
+// The AI Maker (/ai/maker). A self-contained page that mints + signs an
+// rwa-agent/1 record CLIENT-SIDE (WebCrypto Ed25519; the private key never
+// leaves the browser), fetches /ai/template.html, and downloads a carrier.
+const AI_MAKER_HTML = fs.readFileSync(path.join(PUBLIC_DIR, 'ai', 'maker.html'));
 const AI_CARRIERS = new Map();
 for (const f of fs.readdirSync(path.join(PUBLIC_DIR, 'ai', 'carriers'))) {
   // role name is [a-z0-9-] (note hyphens: presentation-coach), suffix .intelligence.html
@@ -1571,6 +1575,14 @@ const server = http.createServer((req, res) => {
       'Content-Type': 'text/html; charset=utf-8',
       'Cache-Control': 'public, max-age=300',
     }, AI_INDEX_HTML);
+  }
+  // The AI Maker — client-side signed drop-in AI authoring. Self-contained
+  // (WebCrypto only, no external assets); the keypair never leaves the browser.
+  if (url === '/ai/maker') {
+    return send(200, {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'public, max-age=300',
+    }, AI_MAKER_HTML);
   }
   // The carrier TEMPLATE the AI Maker fetches, then string-replaces the three
   // markers (card + #rwa-agents zone into INLINE_DOC, role into title/FILE) to

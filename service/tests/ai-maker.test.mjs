@@ -103,3 +103,33 @@ test('GET /ai/template.html mints a fresh DOC_UUID each request', async () => {
     assert.notEqual(a, b, 'two requests must not share a per-container UUID');
   } finally { await srv.stop(); }
 });
+
+// ─── 3. The AI Maker page is served and self-contained ───────────────────────
+//
+// WHY (Rule 9): the maker signs in the browser with WebCrypto — a strict-CSP,
+// no-upload contract. If it ever pulled a script/stylesheet off a CDN, that CDN
+// could observe or tamper with the signing path (and the whole point is that the
+// key never leaves the page). This asserts the page loads AND carries no external
+// asset reference (external <a> nav links to github/spec are fine — they're not
+// loaded into the page's execution context).
+
+test('GET /ai/maker → 200 text/html, self-contained (no external script/style/CDN)', async () => {
+  const srv = await startServer();
+  try {
+    const res = await fetch(srv.base + '/ai/maker');
+    assert.equal(res.status, 200);
+    assert.match(res.headers.get('content-type') || '', /text\/html/);
+    const body = await res.text();
+    assert.ok(body.includes('AI Maker'), 'page identifies itself as the AI Maker');
+    // No external asset loaded into the page: no https src=, no external
+    // stylesheet link, no known CDN host. (The favicon is a data: URI; the nav
+    // links are <a href> navigations, not loaded assets.)
+    assert.ok(!/\bsrc\s*=\s*["']https?:/i.test(body), 'no external script/img src');
+    assert.ok(!/<link\b[^>]*\bhref\s*=\s*["']https?:/i.test(body), 'no external stylesheet link');
+    assert.ok(!/cdnjs|unpkg|jsdelivr|cdn\./i.test(body), 'no CDN reference');
+    // It signs client-side: the WebCrypto Ed25519 primitive must be present.
+    assert.ok(body.includes("name: 'Ed25519'") || body.includes('name:"Ed25519"'), 'uses WebCrypto Ed25519');
+    // The private key is never transmitted: the only fetch is the keyless template GET.
+    assert.ok(!/private_key_pkcs8_b64[\s\S]{0,80}fetch/i.test(body), 'key material is not wired into a fetch');
+  } finally { await srv.stop(); }
+});
