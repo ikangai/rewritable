@@ -77,19 +77,26 @@ becomes **one explicit ordering in one place** — removing the fragile two-list
 
 ## §3 The `accepts` declaration
 
-A new `self-description/1` field: `accepts: [{ class, strict? }]`, riding the existing
-`runtimeProvide` / `runtime.describe()` machinery + the declared `#rwa-affordances` zone, so
-both `rwa doc --json` (static/declared) and the runtime (live) report what a document
-accepts.
+An author declares, in the edit-unreachable `#rwa-affordances` zone, which classes the
+document welcomes: **`accepts: [<class-name>, ...]`** — an array of class-name strings — plus
+an **optional doc-level `strict`** boolean (default `false`). The dispatcher reads it via
+`resolveAccepts()`, applying the same edit-unreachable safeguard as `readTrustworthyDeclaration`
+(a drifted/forged declaration is ignored — treated as no declaration), and consults it before
+routing every real class.
 
-- **No declaration** → accepts every built-in class, advisory.
-- **A declared `accepts`** narrows/annotates: dropping an unlisted class still works but the
-  consent shell shows a soft *"this document doesn't usually take &lt;class&gt;"* note; a
-  class marked `strict:true` (or a frozen doc) is refused with a clear reason.
+- **No declaration (or no `accepts` key)** → accepts every built-in class, advisory.
+- **A declared `accepts`** narrows: dropping an unlisted class still works but a soft
+  *"this document doesn't usually take &lt;class&gt;"* status note is shown; when the doc is
+  `strict:true` an unlisted class is refused with a clear reason and no side effect.
 
-Advisory by default — an author who wants a locked-down document opts into it explicitly.
+Advisory by default — an author who wants a locked-down document opts into `strict` explicitly.
 The declaration is *legible*: a receiver (or a composing rwa, later) can ask a file what it
 accepts before dropping.
+
+> **As-built (AB5):** `strict` is a single **doc-level** boolean, not the per-entry
+> `[{class, strict?}]` this section first sketched — per-entry strictness was muddy for no real
+> gain. The gate **enforces** at drop time regardless; *reporting* `accepts` back through the
+> `self-description/1` contract is deferred (see "As-built deviations" below).
 
 ## §4 The consent shell
 
@@ -169,3 +176,23 @@ stay green — the install/ingest refactor is behavior-preserving.
   model.
 - No new server surface, no npm deps, no break to the single-file invariant.
 - No weakening of any class's existing trust model — the bus routes to them.
+
+## As-built deviations
+
+Two pieces of the design sketch were deferred once the classifier/dispatcher/`accepts` gate
+landed clean (all seed-only, pinned by `tests/artifact-bus.mjs`):
+
+1. **The shared consent shell (§4) — DEFERRED.** In v1 only `install` is modal (the existing
+   `showAgentInstallDialog`); `ingest` and `compose` commit silently, as they already did.
+   With a single modal consumer, extracting `showArtifactConsent(...)` is a speculative
+   abstraction (Rule 2) — extract it when a **second** modal class arrives (e.g. a skin
+   preview / a `transform` confirm), which is when the shared trust-UX actually pays off.
+2. **Self-description reporting of `accepts` (§3) — DEFERRED to a fast-follow.** The gate
+   enforces at drop time via `resolveAccepts()` regardless, but threading `accepts` through
+   the 4-site `self-description/1` contract (spec + `tools/self-description.mjs` oracle +
+   `cli/src/identity.mjs` mirror + seed `runtimeDescribe`, with the `identity.test.mjs`
+   deep-equal pins) is the heaviest part and is not required for the bus to work. So
+   `rwa doc --json` / `runtime.describe()` do not yet report what a document accepts.
+
+Also still deferred per §8: rwa-onto-rwa compose (the prize), the `transform` class, and a
+full `rwa-artifact/1` wire spec.
