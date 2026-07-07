@@ -93,6 +93,10 @@ body{font-family:var(--font-ui);background:var(--bg);color:var(--text);min-heigh
 #rwa-skin-panel{position:fixed;top:50px;right:12px;background:var(--white);border:1px solid var(--gray-200);border-radius:var(--radius-sm);padding:14px;display:none;width:300px;z-index:999;box-shadow:0 4px 16px rgba(0,0,0,0.08);}
 #rwa-skin-panel.open{display:block;}
 #rwa-skin-panel .rwa-skin-hd{font-family:var(--font-mono);font-size:9px;letter-spacing:1.5px;text-transform:uppercase;color:var(--gray-500);margin-bottom:10px;display:flex;justify-content:space-between;}
+#rwa-skin-panel .rwa-skin-like{display:flex;gap:6px;margin-top:12px;}
+#rwa-skin-panel .rwa-skin-like input{flex:1;min-width:0;font:inherit;font-size:12px;padding:6px 8px;border:1px solid var(--gray-200);border-radius:var(--radius-sm);background:var(--gray-50);color:var(--text);}
+#rwa-skin-panel .rwa-skin-like input:focus{outline:none;border-color:var(--gray-400);}
+#rwa-skin-panel .rwa-skin-like button{font:inherit;font-size:12px;padding:6px 12px;border:none;border-radius:var(--radius-sm);background:var(--gray-900);color:#fff;cursor:pointer;}
 .rwa-skin-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
 .rwa-skin-sw{display:flex;flex-direction:column;gap:5px;padding:8px;background:var(--white);border:1px solid var(--gray-200);border-radius:8px;cursor:pointer;text-align:left;transition:border-color .15s;}
 .rwa-skin-sw:hover{border-color:var(--gray-400);}
@@ -197,6 +201,13 @@ body{font-family:var(--font-ui);background:var(--bg);color:var(--text);min-heigh
    Claude.app — keep the user oriented without stealing focus from the input. */
 #rwa-lens-progress{display:none;align-items:center;gap:8px;font-family:var(--font-ui);font-size:12px;color:var(--gray-500);font-style:italic;min-height:16px;line-height:16px;}
 #rwa-lens-progress[data-state]{display:flex;}
+/* The idle "/" hint — the discoverability affordance that replaced the lens input.
+   A hint, never an input: pointer-transparent, one line. Shown in Edit mode (via the
+   backstop below), hidden while the command palette is open (body.rwa-pal-open). */
+#rwa-slash-hint{position:fixed;left:50%;transform:translateX(-50%);bottom:20px;z-index:9;max-width:calc(100% - 48px);background:var(--white);border:1px solid var(--gray-200);border-radius:100px;padding:7px 16px;font-size:12px;color:var(--gray-500);box-shadow:0 2px 8px rgba(0,0,0,0.05);pointer-events:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+#rwa-slash-hint b{color:var(--gray-700);font-weight:600;}
+#rwa-slash-hint .rwa-slash-hint-key{font-family:var(--font-mono);background:var(--gray-100);border:1px solid var(--gray-200);border-radius:5px;padding:1px 6px;color:var(--gray-900);font-weight:600;}
+body.rwa-pal-open #rwa-slash-hint{display:none;}
 #rwa-lens-progress[data-state="error"]{color:var(--red);font-style:normal;}
 #rwa-lens-progress[data-state="done"]{color:var(--green);font-style:normal;}
 .rwa-lens-spinner{display:inline-block;width:10px;height:10px;border-radius:50%;border:1.5px solid var(--gray-200);border-top-color:var(--gray-700);animation:rwa-lens-spin .7s linear infinite;flex-shrink:0;}
@@ -248,6 +259,7 @@ body:not([data-rwa-mode="edit"]) #rwa-lens,
 body:not([data-rwa-mode="edit"]) #rwa-pal,
 body:not([data-rwa-mode="edit"]) #rwa-lens-hist-panel,
 body:not([data-rwa-mode="edit"]) #rwa-img-chip,
+body:not([data-rwa-mode="edit"]) #rwa-slash-hint,
 body:not([data-rwa-mode="edit"]) #rwa-selection-bar{display:none!important;}
 body:not([data-rwa-mode="document"]) #rwa-view-toggle,
 body:not([data-rwa-mode="document"]) #rwa-view-chrome{display:none!important;}
@@ -1638,6 +1650,7 @@ function buildUI() {
     </div>
   </div>
 </div>
+<div id="rwa-slash-hint" aria-hidden="true"><span class="rwa-slash-hint-key">/</span> ask the AI — <b>where you are</b> for this block · <b>select text</b> to target it · <b>nothing selected</b> for the whole document</div>
 <div id="rwa-lens" data-state="default">
   <button type="button" id="rwa-lens-hist-btn" aria-label="show history" title="show history"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/><path d="M12 7v5l3 2"/></svg></button>
   <div id="rwa-lens-badge" hidden></div>
@@ -2254,8 +2267,8 @@ function syncPalScopeChip() {
   if (palScope && palScope.label) { chip.textContent = palScope.label; chip.hidden = false; if (sig) sig.textContent = '/'; }
   else { chip.hidden = true; if (sig) sig.textContent = '⌘K'; }
 }
-const openPal = (scope = null) => { palScope = scope; document.getElementById('rwa-pal').classList.add('open'); syncPalScopeChip(); requestAnimationFrame(() => document.getElementById('rwa-pal-inp').focus()); setPalSt('', palScope ? '● ' + (palScope.label || 'selection') : '● ready'); };
-const closePal = () => { palScope = null; document.getElementById('rwa-pal').classList.remove('open'); document.getElementById('rwa-pal-inp').value = ''; document.getElementById('rwa-pal-go').disabled = true; syncPalScopeChip(); };
+const openPal = (scope = null) => { palScope = scope; document.getElementById('rwa-pal').classList.add('open'); document.body.classList.add('rwa-pal-open'); syncPalScopeChip(); requestAnimationFrame(() => document.getElementById('rwa-pal-inp').focus()); setPalSt('', palScope ? '● ' + (palScope.label || 'selection') : '● ready'); };
+const closePal = () => { palScope = null; document.getElementById('rwa-pal').classList.remove('open'); document.body.classList.remove('rwa-pal-open'); document.getElementById('rwa-pal-inp').value = ''; document.getElementById('rwa-pal-go').disabled = true; syncPalScopeChip(); };
 if (typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent)) {
   window.__openPal = openPal; window.__closePal = closePal; window.__palScope = () => palScope;
 }
@@ -5784,12 +5797,26 @@ HARD RULES: colors are hex strings only (e.g. "#c0392b"); fonts are ONE of the f
     panel.innerHTML =
       '<div class="rwa-skin-hd"><span>Skins</span><span>' + (active || '—') + '</span></div>'
       + '<div class="rwa-skin-grid">' + Object.keys(RWA_SKINS).map(rwaSkinSwatch).join('') + '</div>'
+      + '<div class="rwa-skin-like"><input type="text" id="rwa-skin-like-input" placeholder="or describe a look — e.g. warm newsprint" autocomplete="off" spellcheck="false"><button type="button" id="rwa-skin-like-go">Apply</button></div>'
       + '<div class="rwa-skin-ft"><button type="button" data-skin-reset>Reset skin</button></div>';
     const cur = active && panel.querySelector('.rwa-skin-sw[data-skin="' + active + '"]');
     if (cur) cur.setAttribute('aria-current', 'true');
     panel.querySelectorAll('.rwa-skin-sw').forEach(function (b) {
       b.onclick = function () { panel.classList.remove('open'); Promise.resolve(applySkinL1(b.getAttribute('data-skin'))).catch(function (e) { showAffordance('skin failed: ' + (e && e.code || e)); }); };
     });
+    // /skin like <description> — the free-form synthesized skin (v3), re-homed here
+    // from the retired lens. Enter or Apply runs applySkinLike (a model call → validated
+    // tokens → synthesized theme, ONE commit); it throws on a genuine failure, surfaced.
+    const likeInput = panel.querySelector('#rwa-skin-like-input');
+    const likeGo = panel.querySelector('#rwa-skin-like-go');
+    const runLike = function () {
+      const desc = ((likeInput && likeInput.value) || '').trim();
+      if (!desc) return;
+      panel.classList.remove('open');
+      Promise.resolve(applySkinLike(desc)).catch(function (e) { showAffordance('skin like failed: ' + ((e && (e.message || e.code)) || e)); });
+    };
+    if (likeGo) likeGo.onclick = runLike;
+    if (likeInput) likeInput.onkeydown = function (e) { if (e.key === 'Enter') { e.preventDefault(); runLike(); } };
     const rb = panel.querySelector('[data-skin-reset]');
     if (rb) rb.onclick = function () { panel.classList.remove('open'); Promise.resolve(resetSkin()).catch(function () {}); };
     panel.classList.add('open');
