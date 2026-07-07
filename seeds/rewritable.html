@@ -1621,7 +1621,8 @@ function buildUI() {
 <div id="rwa-pal">
   <div id="rwa-pal-box">
     <div class="rwa-pal-top">
-      <span class="rwa-pal-sig">⌘K</span>
+      <span class="rwa-pal-sig" id="rwa-pal-sig">⌘K</span>
+      <span class="rwa-pal-sig" id="rwa-pal-scope" hidden></span>
       <input id="rwa-pal-inp" placeholder="${LEGACY_PAL_PLACEHOLDER}" autocomplete="off" spellcheck="false">
       <button id="rwa-pal-go" disabled>Run ↵</button>
     </div>
@@ -1896,23 +1897,26 @@ function buildUI() {
   const pal = document.getElementById('rwa-pal'), inp = document.getElementById('rwa-pal-inp'), go = document.getElementById('rwa-pal-go');
   pal.onclick = e => { if (e.target === pal) closePal(); };
   inp.oninput = () => { go.disabled = !inp.value.trim(); };
-  inp.onkeydown = e => {
-    if (e.key === 'Enter' && !e.shiftKey && inp.value.trim()) {
-      e.preventDefault();
-      modify(inp.value.trim()).catch(err => {
-        // concurrent_modify is already surfaced via setPalSt; suppress the
-        // unhandled rejection. Any other throw is a programming error.
-        if (err?.code !== 'concurrent_modify') console.error(err);
-      });
-    }
-    if (e.key === 'Escape') closePal();
-  };
-  go.onclick = () => {
-    if (!inp.value.trim()) return;
-    modify(inp.value.trim()).catch(err => {
+  // Run the palette input against its scope: a captured "/" selection scope
+  // (single/multi block) via runSlashScope, else the whole document via modify —
+  // exactly the prior ⌘K behavior when unscoped. Scope + text are captured before
+  // closePal clears them.
+  const runPal = () => {
+    const v = inp.value.trim(); if (!v) return;
+    const scope = palScope;
+    closePal();
+    const p = scope ? runSlashScope(scope, v) : modify(v);
+    Promise.resolve(p).catch(err => {
+      // concurrent_modify is already surfaced via setPalSt; suppress the
+      // unhandled rejection. Any other throw is a programming error.
       if (err?.code !== 'concurrent_modify') console.error(err);
     });
   };
+  inp.onkeydown = e => {
+    if (e.key === 'Enter' && !e.shiftKey && inp.value.trim()) { e.preventDefault(); runPal(); }
+    if (e.key === 'Escape') closePal();
+  };
+  go.onclick = runPal;
 
   // rwa-lens/1: ⌘Enter (or Ctrl+Enter) submits; plain Enter remains a newline.
   // Spec invariant 8: the lens textarea behaves like a normal multi-line input
@@ -2233,8 +2237,22 @@ function rwaShowPrivateModeBanner() {
 window.rwaDetectPrivateMode = rwaDetectPrivateMode;
 window.rwaShowPrivateModeBanner = rwaShowPrivateModeBanner;
 
-const openPal = () => { document.getElementById('rwa-pal').classList.add('open'); requestAnimationFrame(() => document.getElementById('rwa-pal-inp').focus()); setPalSt('', '● ready'); };
-const closePal = () => { document.getElementById('rwa-pal').classList.remove('open'); document.getElementById('rwa-pal-inp').value = ''; document.getElementById('rwa-pal-go').disabled = true; };
+// palScope carries an optional "/" scope (a text selection captured at "/"-press
+// time). Null = the whole document (the plain ⌘K behavior). The selection's block
+// entries are captured here, so the prompt survives the focus moving to the input.
+let palScope = null;
+function syncPalScopeChip() {
+  const chip = document.getElementById('rwa-pal-scope');
+  const sig = document.getElementById('rwa-pal-sig');
+  if (!chip) return;
+  if (palScope && palScope.label) { chip.textContent = palScope.label; chip.hidden = false; if (sig) sig.textContent = '/'; }
+  else { chip.hidden = true; if (sig) sig.textContent = '⌘K'; }
+}
+const openPal = (scope = null) => { palScope = scope; document.getElementById('rwa-pal').classList.add('open'); syncPalScopeChip(); requestAnimationFrame(() => document.getElementById('rwa-pal-inp').focus()); setPalSt('', palScope ? '● ' + (palScope.label || 'selection') : '● ready'); };
+const closePal = () => { palScope = null; document.getElementById('rwa-pal').classList.remove('open'); document.getElementById('rwa-pal-inp').value = ''; document.getElementById('rwa-pal-go').disabled = true; syncPalScopeChip(); };
+if (typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent)) {
+  window.__openPal = openPal; window.__closePal = closePal; window.__palScope = () => palScope;
+}
 
 // Task 9.3: read-only render of rwa_hist into the side panel. Read once on
 // open — the panel is a snapshot, not a live view. Newest first matches the
@@ -4115,6 +4133,87 @@ function refreshInlineEditAffordances(mount) {
   });
 }
 
+// ─── The unified "/" gesture (reference "E · Slash") ──────────────────────────
+// One gesture, scope inferred: select text first and "/" targets exactly that
+// selection (across blocks too); "/" with nothing focused addresses the whole
+// document. This layer only PRODUCES instructions — it reuses runAnchoredCommand
+// (single block) and modify (whole-doc / multi-block), so the frozen wall,
+// data-rwa-id preservation, retry budget, and one-commit-one-undo all hold. The
+// block-scoped inline "/" (typing "/" while editing a leaf) stays in the inline
+// command layer (commandStartIndex/runInlineCommand); this is the at-rest gesture.
+
+// The editable leaves a selection spans, in document order, frozen/locked excluded
+// (resolveInlineEditTarget returns null for those). Deterministic and jsdom-safe:
+// it slices the leaf list between the selection's start/end leaves rather than
+// relying on Range.intersectsNode (partial under jsdom). Each entry is a sourceMap
+// record ready to anchor a command on.
+function selectionLeafEntries() {
+  const mount = document.getElementById('rwa-doc-mount');
+  const sel = window.getSelection && window.getSelection();
+  if (!mount || !sel || sel.rangeCount === 0 || sel.isCollapsed) return [];
+  const range = sel.getRangeAt(0);
+  if (!range.toString().trim()) return [];
+  if (!mount.contains(range.commonAncestorContainer)) return [];
+  const startLeaf = closestSelectionLeaf(range.startContainer, mount);
+  const endLeaf = closestSelectionLeaf(range.endContainer, mount);
+  if (!startLeaf || !endLeaf) return [];
+  const leaves = Array.from(mount.querySelectorAll(Array.from(INLINE_EDITABLE).map(t => t.toLowerCase()).join(',')));
+  const si = leaves.indexOf(startLeaf), ei = leaves.indexOf(endLeaf);
+  if (si < 0 || ei < 0) return [];
+  const [lo, hi] = si <= ei ? [si, ei] : [ei, si];
+  const out = [];
+  for (let i = lo; i <= hi; i++) {
+    const hit = resolveInlineEditTarget(leaves[i]); // null for frozen/locked/nested → excluded
+    if (hit && hit.el === leaves[i]) out.push(hit);
+  }
+  return out;
+}
+
+// Pure: given a "/" scope + the typed instruction, produce { route, instruction,
+// anchor?, meta? }. This is the load-bearing part — a selection scope constrains
+// the model to the selected span (leave the rest byte-identical), which is what
+// makes "/ targets exactly that selection" true rather than a whole-block rewrite.
+// Returns null for an empty instruction (nothing to run).
+function buildSlashInstruction(scope, instruction) {
+  const instr = (instruction || '').trim();
+  if (!instr) return null;
+  const entries = (scope && scope.entries) || [];
+  if (!scope || scope.kind === 'doc' || entries.length === 0) {
+    return { route: 'doc', instruction: instr };
+  }
+  const sel = (scope.text || '').trim();
+  if (entries.length === 1) {
+    return {
+      route: 'anchored',
+      anchor: entries[0].entry,
+      instruction: 'Within this block, change ONLY the selected text and leave everything else byte-identical.\nSelected text: «' + sel + '»\nChange to make: ' + instr,
+    };
+  }
+  const ids = entries.map(e => String(e.entry.start));
+  return {
+    route: 'doc',
+    instruction: 'Apply this change ONLY to the selected text, which spans ' + ids.length + ' blocks. Leave all other content byte-identical.\nSelected text: «' + sel + '»\nChange to make: ' + instr,
+    meta: { surface: 'selection-command', scope: { type: 'selection', block_ids: ids } },
+  };
+}
+
+// Execute a "/" scope: the anchored (single-block) route reuses runAnchoredCommand
+// (surface 'anchored-command'); the doc route (whole document or multi-block
+// selection) reuses modify. Both are the agent path — a "/" instruction is a model
+// edit, never a deterministic transform.
+async function runSlashScope(scope, instruction) {
+  const b = buildSlashInstruction(scope, instruction);
+  if (!b) return;
+  if (b.route === 'anchored') return runAnchoredCommand(b.anchor, b.instruction);
+  return modify(b.instruction, b.meta || null);
+}
+
+if (typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent)) {
+  window.selectionLeafEntries = selectionLeafEntries;
+  window.buildSlashInstruction = buildSlashInstruction;
+  window.__runSlashScope = runSlashScope;
+}
+
 function enterInlineEdit(el, entry) {
   if (inlineEdit) exitInlineEdit();
   inlineEdit = { el, entry, original: '', commandMode: false, demoted: false };
@@ -4205,12 +4304,15 @@ function insertSoftBreak() {
 // Inline LLM command: a "/" at a word boundary (block start, after leading whitespace, or after
 // any whitespace mid-block) turns the suffix from there to the end into an instruction for the
 // model. Returns that "/" position (the LAST such — so "fix this /shorten it" targets the trailing
-// command), or -1. The \/ escape and mid-word slashes (http://, /etc/hosts) are NOT commands.
+// command), or -1. The \/ and // escapes and mid-word slashes (http://, /etc/hosts) are NOT
+// commands: "//" at a word boundary is the type-a-literal-slash route (collapsed to one "/" at
+// commit), matching the reference gesture.
 function commandStartIndex(text) {
   let last = -1;
   for (let i = 0; i < text.length; i++) {
     if (text[i] !== '/') continue;
     if (i > 0 && text[i - 1] === '\\') continue;     // \/ escape → literal slash
+    if (text[i + 1] === '/') { i++; continue; }       // // escape → literal slash (skip the pair)
     if (i === 0 || /\s/.test(text[i - 1])) last = i;  // start, or preceded by whitespace
   }
   return last;
@@ -4384,7 +4486,12 @@ async function commitInlineEdit() {
   // keystrokes produce different bytes on the two surfaces. The no-op comparison
   // above stays on the RAW serialization on purpose: `original` is also raw, so
   // an untouched block whose content already starts "\/" still commits nothing.
-  const committed = newText.replace(/^(\s*)\\\//, '$1/');
+  // "//" at a word boundary is the same escape by a second route (see command
+  // StartIndex): collapse it to one literal "/". Mid-word "//" (http://) is left
+  // intact — the (^|\s) anchor never matches inside a URL.
+  const committed = newText
+    .replace(/^(\s*)\\\//, '$1/')
+    .replace(/(^|\s)\/\//g, '$1/');
   const a = resolveAnchorFind(entry);
   if (!a) {
     renderDoc(currentDocCache);
@@ -10134,6 +10241,34 @@ document.addEventListener('keydown', e => {
   }
   else if (e.key === 'z') { e.preventDefault(); undo(); }
   else if (e.key === 's') { e.preventDefault(); commit(); }
+});
+
+// The unified "/" gesture (reference "E · Slash"), document level: with nothing
+// editable focused, "/" opens the docked prompt — scoped to the current text
+// selection if there is one (targets exactly that selection, across blocks), else
+// the whole document. It fires ONLY when no field/contenteditable owns the caret;
+// the inline "/" (typing inside an edited block) and the palette input keep their
+// own "/". A selection prompt requires Edit mode already (a mode switch re-renders
+// and would drop the selection); a whole-doc prompt auto-enters Edit like ⌘K.
+document.addEventListener('keydown', e => {
+  if (e.key !== '/' || e.metaKey || e.ctrlKey || e.altKey) return;
+  const pal = document.getElementById('rwa-pal');
+  if (pal && pal.classList.contains('open')) return;
+  const ae = document.activeElement;
+  if (ae && (ae.isContentEditable || (ae.getAttribute && ae.getAttribute('contenteditable') === 'true') ||
+             ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA')) return;
+  if (modifyMutex) return;
+  const editReady = rwaMode === 'edit' && !activeView;
+  const entries = editReady ? selectionLeafEntries() : [];
+  e.preventDefault();
+  if (entries.length) {
+    const label = 'Selection · ' + entries.length + (entries.length === 1 ? ' block' : ' blocks');
+    let text = ''; try { text = window.getSelection().toString(); } catch (_) {}
+    openPal({ kind: 'selection', entries, text, label });
+  } else {
+    try { if (rwaMode !== 'edit') runtimeSetMode('edit'); } catch (_) { return; }
+    openPal();
+  }
 });
 
 (async () => {

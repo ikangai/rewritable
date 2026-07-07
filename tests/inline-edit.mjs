@@ -1050,6 +1050,186 @@ console.log('\n== C5: frozen block cannot enter inline edit (so no /command) =='
 // is inherited from runtimeApplyEnvelope/commitCore and covered by
 // tests/r5-concurrent-commit.mjs + tests/write-path.mjs; not re-tested here.
 
+// C6 — the // literal-slash escape (the reference's "// gives a literal /").
+// Symmetric to the existing \/ escape (C1b): a word-boundary "//" is never a
+// command, and commits as ONE literal "/". Mid-word "//" (http://) is untouched.
+console.log('\n== C6: // escape commits a single literal "/" (word-boundary pair collapsed) ==');
+{
+  await window.__setDocForTest('<p data-rwa-id="c6aaaaaa">Old line</p>');
+  const el = $id('c6aaaaaa');
+  dbl(el);
+  el.textContent = '//etc/hosts is the path';
+  el.dispatchEvent(new window.InputEvent('input', { bubbles: true }));
+  check('// escape: prompt mode stays off', el.dataset.rwaCmd !== 'on');
+  await window.commitInlineEdit();
+  await settle();
+  const doc = await window.getDoc();
+  check('committed block collapses leading // to a single /', doc.includes('<p data-rwa-id="c6aaaaaa">/etc/hosts is the path</p>'));
+  check('no double-slash committed', !doc.includes('//etc'));
+}
+
+console.log('\n== C6b: a mid-word // (URL) is NOT collapsed and never a command ==');
+{
+  await window.__setDocForTest('<p data-rwa-id="c6burl">see http://example.com/path here</p>');
+  const el = $id('c6burl');
+  dbl(el);
+  el.dispatchEvent(new window.InputEvent('input', { bubbles: true }));
+  check('URL // → not command mode', el.dataset.rwaCmd !== 'on');
+  await window.commitInlineEdit();
+  await settle();
+  const doc = await window.getDoc();
+  check('URL // survives intact (mid-word, not a word-boundary escape)', doc.includes('http://example.com/path'));
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Group G — the unified "/" scope-inference gesture (reference "E · Slash").
+// Select text first and "/" targets exactly that selection (across blocks);
+// "/" with nothing focused addresses the whole document. Selection resolution
+// is deterministic (jsdom-safe); the model call is the same agent path as C3.
+
+function selectAcross(elA, needleA, elB, needleB) {
+  const findText = (root, needle) => {
+    const w = document.createTreeWalker(root, window.NodeFilter.SHOW_TEXT);
+    let n; while ((n = w.nextNode())) { const i = n.nodeValue.indexOf(needle); if (i !== -1) return { node: n, i }; }
+    throw new Error('needle not found: ' + needle);
+  };
+  const a = findText(elA, needleA), b = findText(elB, needleB);
+  const range = document.createRange();
+  range.setStart(a.node, a.i);
+  range.setEnd(b.node, b.i + needleB.length);
+  const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range);
+  return range;
+}
+
+// WHY (Rule 9): "targets exactly that selection, across blocks too" — the block
+// set is the leaves the selection spans, resolved deterministically so the model
+// instruction can name them. A regression that only ever sees one block silently
+// drops the cross-block promise.
+console.log('\n== G1: selectionLeafEntries resolves a single-block selection ==');
+{
+  await window.__setDocForTest('<p data-rwa-id="g1sblk">alpha beta gamma delta</p>');
+  selectText($id('g1sblk'), 'beta gamma');
+  const ents = window.selectionLeafEntries();
+  check('one entry for a single-block selection', ents.length === 1);
+  check('entry maps to the selected block', ents[0].el === $id('g1sblk'));
+}
+
+console.log('\n== G2: selectionLeafEntries resolves a selection spanning multiple blocks ==');
+{
+  await window.__setDocForTest('<p data-rwa-id="g2blka">first para here</p>\n<p data-rwa-id="g2blkb">second para here</p>\n<p data-rwa-id="g2blkc">third para here</p>');
+  selectAcross($id('g2blka'), 'para', $id('g2blkc'), 'third');
+  const ents = window.selectionLeafEntries();
+  check('three entries for a selection spanning three blocks', ents.length === 3);
+  check('entries are the spanned blocks in document order',
+    ents[0].el === $id('g2blka') && ents[1].el === $id('g2blkb') && ents[2].el === $id('g2blkc'));
+}
+
+// WHY (Rule 9): the frozen wall must hold even when a selection drags across a
+// frozen block — it is excluded from the target set, so no instruction is ever
+// scoped to a block the author declared invariant.
+console.log('\n== G3: a frozen block inside the selection span is excluded (frozen wall) ==');
+{
+  await window.__setDocForTest('<p data-rwa-id="g3free1">free one</p>\n<p data-rwa-frozen data-rwa-id="g3lockd">locked middle</p>\n<p data-rwa-id="g3free2">free two</p>');
+  selectAcross($id('g3free1'), 'free', $id('g3free2'), 'two');
+  const ids = window.selectionLeafEntries().map(e => e.el.getAttribute('data-rwa-id'));
+  check('frozen block excluded from the selection target set', !ids.includes('g3lockd'));
+  check('both free blocks included', ids.includes('g3free1') && ids.includes('g3free2'));
+}
+
+// WHY (Rule 9): the load-bearing logic is the INSTRUCTION — a selection "/" must
+// constrain the model to the selected span (leave the rest byte-identical), or
+// "targets exactly that selection" is a lie and the whole block gets rewritten.
+console.log('\n== G4: buildSlashInstruction constrains a single-block selection ==');
+{
+  const b = window.buildSlashInstruction({ kind: 'selection', text: 'beta gamma', entries: [{ entry: { start: 42 } }] }, 'make it bold');
+  check('routes to the anchored (block) command', b.route === 'anchored');
+  check('anchor is the selected block entry', b.anchor && b.anchor.start === 42);
+  check('instruction quotes the exact selection', b.instruction.includes('«beta gamma»'));
+  check('instruction constrains to the selection only', /ONLY the selected text/i.test(b.instruction) && /byte-identical/i.test(b.instruction));
+  check('the user instruction is carried through', b.instruction.includes('make it bold'));
+}
+
+console.log('\n== G5: buildSlashInstruction constrains a multi-block selection ==');
+{
+  const b = window.buildSlashInstruction({ kind: 'selection', text: 'x y z', entries: [{ entry: { start: 1 } }, { entry: { start: 9 } }] }, 'tighten this');
+  check('multi-block routes to a whole-doc modify', b.route === 'doc');
+  check('names the number of spanned blocks', /spans 2 blocks/i.test(b.instruction));
+  check('quotes the exact selection', b.instruction.includes('«x y z»'));
+  check('carries the user instruction', b.instruction.includes('tighten this'));
+  check('meta carries the selection scope + block ids', b.meta && b.meta.scope.type === 'selection' && b.meta.scope.block_ids.length === 2);
+}
+
+console.log('\n== G6: buildSlashInstruction with no selection is a whole-document instruction ==');
+{
+  const b = window.buildSlashInstruction({ kind: 'doc' }, 'summarize the document');
+  check('doc scope routes to a plain whole-doc modify', b.route === 'doc' && b.instruction === 'summarize the document' && !b.meta);
+  check('an empty instruction yields null (nothing to run)', window.buildSlashInstruction({ kind: 'doc' }, '   ') === null);
+}
+
+// WHY (Rule 9): end-to-end proof that a single-block selection "/" actually runs
+// the agent scoped to the selection and commits as an anchored-command (same path
+// as the inline "/", so provenance + retry + frozen guards are inherited).
+console.log('\n== G7: a single-block selection "/" runs the agent scoped to the selection ==');
+{
+  await window.__setDocForTest('<p data-rwa-id="g7blk">keep this word please</p>');
+  selectText($id('g7blk'), 'this word');
+  const ents = window.selectionLeafEntries();
+  let asked = null;
+  const realFetch = window.fetch;
+  window.fetch = async (url, opts) => {
+    asked = JSON.parse(opts.body).messages.map(m => m.content).join('\n');
+    return { ok: true, json: async () => ({ choices: [{ message: { content: '<p data-rwa-id="g7blk">keep <strong>this word</strong> please</p>' } }] }) };
+  };
+  try {
+    await window.__runSlashScope({ kind: 'selection', text: 'this word', entries: ents }, 'make it bold');
+    let doc = ''; for (let i = 0; i < 80; i++) { await settle(); doc = await window.getDoc(); if (doc.includes('<strong>')) break; }
+    check('agent scoped-edit applied to the selection', doc.includes('keep <strong>this word</strong> please'));
+    check('the model saw the selection-constrained instruction', asked && asked.includes('«this word»'));
+    const top = await readHistTop();
+    check('committed as an anchored-command (inherits the block path)', top && top.surface === 'anchored-command');
+  } finally { window.fetch = realFetch; }
+}
+
+// WHY (Rule 9): the document-level "/" is the scope router — with a selection it
+// opens the selection prompt, with nothing focused the whole-document prompt, and
+// while typing inside a block it must yield to the inline command layer (never
+// hijack the keystroke).
+console.log('\n== G8: doc-level "/" with a selection opens the selection prompt ==');
+{
+  await window.__setDocForTest('<p data-rwa-id="g8blk">pick these words out of it</p>');
+  selectText($id('g8blk'), 'these words');
+  window.__closePal();
+  document.dispatchEvent(new window.KeyboardEvent('keydown', { key: '/', bubbles: true }));
+  check('palette opened', document.getElementById('rwa-pal').classList.contains('open'));
+  const scope = window.__palScope();
+  check('scope is the selection', scope && scope.kind === 'selection');
+  check('scope carries the resolved entry', scope && scope.entries.length === 1);
+  window.__closePal();
+}
+
+console.log('\n== G9: doc-level "/" with nothing selected addresses the whole document ==');
+{
+  await window.__setDocForTest('<p data-rwa-id="g9blk">nothing is selected here</p>');
+  window.getSelection().removeAllRanges();
+  window.__closePal();
+  document.dispatchEvent(new window.KeyboardEvent('keydown', { key: '/', bubbles: true }));
+  check('palette opened', document.getElementById('rwa-pal').classList.contains('open'));
+  check('scope is whole-document (no selection scope)', window.__palScope() == null);
+  window.__closePal();
+}
+
+console.log('\n== G10: doc-level "/" while editing a block yields to the inline command layer ==');
+{
+  await window.__setDocForTest('<p data-rwa-id="g10blk">editing in place here</p>');
+  const el = $id('g10blk');
+  dbl(el); // el becomes contenteditable + focused → the inline "/" layer owns it
+  window.__closePal();
+  document.dispatchEvent(new window.KeyboardEvent('keydown', { key: '/', bubbles: true }));
+  check('doc-level "/" did NOT open the palette (block layer owns the keystroke)',
+    !document.getElementById('rwa-pal').classList.contains('open'));
+  window.revertInlineEdit();
+}
+
 // ─────────────────────────────────────────────────────────────────────
 console.log(`\n${pass} pass, ${fail} fail`);
 if (fail) process.exit(1);
