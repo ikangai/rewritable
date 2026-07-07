@@ -1037,10 +1037,12 @@ function runtimeBusSubscribe(topic, callback) {
 
 // === First-class runtime modes =============================================
 // Modes are page-load local state, deliberately not serialized into INLINE_DOC.
-// Document is the default every time a file opens; Edit is the only mode that
-// attaches WYSIWYG/lens/image editing affordances.
+// A document container opens EDIT-first ("the document is the editor" — click
+// anywhere and type); view-first kinds (presentation et al.) open in Document
+// (reading) mode. Edit is the only mode that attaches WYSIWYG/lens/image editing
+// affordances. The View/Edit segmented control flips between Document and Edit.
 const RWA_MODES = Object.freeze(['document', 'edit', 'skills', 'actions']);
-let rwaMode = 'document';
+let rwaMode = (PRODUCT_KIND === 'document') ? 'edit' : 'document';
 
 function escRuntimeHtml(s) {
   return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
