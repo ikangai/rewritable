@@ -408,6 +408,34 @@ const undoLen = async (uuid) => ((await readStore(uuid, 'rwa_undo')) || []).leng
     check('V3a: commit kind replace_document', hist && hist[0] && hist[0].kind === 'replace_document');
   }
 
+  // ── V3-panel: /skin like re-homed onto the ✦ Skins panel (the lens is retired) ──
+  // WHY (Rule 9): retiring the lens removed the ONLY entry for free-form synthesized
+  // skins. The ✦ panel's "describe a look" field must drive the SAME applySkinLike path,
+  // or the feature is silently gone.
+  {
+    const BODY = '<article>\n<h1>The Ledger</h1>\n<p>PULLQUOTE opening line</p>\n<p>second body line</p>\n</article>';
+    const w = await boot(BODY);
+    w.window.openSkinPanel();
+    const input = w.document.getElementById('rwa-skin-like-input');
+    const go = w.document.getElementById('rwa-skin-like-go');
+    check('V3-panel: the ✦ panel exposes a "describe a look" input', !!input);
+    check('V3-panel: the ✦ panel exposes an Apply button', !!go);
+    w.window.fetch = stubLikeThenEdit(
+      { name: 'ledger-blue', feel: 'cool ledger', confidence: 'high', tokens: {
+        accent: '#1d4ed8', ink: '#0f172a', bg: '#f8fafc', fontUi: 'serif', fontMono: 'mono',
+        typeScaleRatio: 1.2, baseSize: 17, radius: 3, shadow: 'subtle', density: 'normal',
+        borderWeight: 1, motion: 'subtle', ramp: ['#f8fafc', '#0f172a'], semantic: {} } },
+      { version: 'rwa-edit/1', edits: [{ find: 'PULLQUOTE', replace: '<span class="sk-eyebrow">PULLQUOTE</span>' }] });
+    input.value = 'cool blue ledger';
+    go.dispatchEvent(new w.window.MouseEvent('click', { bubbles: true }));
+    for (let k = 0; k < 60 && !/data-rwa-skin/.test(await w.window.getDoc()); k++) await tick();
+    const doc = await w.window.getDoc();
+    check('V3-panel: Apply ran applySkinLike → synthesized theme landed', /<style data-rwa-skin="ledger-blue">/.test(doc));
+    check('V3-panel: synthesized accent present', /--sk-accent:#1d4ed8/.test(doc));
+    check('V3-panel: agent L1 wrapper landed (sk-eyebrow)', /class="sk-eyebrow"/.test(doc));
+    check('V3-panel: the panel closed after Apply', !w.document.getElementById('rwa-skin-panel').classList.contains('open'));
+  }
+
   // ── V3-b: malicious extractor output → dropped/defaulted, skin still applies clean ──
   {
     const BODY = '<article>\n<h1>Doc</h1>\n<p>plain body line</p>\n</article>';

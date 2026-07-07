@@ -198,6 +198,8 @@ jsdom ignores `display`, so all stay green). Doc-level commands now come from th
 + ⌘K; block/selection from the `/` gesture. **Dropped UI entries (surfaced, not silent):**
 `/skin like <desc>` free-form skin (presets stay on the ✦ menu), the `/image` picker (drag-drop +
 paste stay), and the no-model plain-text append (operator chose to drop it — content is added via
-`/` + the model). Open follow-ups if wanted: re-home `/skin like` (a field on the ✦ panel), and a
-reference-style idle `/` hint for discoverability (the seed has no idle affordance now that the
-lens is hidden).
+`/` + the model). **Both follow-ups DONE (operator asked):** (1) `/skin like` re-homed as a
+"describe a look" field on the ✦ Skins panel → the same `applySkinLike` path (pinned by
+`tests/skin-compose.mjs` V3-panel, 95/95; conformance SKIN-02 still green); (2) a reference-style
+idle `/` hint (`#rwa-slash-hint`) — pointer-transparent, one line, shown in Edit mode, hidden while
+the command palette is open (`body.rwa-pal-open`), pinned by `tests/inline-edit.mjs` G11 (189/0).

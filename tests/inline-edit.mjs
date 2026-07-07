@@ -1230,6 +1230,24 @@ console.log('\n== G10: doc-level "/" while editing a block yields to the inline 
   window.revertInlineEdit();
 }
 
+// WHY (Rule 9): with the docked lens retired, the idle "/" hint is the only on-screen
+// affordance teaching how to invoke the AI. It must exist, teach the three scopes, and
+// step out of the way while the command palette is open (or it double-stacks the prompt).
+console.log('\n== G11: the idle "/" hint exists and gates on the command palette ==');
+{
+  const hint = document.getElementById('rwa-slash-hint');
+  check('slash hint element exists', !!hint);
+  check('hint teaches the "/" gesture and its three scopes', !!hint &&
+    hint.textContent.includes('/') && /block/i.test(hint.textContent) &&
+    /select/i.test(hint.textContent) && /document/i.test(hint.textContent));
+  window.__closePal();
+  check('idle: no rwa-pal-open marker on body', !document.body.classList.contains('rwa-pal-open'));
+  window.__openPal();
+  check('opening the command palette hides the hint (body.rwa-pal-open)', document.body.classList.contains('rwa-pal-open'));
+  window.__closePal();
+  check('closing the palette restores the hint', !document.body.classList.contains('rwa-pal-open'));
+}
+
 // ─────────────────────────────────────────────────────────────────────
 console.log(`\n${pass} pass, ${fail} fail`);
 if (fail) process.exit(1);
