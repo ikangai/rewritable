@@ -161,8 +161,12 @@ only). Concrete wiring decisions:
   `//`, exactly as it already strips the `\/` backslash. Both escapes coexist.
 - **`selectionLeafEntries()`** new helper: editable leaves intersecting the selection (via
   `compareBoundaryPoints`, jsdom-safe), minus frozen/`.rwa-locked`, mapped to sourceMap entries.
-- **Mode:** kept. R3 = Edit-mode; R4/`⌘K`/`/` auto-enter Edit. Default boot mode unchanged
-  (read-first); flipping to always-editable-on-open is a one-line operator follow-up.
+- **Mode:** kept. R3 = Edit-mode; R4/`⌘K`/`/` auto-enter Edit. **Default boot: a `document`-kind
+  container now opens EDIT-first** (`let rwaMode = (PRODUCT_KIND === 'document') ? 'edit' :
+  'document'`, operator ask 2026-07-07) — "the document is the editor," click anywhere and type on
+  open. View-first kinds (`presentation` et al.) still boot in Document/reading mode; the View/Edit
+  segment flips between them. `tests/mode.mjs` block 1 reworked to assert edit-first boot (intent
+  preserved: Document-mode inertness, the mode-change event, unsubscribe, invalid-mode throw).
 
 ## 9. Browser verification (the jsdom gap)
 

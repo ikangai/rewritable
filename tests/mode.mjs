@@ -82,32 +82,32 @@ console.log('== Runtime modes ==');
   const dom = await boot();
   const { window } = dom;
   const { document } = window;
-  check('fresh boot starts in Document mode', window.runtime.mode === 'document');
-  check('body carries document mode marker', document.body.dataset.rwaMode === 'document');
+  // A document container opens edit-first ("the document is the editor").
+  check('fresh boot starts in Edit mode (document is edit-first)', window.runtime.mode === 'edit');
+  check('body carries edit mode marker', document.body.dataset.rwaMode === 'edit');
 
   let p = document.querySelector('[data-rwa-id="modep"]');
-  p.dispatchEvent(new window.MouseEvent('pointerdown', { bubbles: true, button: 0 }));
-  check('Document mode does not attach click-to-edit', p.getAttribute('contenteditable') !== 'true');
-
-  let seen = 0;
-  const off = window.runtime.on('mode', ev => { if (ev.mode === 'edit') seen++; });
-  window.runtime.setMode('edit');
-  await new Promise(r => setTimeout(r, 50));
-  p = document.querySelector('[data-rwa-id="modep"]');
-  check('setMode("edit") updates runtime.mode', window.runtime.mode === 'edit');
-  check('runtime.on("mode") fires', seen === 1);
   check('Edit mode marks editable leaves', p.classList.contains('rwa-editable-leaf'));
   p.dispatchEvent(new window.MouseEvent('pointerdown', { bubbles: true, button: 0 }));
   check('Edit mode attaches click-to-edit', p.getAttribute('contenteditable') === 'true');
 
-  off();
+  // The "View" segment (Document mode) is inert: no click-to-edit; the mode event
+  // fires on the transition.
+  let seen = 0;
+  const off = window.runtime.on('mode', ev => { if (ev.mode === 'document') seen++; });
   window.runtime.setMode('document');
   await new Promise(r => setTimeout(r, 50));
   p = document.querySelector('[data-rwa-id="modep"]');
-  check('setMode("document") switches back', window.runtime.mode === 'document');
+  check('setMode("document") updates runtime.mode', window.runtime.mode === 'document');
+  check('runtime.on("mode") fires', seen === 1);
   check('switching away removes active inline edit', p.getAttribute('contenteditable') !== 'true');
+  p.dispatchEvent(new window.MouseEvent('pointerdown', { bubbles: true, button: 0 }));
+  check('Document mode does not attach click-to-edit', p.getAttribute('contenteditable') !== 'true');
+
+  off();
   window.runtime.setMode('edit');
   check('unsubscribed mode listener no longer fires', seen === 1);
+  check('setMode("edit") switches back to edit', window.runtime.mode === 'edit');
 
   let bad = null;
   try { window.runtime.setMode('bogus'); } catch (e) { bad = e; }
