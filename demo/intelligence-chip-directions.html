@@ -1,0 +1,992 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Intelligence chip — four directions</title>
+<style>
+  html,body{margin:0}
+  #themebtn{position:fixed;top:14px;right:14px;z-index:50;font:600 12px/1 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+    letter-spacing:.02em;padding:8px 13px;border-radius:100px;cursor:pointer;
+    background:rgba(127,127,127,.14);color:inherit;border:1px solid rgba(127,127,127,.3);backdrop-filter:blur(6px)}
+  #themebtn:hover{background:rgba(127,127,127,.24)}
+</style>
+</head>
+<body>
+<button id="themebtn" type="button" aria-label="Toggle light / dark theme">◑ theme</button>
+<style>
+/* ============================================================
+   INTELLIGENCE CHIP — FOUR DIRECTIONS  ·  lookbook shell
+   The shell is a quiet, theme-aware gallery wall.
+   Each direction ("world") commits to its OWN palette + type,
+   scoped under .w-card / .w-sheet / .w-persona / .w-rack so the
+   four worlds never bleed into each other.
+   ============================================================ */
+
+:root{
+  --paper:#f7f6f3;      --paper-2:#efece6;
+  --ink:#1c1b19;        --ink-2:#57534c;   --ink-3:#8a857c;
+  --line:#e0ddd5;       --line-2:#d2cec4;
+  --tab:#2b2925;                         /* shell accent (warm ink) */
+  --ok:#2f9e6f; --warn:#c98a19; --bad:#c8443a; --link:#2f6bd6;
+  --fs-ui:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  --fs-mono:ui-monospace,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;
+  --shadow:0 1px 2px rgba(20,18,15,.05),0 12px 34px -18px rgba(20,18,15,.28);
+}
+@media (prefers-color-scheme:dark){
+  :root{
+    --paper:#141311; --paper-2:#1d1b18;
+    --ink:#f0ede7; --ink-2:#b3ada3; --ink-3:#807a70;
+    --line:#2b2925; --line-2:#38352f; --tab:#f0ede7;
+    --shadow:0 1px 2px rgba(0,0,0,.4),0 18px 44px -20px rgba(0,0,0,.7);
+  }
+}
+:root[data-theme="light"]{
+  --paper:#f7f6f3; --paper-2:#efece6; --ink:#1c1b19; --ink-2:#57534c;
+  --ink-3:#8a857c; --line:#e0ddd5; --line-2:#d2cec4; --tab:#2b2925;
+  --shadow:0 1px 2px rgba(20,18,15,.05),0 12px 34px -18px rgba(20,18,15,.28);
+}
+:root[data-theme="dark"]{
+  --paper:#141311; --paper-2:#1d1b18; --ink:#f0ede7; --ink-2:#b3ada3;
+  --ink-3:#807a70; --line:#2b2925; --line-2:#38352f; --tab:#f0ede7;
+  --shadow:0 1px 2px rgba(0,0,0,.4),0 18px 44px -20px rgba(0,0,0,.7);
+}
+
+*{box-sizing:border-box}
+.lb{
+  background:var(--paper); color:var(--ink);
+  font-family:var(--fs-ui); line-height:1.5;
+  -webkit-font-smoothing:antialiased;
+  padding:0 22px 88px; max-width:1120px; margin:0 auto;
+}
+.lb ::selection{background:var(--tab);color:var(--paper)}
+
+/* ---- shell header ---- */
+.lb-top{padding:64px 0 34px;border-bottom:1px solid var(--line)}
+.lb-eyebrow{
+  font-family:var(--fs-mono); font-size:11.5px; letter-spacing:.22em;
+  text-transform:uppercase; color:var(--ink-3);
+}
+.lb-h1{
+  font-size:clamp(30px,5vw,50px); line-height:1.02; letter-spacing:-.02em;
+  font-weight:680; margin:14px 0 0; text-wrap:balance; max-width:16ch;
+}
+.lb-h1 em{font-style:normal;color:var(--ink-3)}
+.lb-dek{margin:18px 0 0;font-size:16.5px;color:var(--ink-2);max-width:66ch;line-height:1.55}
+.lb-tabs{display:flex;flex-wrap:wrap;gap:8px;margin-top:26px}
+.lb-tab{
+  font-family:var(--fs-mono);font-size:12px;letter-spacing:.02em;
+  color:var(--ink-2);text-decoration:none;
+  border:1px solid var(--line-2);border-radius:100px;padding:7px 14px;
+  transition:border-color .15s,color .15s;
+}
+.lb-tab:hover{border-color:var(--tab);color:var(--ink)}
+.lb-tab b{color:var(--ink);font-weight:600}
+
+/* ---- shared content-model primer ---- */
+.lb-primer{
+  margin:34px 0 8px;border:1px solid var(--line);border-radius:16px;
+  background:var(--paper-2);padding:24px 26px;
+}
+.lb-primer h2{font-size:13px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3);margin:0 0 4px;font-family:var(--fs-mono)}
+.lb-primer p{margin:0 0 16px;color:var(--ink-2);font-size:14.5px;max-width:74ch}
+.field-legend{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:1px;background:var(--line);border:1px solid var(--line);border-radius:11px;overflow:hidden}
+.field-legend div{background:var(--paper);padding:11px 13px}
+.field-legend dt{font-family:var(--fs-mono);font-size:12px;color:var(--ink);font-weight:600}
+.field-legend dd{margin:3px 0 0;font-size:12px;color:var(--ink-3);line-height:1.35}
+.field-legend .sgn{color:var(--ok)} .field-legend .adv{color:var(--warn)}
+.lb-caveat{
+  margin-top:16px;display:flex;gap:11px;align-items:flex-start;
+  font-size:13.5px;color:var(--ink-2);line-height:1.5;
+  background:color-mix(in srgb,var(--warn) 12%,var(--paper));
+  border:1px solid color-mix(in srgb,var(--warn) 35%,var(--line));
+  border-radius:11px;padding:13px 15px;
+}
+.lb-caveat b{color:var(--ink)}
+.lb-caveat .mk{font-family:var(--fs-mono);flex:0 0 auto}
+
+/* ---- direction plate (the quiet frame around each world) ---- */
+.lb-dir{margin-top:52px;scroll-margin-top:20px}
+.lb-cap{display:flex;flex-wrap:wrap;align-items:baseline;gap:12px 16px;margin-bottom:16px}
+.lb-cap .no{font-family:var(--fs-mono);font-size:13px;color:var(--ink-3);letter-spacing:.1em}
+.lb-cap h2{font-size:26px;letter-spacing:-.015em;margin:0;font-weight:660}
+.lb-cap .thesis{font-size:15px;color:var(--ink-2);flex:1 1 260px;min-width:220px;line-height:1.4}
+.lb-meta{display:flex;flex-wrap:wrap;gap:7px;margin-bottom:20px}
+.lb-meta span{
+  font-family:var(--fs-mono);font-size:11px;letter-spacing:.02em;
+  color:var(--ink-2);border:1px solid var(--line-2);border-radius:6px;padding:4px 9px;
+}
+.lb-meta span b{color:var(--ink-3);font-weight:400}
+.lb-stage{border-radius:20px;overflow:hidden;box-shadow:var(--shadow);border:1px solid var(--line)}
+
+/* the world sits in a full-bleed panel that owns its own atmosphere */
+.world{padding:38px clamp(20px,4vw,46px) 42px;position:relative}
+.world-lead{margin:0 0 26px;font-size:13px;max-width:60ch;line-height:1.5}
+.world h3.blk{margin:34px 0 14px;font-size:12px;letter-spacing:.16em;text-transform:uppercase}
+
+/* direction notes under each plate */
+.lb-notes{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:16px}
+.lb-notes .n{border:1px solid var(--line);border-radius:13px;padding:15px 17px;background:var(--paper-2)}
+.lb-notes .n h4{margin:0 0 6px;font-size:11px;letter-spacing:.13em;text-transform:uppercase;color:var(--ink-3);font-family:var(--fs-mono)}
+.lb-notes .n.risk h4{color:var(--bad)}
+.lb-notes .n p{margin:0;font-size:13.5px;color:var(--ink-2);line-height:1.5}
+@media(max-width:640px){.lb-notes{grid-template-columns:1fr}}
+
+/* row that holds the chip + edit demo, generic scaffold reused in each world */
+.demo-grid{display:grid;grid-template-columns:1fr 1fr;gap:26px;margin-top:30px}
+@media(max-width:720px){.demo-grid{grid-template-columns:1fr}}
+
+/* checkbox-driven before/after (no JS) */
+.flip{position:relative}
+.flip>input{position:absolute;opacity:0;pointer-events:none}
+.flip .after{display:none}
+/* ~* reaches the toggle target whether .stack is a direct sibling of the
+   input (retune/brief/tune) or nested inside .body (term/datasheet) */
+.flip>input:checked~* .before{display:none}
+.flip>input:checked~* .after{display:block}
+
+/* the gallery strip: several personas together, world-styled */
+.strip{display:grid;gap:14px}
+
+/* small helper */
+.grow{display:grid;gap:14px;grid-template-columns:repeat(auto-fill,minmax(230px,1fr))}
+
+/* =========================================================================
+   WORLD 1 — THE CARD (collectible / holographic)  — committed dark-holo world
+   ========================================================================= */
+.w-card{
+  --bg:#0c0d16; --bg2:#141626; --edge:#232742;
+  --txt:#eaecff; --dim:#9498c4; --faint:#6a6e9a;
+  --gold:#e8c37a; --foil:linear-gradient(115deg,#41e0ff 8%,#8f6bff 46%,#ff9ad1 72%,#ffd166 96%);
+  background:
+    radial-gradient(120% 90% at 12% -8%,rgba(143,107,255,.20),transparent 55%),
+    radial-gradient(90% 70% at 100% 0%,rgba(65,224,255,.14),transparent 50%),
+    var(--bg);
+  color:var(--txt);
+  font-family:"Futura","Century Gothic","Trebuchet MS",var(--fs-ui);
+}
+.w-card .world-lead{color:var(--dim)}
+.w-card h3.blk{color:var(--faint)}
+.w-card .grow{grid-template-columns:repeat(auto-fill,minmax(232px,1fr))}
+
+.tcard{
+  position:relative;border-radius:16px;padding:2px;background:var(--foil);
+  box-shadow:0 20px 50px -22px rgba(0,0,0,.8);
+}
+.tcard.matte{background:var(--edge);box-shadow:none;opacity:.9}
+.tcard-in{
+  border-radius:14px;background:linear-gradient(180deg,var(--bg2),#0d0f1c);
+  padding:16px 16px 15px;position:relative;overflow:hidden;height:100%;
+}
+.tcard-in::before{ /* holo sheen */
+  content:"";position:absolute;inset:0;pointer-events:none;
+  background:linear-gradient(125deg,transparent 40%,rgba(255,255,255,.16) 47%,transparent 55%);
+  transform:translateX(-30%);transition:transform .5s ease;mix-blend-mode:screen;
+}
+.tcard:hover .tcard-in::before{transform:translateX(30%)}
+.tcard-top{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
+.tcard-role{font-size:19px;font-weight:700;letter-spacing:.01em;line-height:1.05}
+.tcard-type{
+  font-family:"Futura","Trebuchet MS",var(--fs-ui);font-size:9.5px;letter-spacing:.18em;
+  text-transform:uppercase;color:#0c0d16;background:var(--foil);
+  padding:3px 7px;border-radius:5px;font-weight:700;white-space:nowrap;
+}
+.tcard.matte .tcard-type{background:var(--edge);color:var(--dim)}
+.tcard-flavor{
+  margin:11px 0 0;font-family:var(--fs-ui);font-size:12.5px;line-height:1.42;color:var(--dim);
+  min-height:52px;
+}
+.tcard-stats{display:grid;grid-template-columns:1fr 1fr;gap:1px;margin:13px 0 0;background:var(--edge);border:1px solid var(--edge);border-radius:9px;overflow:hidden}
+.tcard-stats .s{background:#0e1020;padding:9px 10px}
+.tcard-stats .s.full{grid-column:1/-1}
+.tcard-stats dt{font-family:var(--fs-ui);font-size:8.5px;letter-spacing:.15em;text-transform:uppercase;color:var(--faint)}
+.tcard-stats dd{margin:3px 0 0;font-family:var(--fs-mono);font-size:12px;color:var(--txt);font-variant-numeric:tabular-nums}
+.tcard-seal{display:flex;align-items:center;gap:7px;margin:12px 0 0;font-family:var(--fs-mono);font-size:10.5px;color:var(--gold);letter-spacing:.02em}
+.tcard-seal svg{flex:0 0 auto}
+.tcard.matte .tcard-seal{color:#ff8a7a}
+.tcard-cta{
+  margin:13px 0 0;width:100%;border:0;border-radius:8px;padding:10px;
+  font-family:"Futura","Trebuchet MS",var(--fs-ui);font-weight:700;font-size:12px;letter-spacing:.12em;
+  text-transform:uppercase;cursor:pointer;color:#0c0d16;background:var(--foil);
+}
+.tcard.matte .tcard-cta{background:var(--edge);color:var(--faint);cursor:not-allowed}
+.tcard-ribbon{position:absolute;top:12px;right:-30px;transform:rotate(45deg);background:var(--bad);color:#fff;font-family:var(--fs-mono);font-size:9px;letter-spacing:.1em;padding:3px 34px}
+
+/* chip — world 1 */
+.w-card .statusbar{display:flex;align-items:center;gap:0;background:#0e1020;border:1px solid var(--edge);border-radius:9px;padding:6px 8px;font-family:var(--fs-mono);font-size:11px;color:var(--faint)}
+.w-card .statusbar .sp{flex:1}
+.chip-card{display:inline-flex;align-items:center;gap:6px;padding:5px 11px;border-radius:100px;background:var(--foil);color:#0c0d16;font-weight:700;font-size:11px;letter-spacing:.02em}
+.chip-card.none{background:transparent;color:var(--faint);border:1px dashed var(--edge)}
+
+/* edit affordance — world 1 */
+.retune{background:#0e1020;border:1px solid var(--edge);border-radius:12px;padding:15px}
+.retune .pline{display:flex;gap:8px;align-items:center;font-family:var(--fs-mono);font-size:12px;color:var(--txt);background:#070812;border:1px solid var(--edge);border-radius:8px;padding:9px 11px}
+.retune .pline .k{color:#41e0ff}
+.retune .runbtn{margin-left:auto;font-family:var(--fs-ui);font-weight:700;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:#0c0d16;background:var(--foil);border-radius:6px;padding:5px 10px;cursor:pointer}
+.retune .stack{margin-top:12px;font-family:var(--fs-ui);font-size:12.5px;line-height:1.45}
+.retune .lab{font-family:var(--fs-mono);font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--faint);margin-bottom:5px}
+.retune .before{color:var(--dim)}
+.retune .after{color:var(--txt)}
+.retune .after .badge{display:inline-block;margin-left:8px;font-family:var(--fs-mono);font-size:9px;color:#0c0d16;background:var(--gold);padding:2px 6px;border-radius:4px;letter-spacing:.06em}
+
+/* =========================================================================
+   WORLD 2 — THE DATASHEET (brutalist blueprint / terminal manifest)
+   committed cool-engineering-paper world; monospace; no radius
+   ========================================================================= */
+.w-sheet{
+  --pp:#e7ebf0; --pp2:#dde3ea; --nk:#12233a; --nk2:#40566e; --nk3:#7d8da3;
+  --grid:#c2cddb; --cy:#1f7fb8; --stamp:#c5342b;
+  background:
+    linear-gradient(var(--pp),var(--pp));
+  background-image:
+    linear-gradient(90deg,rgba(31,127,184,.10) 1px,transparent 1px),
+    linear-gradient(rgba(31,127,184,.10) 1px,transparent 1px);
+  background-size:26px 26px;
+  color:var(--nk);font-family:var(--fs-mono);
+}
+.w-sheet .world-lead{color:var(--nk2)}
+.w-sheet h3.blk{color:var(--nk2);letter-spacing:.16em}
+
+.sheet{background:#f4f7fa;border:1.5px solid var(--nk);position:relative}
+.sheet .holes{position:absolute;left:0;top:0;bottom:0;width:16px;border-right:1px dashed var(--grid);display:flex;flex-direction:column;justify-content:space-around;align-items:center;padding:12px 0}
+.sheet .holes i{width:6px;height:6px;border-radius:50%;background:var(--pp2);border:1px solid var(--grid)}
+.sheet-body{padding:14px 16px 15px 26px}
+.sheet-hd{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:1.5px solid var(--nk);padding-bottom:9px}
+.sheet-hd .id{font-size:9px;letter-spacing:.1em;color:var(--nk2)}
+.sheet-hd .role{font-size:16px;font-weight:700;letter-spacing:.01em;margin-top:2px}
+.sheet-hd .rev{font-size:9px;color:var(--nk3);text-align:right;line-height:1.5}
+.sheet-rows{margin-top:2px}
+.sheet-rows .r{display:grid;grid-template-columns:74px 1fr;gap:10px;border-bottom:1px dotted var(--grid);padding:6px 0;font-size:11.5px;align-items:baseline}
+.sheet-rows .r .lab{color:var(--nk3);letter-spacing:.08em;font-size:9.5px;padding-top:1px}
+.sheet-rows .r .val{color:var(--nk);font-variant-numeric:tabular-nums;word-break:break-word}
+.sheet-rows .r .val .adv{color:var(--cy)}
+.sheet-rows .r .val .nul{color:var(--nk3)}
+.sheet-foot{display:flex;justify-content:space-between;align-items:center;margin-top:11px;border-top:1.5px solid var(--nk);padding-top:9px}
+.sheet-sig{font-size:9.5px;color:var(--nk2);letter-spacing:.03em}
+.sheet-sig b{color:var(--nk)}
+.stamp{border:1.5px solid var(--stamp);color:var(--stamp);font-size:9px;font-weight:700;letter-spacing:.12em;padding:4px 8px;transform:rotate(-5deg);border-radius:2px}
+.stamp.fail{border-color:var(--stamp);color:var(--stamp)}
+.stamp.ok{border-color:#1c7a4d;color:#1c7a4d}
+.sheet-dl{margin-top:11px;width:100%;border:1.5px solid var(--nk);background:var(--nk);color:#f4f7fa;font-family:var(--fs-mono);font-size:11px;letter-spacing:.08em;padding:8px;cursor:pointer;text-transform:uppercase}
+
+/* chip — world 2 */
+.w-sheet .statusbar{display:flex;align-items:center;background:#f4f7fa;border:1.5px solid var(--nk);padding:5px 8px;font-size:10.5px;color:var(--nk3)}
+.w-sheet .statusbar .sp{flex:1}
+.chip-sheet{display:inline-flex;align-items:center;gap:6px;padding:3px 8px;border:1.5px solid var(--nk);background:var(--nk);color:#f4f7fa;font-size:10.5px;letter-spacing:.04em}
+.chip-sheet.none{background:transparent;color:var(--nk2);border-style:dashed}
+
+/* edit affordance — world 2: literal command line */
+.term{background:#0f1f30;border:1.5px solid var(--nk);color:#cfe4f5;font-size:12px}
+.term .hd{background:var(--nk);color:#cfe4f5;font-size:9px;letter-spacing:.14em;padding:5px 10px;text-transform:uppercase}
+.term .body{padding:12px}
+.term .cl{display:flex;gap:8px;align-items:center}
+.term .cl .ps{color:#4fd08a}
+.term .cl input{all:unset;flex:1;color:#fff;font-family:var(--fs-mono);font-size:12px}
+.term .cl .caret{width:7px;height:14px;background:#4fd08a;animation:cblink 1.1s steps(1) infinite}
+@keyframes cblink{50%{opacity:0}}
+.term .out{margin-top:10px;font-size:11px;line-height:1.55;color:#8fb6d6}
+.term .out .before{color:#8fb6d6}
+.term .out .after .diffminus{color:#e88;text-decoration:line-through;opacity:.7}
+.term .out .after .diffplus{color:#8ff0b0}
+.term .out .after .ok{color:#4fd08a}
+.term .runbtn2{margin-top:10px;display:inline-block;font-family:var(--fs-mono);font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:#0f1f30;background:#4fd08a;padding:5px 11px;cursor:pointer}
+
+/* =========================================================================
+   WORLD 3 — THE PERSONA (editorial portrait / a named voice)
+   committed cool-ivory + deep-forest ink + brass seal; serif display
+   ========================================================================= */
+.w-persona{
+  --iv:#eef0ea; --iv2:#e4e7de; --nk:#1b241e; --nk2:#4b564d; --nk3:#7c857b;
+  --teal:#0e6b60; --brass:#a97f2e; --hair:#cdd2c6;
+  background:
+    radial-gradient(130% 80% at 88% -10%,rgba(14,107,96,.10),transparent 55%),
+    var(--iv);
+  color:var(--nk);
+  font-family:Optima,Candara,"Gill Sans","Segoe UI",var(--fs-ui);
+}
+.w-persona .world-lead{color:var(--nk2)}
+.w-persona h3.blk{color:var(--nk3);letter-spacing:.18em}
+.w-persona .serif{font-family:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,"Times New Roman",serif}
+.w-persona .grow{grid-template-columns:repeat(auto-fill,minmax(250px,1fr))}
+
+.pcard{background:var(--iv);border:1px solid var(--hair);border-radius:4px;padding:22px 22px 20px;position:relative;box-shadow:0 14px 34px -22px rgba(27,36,30,.5)}
+.pcard-por{display:flex;gap:15px;align-items:center}
+.avatar{flex:0 0 auto;width:52px;height:52px;border-radius:50%;display:grid;place-items:center;font-family:"Iowan Old Style",Palatino,Georgia,serif;font-size:22px;font-weight:600;color:var(--iv);background:linear-gradient(140deg,var(--teal),#0a4f47)}
+.avatar.b{background:linear-gradient(140deg,var(--brass),#8a6420)}
+.avatar.c{background:linear-gradient(140deg,#5d6b8f,#3c4763)}
+.pcard-name{line-height:1.1}
+.pcard-name .nm{font-family:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;font-size:22px;font-weight:600;letter-spacing:-.01em}
+.pcard-name .ttl{font-size:12.5px;color:var(--nk2);margin-top:3px}
+.pcard-quote{font-family:"Iowan Old Style",Palatino,Georgia,serif;font-style:italic;font-size:15px;line-height:1.5;color:var(--nk);margin:17px 0 0;padding-left:14px;border-left:2px solid var(--teal)}
+.pcard-facts{margin:17px 0 0;border-top:1px solid var(--hair);padding-top:13px;display:grid;gap:8px}
+.pcard-facts .f{display:flex;gap:10px;font-size:12.5px}
+.pcard-facts .f .k{flex:0 0 92px;color:var(--nk3);letter-spacing:.02em}
+.pcard-facts .f .v{color:var(--nk);font-family:var(--fs-mono);font-size:11.5px}
+.pcard-facts .f .v.plain{font-family:inherit;font-size:12.5px}
+.pcard-seal{display:flex;align-items:center;gap:9px;margin:17px 0 0}
+.wax{flex:0 0 auto;width:34px;height:34px;border-radius:50%;background:radial-gradient(circle at 35% 30%,#c99a45,var(--brass) 60%,#7f5c1e);display:grid;place-items:center;color:#fff5df;font-size:14px;box-shadow:inset 0 -2px 4px rgba(0,0,0,.3)}
+.pcard-seal .txt{font-size:11px;color:var(--nk2);line-height:1.4}
+.pcard-seal .txt b{color:var(--nk)}
+.pcard-seal .txt .fp{font-family:var(--fs-mono);font-size:10px;color:var(--nk3)}
+.pcard-cta{margin:18px 0 0;width:100%;border:1px solid var(--nk);background:var(--nk);color:var(--iv);font-family:Optima,Candara,"Gill Sans",var(--fs-ui);font-size:13px;letter-spacing:.03em;padding:11px;border-radius:3px;cursor:pointer}
+
+/* chip — world 3 */
+.w-persona .statusbar{display:flex;align-items:center;gap:0;background:var(--iv);border:1px solid var(--hair);border-radius:4px;padding:6px 9px;font-size:11px;color:var(--nk3);font-family:var(--fs-mono)}
+.w-persona .statusbar .sp{flex:1}
+.chip-persona{display:inline-flex;align-items:center;gap:7px;font-family:Optima,Candara,"Gill Sans",var(--fs-ui);font-size:12px;color:var(--nk)}
+.chip-persona .av{width:19px;height:19px;border-radius:50%;background:linear-gradient(140deg,var(--teal),#0a4f47);display:grid;place-items:center;color:var(--iv);font-family:"Iowan Old Style",Palatino,serif;font-size:10px;font-weight:600}
+.chip-persona.none{color:var(--nk3)}
+.chip-persona.none .av{background:transparent;border:1px dashed var(--hair);color:var(--nk3)}
+
+/* edit affordance — world 3: brief the persona */
+.brief{background:var(--iv);border:1px solid var(--hair);border-radius:6px;padding:16px}
+.brief .to{font-size:11px;color:var(--nk3);letter-spacing:.04em;margin-bottom:8px}
+.brief .to b{color:var(--nk);font-family:var(--fs-mono)}
+.brief .say{display:flex;gap:9px;align-items:center;background:var(--iv2);border:1px solid var(--hair);border-radius:100px;padding:9px 8px 9px 15px}
+.brief .say span{flex:1;font-family:"Iowan Old Style",Palatino,Georgia,serif;font-style:italic;font-size:13.5px;color:var(--nk)}
+.brief .send{flex:0 0 auto;width:30px;height:30px;border-radius:50%;background:var(--teal);color:#fff;border:0;cursor:pointer;font-size:14px}
+.brief .stack{margin-top:14px}
+.brief .lab{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--nk3);margin-bottom:6px}
+.brief .before,.brief .after{font-family:"Iowan Old Style",Palatino,Georgia,serif;font-style:italic;font-size:14px;line-height:1.5;padding-left:13px;border-left:2px solid var(--hair);color:var(--nk2)}
+.brief .after{border-left-color:var(--teal);color:var(--nk)}
+.brief .after em{font-style:normal;background:color-mix(in srgb,var(--teal) 16%,transparent);padding:0 3px;border-radius:2px}
+
+/* =========================================================================
+   WORLD 4 — THE INSTRUMENT (tactile control surface / rack module)
+   committed graphite-anodized world; engraved condensed labels; LEDs
+   ========================================================================= */
+.w-rack{
+  --panel:#2a2d33; --panel2:#33373e; --groove:#16181c; --edge:#454a52;
+  --lab:#c7ccd4; --lab2:#878d97; --amber:#f5a524; --grn:#49d67f; --off:#3d424b;
+  --acc:#ff6a3d;
+  background:
+    linear-gradient(180deg,#31343a,#232529);
+  color:var(--lab);
+  font-family:"Helvetica Neue",Arial,var(--fs-ui);
+}
+.w-rack .world-lead{color:var(--lab2)}
+.w-rack h3.blk{color:var(--lab2);letter-spacing:.2em}
+.w-rack .grow{grid-template-columns:repeat(auto-fill,minmax(250px,1fr))}
+.eng{font-family:"Helvetica Neue","Arial Narrow",Arial;text-transform:uppercase;letter-spacing:.14em}
+
+.module{
+  background:linear-gradient(180deg,var(--panel2),var(--panel));
+  border:1px solid #1c1e22;border-top:1px solid #4a4f57;border-radius:8px;
+  padding:16px;position:relative;
+  box-shadow:0 16px 40px -20px rgba(0,0,0,.85),inset 0 1px 0 rgba(255,255,255,.05);
+}
+.module .screws{position:absolute;inset:6px;pointer-events:none}
+.module .screws i{position:absolute;width:7px;height:7px;border-radius:50%;background:radial-gradient(circle at 35% 30%,#565b63,#23252a);box-shadow:inset 0 0 0 1px #17181c}
+.module .screws i:nth-child(1){top:0;left:0}.module .screws i:nth-child(2){top:0;right:0}
+.module .screws i:nth-child(3){bottom:0;left:0}.module .screws i:nth-child(4){bottom:0;right:0}
+.mod-hd{display:flex;justify-content:space-between;align-items:center;padding-bottom:12px;border-bottom:1px solid var(--groove)}
+.mod-hd .role{font-family:"Helvetica Neue","Arial Narrow",Arial;font-size:16px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#eef1f5}
+.mod-hd .led{display:flex;align-items:center;gap:6px;font-size:8.5px;letter-spacing:.12em;color:var(--lab2)}
+.mod-hd .led .dot{width:9px;height:9px;border-radius:50%;background:var(--grn);box-shadow:0 0 8px var(--grn)}
+.mod-hd .led .dot.amber{background:var(--amber);box-shadow:0 0 8px var(--amber)}
+.mod-hd .led .dot.off{background:var(--off);box-shadow:none}
+.screen{margin:13px 0 0;background:#0c1a12;border:1px solid #06100a;border-radius:4px;padding:9px 11px;font-family:var(--fs-mono);font-size:10.5px;color:#63e39a;line-height:1.5;box-shadow:inset 0 2px 6px rgba(0,0,0,.6)}
+.screen .lo{color:#2f8f5c}
+.knobs{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:14px 0 0}
+.knob{text-align:center}
+.knob .dial{width:42px;height:42px;border-radius:50%;margin:0 auto;background:radial-gradient(circle at 38% 30%,#4b505a,#25272c);border:1px solid #16181c;position:relative;box-shadow:0 3px 6px rgba(0,0,0,.5)}
+.knob .dial::after{content:"";position:absolute;top:5px;left:50%;width:2px;height:12px;background:var(--acc);transform:translateX(-50%);border-radius:2px}
+.knob.k2 .dial::after{transform:translateX(-50%) rotate(38deg);transform-origin:50% 16px}
+.knob.k3 .dial::after{transform:translateX(-50%) rotate(-30deg);transform-origin:50% 16px}
+.knob .kl{font-family:"Helvetica Neue","Arial Narrow",Arial;font-size:8px;letter-spacing:.1em;text-transform:uppercase;color:var(--lab2);margin-top:6px}
+.knob .kv{font-family:var(--fs-mono);font-size:10px;color:var(--lab);margin-top:2px}
+.jacks{display:flex;gap:14px;align-items:center;margin:14px 0 0;padding-top:12px;border-top:1px solid var(--groove)}
+.jacks .jk{text-align:center}
+.jacks .jk .hole{width:20px;height:20px;border-radius:50%;background:radial-gradient(circle at 40% 35%,#1a1c20,#0a0b0d 70%);border:2px solid #4a4f57;margin:0 auto}
+.jacks .jk .jl{font-size:7.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--lab2);margin-top:5px}
+.jacks .serial{margin-left:auto;text-align:right;font-family:var(--fs-mono);font-size:9px;color:var(--lab2);line-height:1.5}
+.jacks .serial b{color:var(--lab)}
+.mod-cta{margin:14px 0 0;width:100%;border:1px solid #16181c;background:linear-gradient(180deg,#40454d,#2c2f35);color:#eef1f5;font-family:"Helvetica Neue","Arial Narrow",Arial;font-size:11px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;padding:9px;border-radius:5px;cursor:pointer;box-shadow:inset 0 1px 0 rgba(255,255,255,.08)}
+
+/* chip — world 4 */
+.w-rack .statusbar{display:flex;align-items:center;background:linear-gradient(180deg,#31343a,#26282d);border:1px solid #16181c;border-radius:6px;padding:6px 9px;font-family:var(--fs-mono);font-size:10px;color:var(--lab2)}
+.w-rack .statusbar .sp{flex:1}
+.chip-rack{display:inline-flex;align-items:center;gap:7px;font-family:"Helvetica Neue","Arial Narrow",Arial;text-transform:uppercase;letter-spacing:.08em;font-size:10.5px;color:#eef1f5;background:var(--groove);border:1px solid var(--edge);border-radius:5px;padding:4px 9px}
+.chip-rack .dot{width:8px;height:8px;border-radius:50%;background:var(--grn);box-shadow:0 0 7px var(--grn)}
+.chip-rack.none{color:var(--lab2)}
+.chip-rack.none .dot{background:var(--off);box-shadow:none}
+
+/* edit affordance — world 4: tune a parameter */
+.tune{background:linear-gradient(180deg,#2f3238,#26282d);border:1px solid #16181c;border-radius:8px;padding:15px}
+.tune .cmd{display:flex;gap:9px;align-items:center;background:#0c1a12;border:1px solid #06100a;border-radius:5px;padding:9px 11px;font-family:var(--fs-mono);font-size:11px;color:#63e39a}
+.tune .cmd .ps{color:var(--amber)}
+.tune .cmd .go{margin-left:auto;font-family:"Helvetica Neue","Arial Narrow",Arial;font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:#0c1a12;background:var(--amber);padding:5px 10px;border-radius:4px;cursor:pointer}
+.tune .rail{margin-top:16px}
+.tune .lab{font-family:"Helvetica Neue","Arial Narrow",Arial;font-size:8.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--lab2);display:flex;justify-content:space-between}
+.tune .fader{height:8px;border-radius:5px;background:#16181c;margin-top:7px;position:relative;box-shadow:inset 0 1px 3px rgba(0,0,0,.6)}
+.tune .fader .fill{position:absolute;left:0;top:0;bottom:0;border-radius:5px;background:linear-gradient(90deg,var(--amber),var(--acc));transition:width .4s ease}
+.tune .fader .knb{position:absolute;top:50%;width:16px;height:16px;border-radius:50%;background:radial-gradient(circle at 38% 30%,#5a5f68,#2a2c31);border:1px solid #16181c;transform:translate(-50%,-50%);transition:left .4s ease;box-shadow:0 2px 4px rgba(0,0,0,.6)}
+.tune .stack .before .fill{width:40%}.tune .stack .before .knb{left:40%}
+.tune .stack .after .fill{width:74%}.tune .stack .after .knb{left:74%}
+.tune .stack .note{font-family:var(--fs-mono);font-size:10px;color:#63e39a;margin-top:10px}
+.tune .stack .before .note{color:var(--lab2)}
+
+/* ---- B-honest edit-demo states (advisory-only editing) ---- */
+/* world 1 · card */
+.retune .pline{margin-bottom:0}
+.retune .before .pline,.retune .after .pline{margin-bottom:8px}
+.retune .lock{color:var(--gold);font-size:11.5px;line-height:1.45}
+.retune .lock .mk{margin-right:4px}
+.retune .maker{color:#41e0ff}
+.retune .hint{color:var(--faint);font-size:10px;margin-top:10px;letter-spacing:.02em}
+.retune .ok{color:#63e39a;font-size:11.5px;line-height:1.45}
+.retune .was{color:var(--faint);text-decoration:line-through}
+.retune .now{color:#41e0ff}
+/* world 2 · datasheet */
+.term .out .cl{margin-bottom:7px}
+.term .err{color:#ff9b8f;line-height:1.55}
+.term .err .code{color:#ffd166;font-weight:700}
+.term .maker2{color:#4fd08a}
+/* world 3 · persona */
+.brief .after.decline{border-left-color:var(--brass)}
+.brief .maker3{font-family:var(--fs-mono);font-size:11px;font-style:normal;color:var(--teal)}
+/* world 4 · instrument */
+.tune .fader.locked{opacity:.42}
+.tune .fader.locked .fill{background:var(--off);width:40%}
+.tune .fader.locked .knb{left:40%}
+.tune .padlock{color:var(--amber);margin-left:5px}
+.tune .locknote{color:var(--amber);font-family:var(--fs-mono);font-size:10px;line-height:1.45;margin-top:9px}
+.tune .oknote{color:#63e39a;font-family:var(--fs-mono);font-size:10px;margin-top:9px}
+.tune .swap{font-family:var(--fs-mono);font-size:12px;color:var(--lab);margin-top:9px}
+.tune .swap .was{color:var(--lab2);text-decoration:line-through}
+.tune .swap .now{color:var(--acc)}
+.tune .stack .before,.tune .stack .after{margin:0}
+/* hero personality lock cues */
+.tcard-frozen{margin:8px 0 0;font-family:var(--fs-ui);font-size:10px;color:var(--faint);letter-spacing:.02em}
+.tcard-frozen .mk{color:var(--gold);margin-right:3px}
+.pcard-frozen{margin:8px 0 0;font-family:var(--fs-mono);font-size:10.5px;color:var(--nk3)}
+.screen .lk{float:right;color:#2f8f5c}
+
+/* ---- footer ---- */
+.lb-foot{margin-top:56px;border-top:1px solid var(--line);padding-top:28px}
+.lb-foot h2{font-size:19px;margin:0 0 8px;letter-spacing:-.01em}
+.lb-foot p{margin:0 0 6px;color:var(--ink-2);font-size:14.5px;max-width:70ch;line-height:1.55}
+.lb-foot .q{display:grid;gap:9px;margin-top:16px;grid-template-columns:repeat(auto-fit,minmax(210px,1fr))}
+.lb-foot .q div{border:1px solid var(--line);border-radius:11px;padding:13px 15px;background:var(--paper-2);font-size:13px;color:var(--ink-2)}
+.lb-foot .q div b{display:block;color:var(--ink);font-size:13.5px;margin-bottom:3px}
+
+@media (prefers-reduced-motion:reduce){
+  *{animation:none!important;transition:none!important}
+}
+</style>
+
+<div class="lb">
+
+  <header class="lb-top">
+    <div class="lb-eyebrow">Design lookbook · v2 · advisory-only editing</div>
+    <h1 class="lb-h1">The intelligence chip, <em>four ways.</em></h1>
+    <p class="lb-dek">A droppable AI is an awkward object to design: it is <b>structured</b> like a form (a prompt, an engine, credentials, a signature), it must be <b>editable</b> like any rewritable, and it must be <b>browsable</b> in a gallery. These four directions each take a wildly different stance on what a droppable intelligence even <em>is</em> — a card to collect, a datasheet to read, a person to meet, a machine to operate. Same real content in every one. <b>v2:</b> the edit demos now honour the editing model you chose — <b>advisory-only</b>: the signed personality is frozen, and only the engine/affinity change by prompt.</p>
+    <nav class="lb-tabs">
+      <a class="lb-tab" href="#dir-1"><b>01</b> The Card</a>
+      <a class="lb-tab" href="#dir-2"><b>02</b> The Datasheet</a>
+      <a class="lb-tab" href="#dir-3"><b>03</b> The Persona</a>
+      <a class="lb-tab" href="#dir-4"><b>04</b> The Instrument</a>
+    </nav>
+  </header>
+
+  <!-- shared content model -->
+  <section class="lb-primer">
+    <h2>What every card is actually made of</h2>
+    <p>The mockups use the real signed <code>rwa-agent/1</code> fields — no invented data. The five personas below are the ones shipping in the gallery today.</p>
+    <dl class="field-legend">
+      <div><dt>role</dt><dd><span class="sgn">signed</span> · the handle, e.g. <code>concise-editor</code></dd></div>
+      <div><dt>description</dt><dd><span class="sgn">signed</span> · one-line tagline</dd></div>
+      <div><dt>system_prompt</dt><dd><span class="sgn">signed</span> · the personality; preview-only in-app</dd></div>
+      <div><dt>recommended_model + backend</dt><dd><span class="adv">advisory</span> · e.g. <code>sonnet-4-6 · openrouter</code></dd></div>
+      <div><dt>affinity</dt><dd><span class="adv">advisory</span> · doc kind it's tuned for, or "any"</dd></div>
+      <div><dt>vault_namespace_set</dt><dd><span class="sgn">signed</span> · credentials it can reach (usually none)</dd></div>
+      <div><dt>signature → verified</dt><dd><span class="sgn">signed</span> · shield + 16-char fingerprint</dd></div>
+      <div><dt>connect state</dt><dd>session-only · never stored in the file</dd></div>
+    </dl>
+    <div class="lb-caveat">
+      <span class="mk">⚠</span>
+      <span><b>There is no "list of skills" on a persona today.</b> Its real capabilities are its <b>model</b>, its <b>affinity</b>, and its <b>vault reach</b> — that's what I've surfaced as the structured "abilities" in each direction. If you want a genuine per-persona skills array added to the data model, that's a separate call — say the word and I'll flag it to the seed/spec owners.</span>
+    </div>
+  </section>
+
+  <!-- ==================== DIRECTION 1 — THE CARD ==================== -->
+  <section class="lb-dir" id="dir-1">
+    <div class="lb-cap">
+      <span class="no">01</span>
+      <h2>The Card</h2>
+      <span class="thesis">An AI is a collectible you own and drop into play. Foil = trust, stats = capability, flavour text = personality.</span>
+    </div>
+    <div class="lb-meta">
+      <span><b>metaphor</b> collectible / trading card</span>
+      <span><b>editing</b> advisory only · voice frozen</span>
+      <span><b>trust</b> holo foil vs matte</span>
+      <span><b>vibe</b> dark, iridescent, tactile</span>
+    </div>
+
+    <div class="lb-stage">
+      <div class="world w-card">
+        <p class="world-lead">Committed dark-holo world (single theme by design). The foil edge is the verified signature made physical — an unsigned drop can't earn the foil, so trust is legible at a glance across a whole binder.</p>
+
+        <div class="grow">
+          <!-- hero -->
+          <div class="tcard">
+            <div class="tcard-in">
+              <div class="tcard-top">
+                <div class="tcard-role">concise-editor</div>
+                <div class="tcard-type">Editor</div>
+              </div>
+              <p class="tcard-flavor">Tightens prose — shorter sentences, fewer hedges, meaning preserved.</p>
+              <div class="tcard-frozen"><span class="mk">🔒</span>voice signed by author · frozen</div>
+              <dl class="tcard-stats">
+                <div class="s"><dt>Engine</dt><dd>sonnet-4-6</dd></div>
+                <div class="s"><dt>Backend</dt><dd>openrouter</dd></div>
+                <div class="s"><dt>Affinity</dt><dd>any kind</dd></div>
+                <div class="s"><dt>Reach</dt><dd>no vault</dd></div>
+              </dl>
+              <div class="tcard-seal">
+                <svg width="13" height="15" viewBox="0 0 13 15" fill="none"><path d="M6.5 0 12 2.3v4.4C12 10.4 9.6 13.4 6.5 15 3.4 13.4 1 10.4 1 6.7V2.3L6.5 0Z" fill="#e8c37a" opacity=".18"/><path d="M6.5 1.1 11 2.9v3.8C11 9.7 9 12.2 6.5 13.6 4 12.2 2 9.7 2 6.7V2.9l4.5-1.8Z" stroke="#e8c37a"/><path d="m4.4 7 1.5 1.5L8.9 5.4" stroke="#e8c37a" stroke-width="1.1" fill="none"/></svg>
+                signed · 8a1063343bc3a89b
+              </div>
+              <button class="tcard-cta">Add to document</button>
+            </div>
+          </div>
+
+          <!-- gallery peers -->
+          <div class="tcard">
+            <div class="tcard-in">
+              <div class="tcard-top"><div class="tcard-role">presentation-coach</div><div class="tcard-type">Coach</div></div>
+              <p class="tcard-flavor">Sharper slides, one idea each.</p>
+              <dl class="tcard-stats">
+                <div class="s"><dt>Engine</dt><dd>gemini-3.5</dd></div>
+                <div class="s"><dt>Backend</dt><dd>openrouter</dd></div>
+                <div class="s full"><dt>Affinity</dt><dd>best for: presentation</dd></div>
+              </dl>
+              <div class="tcard-seal">
+                <svg width="13" height="15" viewBox="0 0 13 15" fill="none"><path d="M6.5 1.1 11 2.9v3.8C11 9.7 9 12.2 6.5 13.6 4 12.2 2 9.7 2 6.7V2.9l4.5-1.8Z" stroke="#e8c37a"/><path d="m4.4 7 1.5 1.5L8.9 5.4" stroke="#e8c37a" stroke-width="1.1" fill="none"/></svg>
+                signed · 6f14101570d15ec7
+              </div>
+              <button class="tcard-cta">Add to document</button>
+            </div>
+          </div>
+
+          <!-- untrusted example -->
+          <div class="tcard matte">
+            <div class="tcard-in">
+              <div class="tcard-ribbon">UNSIGNED</div>
+              <div class="tcard-top"><div class="tcard-role">free-editor</div><div class="tcard-type">?</div></div>
+              <p class="tcard-flavor">Rewrites anything, no limits. (Signature does not verify — no foil, can't be played.)</p>
+              <dl class="tcard-stats">
+                <div class="s"><dt>Engine</dt><dd>unknown</dd></div>
+                <div class="s"><dt>Backend</dt><dd>—</dd></div>
+                <div class="s"><dt>Affinity</dt><dd>—</dd></div>
+                <div class="s"><dt>Reach</dt><dd>—</dd></div>
+              </dl>
+              <div class="tcard-seal">✕ signature failed</div>
+              <button class="tcard-cta">Can't activate</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="demo-grid">
+          <div>
+            <h3 class="blk">In the status bar</h3>
+            <div class="statusbar">
+              <span>Document · saved</span>
+              <span class="sp"></span>
+              <span class="chip-card">◆ concise-editor</span>
+            </div>
+            <div style="height:9px"></div>
+            <div class="statusbar">
+              <span>Document · saved</span>
+              <span class="sp"></span>
+              <span class="chip-card none">◇ add an AI</span>
+            </div>
+          </div>
+          <div>
+            <h3 class="blk">Edit it with a prompt</h3>
+            <label class="flip retune">
+              <input type="checkbox">
+              <div class="stack">
+                <div class="before">
+                  <div class="pline"><span class="k">retune ▸</span><span>make it gentler</span><span class="runbtn">run</span></div>
+                  <div class="lock"><span class="mk">🔒</span><b>Its voice is signed by the author — frozen here.</b> The smallest surgical change stays the smallest surgical change. <span class="maker">Fork your own copy in the Maker →</span></div>
+                  <div class="hint">▸ click — the advisory fields ARE yours</div>
+                </div>
+                <div class="after">
+                  <div class="pline"><span class="k">retune ▸</span><span>use gemini instead</span><span class="runbtn">run</span></div>
+                  <div class="ok">Engine <span class="was">sonnet-4-6</span> → <span class="now">gemini-3.5</span> · advisory field · foil intact · this session only</div>
+                  <div class="hint">↩ click — try the frozen voice</div>
+                </div>
+              </div>
+            </label>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="lb-notes">
+      <div class="n"><h4>Why it works</h4><p>A binder of foil cards is genuinely fun to browse, and the foil-vs-matte split turns the signature — normally a boring shield — into the single most eye-catching thing on the card. Capability reads as "stats", which is honest here because they map to real fields.</p></div>
+      <div class="n risk"><h4>The risk</h4><p>Gamified stats can read as unserious for a tool people trust with their writing. Mitigation: the stats are real (engine/affinity/reach), never invented numbers, and the copy stays plain.</p></div>
+    </div>
+  </section>
+
+  <!-- ==================== DIRECTION 2 — THE DATASHEET ==================== -->
+  <section class="lb-dir" id="dir-2">
+    <div class="lb-cap">
+      <span class="no">02</span>
+      <h2>The Datasheet</h2>
+      <span class="thesis">An AI is a spec you read top to bottom — a component datasheet / punch-card manifest. Structure <em>is</em> the aesthetic.</span>
+    </div>
+    <div class="lb-meta">
+      <span><b>metaphor</b> engineering datasheet</span>
+      <span><b>editing</b> command line · signed writes rejected</span>
+      <span><b>trust</b> checksum stamp</span>
+      <span><b>vibe</b> brutalist blueprint, mono</span>
+    </div>
+
+    <div class="lb-stage">
+      <div class="world w-sheet">
+        <p class="world-lead">Committed cool-blueprint world, and the natural home for advisory-only editing: <b>ink fields are signed &amp; frozen, cyan fields are advisory &amp; editable</b> — the command line simply refuses to write the ink. Every field is labelled, aligned, monospaced; you edit by typing.</p>
+
+        <div class="grow">
+          <!-- hero -->
+          <div class="sheet">
+            <div class="holes"><i></i><i></i><i></i><i></i><i></i></div>
+            <div class="sheet-body">
+              <div class="sheet-hd">
+                <div>
+                  <div class="id">RWA-AGENT/1 · MANIFEST</div>
+                  <div class="role">concise-editor</div>
+                </div>
+                <div class="rev">REV 1<br>2026-07-06</div>
+              </div>
+              <div class="sheet-rows">
+                <div class="r"><span class="lab">DESC</span><span class="val">Tightens prose — shorter sentences, fewer hedges, meaning preserved.</span></div>
+                <div class="r"><span class="lab">PROMPT</span><span class="val">"You are a concision editor. Favor edits that shorten sentences, cut hedging…" <span class="nul">[240 chars]</span></span></div>
+                <div class="r"><span class="lab">MODEL</span><span class="val"><span class="adv">anthropic/claude-sonnet-4-6</span></span></div>
+                <div class="r"><span class="lab">BACKEND</span><span class="val"><span class="adv">openrouter</span></span></div>
+                <div class="r"><span class="lab">AFFINITY</span><span class="val"><span class="adv">* any kind</span></span></div>
+                <div class="r"><span class="lab">VAULT</span><span class="val"><span class="nul">∅ none</span></span></div>
+              </div>
+              <div class="sheet-foot">
+                <div class="sheet-sig">SIG <b>8a1063343bc3a89b</b> · Ed25519 · verified</div>
+                <div class="stamp ok">✓ AUTHENTIC</div>
+              </div>
+              <button class="sheet-dl">▼ Install to document</button>
+            </div>
+          </div>
+
+          <!-- peer -->
+          <div class="sheet">
+            <div class="holes"><i></i><i></i><i></i><i></i><i></i></div>
+            <div class="sheet-body">
+              <div class="sheet-hd">
+                <div><div class="id">RWA-AGENT/1 · MANIFEST</div><div class="role">translator</div></div>
+                <div class="rev">REV 1<br>2026-07-06</div>
+              </div>
+              <div class="sheet-rows">
+                <div class="r"><span class="lab">DESC</span><span class="val">German ↔ English, tone-preserving.</span></div>
+                <div class="r"><span class="lab">MODEL</span><span class="val"><span class="adv">google/gemini-3.5-flash</span></span></div>
+                <div class="r"><span class="lab">BACKEND</span><span class="val"><span class="adv">openrouter</span></span></div>
+                <div class="r"><span class="lab">AFFINITY</span><span class="val"><span class="adv">* any kind</span></span></div>
+                <div class="r"><span class="lab">VAULT</span><span class="val"><span class="nul">∅ none</span></span></div>
+              </div>
+              <div class="sheet-foot">
+                <div class="sheet-sig">SIG <b>96a2b1fb2c481dc6</b> · verified</div>
+                <div class="stamp ok">✓ AUTHENTIC</div>
+              </div>
+              <button class="sheet-dl">▼ Install to document</button>
+            </div>
+          </div>
+
+          <!-- fail example -->
+          <div class="sheet">
+            <div class="holes"><i></i><i></i><i></i><i></i><i></i></div>
+            <div class="sheet-body">
+              <div class="sheet-hd">
+                <div><div class="id">RWA-AGENT/1 · MANIFEST</div><div class="role">free-editor</div></div>
+                <div class="rev">REV ?<br>—</div>
+              </div>
+              <div class="sheet-rows">
+                <div class="r"><span class="lab">DESC</span><span class="val">Rewrites anything, no limits.</span></div>
+                <div class="r"><span class="lab">MODEL</span><span class="val"><span class="nul">unknown</span></span></div>
+                <div class="r"><span class="lab">VAULT</span><span class="val"><span class="nul">? undeclared</span></span></div>
+              </div>
+              <div class="sheet-foot">
+                <div class="sheet-sig">SIG <b>MISMATCH</b> · record altered</div>
+                <div class="stamp fail">✕ REJECT</div>
+              </div>
+              <button class="sheet-dl" style="background:#c5342b;border-color:#c5342b">✕ Cannot install</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="demo-grid">
+          <div>
+            <h3 class="blk">In the status bar</h3>
+            <div class="statusbar"><span>DOC · SAVED</span><span class="sp"></span><span class="chip-sheet">[◆] concise-editor</span></div>
+            <div style="height:9px"></div>
+            <div class="statusbar"><span>DOC · SAVED</span><span class="sp"></span><span class="chip-sheet none">[ ] no ai</span></div>
+          </div>
+          <div>
+            <h3 class="blk">Edit it with a prompt</h3>
+            <label class="flip term">
+              <input type="checkbox">
+              <div class="hd">edit manifest — cyan fields only</div>
+              <div class="body">
+                <div class="stack">
+                  <div class="before out">
+                    <div class="cl"><span class="ps">agent&gt;</span><span>set model gemini-3.5-flash</span><span class="caret"></span></div>
+                    <span class="diffminus">anthropic/claude-sonnet-4-6</span> → <span class="diffplus">google/gemini-3.5-flash</span><br><span class="ok">✓ advisory field · signature unaffected · session only</span>
+                  </div>
+                  <div class="after out">
+                    <div class="cl"><span class="ps">agent&gt;</span><span>set prompt "be gentler"</span><span class="caret"></span></div>
+                    <span class="err"><span class="code">E_SIGNED_FIELD</span> · system_prompt is signed by 8a10…a89b · write rejected.<br><span class="maker2">→ run `fork` in the Maker to author your own copy.</span></span>
+                  </div>
+                </div>
+                <span class="runbtn2">▸ try both</span>
+              </div>
+            </label>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="lb-notes">
+      <div class="n"><h4>Why it works</h4><p>It never pretends to be something it isn't. Signed vs advisory fields are visually distinct (ink vs cyan), the checksum stamp makes trust unambiguous, and "editing = typing a command" is the truest expression of a rewritable. It reads as trustworthy infrastructure.</p></div>
+      <div class="n risk"><h4>The risk</h4><p>Cold. A gallery of datasheets may not seduce a first-time visitor the way a portrait or a foil card does. Bet: precision and the red REJECT stamp carry enough drama for the audience that actually cares.</p></div>
+    </div>
+  </section>
+
+  <!-- ==================== DIRECTION 3 — THE PERSONA ==================== -->
+  <section class="lb-dir" id="dir-3">
+    <div class="lb-cap">
+      <span class="no">03</span>
+      <h2>The Persona</h2>
+      <span class="thesis">An AI is <em>someone</em> — a named voice with a face, a title, and a line you can hear it say. You don't rewrite it; you pick it, and point it at another engine.</span>
+    </div>
+    <div class="lb-meta">
+      <span><b>metaphor</b> editorial portrait / cast</span>
+      <span><b>editing</b> switch engine · voice is the author's</span>
+      <span><b>trust</b> wax-seal credential</span>
+      <span><b>vibe</b> warm, refined, serif</span>
+    </div>
+
+    <div class="lb-stage">
+      <div class="world w-persona">
+        <p class="world-lead">Committed cool-ivory world with a deep-teal voice and a brass credential seal — deliberately <em>not</em> the cream-and-terracotta editorial cliché. The system prompt becomes a pull-quote: the one line that lets you hear the voice before you hire it.</p>
+
+        <div class="grow">
+          <!-- hero -->
+          <div class="pcard">
+            <div class="pcard-por">
+              <div class="avatar">Ce</div>
+              <div class="pcard-name"><div class="nm serif">concise-editor</div><div class="ttl">Concision editor · tightens without flattening</div></div>
+            </div>
+            <p class="pcard-quote">"Favour the smallest surgical change that achieves the cut. Never pad, never add new claims."</p>
+            <div class="pcard-frozen">🔒 the author's line — signed, not editable here</div>
+            <div class="pcard-facts">
+              <div class="f"><span class="k">Speaks through</span><span class="v">claude-sonnet-4-6</span></div>
+              <div class="f"><span class="k">Specialises in</span><span class="v plain">any document</span></div>
+              <div class="f"><span class="k">Trusted with</span><span class="v plain">no credentials</span></div>
+            </div>
+            <div class="pcard-seal">
+              <div class="wax">✓</div>
+              <div class="txt"><b>Signed &amp; verified.</b><br><span class="fp">key 8a1063343bc3a89b · the author is the key, not the name</span></div>
+            </div>
+            <button class="pcard-cta">Bring it into this document</button>
+          </div>
+
+          <!-- peers -->
+          <div class="pcard">
+            <div class="pcard-por">
+              <div class="avatar b">Pr</div>
+              <div class="pcard-name"><div class="nm serif">proofreader</div><div class="ttl">Copy editor · corrects, never rewrites</div></div>
+            </div>
+            <p class="pcard-quote">"Fix only spelling, grammar, and punctuation. Leave correct text byte-identical."</p>
+            <div class="pcard-facts">
+              <div class="f"><span class="k">Speaks through</span><span class="v">gemini-3.5-flash</span></div>
+              <div class="f"><span class="k">Specialises in</span><span class="v plain">any document</span></div>
+            </div>
+            <div class="pcard-seal"><div class="wax">✓</div><div class="txt"><b>Signed &amp; verified.</b><br><span class="fp">key 6974bb8053df731a</span></div></div>
+            <button class="pcard-cta">Bring it into this document</button>
+          </div>
+
+          <div class="pcard">
+            <div class="pcard-por">
+              <div class="avatar c">Pl</div>
+              <div class="pcard-name"><div class="nm serif">playful-rewriter</div><div class="ttl">Stylist · adds wit, keeps the facts</div></div>
+            </div>
+            <p class="pcard-quote">"Loosen stiff, bureaucratic phrasing into something lively and human — but stay professional."</p>
+            <div class="pcard-facts">
+              <div class="f"><span class="k">Speaks through</span><span class="v">gemini-3.5-flash</span></div>
+              <div class="f"><span class="k">Specialises in</span><span class="v plain">any document</span></div>
+            </div>
+            <div class="pcard-seal"><div class="wax">✓</div><div class="txt"><b>Signed &amp; verified.</b><br><span class="fp">key 1ed40dc7307feefc</span></div></div>
+            <button class="pcard-cta">Bring it into this document</button>
+          </div>
+        </div>
+
+        <div class="demo-grid">
+          <div>
+            <h3 class="blk">In the status bar</h3>
+            <div class="statusbar"><span>Document · saved</span><span class="sp"></span><span class="chip-persona"><span class="av">Ce</span>concise-editor</span></div>
+            <div style="height:9px"></div>
+            <div class="statusbar"><span>Document · saved</span><span class="sp"></span><span class="chip-persona none"><span class="av">+</span>meet an AI</span></div>
+          </div>
+          <div>
+            <h3 class="blk">Edit it with a prompt</h3>
+            <label class="flip brief">
+              <input type="checkbox">
+              <div class="to">You say to <b>concise-editor</b></div>
+              <div class="say"><span>Be a touch warmer — lose the clinical tone.</span><button class="send">↑</button></div>
+              <div class="stack">
+                <div class="before"><div class="lab" style="font-family:var(--fs-mono)">tap to hear it answer ▸</div>Favour the smallest surgical change that achieves the cut.</div>
+                <div class="after decline"><div class="lab" style="font-family:var(--fs-mono)">it answers</div>"That line is my author's, and I keep to it — it's what my signature vouches for. I can speak through a faster engine if you like, or <span class="maker3">make your own edition of me in the Maker.</span>"</div>
+              </div>
+            </label>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="lb-notes">
+      <div class="n"><h4>Why it works</h4><p>It's the warmest, most browsable direction — a roster of characters invites the "who do I want in the room?" feeling. "Brief it" reframes prompt-editing as delegation, which is exactly the mental model of handing a document to an editor.</p></div>
+      <div class="n risk"><h4>The risk · B costs it the most</h4><p>Its signature move was reshaping the voice by briefing — exactly what advisory-only editing forbids. Now the persona can only decline in-character and switch engines, so the "hire an editor you can direct" promise shrinks to "hire a fixed editor, swap its engine." Plus: anthropomorphising is opinionated (monogram avatars stay abstract, not a fake photo), and the persona-graduation path is deferred, so don't over-promise personhood.</p></div>
+    </div>
+  </section>
+
+  <!-- ==================== DIRECTION 4 — THE INSTRUMENT ==================== -->
+  <section class="lb-dir" id="dir-4">
+    <div class="lb-cap">
+      <span class="no">04</span>
+      <h2>The Instrument</h2>
+      <span class="thesis">An AI is a piece of gear you rack, patch, and tune. The engine and routing are knobs you turn; the voice is a sealed, signed module.</span>
+    </div>
+    <div class="lb-meta">
+      <span><b>metaphor</b> synth module / rack unit</span>
+      <span><b>editing</b> patch the engine · voice params locked</span>
+      <span><b>trust</b> engraved serial + lit LED</span>
+      <span><b>vibe</b> graphite, industrial, LEDs</span>
+    </div>
+
+    <div class="lb-stage">
+      <div class="world w-rack">
+        <p class="world-lead">Committed graphite-anodized world. Connection state — the one thing that's session-only and easy to lose — becomes a hardware power LED: green when connected, amber when a model is recommended but not wired, dark when off. Semantic colour, kept separate from the accent.</p>
+
+        <div class="grow">
+          <!-- hero -->
+          <div class="module">
+            <div class="screws"><i></i><i></i><i></i><i></i></div>
+            <div class="mod-hd">
+              <div class="role">concise-editor</div>
+              <div class="led"><span class="dot"></span>CONNECTED</div>
+            </div>
+            <div class="screen"><span class="lk">🔒</span><span class="lo">VOICE //</span> concision editor — shortens, cuts hedging, keeps facts &amp; voice</div>
+            <div class="knobs">
+              <div class="knob"><div class="dial"></div><div class="kl">Engine</div><div class="kv">sonnet-4-6</div></div>
+              <div class="knob k2"><div class="dial"></div><div class="kl">Backend</div><div class="kv">openrouter</div></div>
+              <div class="knob k3"><div class="dial"></div><div class="kl">Affinity</div><div class="kv">any</div></div>
+            </div>
+            <div class="jacks">
+              <div class="jk"><div class="hole"></div><div class="jl">vault</div></div>
+              <div class="serial">SER · <b>8a1063343bc3a89b</b><br>ED25519 · AUTHENTICATED</div>
+            </div>
+            <button class="mod-cta">Patch into document</button>
+          </div>
+
+          <!-- peers -->
+          <div class="module">
+            <div class="screws"><i></i><i></i><i></i><i></i></div>
+            <div class="mod-hd"><div class="role">presentation-coach</div><div class="led"><span class="dot amber"></span>WANTS GEMINI</div></div>
+            <div class="screen"><span class="lo">VOICE //</span> sharper slides, one idea per slide, parallel bullets</div>
+            <div class="knobs">
+              <div class="knob"><div class="dial"></div><div class="kl">Engine</div><div class="kv">gemini-3.5</div></div>
+              <div class="knob k2"><div class="dial"></div><div class="kl">Backend</div><div class="kv">openrouter</div></div>
+              <div class="knob k3"><div class="dial"></div><div class="kl">Affinity</div><div class="kv">deck</div></div>
+            </div>
+            <div class="jacks"><div class="jk"><div class="hole"></div><div class="jl">vault</div></div><div class="serial">SER · <b>6f14101570d15ec7</b><br>AUTHENTICATED</div></div>
+            <button class="mod-cta">Patch into document</button>
+          </div>
+
+          <!-- off example -->
+          <div class="module">
+            <div class="screws"><i></i><i></i><i></i><i></i></div>
+            <div class="mod-hd"><div class="role">translator</div><div class="led"><span class="dot off"></span>NOT CONNECTED</div></div>
+            <div class="screen"><span class="lo">VOICE //</span> German ↔ English, tone-preserving</div>
+            <div class="knobs">
+              <div class="knob"><div class="dial"></div><div class="kl">Engine</div><div class="kv">gemini-3.5</div></div>
+              <div class="knob k2"><div class="dial"></div><div class="kl">Backend</div><div class="kv">openrouter</div></div>
+              <div class="knob k3"><div class="dial"></div><div class="kl">Affinity</div><div class="kv">any</div></div>
+            </div>
+            <div class="jacks"><div class="jk"><div class="hole"></div><div class="jl">vault</div></div><div class="serial">SER · <b>96a2b1fb2c481dc6</b><br>AUTHENTICATED</div></div>
+            <button class="mod-cta">Connect a model first</button>
+          </div>
+        </div>
+
+        <div class="demo-grid">
+          <div>
+            <h3 class="blk">In the status bar</h3>
+            <div class="statusbar"><span>DOC</span><span class="sp"></span><span class="chip-rack"><span class="dot"></span>concise-editor</span></div>
+            <div style="height:9px"></div>
+            <div class="statusbar"><span>DOC</span><span class="sp"></span><span class="chip-rack none"><span class="dot"></span>no module</span></div>
+          </div>
+          <div>
+            <h3 class="blk">Edit it with a prompt</h3>
+            <label class="flip tune">
+              <input type="checkbox">
+              <div class="stack">
+                <div class="before">
+                  <div class="cmd"><span class="ps">tune&gt;</span> add more warmth<span class="go">set</span></div>
+                  <div class="rail">
+                    <div class="lab"><span>Warmth · voice<span class="padlock">🔒</span></span><span>signed parameter</span></div>
+                    <div class="fader locked"><div class="fill"></div><div class="knb"></div></div>
+                    <div class="locknote">🔒 VOICE params are signed — the knob won't turn. Fork it in the Maker to re-voice.</div>
+                  </div>
+                </div>
+                <div class="after">
+                  <div class="cmd"><span class="ps">tune&gt;</span> patch engine gemini<span class="go">set</span></div>
+                  <div class="rail">
+                    <div class="lab"><span>Engine · routing</span><span>advisory · turns freely</span></div>
+                    <div class="swap"><span class="was">sonnet-4-6</span> → <span class="now">gemini-3.5</span></div>
+                    <div class="oknote">✓ engine patched · signature untouched · session only</div>
+                  </div>
+                </div>
+              </div>
+            </label>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="lb-notes">
+      <div class="n"><h4>Why it works</h4><p>It solves the real UX problem the others gloss over: <b>connection state is invisible and easy to lose</b>. As a power LED it's the first thing you see. "Tune a parameter" makes prompt-editing feel precise and reversible rather than a black box.</p></div>
+      <div class="n risk"><h4>The risk · B locks its best knob</h4><p>The expressive move — the warmth fader — is a signed voice parameter, so under advisory-only editing it's frozen; only the engine/routing knobs turn. A tactile surface that promises "tune everything" but greys out its most tempting control invites the exact frustration B is meant to avoid. (Also: skeuomorphism dates fast — kept matte, no glossy bevels — so it leans hardest on execution.)</p></div>
+    </div>
+  </section>
+
+  <!-- footer -->
+  <footer class="lb-foot">
+    <h2>Where this stands</h2>
+    <p><b>Two decisions are locked in.</b> Editing model = <b>advisory-only (B)</b>: a chip's personality is a signed, frozen artifact; only its engine/affinity change by prompt, and "make it different" routes to the Maker. Surface = <b>both</b> the cold gallery listing and the in-app chip — editing governs only the in-app side, so the gallery cards stay pure listings. Every edit demo above now reflects that.</p>
+    <div class="q">
+      <div><b>Pick a lead</b> B favours <b>02 Datasheet</b> and <b>01 Card</b> — their "edit = configure" story survives intact. It undercuts <b>03</b> &amp; <b>04</b>, whose charm was reshaping the voice.</div>
+      <div><b>Steal parts</b> e.g. the Datasheet's signed/advisory colour-coding + the Instrument's connection LED. Mixes welcome.</div>
+      <div><b>Kill list</b> Anything that's an obvious no, so I stop spending effort there.</div>
+      <div><b>Still open · skills</b> A real per-persona skills array, or is model + affinity + vault enough?</div>
+    </div>
+  </footer>
+
+</div>
+<script>
+(function(){
+  var b=document.getElementById('themebtn'),r=document.documentElement;
+  b.addEventListener('click',function(){
+    var cur=r.getAttribute('data-theme');
+    var dark=cur?cur==='dark':matchMedia('(prefers-color-scheme:dark)').matches;
+    r.setAttribute('data-theme',dark?'light':'dark');
+  });
+})();
+</script>
+</body>
+</html>
