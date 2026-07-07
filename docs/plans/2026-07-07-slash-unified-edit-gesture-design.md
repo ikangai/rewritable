@@ -186,3 +186,18 @@ typing. Manual recipe (open a real Chromium on the regenerated `hello.html`):
 6. Click into empty space (nothing focused), press `/` → the whole-document prompt opens.
 
 Expected: no stray `/` characters typed anywhere the gesture fires; one ⌘Z reverts each edit.
+
+## 10. Retire the persistent lens bar (operator ask 2026-07-07)
+
+With the `/` gesture as the command surface + edit-first boot, the always-docked lens card
+(`#rwa-lens`) became redundant *and* visible clutter that fights the reference's on-demand model.
+Retired via CSS (`#rwa-lens { display:none }`); `body padding-bottom` 160px→48px. Surgical on
+purpose: the card's markup + its anchor/sourcemap engine STAY (the anchor is shared with inline
+edit; `tests/lens.mjs`'s 262 checks drive the machinery through the still-present elements, and
+jsdom ignores `display`, so all stay green). Doc-level commands now come from the `/` gesture (pal)
++ ⌘K; block/selection from the `/` gesture. **Dropped UI entries (surfaced, not silent):**
+`/skin like <desc>` free-form skin (presets stay on the ✦ menu), the `/image` picker (drag-drop +
+paste stay), and the no-model plain-text append (operator chose to drop it — content is added via
+`/` + the model). Open follow-ups if wanted: re-home `/skin like` (a field on the ✦ panel), and a
+reference-style idle `/` hint for discoverability (the seed has no idle affordance now that the
+lens is hidden).
