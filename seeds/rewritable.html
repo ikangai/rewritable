@@ -59,6 +59,17 @@ body{font-family:var(--font-ui);background:var(--bg);color:var(--text);min-heigh
 #rwa-ai-panel{position:fixed;top:50px;right:12px;background:var(--white);border:1px solid var(--gray-200);border-radius:var(--radius-sm);padding:14px;display:none;width:340px;max-width:calc(100vw - 24px);z-index:999;box-shadow:0 4px 16px rgba(0,0,0,0.08);font-family:var(--font-ui);font-size:13px;line-height:1.5;color:var(--gray-700);}
 #rwa-ai-panel.open{display:block;}
 #rwa-ai-panel p{margin:0 0 10px;}
+/* advisory-only chip edit — a command-line-style tune surface within the grayscale system.
+   The "advisory only" kicker sets the expectation the B contract enforces. */
+.rwa-ai-edit{display:grid;grid-template-columns:1fr auto;gap:6px 8px;align-items:center;margin-top:10px;padding-top:10px;border-top:1px solid var(--gray-100);}
+.rwa-ai-edit-kicker{grid-column:1/-1;font-family:var(--font-mono);font-size:9px;letter-spacing:1.5px;text-transform:uppercase;color:var(--gray-500);}
+.rwa-ai-edit input[data-ai-edit]{width:100%;font-family:var(--font-mono);font-size:12px;padding:6px 9px;border:1px solid var(--gray-300);border-radius:8px;background:var(--gray-50);color:var(--gray-900);}
+.rwa-ai-edit input[data-ai-edit]::placeholder{color:var(--gray-400);}
+.rwa-ai-edit button[data-ai-edit-run]{font:inherit;font-size:12px;padding:6px 12px;border:1px solid var(--gray-900);border-radius:8px;background:var(--gray-900);color:var(--white);cursor:pointer;}
+.rwa-ai-edit-result{grid-column:1/-1;font-family:var(--font-mono);font-size:11px;line-height:1.5;color:var(--gray-600);}
+.rwa-ai-edit-result:empty{display:none;}
+.rwa-ai-edit-result.ok{color:var(--green);}
+.rwa-ai-edit-result a{color:var(--gray-900);}
 #rwa-st-menu-panel{position:fixed;top:50px;right:12px;background:var(--white);border:1px solid var(--gray-200);border-radius:var(--radius-sm);padding:6px;display:flex;flex-direction:column;gap:2px;min-width:172px;z-index:999;box-shadow:0 4px 16px rgba(0,0,0,0.08);}
 #rwa-st-menu-panel[hidden]{display:none;}
 .rwa-st-menu-item{display:flex;align-items:center;gap:10px;background:transparent;border:0;border-radius:6px;padding:8px 10px;font:500 13px var(--font-ui);color:var(--gray-800);cursor:pointer;text-align:left;text-transform:none;letter-spacing:0;}
@@ -2450,8 +2461,13 @@ function renderAiPanel(panel) {
     const desc = a.description ? '<div>' + escRuntimeHtml(a.description) + '</div>' : '';
     rows.push('<div class="rwa-mode-row"><div><div class="rwa-mode-title">' + escRuntimeHtml(a.role) + '</div>' + desc + '<div class="rwa-mode-meta">' + escRuntimeHtml(meta) + '</div></div>' + btns + '</div>');
   }
+  // Advisory-only edit input — only under an ACTIVE AI (the target of the edit). Personality is
+  // signed+frozen; this can only change model/backend (spec §3). Wired below.
+  const editBlock = active
+    ? '<div class="rwa-ai-edit"><div class="rwa-ai-edit-kicker">Tune this AI · advisory only</div><input type="text" data-ai-edit aria-label="Edit this AI" placeholder="Change its model — e.g. “use gemini”"><button type="button" data-ai-edit-run>Apply</button><div class="rwa-ai-edit-result" data-ai-edit-result></div></div>'
+    : '';
   panel.innerHTML = [
-    '<div class="rwa-mode-section"><div class="rwa-mode-kicker">AI</div>' + (rows.length ? rows.join('') : '<div class="rwa-mode-empty">No AI installed yet.</div>') + '</div>',
+    '<div class="rwa-mode-section"><div class="rwa-mode-kicker">AI</div>' + (rows.length ? rows.join('') : '<div class="rwa-mode-empty">No AI installed yet.</div>') + editBlock + '</div>',
     '<div class="rwa-mode-section"><p>Drop an AI file anywhere on this page — or browse the <a href="https://rewritable.ikangai.com/ai" target="_blank" rel="noopener">AI Gallery</a>.</p>',
     '<div class="rwa-mode-actions"><button type="button" id="rwa-ai-manual">set up manually (⚙)</button></div></div>',
   ].join('');
@@ -2489,6 +2505,37 @@ function renderAiPanel(panel) {
     renderAiChip(); renderAiPanel(panel);
   }));
   panel.querySelectorAll('[data-agent-advoff]').forEach(btn => btn.addEventListener('click', () => { runtimeRemoveAdvisor(btn.getAttribute('data-agent-advoff')); renderAiChip(); renderAiPanel(panel); }));
+  // Advisory-only edit: applyChipEdit either applies model/backend (session) or declines a signed
+  // edit and points at the Maker. It can NEVER write a signed field (see classifyChipEdit).
+  const editInput = panel.querySelector('[data-ai-edit]');
+  const editRun = panel.querySelector('[data-ai-edit-run]');
+  if (editInput || editRun) {
+    const LABEL = { system_prompt: 'instructions', role: 'name', description: 'description', vault: 'credential reach' };
+    const runChipEditUi = () => {
+      const val = ((editInput && editInput.value) || '').trim();
+      if (!val) return;
+      const r = (typeof applyChipEdit === 'function') ? applyChipEdit(val) : { action: 'decline', reason: 'unrecognized', redirect: 'maker' };
+      if (r.action === 'apply') {
+        renderAiChip(); renderAiPanel(panel); // re-render so the status line reflects the new model/backend
+        const res = panel.querySelector('[data-ai-edit-result]');
+        if (res) { res.textContent = r.field === 'model' ? ('✓ now using ' + r.value + ' · this session') : ('✓ backend → ' + r.value + ' · this session'); res.className = 'rwa-ai-edit-result ok'; }
+        return;
+      }
+      const res = panel.querySelector('[data-ai-edit-result]');
+      if (!res) return;
+      const who = (active && active.role) || 'This AI'; // raw — escaped once with the lead below
+      const lab = LABEL[r.field] || 'personality';
+      // Appositive phrasing ("<field> — signed …") avoids is/are disagreement across singular
+      // (name/description) and plural (instructions) labels; casing differs per lead.
+      const lead = r.reason === 'signed'
+        ? '🔒 ' + who + '’s ' + lab + ' — signed by its author, kept as written. Make your own copy in'
+        : 'I can change its model or backend (e.g. “use gemini”). To change how it writes, fork your own copy in';
+      res.innerHTML = escRuntimeHtml(lead) + ' <a href="https://rewritable.ikangai.com/ai/maker" target="_blank" rel="noopener">the AI Maker</a> →';
+      res.className = 'rwa-ai-edit-result decline';
+    };
+    if (editRun) editRun.addEventListener('click', runChipEditUi);
+    if (editInput) editInput.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); runChipEditUi(); } });
+  }
 }
 
 // ─── Agent (rwa-edit/1) ─────────────────────────────────────────────
@@ -8627,6 +8674,54 @@ window.__rwaOfferRecommendedModel = offerRecommendedModel;
 window.__rwaActivateAgent = runtimeActivateAgent;
 window.__rwaResolveSystemPrompt = resolveSystemPrompt; // I-E test hook — the assembled modify() prompt
 window.__rwaGetActiveActor = getActiveActor;
+
+// ── Chip advisory-only edit (docs/plans/2026-07-06-intelligence-chip-datasheet-card-design.md §3).
+// "Edit the AI with a prompt" — but the signed fields (role, description, system_prompt,
+// vault_namespace_set) are INSIDE the Ed25519 signature, so editing them would break it. This
+// contract is ADVISORY-ONLY: the ONLY apply path is the unsigned model/backend (the same fields
+// I-A applies to sessionStorage). Everything else — personality, role, vault, or anything we don't
+// recognise — DECLINES and points the user at the Maker (re-author under their own key = model C).
+// classifyChipEdit never returns action:'apply' for a signed field; applyChipEdit routes apply
+// through applyRecommendation(), which can only ever write RWA.K_MODEL / RWA.K_BACKEND.
+// A deliberately tiny convenience map — a full model id (with a '/') always applies verbatim; an
+// unknown shorthand declines with a "give the full id" nudge rather than guessing.
+const CHIP_MODEL_ALIASES = { gemini: 'google/gemini-3.5-flash', sonnet: 'anthropic/claude-sonnet-4-6' };
+function classifyChipEdit(instruction) {
+  const raw = String(instruction == null ? '' : instruction).trim();
+  const s = raw.toLowerCase();
+  if (!s) return { action: 'decline', reason: 'unrecognized', redirect: 'maker' };
+  // 1) advisory — backend (enum). A backend name in a use/switch/run/via/on/to context.
+  const bm = s.match(/\b(?:use|using|via|on|to|switch(?:\s+to)?|run(?:\s+on|\s+with)?|backend)\s+(openrouter|ollama|lm ?studio|atomic|bridge-session|bridge)\b/);
+  if (bm) { const be = bm[1].replace(/\s+/g, ''); if (REC_BACKENDS.includes(be)) return { action: 'apply', field: 'backend', value: be }; }
+  // 2) advisory — model. Only a VALID token (full id or known alias) applies; anything else falls
+  //    through to a decline, so a personality instruction can never be mistaken for a model set.
+  const mm = s.match(/\b(?:use|using|switch(?:\s+to)?|run(?:\s+on|\s+with)?|try|with|set(?:\s+the)?(?:\s+model)?(?:\s+to)?|change(?:\s+the)?(?:\s+model)?(?:\s+to)?)\s+(?:the\s+)?([a-z0-9][a-z0-9._:\/-]*)/);
+  if (mm) {
+    const tokenLc = mm[1];
+    if (CHIP_MODEL_ALIASES[tokenLc]) return { action: 'apply', field: 'model', value: CHIP_MODEL_ALIASES[tokenLc] };
+    if (tokenLc.indexOf('/') >= 0) {
+      const idm = raw.match(/[A-Za-z0-9][A-Za-z0-9._:\/-]*\/[A-Za-z0-9._:\/-]+/);
+      const id = idm ? idm[0] : mm[1];
+      if (REC_MODEL_RE.test(id)) return { action: 'apply', field: 'model', value: id };
+    }
+  }
+  // 3) decline — name the signed field for a helpful message; default to 'unrecognized'.
+  let field = null;
+  if (/\b(vault|credential|credentials|namespace|api ?key|secret|access to|reach)\b/.test(s)) field = 'vault';
+  else if (/\b(rename|renamed?|call it|role name|its name|the name)\b/.test(s)) field = 'role';
+  else if (/\b(tagline|description|summary line|one-liner)\b/.test(s)) field = 'description';
+  else if (/\b(be|being|make|sound|tone|voice|personality|behav\w*|gentl\w*|warm\w*|nicer|friendl\w*|formal|casual|funn\w*|strict\w*|rewrite|instruction\w*|prompt|always|never|stop|start|answer|respond|translate|write|act)\b/.test(s)) field = 'system_prompt';
+  if (field) return { action: 'decline', reason: 'signed', field: field, redirect: 'maker' };
+  return { action: 'decline', reason: 'unrecognized', redirect: 'maker' };
+}
+function applyChipEdit(instruction) {
+  const c = classifyChipEdit(instruction);
+  if (c.action !== 'apply') return c;
+  const applied = applyRecommendation(c.field === 'model' ? { model: c.value } : { backend: c.value });
+  return Object.assign({}, c, { applied: applied });
+}
+window.__rwaClassifyChipEdit = classifyChipEdit;
+window.__rwaApplyChipEdit = applyChipEdit;
 
 // §4/§5a — does a network: host pattern admit a host? Mirror of cli/src/skill-manifest.mjs
 // matchNetworkOrigin (keep in step). The bridge's per-call origin check.

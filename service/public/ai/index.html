@@ -173,6 +173,50 @@
     .maker-card { padding: 24px 22px; }
     .footer-inner { flex-direction: column; align-items: flex-start; gap: 16px; }
   }
+
+  /* ── Card treatment (Composition A): holographic collectibles on a dark stage.
+     docs/plans/2026-07-06-intelligence-chip-datasheet-card-design.md §5. CSS-only over the
+     existing static markup — the badges read as "stats", the shield becomes a foil seal, the
+     download button becomes foil. The gallery grid sits on a dark band so the dark cards read as
+     intentional collectibles, not stray dark islands. Scoped to .ai-card so the page's other
+     primary buttons (maker CTA) stay grayscale. */
+  .gallery {
+    background:
+      radial-gradient(120% 80% at 15% -10%, rgba(143,107,255,0.16), transparent 55%),
+      radial-gradient(90% 70% at 100% 0%, rgba(65,224,255,0.10), transparent 50%),
+      #0c0d16;
+    padding-top: 36px; padding-bottom: 44px;
+  }
+  .ai-card {
+    position: relative; overflow: hidden;
+    border: 1.5px solid transparent; border-radius: 16px;
+    background:
+      linear-gradient(180deg, #141626, #0d0f1c) padding-box,
+      linear-gradient(115deg, #41e0ff, #8f6bff 46%, #ff9ad1 72%, #ffd166) border-box;
+    box-shadow: 0 20px 50px -24px rgba(0,0,0,0.8);
+  }
+  .ai-card::before {
+    content: ""; position: absolute; inset: 0; pointer-events: none; z-index: 0;
+    background: linear-gradient(125deg, transparent 42%, rgba(255,255,255,0.10) 48%, transparent 55%);
+    transform: translateX(-30%); transition: transform 0.6s ease; mix-blend-mode: screen;
+  }
+  .ai-card > * { position: relative; z-index: 1; }
+  .ai-card:hover { border-color: transparent; box-shadow: 0 26px 60px -22px rgba(0,0,0,0.9); }
+  .ai-card:hover::before { transform: translateX(35%); }
+  .ai-card-head h3 { color: #eaecff; }
+  .ai-card-desc { color: #9498c4; }
+  .ai-card .badge { border-color: #232742; background: #0e1020; color: #c3c6e6; }
+  .ai-card .badge-model { color: #eaecff; }
+  .ai-card .badge-affinity { border-color: rgba(65,224,255,0.5); color: #7fe3ff; background: rgba(65,224,255,0.08); }
+  .ai-card .badge-any { color: #6a6e9a; }
+  .ai-card .fingerprint { color: #e8c37a; }
+  .ai-card .fingerprint svg { stroke: #e8c37a; }
+  .ai-card .btn-primary {
+    background: linear-gradient(115deg, #41e0ff, #8f6bff 46%, #ff9ad1 72%, #ffd166);
+    color: #0c0d16; border-color: transparent; font-weight: 700;
+  }
+  .ai-card .btn-primary:hover { filter: brightness(1.08); background: linear-gradient(115deg, #41e0ff, #8f6bff 46%, #ff9ad1 72%, #ffd166); }
+  @media (prefers-reduced-motion: reduce) { .ai-card::before { transition: none; } }
 </style>
 </head>
 <body>
