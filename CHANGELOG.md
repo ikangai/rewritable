@@ -2,6 +2,16 @@
 
 Notable changes to `re-write-able`. The container format is versioned in `re-write-able-spec.md`; the edit protocol in `rwa-edit-spec.md`; the structural-transform DSL in `rwa-edit-dsl-spec.md`. The CLI follows semver in `cli/package.json`.
 
+## 2026-07-08 — the unified "/" edit gesture: the document is the editor (cli 0.18.0)
+
+The in-document editing model is reworked around a single idea — **the document is the editor**. Ported from a reference interaction; entirely additive to the inline-edit / mode / selection layer. There is **no new commit or undo path**: the `/` gestures produce edits through the existing agent + anchor pipeline, so the frozen wall, `data-rwa-id` stability, the 3-attempt retry budget, and one-edit-one-`⌘Z` all still hold.
+
+- **Edit-first boot.** A `document`-kind container now opens in **Edit** mode — click anywhere and type on open, no mode switch. View-first kinds (presentation et al.) still open in reading/present mode; the **View/Edit** segment flips between them.
+- **The unified `/` gesture.** One key, scope inferred from where you are: `/` mid-text → an instruction on **that block**; **select text first** and `/` → exactly that selection (across blocks too); `/` with **nothing focused** → the **whole document**. Mid-word slashes (`and/or`, `6/7`, `http://`) stay literal; `//` escapes to a literal `/` (alongside the existing `\/`).
+- **The docked lens bar is retired.** Doc-level commands come from the `/` gesture (and `⌘K`); the lens's anchor/sourcemap engine stays (it is shared with inline edit). A quiet, pointer-transparent idle **`/` hint** replaces it as the discoverability affordance. The free-form **`/skin like <description>`** synthesized skin is re-homed as a "describe a look" field on the ✦ Skins panel; image insertion stays on drag-drop / paste.
+
+Pinned by `tests/inline-edit.mjs` (189/189 — the `/` scope gesture is groups C6/C6b + G1–G11), `tests/mode.mjs` (18/18, reworked for edit-first), `tests/skin-compose.mjs` (95/95), and the neighbouring seed suites (lens 262, view 23, e2e 294); conformance 86/86. Design: `docs/plans/2026-07-07-slash-unified-edit-gesture-design.md`. Deployed at `rewritable.ikangai.com`.
+
 ## 2026-07-06 — drop-in AI + the typed artifact drop bus (cli 0.17.0)
 
 The emitted seed gains two seed-level features (browser-proven; `rwa new` now ships them).
