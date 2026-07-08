@@ -2,6 +2,38 @@
 
 All notable changes to the `rewritable` CLI (`rwa`).
 
+## [0.18.0] - 2026-07-08
+
+Seed-only release — no change to the CLI's own code (verified: `cli/src` and `cli/bin`
+byte-identical to 0.17.0); `rwa new` / `import` emit the updated bootstrap. Full detail
+in the root [`CHANGELOG.md`](../CHANGELOG.md) (2026-07-08).
+
+### Added
+- **The unified `/` edit gesture.** A `document` container boots **edit-first** (click
+  anywhere and type on open; view-first kinds still open in reading mode). One `/` reaches
+  the AI, scope inferred from context — mid-text → this block, with a selection → exactly
+  that selection (across blocks), nothing focused → the whole document. Mid-word slashes
+  stay literal; `//` escapes to a literal `/`. The docked lens bar is retired for a quiet
+  idle `/` hint; `/skin like <desc>` moves onto the ✦ Skins panel.
+- **Advisory-only AI chip editing.** The AI panel gains a "Tune this AI · advisory only"
+  prompt — model / backend are prompt-editable (session-only); the signed personality
+  stays frozen and redirects to the Maker. (The online gallery Card restyle is
+  service-side, not in the CLI.)
+
+## [0.17.0] - 2026-07-06
+
+The bundled seed gains two features (they ship via `rwa new`). Full detail in the root
+[`CHANGELOG.md`](../CHANGELOG.md) (2026-07-06).
+
+### Added
+- **Drop-in AI (`intelligence/0.3` §7).** Model selection becomes a status-bar **AI chip**
+  + panel, a unified "Use this AI" consent card (install + activate + apply-recommended-
+  model + connect in one gesture), and a drop-invitation. The carriers it consumes are
+  authored by `rwa intelligence new` (0.15.0).
+- **The typed artifact drop bus (`rwa-artifact/1`).** One classifier over three drop
+  classes — `install` (AI / skill carrier), `ingest` (image), `compose` (skin) — each
+  keeping its own trust model, with an author-declared `accepts` gate.
+
 ## [0.16.1] - 2026-07-02
 
 ### Fixed
