@@ -12,6 +12,15 @@ The in-document editing model is reworked around a single idea — **the documen
 
 Pinned by `tests/inline-edit.mjs` (189/189 — the `/` scope gesture is groups C6/C6b + G1–G11), `tests/mode.mjs` (18/18, reworked for edit-first), `tests/skin-compose.mjs` (95/95), and the neighbouring seed suites (lens 262, view 23, e2e 294); conformance 86/86. Design: `docs/plans/2026-07-07-slash-unified-edit-gesture-design.md`. Deployed at `rewritable.ikangai.com`.
 
+## 2026-07-08 — the intelligence chip: tune your AI + a gallery Card (cli 0.18.0)
+
+The drop-in-AI chip becomes **editable like the document it lives in**, and the online gallery gets a look to match. Both browser-proven; shipped in the same 0.18.0 seed.
+
+- **Advisory-only chip editing.** The AI panel gains a **"Tune this AI · advisory only"** prompt: type *"use gemini"* or *"switch to ollama"* and it re-points this session's model/backend (through the existing recommended-model apply path — sessionStorage only, never the API key). Anything that would change the AI's **personality** — its instructions, role, description, or credential reach — is **declined and redirected to the Maker**, because those fields are inside the Ed25519 signature and editing them would break it. The routing is deterministic (no model call), and the contract structurally *cannot* write a signed field — so "edit your AI with a prompt" holds without letting a prompt silently re-author a signed role or widen its vault reach.
+- **The gallery Card treatment.** `rewritable.ikangai.com/ai` restyles its cards into signed **collectibles** — foil-edged holographic cards on a dark stage, the verification shield rendered as a gold "signed" seal, the recommended model + affinity as stats. CSS-only over the existing markup; the page chrome and the "Make your own AI" CTA stay grayscale.
+
+Pinned by `tests/chip-edit.mjs` (26/26 — the contract E1–E4 with a 15-instruction no-signed-field-leak battery, plus the panel UI F1–F3); neighbours green (ai-chip 76, e2e 294, intelligence-{drop 38, blend 19, affinity 11, model-rec 23}). Design: `docs/plans/2026-07-06-intelligence-chip-datasheet-card-design.md`. Deployed at `rewritable.ikangai.com`.
+
 ## 2026-07-06 — drop-in AI + the typed artifact drop bus (cli 0.17.0)
 
 The emitted seed gains two seed-level features (browser-proven; `rwa new` now ships them).

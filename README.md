@@ -49,6 +49,15 @@ The agent backend is selectable in the ⚙ settings panel. **OpenRouter** is the
 
 Send the file by email, put it on a USB stick, commit it to git. The recipient opens it in a browser and it runs.
 
+## Choosing and tuning the AI
+
+The document needs a model to run the `/` gesture and ⌘K. Two ways to give it one:
+
+- **The ⚙ settings panel** (above) — paste a key, pick a backend, done. The power-user path.
+- **Drop in an AI.** An **AI** here is a small signed file — a named editor personality (a *concise editor*, a *proofreader*, a *translator*) with a recommended model. Browse a few at [`rewritable.ikangai.com/ai`](https://rewritable.ikangai.com/ai), download one, and drag it onto any rewritable: a **"Use this AI"** card shows who signed it (by key fingerprint, *not* name), what it is allowed to reach, and a preview of its instructions — one confirmation installs, activates, and connects it. The active AI shows as a chip in the status bar. Author your own at [`/ai/maker`](https://rewritable.ikangai.com/ai/maker) — the Ed25519 signing key is generated in your browser and never leaves it.
+
+Click the chip to open the **AI panel** and **tune the active AI with a prompt** — but only its *advisory* settings: *"use gemini"* or *"switch to ollama"* re-points this session's model/backend. Its **personality is signed and frozen** — asking to change how it writes (its instructions, name, or credential reach) is declined with a link to fork your own copy in the Maker, because those fields are covered by the signature and editing them would break it. The identity you trust is the author's key; the model is only ever this session's choice, never stored in the file.
+
 ## Getting a fresh file
 
 Three ways, all produce the same self-contained `.html`:
@@ -218,6 +227,7 @@ The messaging and voice surfaces in `surfaces/` are **adapters onto the one cont
 - [`docs/specs/rwa-lens-spec.md`](docs/specs/rwa-lens-spec.md) — the lens edit model: a single steerable input with default and anchored states, slash-discriminated content vs. instruction, class-declared locks, the working-block inline-edit surface, and the selection formatting bubble. Currently rwa-lens/1 (v0.12).
 - [`docs/specs/rwa-operations-api.md`](docs/specs/rwa-operations-api.md) — the surface-agnostic operations contract: the five verbs every surface speaks (`bootstrap / import / modify / describe / publish`) and the three shared wire strings (`rwa-edit/1`, `rwa-edit-dsl/1`, `self-description/1`). The routing index that ties CLI, lens, service, hosted runtime, skill, and the messaging/voice adapters to one contract. Currently v0.1 (draft).
 - [`docs/specs/re-write-able-actions-spec-v0.8.md`](docs/specs/re-write-able-actions-spec-v0.8.md) — the actions/skill layer: signed skills, the permission tiers, the install-consent trust anchor, Worker isolation, the vault. v0.8 (built); v0.9 additions (agents, hooks, `bus:`/`fsa:`/`idb:` tiers, confusable detection) are specified in [`re-write-able-actions-spec-v0.9.md`](docs/specs/re-write-able-actions-spec-v0.9.md) (built).
+- [`docs/specs/rwa-intelligence-spec.md`](docs/specs/rwa-intelligence-spec.md) — droppable "intelligences": a signed editor personality (the `rwa-agent/1` role) plus a recommended model, the chip/gallery/maker UX, and the advisory-only tuning above. Currently intelligence/0.3.
 - [`CHANGELOG.md`](CHANGELOG.md) — release notes.
 
 ## Related
