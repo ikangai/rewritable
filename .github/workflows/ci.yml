@@ -42,6 +42,13 @@ jobs:
       - name: Install test deps
         working-directory: tests
         run: npm install --no-audit --no-fund
+      # Not self-contained: datatable.mjs shells out to `rwa edit` / `rwa doc`
+      # to prove the CLI and the seed agree on the same container, so the root
+      # suite needs the CLI's dependencies installed too. This is invisible
+      # locally, where every node_modules already exists.
+      - name: Install CLI deps (root suite shells out to rwa)
+        working-directory: cli
+        run: npm ci --no-audit --no-fund
       - name: Run all root tests
         # run-all.mjs enforces a per-file timeout and treats a file that never
         # exits as a failure. Nine files used to hang forever on SUCCESS because
@@ -77,8 +84,18 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-      # service/ has no dependencies by design. It does have a cmp gate that
-      # asserts service/lib/* stays a byte-identical mirror of cli/src/*.
+      # The service RUNTIME is zero-dep by design, but its TEST SUITE is not:
+      # vendored-apply.test.mjs shells out to cli/bin/rwa.mjs (needs `marked`
+      # et al.) to prove service/lib/* stays a byte-identical mirror of
+      # cli/src/*, and hosted.test.mjs needs jsdom. Both resolve from sibling
+      # installs locally, which is why this passes on a dev machine and failed
+      # on the first CI run.
+      - name: Install CLI deps (vendored-apply shells out to rwa)
+        working-directory: cli
+        run: npm ci --no-audit --no-fund
+      - name: Install test deps (hosted.test.mjs needs jsdom)
+        working-directory: tests
+        run: npm install --no-audit --no-fund
       - name: Test
         run: node --test service/tests/*.test.mjs
 
