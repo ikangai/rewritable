@@ -670,4 +670,4 @@ function dropEventOn(el, dt) {
 // ─── tail ───────────────────────────────────────────────────────────
 await settle();
 console.log(`\n${pass} passed, ${fail} failed`);
-if (fail > 0) process.exit(1);
+process.exit(fail ? 1 : 0);

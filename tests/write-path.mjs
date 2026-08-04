@@ -142,5 +142,5 @@ const env = (find, replace) => ({ version: 'rwa-edit/1', edits: [{ find, replace
   check("no actor passed → defaults to 'user:lens' (back-compat)", !!def && def.actor === 'user:lens');
 
   console.log(`\n== Summary ==\n${pass} pass, ${fail} fail`);
-  if (fail > 0) process.exit(1);
+  process.exit(fail ? 1 : 0);
 })().catch(e => { console.error(e); process.exit(1); });

@@ -1250,4 +1250,4 @@ console.log('\n== G11: the idle "/" hint exists and gates on the command palette
 
 // ─────────────────────────────────────────────────────────────────────
 console.log(`\n${pass} pass, ${fail} fail`);
-if (fail) process.exit(1);
+process.exit(fail ? 1 : 0);

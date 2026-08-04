@@ -91,4 +91,4 @@ check('base64 round-trips an ASCII prompt unchanged', roundtrip('plain ascii pro
 check('base64 round-trips a unicode prompt unchanged', roundtrip('café — 日本語 — 🎉') === 'café — 日本語 — 🎉');
 
 console.log(`\n${pass} passed, ${fail} failed`);
-if (fail > 0) process.exit(1);
+process.exit(fail ? 1 : 0);

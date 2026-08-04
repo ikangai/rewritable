@@ -252,5 +252,5 @@ async function boot({ kind = 'document', title = 'Doc', body = null } = {}) {
     !u2d.affordances.some(a => a.kind === 'view' && a.name === 'grid'));
 
   console.log(`\n== Summary ==\n${pass} pass, ${fail} fail`);
-  if (fail > 0) process.exit(1);
+  process.exit(fail ? 1 : 0);
 })().catch(e => { console.error(e); process.exit(1); });

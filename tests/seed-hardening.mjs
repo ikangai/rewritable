@@ -130,4 +130,4 @@ console.log('\n== #5 rwa-id-strict (opt-in) ==');
 }
 
 console.log(`\n${pass} pass, ${fail} fail`);
-if (fail) process.exit(1);
+process.exit(fail ? 1 : 0);

@@ -151,5 +151,5 @@ async function boot(body, { suppress } = {}) {
   }
 
   console.log(`\n== Summary ==\n${pass} pass, ${fail} fail`);
-  if (fail > 0) process.exit(1);
+  process.exit(fail ? 1 : 0);
 })().catch(e => { console.error(e); process.exit(1); });

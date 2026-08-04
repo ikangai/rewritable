@@ -226,4 +226,4 @@ check('11. Authorization: Bearer <token> sent on /session/* calls',
 resetResponses();
 
 console.log(`\n${pass} passed, ${fail} failed`);
-if (fail > 0) process.exit(1);
+process.exit(fail ? 1 : 0);
