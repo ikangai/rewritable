@@ -184,6 +184,8 @@ This catches the realistic accidental-damage signal — splitting a `<script>` t
 
 Edits that *intend* to add or remove a `<script>` or `<style>` tag must use `replace_document` (§6). This is a deliberate constraint: such changes are structural and rare, and routing them through the wholesale-rewrite path keeps `apply_edits` for surgical changes within the existing scripting/styling skeleton.
 
+**`replace_document` is no longer unconditionally exempt for `<script>`.** The escape hatch is exempt from the *shape* check, but an agent-authored increase in **executable** script count is refused with `script_introduction_denied` unless the container allows it. The reason is security rather than structure: a document's own `<script>` is re-created and executed on the very render that commits it, so an agent induced by injected text to add one gets it running immediately, with the user's key in reach. Only `EXEC_TYPES` scripts count (`''`, `text/javascript`, `application/javascript`, `module`) — data-carrying types such as `text/rwa-step` workflow step bodies are not executable and are never gated, in any product kind. `<style>` remains fully exempt: skinning composes theme blocks through this path. The permission is a container capability set once by the user, not a per-edit prompt. See `docs/received-container-threat-model-2026-08-04.md` §2/§5.
+
 ---
 
 ## 6. replace_document — the escape hatch
@@ -409,7 +411,8 @@ The retry budget is per-modify, not lifetime. Each ⌘K starts a fresh conversat
 | `frozen_zone_violation` | An edit's `find` or `replace` contains a reserved marker substring or `data-rwa-frozen`. |
 | `frozen_zone_corrupted` | After applying, frozen-zone names, pairing, or inner content do not match the original. |
 | `parse_error_post_apply` | The resulting doc fails `DOMParser` (`text/html`) — a `<parsererror>` element appears in the parsed tree. |
-| `structural_shape_changed` | `<script>` count or `<style>` count differs between the original and post-apply doc. Returned with before/after pairs. `apply_edits` only; `replace_document` is exempt. |
+| `structural_shape_changed` | `<script>` count or `<style>` count differs between the original and post-apply doc. Returned with before/after pairs. `apply_edits` only; `replace_document` is exempt (but see `script_introduction_denied`). |
+| `script_introduction_denied` | `replace_document` would increase the count of **executable** `<script>` tags and the container does not allow agent-authored scripts. `<style>` and data-typed scripts (e.g. `text/rwa-step`) are unaffected. §9.1. |
 | `replace_too_large` | An individual edit's `replace` field exceeds the per-edit size cap (default 8 KB). |
 | `target_size_exceeded` | Resulting doc exceeds the implementation-defined whole-document size cap. |
 | `concurrent_modify` | A modify is already in progress. Returned by the modify-lifecycle wrapper, not by `apply_edits`. |

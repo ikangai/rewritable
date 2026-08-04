@@ -1541,27 +1541,55 @@ const docCrlf = await window.getDoc();
 check('48: edit with CRLF in replace succeeded', docCrlf.includes('<p>line2a</p>') && docCrlf.includes('<p>line2b</p>'));
 check('48: stored doc is LF-only (no CR characters)', !docCrlf.includes('\r'));
 
-// Test 49: replace_document is intentionally allowed to change script/style count.
+// Test 49: replace_document is intentionally allowed to change STYLE count —
 // apply_edits enforces shape invariance, but replace_document is the escape
-// hatch where shape may legitimately change. Pin this down so a future
-// tightening doesn't accidentally apply the shape check to replace_document.
-console.log('\n== Test 49: replace_document may change script/style count ==');
-await seedDoc('<div>plain-49</div>');
-const newDoc49 = '<style>.k{}</style>\n<script>const Y=1;</script>\n<div>after-rd-shape</div>';
+// hatch where shape may legitimately change (skinning-v2 relies on this to
+// land a <style> the agent could never add itself). SCRIPT count is
+// different: issue #5 (docs/received-container-threat-model-2026-08-04.md
+// §2/§5) closed the "unrestricted <script> rides the escape hatch straight
+// through" chain — a script INCREASE is now denied unless scripts are
+// allowed for this container (this harness boots PRODUCT_KIND === 'document'
+// with no rwa_state override, so denied-by-default is the case pinned here).
+// The full capability-flag matrix (workflow default, the opt-in flag, the
+// refusal bar) lives in tests/agent-scripts.mjs.
+console.log('\n== Test 49: replace_document style-count change allowed, script-count increase denied ==');
+
+// 49a: style count may change freely.
+await seedDoc('<div>plain-49a</div>');
+const newDoc49a = '<style>.k{}</style>\n<div>after-rd-style-shape</div>';
 fetchHandler = async () => ({
   ok: true, json: async () => ({
     choices: [{ message: {
       role: 'assistant', content: '',
-      tool_calls: [{ id: 'rd49', type: 'function', function: {
+      tool_calls: [{ id: 'rd49a', type: 'function', function: {
         name: 'replace_document',
-        arguments: JSON.stringify({ version: 'rwa-edit/1', doc: newDoc49, reason: 'add scaffolding' }),
+        arguments: JSON.stringify({ version: 'rwa-edit/1', doc: newDoc49a, reason: 'add scaffolding' }),
       } }],
     } }],
   }),
 });
-await window.modify('replace_document scaffolding');
+await window.modify('replace_document style scaffolding');
 await new Promise(r => setTimeout(r, 100));
-check('49: replace_document changing script/style count allowed', (await window.getDoc()) === newDoc49);
+check('49a: replace_document changing style count allowed', (await window.getDoc()) === newDoc49a);
+
+// 49b: script count increase is denied by default (issue #5).
+await seedDoc('<div>plain-49b</div>');
+const docBefore49b = await window.getDoc();
+const newDoc49b = '<script>const Y=1;</script>\n<div>after-rd-script-shape</div>';
+fetchHandler = async () => ({
+  ok: true, json: async () => ({
+    choices: [{ message: {
+      role: 'assistant', content: '',
+      tool_calls: [{ id: 'rd49b', type: 'function', function: {
+        name: 'replace_document',
+        arguments: JSON.stringify({ version: 'rwa-edit/1', doc: newDoc49b, reason: 'add scaffolding' }),
+      } }],
+    } }],
+  }),
+});
+await window.modify('replace_document script scaffolding');
+await new Promise(r => setTimeout(r, 100));
+check('49b: replace_document adding a <script> denied by default', (await window.getDoc()) === docBefore49b);
 
 // Tests 50a-d: replace_document data-rwa-frozen element preservation matrix.
 // Tests 45a-c cover the apply_edits side. The snapshot-equality check also

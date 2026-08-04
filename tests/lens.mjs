@@ -877,8 +877,11 @@ console.log('\n== Test L8.7: prompt names .rwa-locked blocks ==');
     /rwa-locked|class.declared|class-declared/i.test(prompt));
   // Stronger check: a dedicated mention must appear OUTSIDE the embedded <DOC>
   // body, otherwise the agent only "sees" the lock as a side-effect of the
-  // class attribute being copied into the doc verbatim.
-  const docIdx = prompt.indexOf('<DOC>');
+  // class attribute being copied into the doc verbatim. #5: the fence is now
+  // nonce-tagged (<DOC nonce="...">) and mentioned once inline before the
+  // real fence — lastIndexOf finds the real opening tag, which starts the
+  // actual document body.
+  const docIdx = prompt.lastIndexOf('<DOC');
   const head = docIdx >= 0 ? prompt.slice(0, docIdx) : prompt;
   check('lock annotation appears in prompt header (before <DOC>)',
     /rwa-locked|class.declared|class-declared/i.test(head));

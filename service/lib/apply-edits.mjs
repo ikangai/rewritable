@@ -95,6 +95,10 @@ export const FAILURE_HINTS = {
   empty_find: 'find must be a non-empty string — provide the exact text to anchor on.',
   parse_error_post_apply: 'The result was not well-formed HTML — check that the tags in replace are balanced.',
   unknown_asset_reference: 'src uses an rwa-asset: token that does not exist in this document. Copy tokens verbatim from existing <img> tags; never invent or edit them.',
+  // Issue #5 — mirrored for hint-text parity only. The CLI has no rwa_state
+  // (browser-only IDB) so it does not enforce this gate itself; the seed's
+  // replaceDocument is the sole enforcement point.
+  script_introduction_denied: 'This document does not allow the AI to add <script> tags. Make the edit without introducing a script, or ask the user to allow scripts for this document first.',
 };
 
 // ─── Image-asset virtualization (images-v1) ─────────────────────────

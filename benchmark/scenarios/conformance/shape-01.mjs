@@ -23,13 +23,16 @@ export default {
   async run({ harness }) {
     const ctx = await harness.fresh();
     try {
-      // Setup: a doc with a <script>. replaceDocument bypasses shape checks
-      // (it's the escape hatch for shape changes), so we can inject one.
-      const seedDoc = await ctx.getDoc();
-      await ctx.replaceDocument(
-        { version: 'rwa-edit/1', doc: '<div class="hello"><script>window.foo=1;</script><p>x</p></div>', reason: 'SHAPE-01 setup' },
-        seedDoc,
-      );
+      // Setup: a doc with a <script>. Use the fixture-only ctx.setDoc bypass
+      // rather than ctx.replaceDocument — since issue #5, replaceDocument
+      // itself refuses to INCREASE the script count unless scripts are
+      // allowed for this container (this harness boots PRODUCT_KIND ===
+      // 'document' with no rwa_state override), which is exactly what would
+      // happen here. That gate is orthogonal to what SHAPE-01 exercises
+      // (apply_edits shape rejection + a replace_document retry that REMOVES
+      // the script, a decrease the gate never blocks) — setDoc seeds the
+      // fixture without going through runtime validation at all.
+      await ctx.setDoc('<div class="hello"><script>window.foo=1;</script><p>x</p></div>');
 
       // Stub the model: turn 1 emits apply_edits removing the script;
       // turn 2 emits replace_document with a no-script doc.
