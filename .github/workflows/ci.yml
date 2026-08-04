@@ -1,0 +1,157 @@
+name: CI
+
+# The evaluator that sits outside the loop (issue #3).
+#
+# This repo is developed by parallel agents that write both the code and the
+# tests that pin it, and it carries ~20 cross-site mirror obligations of which
+# only ~6 had automated gates. Until this file existed, every one of those was
+# enforced by a human remembering to run a command.
+#
+# Two constraints follow from that, and they are load-bearing:
+#   1. A change must not be able to weaken the gate that judges it. The
+#      `verifier-integrity` job below surfaces that; enforcing it needs branch
+#      protection, which is a repo setting the operator must enable.
+#   2. The benchmark oracles are an INDEPENDENT implementation the code is
+#      judged against, not assertions the code's author wrote. That is the
+#      project's strongest verification asset — extend it, don't dilute it.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # tests/ and benchmark/ do not commit their lockfiles (both are gitignored),
+  # so `npm ci` is not available there. Only cli/ has a tracked lockfile.
+  NODE_VERSION: '24'
+
+jobs:
+  root-tests:
+    name: Root suite (seed runtime, jsdom)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Install test deps
+        working-directory: tests
+        run: npm install --no-audit --no-fund
+      - name: Run all root tests
+        # run-all.mjs enforces a per-file timeout and treats a file that never
+        # exits as a failure. Nine files used to hang forever on SUCCESS because
+        # they only exited on failure; that is why this runner exists.
+        run: node tests/run-all.mjs
+        env:
+          TEST_TIMEOUT_MS: '180000'
+
+  cli-tests:
+    name: CLI suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: cli/package-lock.json
+      - name: Install
+        working-directory: cli
+        run: npm ci --no-audit --no-fund
+      - name: Test
+        working-directory: cli
+        run: npm test
+
+  service-tests:
+    name: Service suite (zero-dep)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      # service/ has no dependencies by design. It does have a cmp gate that
+      # asserts service/lib/* stays a byte-identical mirror of cli/src/*.
+      - name: Test
+        run: node --test service/tests/*.test.mjs
+
+  benchmark:
+    name: Conformance + fidelity (stub)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Install
+        working-directory: benchmark
+        run: npm install --no-audit --no-fund
+      - name: Conformance
+        working-directory: benchmark
+        run: npm run conformance
+      - name: Fidelity (stub model — no API key needed)
+        working-directory: benchmark
+        run: npm run fidelity:stub
+
+  refs-fresh:
+    name: References regenerate cleanly
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      # "Regenerate references after a seed change" is a CLAUDE.md rule that was
+      # enforced only by memory. If regeneration produces a diff, the committed
+      # references have drifted from seeds/rewritable.html.
+      - name: Regenerate
+        run: node tools/regenerate-refs.mjs
+      - name: Assert no drift
+        run: |
+          if ! git diff --quiet; then
+            echo "::error::References are stale. Run 'node tools/regenerate-refs.mjs' and commit the result."
+            git diff --stat
+            exit 1
+          fi
+          echo "References are in sync with the seed."
+
+  verifier-integrity:
+    name: Verifier integrity (advisory)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      # A change should not be able to weaken the thing that judges it. This job
+      # only ANNOTATES — making it blocking requires branch protection with a
+      # required review, which the operator must configure. Reported rather than
+      # silently tolerated, so the tradeoff stays visible.
+      - name: Flag self-judging changes
+        # Interpolations are bound through env rather than pasted into the shell.
+        # These two are commit SHAs, but the safe pattern is the default here.
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          changed=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")
+          gate=$(echo "$changed" | grep -E '^(\.github/workflows/|benchmark/oracles/|tools/self-description\.mjs|tests/run-all\.mjs)' || true)
+          code=$(echo "$changed" | grep -E '^(seeds/|cli/src/|service/(server\.js|lib/))' || true)
+          if [ -n "$gate" ] && [ -n "$code" ]; then
+            echo "::warning::This PR changes both the verifier and the code it judges."
+            echo "Verifier files touched:"; echo "$gate" | sed 's/^/  /'
+            echo "Judged code touched:"; echo "$code" | sed 's/^/  /'
+            echo "Weakening a gate should be a separate, visible change. Please split, or state why not in the PR."
+          else
+            echo "No self-judging change detected."
+          fi
