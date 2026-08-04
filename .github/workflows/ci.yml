@@ -93,8 +93,11 @@ jobs:
       - name: Install CLI deps (vendored-apply shells out to rwa)
         working-directory: cli
         run: npm ci --no-audit --no-fund
-      - name: Install test deps (hosted.test.mjs needs jsdom)
-        working-directory: tests
+      # hosted.test.mjs resolves jsdom + fake-indexeddb through a
+      # benchmark-scoped createRequire (see its comment at ~line 1622), so the
+      # deps must be installed in benchmark/, not tests/.
+      - name: Install benchmark deps (hosted.test.mjs resolves jsdom there)
+        working-directory: benchmark
         run: npm install --no-audit --no-fund
       - name: Test
         run: node --test service/tests/*.test.mjs
