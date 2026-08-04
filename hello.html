@@ -272,6 +272,12 @@ body:not([data-rwa-mode="document"]) #rwa-view-chrome{display:none!important;}
 #rwa-private-mode-banner h2{font-size:18px;font-weight:600;color:var(--gray-900);margin:0 0 12px;}
 #rwa-private-mode-banner p{font-size:14px;color:var(--gray-700);margin:0 0 8px;line-height:1.5;}
 #rwa-private-mode-banner .rwa-pm-detail{font-size:12px;color:var(--gray-500);font-family:var(--font-mono);}
+/* Boot reconciliation (docs/plans/2026-08-04-boot-reconciliation-design.md §3.5):
+   a PERSISTENT bar, not a toast — stays until Keep/Use resolves it. */
+#rwa-reconcile-bar{position:fixed;top:0;left:0;right:0;z-index:50;display:flex;align-items:center;justify-content:center;gap:10px;flex-wrap:wrap;padding:10px 16px;background:var(--yellow);color:var(--gray-900);font-family:var(--font-ui);font-size:13px;box-shadow:0 2px 8px rgba(0,0,0,0.08);}
+#rwa-reconcile-bar[hidden]{display:none;}
+#rwa-reconcile-bar button{font:inherit;font-size:12px;padding:5px 10px;border:1px solid var(--gray-900);border-radius:6px;background:var(--white);color:var(--gray-900);cursor:pointer;}
+#rwa-reconcile-bar button:hover{background:var(--gray-100);}
 .rwa-frag-pulse{animation:rwa-frag-pulse 1.6s ease-out;}
 @keyframes rwa-frag-pulse{0%{background:rgba(59,130,246,0.22);}100%{background:transparent;}}
 [data-rwa-anchored]{outline:2px solid var(--gray-900);outline-offset:2px;border-radius:4px;}
@@ -2169,7 +2175,16 @@ async function rwaBumpDirtyCount() {
 async function rwaResetDirtyCount() { await rwaSetDirtyCount(0); }
 // rwaResetOnCommit is a named commit-hook seam: keep separate from
 // rwaResetDirtyCount so future commit-only logic (e.g., last_commit_ts) lands here.
-async function rwaResetOnCommit()   { await rwaResetDirtyCount(); }
+// Boot-reconciliation §3.2: a successful save is one of exactly two moments the
+// doc_baseline is written — the file's body now IS canonLF(doc), so record
+// H(canonLF(doc)) as the new baseline. Own try/catch: no crypto.subtle (§3.6)
+// must not block the dirty-count reset commit() already depends on.
+async function rwaResetOnCommit(doc) {
+  await rwaResetDirtyCount();
+  if (doc != null) {
+    try { await rwaWriteBaseline(await rwaSha256Hex(canonLF(doc))); } catch (_) {}
+  }
+}
 
 function showCommitNudge(n) {
   let t = document.querySelector('.rwa-lens-toast[data-kind="commit-nudge"]');
@@ -2255,6 +2270,145 @@ function rwaShowPrivateModeBanner() {
 // Expose for tests only.
 window.rwaDetectPrivateMode = rwaDetectPrivateMode;
 window.rwaShowPrivateModeBanner = rwaShowPrivateModeBanner;
+
+// ─── Boot reconciliation ────────────────────────────────────────────
+// docs/plans/2026-08-04-boot-reconciliation-design.md. rwa_state['doc_baseline']
+// = { baseHash, at } records the file's body hash as of the last time this
+// runtime was in sync with it (hydration or a successful save — §3.2). It is
+// compared against a fresh hash of INLINE_DOC at every boot (§3.3) — never
+// against rwa_doc, because blessing rewrites rwa_doc on every fresh open and
+// must never read as divergence (§2).
+let rwaDivergence = null; // { fileHash } while unresolved; gates commit() (§3.5)
+
+async function rwaSha256Hex(s) {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s));
+  return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('');
+}
+async function rwaWriteBaseline(hash) {
+  await idbPut(RWA.STATE, { baseHash: hash, at: new Date().toISOString() }, 'doc_baseline');
+}
+
+// Called from the boot IIFE right after getDoc(), before block-id blessing (§3.4).
+// Own try/catch (§3.6): no crypto.subtle, or any other failure, degrades to
+// today's behaviour — IDB wins, nothing recorded. A boot crash would be
+// strictly worse than the bug this closes.
+async function reconcileBootDoc(doc) {
+  // Hosted shim (§5 D2): the server is authoritative and serves an un-blessed
+  // body so the client's hash stays equal to the server's baseBodyHash.
+  // Reconciliation must stay as inert as the blessing it sits beside — same
+  // flag, same reason.
+  if (window.__rwaSuppressBlockIds) return doc;
+  try {
+    if (!(window.crypto && window.crypto.subtle && window.TextEncoder)) return doc;
+    const fileHash = await rwaSha256Hex(canonLF(INLINE_DOC));
+    const baseline = await idbGet(RWA.STATE, 'doc_baseline');
+    if (!baseline) {
+      // §3.3 row 1 — migration path. Every container already in the wild has
+      // no baseline; we cannot yet tell which side is stale, so keep today's
+      // behaviour and start tracking from here.
+      await rwaWriteBaseline(fileHash);
+      return doc;
+    }
+    if (fileHash === baseline.baseHash) return doc; // §3.3 row 2 — unchanged, IDB wins
+    if ((await rwaGetDirtyCount()) === 0) {
+      // §3.3 row 3 — the file moved, nothing local is unsaved: adopt it.
+      // LF-canonical: rwa_doc is what the rwa-edit/1 contract operates on, and
+      // every other write path canonicalises before storing. Blessing runs on
+      // the returned doc back in the boot IIFE.
+      const adopted = canonLF(INLINE_DOC);
+      await idbPut(RWA.DOC, adopted);
+      await rwaWriteBaseline(fileHash);
+      return adopted;
+    }
+    // §3.3 row 4 — genuine divergence. Never pick silently: render from IDB
+    // unchanged, surface the bar, and block ⌘S until the user resolves it.
+    rwaDivergence = { fileHash };
+    showReconcileBar();
+    return doc;
+  } catch (_) {
+    return doc;
+  }
+}
+
+// §3.5: a PERSISTENT bar, not a toast — stays until Keep/Use resolves it.
+function showReconcileBar() {
+  let bar = document.getElementById('rwa-reconcile-bar');
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.id = 'rwa-reconcile-bar';
+    bar.setAttribute('role', 'alert');
+    bar.innerHTML =
+      '<span>This file changed outside the browser. You have unsaved edits here.</span>' +
+      '<button type="button" data-act="keep">Keep my edits</button>' +
+      '<button type="button" data-act="use-file">Use the file version</button>' +
+      '<button type="button" data-act="diff">Show what differs</button>';
+    bar.addEventListener('click', (e) => {
+      const act = e.target && e.target.getAttribute && e.target.getAttribute('data-act');
+      if (act === 'keep') rwaReconcileKeepMine();
+      else if (act === 'use-file') rwaReconcileUseFile();
+      else if (act === 'diff') rwaReconcileShowDiff();
+    });
+    document.body.appendChild(bar);
+  }
+  bar.hidden = false;
+}
+function hideReconcileBar() {
+  const bar = document.getElementById('rwa-reconcile-bar');
+  if (bar) bar.hidden = true;
+}
+
+// "Keep my edits" (§7): the edits are still live and unsaved, so dirty_count is
+// untouched — only the baseline advances, acknowledging the new file bytes
+// without adopting them.
+async function rwaReconcileKeepMine() {
+  if (!rwaDivergence) return;
+  try { await rwaWriteBaseline(rwaDivergence.fileHash); } catch (_) {}
+  rwaDivergence = null;
+  hideReconcileBar();
+  setStatus('ok', '● ready');
+}
+
+// "Use the file version" (§3.5/§7): push the superseded doc onto rwa_undo
+// first (⌘Z recovers it), then adopt INLINE_DOC and clear dirty_count —
+// adopting the file means the edits are no longer in rwa_doc, so a nonzero
+// counter would misreport unsaved work the live document no longer contains.
+async function rwaReconcileUseFile() {
+  if (!rwaDivergence) return;
+  try {
+    const superseded = await getDoc();
+    const undoArr = (await idbGet(RWA.UNDO)) || [];
+    undoArr.push(superseded);
+    while (undoArr.length > RWA.UNDO_CAP) undoArr.shift();
+    await idbPut(RWA.UNDO, undoArr);
+    // Adopt LF-canonical AND blessed. Boot gets blessing for free because
+    // reconciliation runs before it; this mid-session path does not, and both
+    // the anchor map and URL-fragment links need data-rwa-id present. The
+    // baseline still records the FILE's hash — it tracks the file body, not
+    // rwa_doc, so blessing here cannot desync it.
+    let adopted = canonLF(INLINE_DOC);
+    const idRes = injectMissingBlockIds(adopted);
+    if (idRes.assigned > 0) adopted = idRes.text;
+    await idbPut(RWA.DOC, adopted);
+    await rwaWriteBaseline(rwaDivergence.fileHash);
+    await rwaResetDirtyCount();
+    rwaDivergence = null;
+    hideReconcileBar();
+    renderDoc(adopted);
+    setStatus('ok', '● ready');
+  } catch (e) {
+    setStatus('err', '✗ ' + e.message);
+  }
+}
+
+// Non-goal for v1 (§6): no diff algorithm — states that the file changed, not how.
+function rwaReconcileShowDiff() {
+  setStatus('', 'no diff view yet — the file body changed outside the browser');
+}
+
+// Expose for tests only — production code uses the hooks above.
+window.rwaReconcileKeepMine = rwaReconcileKeepMine;
+window.rwaReconcileUseFile = rwaReconcileUseFile;
+window.rwaGetDivergence = () => rwaDivergence;
 
 // palScope carries an optional "/" scope (a text selection captured at "/"-press
 // time). Null = the whole document (the plain ⌘K behavior). The selection's block
@@ -10208,9 +10362,14 @@ async function undo() {
 }
 
 async function commit() {
+  // Boot reconciliation §3.5: choosing destroys nothing, but overwriting the
+  // file does — so THAT is what's guarded. Cleared by rwaReconcileKeepMine /
+  // rwaReconcileUseFile; unresolved divergence never silently picks a side.
+  if (rwaDivergence) { setStatus('err', '✗ resolve the file conflict before saving'); return; }
   setStatus('run', '⌘S writing');
   try {
-    const text = buildFile(await getDoc());
+    const d = await getDoc();
+    const text = buildFile(d);
     if ('showSaveFilePicker' in window) {
       let h = null; try { h = await idbGet(RWA.FSA); } catch (_) {}
       try {
@@ -10242,7 +10401,7 @@ async function commit() {
           if (writeErr && writeErr.name === 'InvalidStateError') _fsaState = 'lost';
           throw writeErr;
         }
-        setDirty(false); await rwaResetOnCommit().catch(() => {}); setStatus('ok', '✓ committed');
+        setDirty(false); await rwaResetOnCommit(d).catch(() => {}); setStatus('ok', '✓ committed');
         emitRuntimeEvent('commit', null);
         emitRuntimeEvent('status', getStatusSnapshot());
         return;
@@ -10256,7 +10415,7 @@ async function commit() {
     a.download = RWA.FILE;
     a.click();
     URL.revokeObjectURL(a.href);
-    setDirty(false); await rwaResetOnCommit().catch(() => {}); setStatus('ok', '✓ exported');
+    setDirty(false); await rwaResetOnCommit(d).catch(() => {}); setStatus('ok', '✓ exported');
     emitRuntimeEvent('commit', null);
     emitRuntimeEvent('status', getStatusSnapshot());
   } catch (e) {
@@ -10338,6 +10497,11 @@ document.addEventListener('keydown', e => {
     const initialCount = await rwaGetDirtyCount();
     if (initialCount >= RWA.NUDGE_THRESHOLD) showCommitNudge(initialCount);
     let doc = await getDoc();
+    // Boot reconciliation (docs/plans/2026-08-04-boot-reconciliation-design.md):
+    // detect the file changing underneath this container (git pull, restored
+    // backup, external editor) BEFORE blessing runs below — blessing rewrites
+    // rwa_doc on every fresh open and must never be mistaken for divergence.
+    doc = await reconcileBootDoc(doc);
     // Web-citizen: ensure every anchorable block has a stable data-rwa-id
     // before first render so URL-fragment links resolve immediately, without
     // waiting for the first agent edit. One-shot per container — subsequent

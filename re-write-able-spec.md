@@ -556,7 +556,20 @@ IndexedDB load is async. Three strategies for the gap between bootstrap parse an
 - **Splash** — render a runtime splash, swap on hydration.
 - **Synchronous from inline snapshot, reconcile after** — fastest perceived render, but needs a reconciliation pass when IDB diverges from the snapshot (which it does between commits).
 
-Current direction: *synchronous from inline snapshot*, with reconciliation only when IDB content differs from the snapshot.
+Current direction: *synchronous from inline snapshot*, with a reconciliation pass at boot.
+
+**Built** (2026-08-04; `docs/plans/2026-08-04-boot-reconciliation-design.md`, pinned by `tests/boot-reconcile.mjs`). Note the earlier wording here — "reconciliation only when IDB content differs from the snapshot" — described a comparison that does not work, and the implementation deliberately does not do it. The runtime blesses every document with stable `data-rwa-id` attributes at boot and writes the result back, so `rwa_doc` legitimately differs from the snapshot on any container that has merely been *opened*; a content comparison would report divergence on every fresh open.
+
+What is built instead: `rwa_state['doc_baseline'] = { baseHash, at }` records the hash of the file's body as of the last moment the runtime was in sync with it — hydration, or a successful commit. `baseHash` is sha-256 of `canonLF(body)`, the same definition the hosted runtime uses for `baseBodyHash` (§5.12). At boot the runtime compares a fresh hash of the inline snapshot against that baseline, and consults the existing `dirty_count` for unsaved work:
+
+| baseline | snapshot changed | unsaved edits | Behaviour |
+|---|---|---|---|
+| absent | — | — | IndexedDB wins; a baseline is recorded for next open |
+| present | no | — | IndexedDB wins |
+| present | yes | no | the file is adopted |
+| present | yes | yes | the user is asked; commit is blocked until resolved |
+
+The guard sits on commit, not on boot: choosing destroys nothing (the file is on disk, IndexedDB holds its copy), so the container renders normally and only ⌘S is withheld until the conflict is resolved. Adopting the file pushes the superseded document onto `rwa_undo` first, so ⌘Z recovers it. A container with no baseline — every container created before this shipped — keeps the previous behaviour on its first open, because at that point neither side can be shown to be stale.
 
 ### 11.3 Diff Protocol Reintroduction
 
@@ -675,12 +688,14 @@ These properties are load-bearing — every change to the runtime, bootstrap, or
 3. The runtime is always loaded from the bootstrap, never from IndexedDB. The agent has no access to it.
 4. Reserved IndexedDB stores (`rwa_*`) within `rwa_<DOC_UUID>`, the shared composition database (`rwa_shared`), and OPFS paths (`_rwa/`) are written only by the runtime.
 5. Every committed file is self-contained — opens and runs without external dependencies.
-6. The inline snapshot is the source of truth on first open. After hydration, IndexedDB is the source of truth until the next commit.
+6. The inline snapshot is the source of truth on first open. After hydration, IndexedDB is the source of truth **for as long as the file's inline snapshot is unchanged**. If the snapshot changes underneath a container — an external edit, a version-control checkout, a restored backup — the runtime detects the divergence at the next open and never silently discards either copy: it adopts the file when there is no unsaved local work, and otherwise defers to the user before the next commit (§11.2).
 7. Undo history lives in IndexedDB, not in the file. Commits do not carry undo state.
 8. A render mode's output (§5.10) is display-only: it is written to `#rwa-doc-mount` and never read back into `rwa_doc`, never committed, never persisted. The stored document remains the source of truth.
 9. The document the agent receives is derived from the stored document text, never from a render mode's mounted output. Render modes are invisible to the agent.
 
 ---
+
+*Spec version 0.16 — boot reconciliation. **Invariant 6 narrows.** It previously read "after hydration, IndexedDB is the source of truth until the next commit", and the runtime implemented that faithfully: `getDoc()` consulted the inline snapshot only when the IndexedDB record was literally absent, so a container silently discarded its own file's content whenever that file changed underneath it — a `git pull`, a version-control checkout, an external editor, a restored backup. IndexedDB now wins only while the snapshot is unchanged. §11.2 specifies the mechanism: a `doc_baseline` record in `rwa_state` holding sha-256 of `canonLF(body)` — the same definition the hosted runtime uses for `baseBodyHash`, deliberately one divergence vocabulary rather than two — written at the two moments the runtime is known to be in sync with the file (hydration, and a successful commit), and compared against a fresh hash of the snapshot at every boot. Divergence is classified against the existing `dirty_count`, never against `rwa_doc`: the runtime blesses every document with `data-rwa-id` at boot and writes the result back, so a content comparison would report divergence on every fresh open. The guard sits on **commit, not boot** — choosing destroys nothing, since the file is on disk and IndexedDB holds its copy, so the container renders normally and only ⌘S is withheld until the conflict is resolved. Adopting the file pushes the superseded document onto `rwa_undo` first (⌘Z recovers it) and clears `dirty_count`; keeping local edits advances the baseline only. Containers created before this ship carry no baseline and keep the previous behaviour on their first open, because at that point neither side can be shown to be stale. Degrades to previous behaviour if `crypto.subtle` is unavailable, and stays inert under the hosted shim's `__rwaSuppressBlockIds`. Verified: `tests/boot-reconcile.mjs` 43/0, `tests/hosted-bless-parity.mjs` 7/0, full seed suite 45 files / 1440 assertions, conformance 86/86. References regenerated. Design: `docs/plans/2026-08-04-boot-reconciliation-design.md`. Closes [#1](https://github.com/ikangai/rewritable/issues/1).*
 
 *Spec version 0.15 — connected share. §5.11 (new) specifies the ↗ chrome affordance: a container connects to a stable share URL by POSTing its full file bytes to a share service (`POST /share` → `{short, url, token}`), re-publishes versions to the same URL under the Bearer update token, and unshares with DELETE. The connection record (`share_conn`, with the token) lives in `rwa_state` — machine-local by construction: Invariant 1 keeps it out of the exported file, Invariant 4 keeps it runtime-only. The link shows a published **version**, not live edits (the local-first framing, `docs/plans/2026-06-11-save-affordance-framings.md` §7c); the panel surfaces freshness via the published-hash. Every publish rotates `DOC_UUID` server-side so a receiver's stale per-UUID IDB can never shadow an update (§5.7). Shares are durable while active (90-day inactivity backstop). These gestures are the only non-agent network the runtime performs — nothing fires at boot or on ⌘S, so offline-first holds. Service: the `/share` route family beside `POST /publish` (unchanged) in `service/server.js`. Verified: `tests/share.mjs` 36/0, `service/tests/share.test.mjs` 8/0, full seed suite + conformance green. References regenerated.*
 

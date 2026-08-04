@@ -211,14 +211,22 @@ that flag exists to prevent — `tests/hosted-bless-parity.mjs` must stay green.
 - **No CLI mirror.** `cli/src/apply-edits.mjs` mirrors the seed's validator; this is boot behaviour,
   which the CLI does not have. Nothing to mirror.
 
-## 7. Open question for the operator
+## 7. Resolved: "Use the file version" clears `dirty_count`
 
-**Should "Use the file version" also clear `dirty_count`?** Adopting the file means the local edits
-are no longer in `rwa_doc`, so the counter's "unsaved edits" claim becomes false — argues for
-clearing. But they remain recoverable via `rwa_undo`, and clearing loses the signal that work was
-displaced. Leaning toward **clear it** (the counter tracks the live document, and the undo stack is
-where the displaced work lives), but it is a judgement call and it changes what the commit nudge
-says immediately afterwards.
+**Decided by the operator, 2026-08-04.** Adopting the file means the local edits are no longer in
+`rwa_doc`, so leaving the counter set would have it assert unsaved work that the live document does
+not contain. The counter tracks the live document; the undo stack is where displaced work lives.
+
+Consequences to implement:
+
+- `rwaResetDirtyCount()` on adopt, which also clears the commit nudge via the existing
+  `rwaSetDirtyCount` path (`:2159-2163`).
+- The superseded document still goes onto `rwa_undo` first, so ⌘Z recovers it. Clearing the counter
+  must not read as "the work is gone."
+- Test **B3** asserts both: `dirty_count === 0` after adopt, **and** the prior document recoverable
+  from `rwa_undo`.
+- **Keep my edits** (B4) does *not* clear the counter — the edits are still live and still unsaved.
+  It advances the baseline only.
 
 ---
 
