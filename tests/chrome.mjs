@@ -89,7 +89,17 @@ console.log('\n== M4: a two-state View | Edit segmented toggle (no mode tabs) ==
   const view = doc.getElementById('rwa-st-view');
   const edit = doc.getElementById('rwa-st-edit');
   check('View and Edit segments exist in the chrome', !!view && !!edit && doc.getElementById('rwa-set').contains(edit));
-  check('View is active (reading) by default', w.runtime.mode !== 'edit' && view.classList.contains('on') && view.getAttribute('aria-pressed') === 'true' && !edit.classList.contains('on'));
+  // The reading-by-default assertion needs a VIEW-FIRST kind. A `document`
+  // container boots edit-first ("the document is the editor", seed :1051) and
+  // tests/mode.mjs:86 pins that; `presentation` still boots into reading mode.
+  // Asserted positively (=== 'document'): the old `!== 'edit'` form also passed
+  // for the 'skills' and 'actions' panels, so it could not tell "opens in
+  // reading mode" apart from "opens in some panel".
+  const pw = await boot('presentation');
+  const pview = pw.document.getElementById('rwa-st-view');
+  const pedit = pw.document.getElementById('rwa-st-edit');
+  check('View is active (reading) by default on a view-first kind',
+    pw.runtime.mode === 'document' && pview.classList.contains('on') && pview.getAttribute('aria-pressed') === 'true' && !pedit.classList.contains('on'));
   edit.click(); await tick();
   check('clicking Edit activates edit + highlights the Edit segment', w.runtime.mode === 'edit' && doc.body.dataset.rwaMode === 'edit' && edit.classList.contains('on') && edit.getAttribute('aria-pressed') === 'true' && !view.classList.contains('on'));
   view.click(); await tick();
