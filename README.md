@@ -219,6 +219,31 @@ The messaging and voice surfaces in `surfaces/` are **adapters onto the one cont
 - **Telegram bot** ([`surfaces/telegram/`](surfaces/telegram/README.md)) — DM it text, a markdown file, or a document and it replies with a published rewritable (Phase A: create-and-publish, ephemeral 24h share, no backend key needed for the wrap path). Set `RWA_FOUNDATION_URL` and Phase B turns on: the bot creates **editable hosted docs** and edits them **in-chat** — a plain message becomes an edit instruction against the chat's active doc, with `/show` and `/export` (the offline escape hatch). Long-poll, no webhook; shells out to the `rwa` CLI over argument arrays.
 - **Phone (voice spike)** ([`surfaces/phone/`](surfaces/phone/README.md)) — call a number and **talk to one bound hosted rewritable**: ask it questions or speak a change and have it edited, over Twilio's `<Gather speech>` / `<Say>`. A **timeboxed spike** (happy-path only). Gated on Twilio creds + a public URL; the webhook is unauthenticated, so bind only a throwaway/demo doc (HMAC request-signing is the production follow-up).
 
+## Opening a rewritable someone sent you
+
+Be deliberate about this one. **A rewritable is a program, and opening one runs its author's code.**
+
+Interactive documents are a feature, not an oversight — a rewritable can carry a working tracker, a
+chart, a calculator — and the runtime executes the document's own `<script>` on every render, in the
+same page as the runtime. So a container you received can do anything a script on that page can do:
+read the API key you typed into it, read the other rewritables in that browser, and send what it
+finds anywhere. The `DOC_UUID` that namespaces each container's storage prevents *collisions*, not
+*snooping* — under `file://` every local container shares one origin.
+
+The right mental model is an email attachment or a downloaded script, not a web page. Open files
+from people you'd accept a program from; be wary of one that arrives unsolicited and immediately
+asks for your API key.
+
+What the runtime does do: skills run in isolated Workers behind a consent dialog and per-call
+permission checks (above), the vault re-prompts on reload and auto-locks when idle, and your API key
+is never written into the file or to disk. What it does not do: sandbox the document body. Fixing
+that would mean giving up interactive documents, which is most of why the format is interesting —
+so the boundary is stated here rather than engineered away.
+
+Full analysis, including the options considered and rejected:
+[`docs/received-container-threat-model-2026-08-04.md`](docs/received-container-threat-model-2026-08-04.md).
+Report a vulnerability via [`SECURITY.md`](SECURITY.md).
+
 ## The specs
 
 - [`re-write-able-spec.md`](re-write-able-spec.md) — the container spec: architecture, storage model, agent contract, embedding, security, platform behavior. Currently v0.15.

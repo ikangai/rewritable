@@ -480,6 +480,7 @@ const RWA = {
   DB:'rwa_'+DOC_UUID, KEY:'self',
   DOC:'rwa_doc', UNDO:'rwa_undo', HIST:'rwa_hist', FSA:'rwa_fsa', STATE:'rwa_state', VAULT:'rwa_vault', SOURCES:'rwa_sources', HOOK_LOG:'rwa_hook_log',
   UNDO_CAP:10, HIST_CAP:1000, NUDGE_THRESHOLD:5,
+  VAULT_IDLE_MS: 15 * 60 * 1000, // auto-lock the vault after this long with no vault operation
   K_API:'rwa_apikey', K_MODEL:'rwa_model', K_BACKEND:'rwa_backend',
   // Per-backend base-URL overrides for local OpenAI-compatible servers.
   // Empty/unset falls back to DEFAULT_*_URL below.
@@ -3422,11 +3423,17 @@ function setSourceMap(doc) {
   sourceMap = buildSourcePositionMap(doc);
 }
 function getSourceMap() { return sourceMap; }
-window.getSourceMap = getSourceMap;
 // Agent-facing source cache (spec §5.10 Invariant 9 lives or dies here): with a
 // render mode active this MUST equal the stored doc text, never the view's
-// mounted output. Exposed for tests, same as getSourceMap above.
-window.getCurrentDocCache = () => currentDocCache;
+// mounted output.
+//
+// Test seams — jsdom only. These were exposed unconditionally and so shipped in
+// every container, handing a received document's own inline script the live doc
+// cache for free (docs/received-container-threat-model-2026-08-04.md §5).
+if (typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent)) {
+  window.getSourceMap = getSourceMap;
+  window.getCurrentDocCache = () => currentDocCache;
+}
 
 // rwa-lens/1: class-declared locks (spec §7).
 let lockedRanges = [];
@@ -5925,8 +5932,15 @@ HARD RULES: colors are hex strings only (e.g. "#c0392b"); fonts are ONE of the f
       else showAffordance('skin "' + v.name + '" applied');
     }
   }
-  window.applySkin = applySkin; window.resetSkin = resetSkin; window.applySkinL1 = applySkinL1; window.deskinDoc = deskinDoc;
-  window.validateSkinTokens = validateSkinTokens; window.synthesizeSkinTheme = synthesizeSkinTheme; window.applySkinLike = applySkinLike;
+  // Test seams — jsdom only. These shipped unconditionally; applySkinL1 and
+  // applySkinLike drive a full agent call and commit a document edit, so a
+  // received document's own script could spend the user's key and rewrite the
+  // document through them (docs/received-container-threat-model-2026-08-04.md §5).
+  // The ✦ panel and the /skin lens call these through the closure, not window.
+  if (typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent)) {
+    window.applySkin = applySkin; window.resetSkin = resetSkin; window.applySkinL1 = applySkinL1; window.deskinDoc = deskinDoc;
+    window.validateSkinTokens = validateSkinTokens; window.synthesizeSkinTheme = synthesizeSkinTheme; window.applySkinLike = applySkinLike;
+  }
   // The ✦ gallery: a runtime-chrome panel (frozen bootstrap, never INLINE_DOC).
   // Each swatch is a pure-CSS mini-preview built from the preset's 3-stop swatch
   // (bg / ink / accent) — no images, no fetch to build the preview. A click
@@ -6229,7 +6243,12 @@ function bridgeCommand(prompt) {
   const promptB64 = btoa(unescape(encodeURIComponent(prompt)));
   return `echo '${promptB64}' | base64 -d | claude -p --output-format text`;
 }
-window.bridgeCommand = bridgeCommand; // expose for tests
+// Test seam — jsdom only. bridgeCommand builds the shell string the localhost
+// bridge executes; it shipped unconditionally, so a received document's own
+// script could read it (docs/received-container-threat-model-2026-08-04.md §5).
+if (typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent)) {
+  window.bridgeCommand = bridgeCommand;
+}
 
 // Bridge counterpart to callAgentSingleShot. Anchored commands ask for naked
 // HTML, not a JSON envelope, so we don't run parseBridgeEnvelope — but we do
@@ -7769,10 +7788,22 @@ function runtimeListSkills() {
 // ─── Vault (shannon, v0.8 §6) — PBKDF2-200k + AES-256-GCM credential store ────────
 // Stored as ONE record in IDB rwa_vault: { salt, check, entries:{ "ns\0key":{iv,ct} } }.
 // salt is plaintext; `check` is an encrypted verifier (proves the passphrase); entries are
-// per-entry AES-GCM. The session AES key is cached in sessionStorage (machine-local, never
-// persisted to the file, cleared on lock / tab close). A Worker reaches the vault ONLY via
-// the bridge (bridge:vault), which gates on the skill's vault:<ns> perm. Argon2id deferred.
-let _vaultKey = null, _vaultRec = null;
+// per-entry AES-GCM. A Worker reaches the vault ONLY via the bridge (bridge:vault), which
+// gates on the skill's vault:<ns> perm.
+//
+// The derived AES key lives ONLY in this closure. It used to be cached in sessionStorage so
+// an unlocked vault survived a reload — that put the raw exported key in the single most
+// readable place in the browser, where a received container's own inline script reads it
+// with one getItem (docs/received-container-threat-model-2026-08-04.md §3, option B). A
+// reload now re-prompts, and the key auto-locks after RWA.VAULT_IDLE_MS without a vault
+// operation, so "unlocked once" no longer means "unlocked until the tab closes".
+let _vaultKey = null, _vaultRec = null, _vaultIdleTimer = null;
+// Restart the idle countdown. Called on unlock and on each key-using vault op, so an idle
+// vault relocks itself while an actively-used one does not.
+function _vaultTouch() {
+  if (_vaultIdleTimer) { clearTimeout(_vaultIdleTimer); _vaultIdleTimer = null; }
+  if (_vaultKey) _vaultIdleTimer = setTimeout(() => { runtimeVaultLock(); }, RWA.VAULT_IDLE_MS);
+}
 function _skB64(bytes) { let s = ''; for (const b of bytes) s += String.fromCharCode(b); return btoa(s); } // standard base64 (vault-internal)
 async function _vaultLoadRec() {
   if (_vaultRec) return _vaultRec;
@@ -7853,8 +7884,7 @@ async function runtimeVaultUnlock(passphrase, options) {
     rec.kdf_version = useVer;
     rec.check = await _encWith(key, 'rwa-vault-ok');
     try { await idbPut(RWA.VAULT, rec); } catch (_) { _vaultKey = null; throw new Error('vault_storage_error'); }
-    _vaultKey = key;
-    try { sessionStorage.setItem('rwa_vault_key', _skB64(new Uint8Array(await crypto.subtle.exportKey('raw', key)))); } catch (_) {}
+    _vaultKey = key; _vaultTouch();
     return true;
   }
   const oldKey = await _vaultDeriveKey(passphrase, rec.salt, cur);
@@ -7864,24 +7894,20 @@ async function runtimeVaultUnlock(passphrase, options) {
     const next = { salt: rec.salt, kdf_version: target, check: await _encWith(newKey, 'rwa-vault-ok'), entries: {} };
     for (const k of Object.keys(rec.entries)) next.entries[k] = await _encWith(newKey, await _decWith(oldKey, rec.entries[k]));
     try { await idbPut(RWA.VAULT, next); } catch (_) { _vaultKey = null; throw new Error('vault_storage_error'); }
-    _vaultRec = next; _vaultKey = newKey;
-    try { sessionStorage.setItem('rwa_vault_key', _skB64(new Uint8Array(await crypto.subtle.exportKey('raw', newKey)))); } catch (_) {}
+    _vaultRec = next; _vaultKey = newKey; _vaultTouch();
     return true;
   }
-  _vaultKey = oldKey;
-  try { sessionStorage.setItem('rwa_vault_key', _skB64(new Uint8Array(await crypto.subtle.exportKey('raw', oldKey)))); } catch (_) {}
+  _vaultKey = oldKey; _vaultTouch();
   return true;
 }
-async function _vaultReimportSession() {
-  if (_vaultKey) return;
-  let b = null; try { b = sessionStorage.getItem('rwa_vault_key'); } catch (_) { return; }
-  if (!b) return;
-  try { _vaultKey = await crypto.subtle.importKey('raw', _skFromB64(b), { name: 'AES-GCM' }, true, ['encrypt', 'decrypt']); } catch (_) {}
-}
 function runtimeVaultIsLocked() { return !_vaultKey; }
-function runtimeVaultLock() { _vaultKey = null; try { sessionStorage.removeItem('rwa_vault_key'); } catch (_) {} }
+function runtimeVaultLock() {
+  _vaultKey = null;
+  if (_vaultIdleTimer) { clearTimeout(_vaultIdleTimer); _vaultIdleTimer = null; }
+}
 async function runtimeVaultGet(ns, key) { // §6: locked-or-missing → null (never throws)
   if (!_vaultKey) return null;
+  _vaultTouch();
   const rec = await _vaultLoadRec();
   const entry = rec.entries[ns + '\0' + key];
   if (!entry) return null;
@@ -7890,6 +7916,7 @@ async function runtimeVaultGet(ns, key) { // §6: locked-or-missing → null (ne
 }
 async function runtimeVaultSet(ns, key, value) {
   if (!_vaultKey) throw new Error('vault_locked');
+  _vaultTouch();
   const rec = await _vaultLoadRec();
   rec.entries[ns + '\0' + key] = await _vaultEnc(JSON.stringify(value));
   try { await idbPut(RWA.VAULT, rec); } catch (_) { throw new Error('vault_storage_error'); }
@@ -10550,7 +10577,8 @@ document.addEventListener('keydown', e => {
       await _hookLogPrune();
       fireHooks('on-open', { event: 'on-open', docUuid: DOC_UUID });
     } catch (_) { /* no installed skills */ }
-    await _vaultReimportSession().catch(() => {}); // v0.8 §6 — restore an unlocked vault within the tab session
+    // A reload re-prompts for the vault passphrase. The session-cached key that used to
+    // restore an unlocked vault here was removed deliberately — see the Vault block.
     // Spec §7: expose the public runtime API. Only constructed on the success
     // path (after private-mode detection + openDB() + block-id seeding) so
     // documents never see a half-initialized runtime. Private-mode early-return

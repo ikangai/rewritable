@@ -42,17 +42,26 @@ server-authoritative apply path.
 These are documented design positions, not undiscovered bugs. Reports restating them are welcome as
 discussion, but they are already known:
 
+The threat model for received containers is written up in full, including the mitigations considered
+and why some were rejected: [`docs/received-container-threat-model-2026-08-04.md`](docs/received-container-threat-model-2026-08-04.md).
+
 - **A rewritable executes its own inline `<script>` on every render.** Interactive documents are an
-  intended feature. A container you received from someone else runs their code in your browser. See
-  [#4](https://github.com/ikangai/rewritable/issues/4) — the threat model for received containers is
-  being written, and the mitigations are an open decision.
+  intended feature. A container you received from someone else runs their code in your browser, in
+  the same realm as the runtime. **This is an accepted risk, decided deliberately** — sandboxing the
+  document body would mean giving up interactive documents. It is documented in `README.md` under
+  "Opening a rewritable someone sent you" so users can make an informed choice.
 - **Under `file://`, all containers share the null origin.** Per-container IndexedDB namespacing by
   `DOC_UUID` is a naming convention, not a security boundary. This is stated in the container spec
-  (§5.7).
+  (§5.7). The fix that closed the equivalent hosted problem — one origin per share — has no local
+  analogue.
 - **There is no CSP on the document realm.** Deliberately deferred, because the seed is itself an
-  inline-script design.
+  inline-script design. The CSP that does ship is worker-scoped: it stops a skill Worker importing
+  remote code. It governs script *origin*, not capability.
 - **The API key lives in `sessionStorage`,** never persisted to disk and never written into the
   exported file — but it is readable by script running in the same realm.
+- **The vault key is not persisted.** It lives only in a closure, re-prompts after a reload, and
+  auto-locks after idle. It was previously cached in `sessionStorage` so an unlocked vault survived
+  a reload; that was removed in favour of the re-prompt.
 
 If you have found a way to make one of these materially worse than described, that **is** in scope —
 please report it.
