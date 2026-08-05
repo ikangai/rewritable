@@ -138,5 +138,30 @@ console.log('\n== M7: choosing Activity opens the activity panel ==');
   check('Activity opens the mode panel with the renamed label', mp.classList.contains('open') && /Activity/i.test(mp.textContent || ''));
 }
 
+// ── M8: the whole-document prompt is reachable without a keyboard (#10) ──
+//
+// WHY (Rule 9): openPal had exactly two call sites and both were keydown handlers — ⌘K and the
+// document-level "/" gesture. Retiring the docked lens card removed the last tappable surface, so
+// on a touch device the core gesture of the product was unreachable, on a format whose whole pitch
+// is that the file travels to other people's devices. jsdom cannot prove a tap works; it CAN prove
+// a tap target exists and is wired, which is the part that regressed.
+console.log('\n== M8: the AI prompt is reachable by tap, not only by keyboard ==');
+{
+  const ask = doc.getElementById('rwa-st-ask');
+  check('a tappable "/" button exists in the persistent row',
+    !!ask && doc.getElementById('rwa-set').contains(ask));
+  check('it is labelled for assistive tech', !!ask && !!ask.getAttribute('aria-label'));
+
+  // Clicking it must open the same pal the keyboard opens — and, on a view-first kind, flip to
+  // Edit first, exactly as the keydown path does.
+  const pw = await boot('presentation');
+  const pdoc = pw.document;
+  check('view-first kind starts in Document mode (precondition)', pw.runtime.mode === 'document');
+  pdoc.getElementById('rwa-st-ask').click();
+  await tick();
+  check('tapping "/" opens the pal', pdoc.getElementById('rwa-pal').classList.contains('open'));
+  check('tapping "/" auto-enters Edit, like the keydown path', pw.runtime.mode === 'edit');
+}
+
 console.log('\n== ' + pass + ' pass, ' + fail + ' fail ==');
 process.exit(fail ? 1 : 0);

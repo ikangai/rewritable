@@ -6,6 +6,7 @@
   "description": "End-to-end harness for the rwa-edit/1 protocol implementation in seeds/rewritable.html.",
   "scripts": {
     "test": "node run-all.mjs",
+    "test:browser": "node browser/run.mjs",
     "test:e2e": "node e2e.mjs",
     "test:lens": "node lens.mjs",
     "test:view": "node view.mjs",

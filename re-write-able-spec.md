@@ -694,6 +694,14 @@ It is a file that writes itself.
 
 **HyperCard** (Atkinson, 1987) — a stack was a program you could read and modify. Every HyperCard user was implicitly a developer. re-write-able is HyperCard for the agent era: the card modifies itself.
 
+**TiddlyWiki** (Buckingham Shuttleworth, 2004) — the closest prior art by construction, and the one this spec omitted longest. A single self-contained HTML file that renders its own content, is edited in the browser, saves itself back to disk, and is passed around as a file. That is this format's entire physical description, twenty years earlier. Three things it solved that are live problems here rather than settled ones:
+
+- **The static-linking cost.** Every container carries its own runtime, so a fix after a file ships never reaches it (§Invariants 1, 2a). TiddlyWiki's answer is an upgrade wizard that re-bootstraps an existing wiki onto a newer core, preserving content — the exact shape of the unbuilt `rwa upgrade`. It is also twenty years of evidence about how well that answer works in practice, which is worth more than a fresh design.
+- **Saving as a pluggable concern.** Its "savers" abstraction survived the whole arc of browser history — `file://` restrictions, plugin deprecations, the arrival of the File System Access API — by never assuming one mechanism. This runtime's FSA-or-download split is the same problem answered once.
+- **Plugin trust and distribution.** A plugin ecosystem inside a single-file format, with the install-time review problem that the skill and intelligence layers meet again here.
+
+The genuine novelty is narrower than "a self-modifying file", and clearer for the comparison: **a document that rewrites itself in response to a sentence of English.** TiddlyWiki users author changes; here the model authors them, under a validating apply pipeline the document cannot bypass. Naming the ancestor sharpens the claim rather than diluting it.
+
 **Word, Excel, PowerPoint** (1980s–) — the office suite proved that a document is something you own, on disk, that you can send. Then the documents moved to the cloud. re-write-able returns the document to a file.
 
 ---

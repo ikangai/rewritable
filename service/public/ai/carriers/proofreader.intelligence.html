@@ -17,7 +17,7 @@
 <meta http-equiv="Content-Security-Policy" content="script-src 'unsafe-inline' blob:; worker-src blob:; object-src 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="rwa-bootstrap" content="0.9">
-<meta name="rwa-seed" content="8f2bbda80205">
+<meta name="rwa-seed" content="0099b7ef72c5">
 <title>Intelligence — proofreader</title>
 <style>
 /* Palette + chrome modeled on playground.ikangai.com — neutral grayscale,
@@ -1339,12 +1339,17 @@ function renderDoc(html) {
   m.removeEventListener('drop', handleMountDrop);
   m.removeEventListener('mouseover', handleMountImgOver);
   m.removeEventListener('mouseout', handleMountImgOut);
+  m.removeEventListener('touchstart', handleMountImgOver);
   if (editReady) {
     m.addEventListener('dragover', handleMountDragOver);
     m.addEventListener('dragleave', handleMountDragLeave);
     m.addEventListener('drop', handleMountDrop);
     m.addEventListener('mouseover', handleMountImgOver);
     m.addEventListener('mouseout', handleMountImgOut);
+    // Touch equivalent (#10): the resize/remove chip was hover-only, so on a coarse pointer an
+    // inserted image had no affordance at all. A tap on the image reuses the same handler the
+    // hover path uses — handleMountImgOver reads e.target, so a touch event serves it unchanged.
+    m.addEventListener('touchstart', handleMountImgOver, { passive: true });
   }
   // §5.10: post-mount provider seam. render() stays a pure string->string slot;
   // mounted() is the impure slot that restores transient UI state (slide index)
@@ -1632,6 +1637,7 @@ function buildUI() {
     <button class="rwa-seg" type="button" id="rwa-st-view" data-rwa-mode-target="document" aria-pressed="true" title="Reading view">View</button>
     <button class="rwa-seg" type="button" id="rwa-st-edit" data-rwa-mode-target="edit" aria-pressed="false" title="Edit — format and edit in place">Edit</button>
   </div>
+  <button class="rwa-st-btn" id="rwa-st-ask" title="Ask the AI to change this document (/ or ⌘K)" aria-label="ask the AI to change this document">/</button>
   <button class="rwa-st-btn none" id="rwa-st-ai" title="AI — drop one in, or manage" aria-haspopup="true">◇ AI</button>
   <button class="rwa-st-btn" id="rwa-st-menu" title="Menu" aria-label="menu" aria-haspopup="true" aria-expanded="false">⋯</button>
   <button class="rwa-st-btn pri" id="rwa-st-commit" title="Save (⌘S)" hidden>⌘S</button>
@@ -1866,6 +1872,17 @@ function buildUI() {
       if (!stMenuPanel.hidden && !stMenuPanel.contains(e.target) && e.target !== stMenuBtn) { stMenuPanel.hidden = true; stMenuBtn.setAttribute('aria-expanded', 'false'); }
     });
   }
+  // "/" — the ONLY tap-reachable route to the whole-document prompt (#10). Before this,
+  // openPal had exactly two call sites, both keydown handlers (⌘K and the document-level
+  // "/" gesture), so on a touch device the core gesture was unreachable: retiring the
+  // docked lens card removed the last tappable surface, and a format whose pitch is that
+  // the file travels to other people's devices had no way in on half of them. Mirrors the
+  // keyboard gesture exactly — unscoped, and it auto-enters Edit for a view-first kind the
+  // same way the keydown path does.
+  document.getElementById('rwa-st-ask').onclick = () => {
+    if (rwaMode !== 'edit') runtimeSetMode('edit');
+    openPal();
+  };
   document.getElementById('rwa-st-cog').onclick = () => {
     document.getElementById('rwa-info-panel').classList.remove('open');   // panels are mutually exclusive
     document.getElementById('rwa-skin-panel').classList.remove('open');
@@ -2132,6 +2149,16 @@ function buildUI() {
   // Track the pointer to arm the bubble on a deliberate dwell (so it stays pointer-transparent
   // to a press that's starting a selection over the text it overlaps).
   document.addEventListener('mousemove', (e) => { _lastPointer = { x: e.clientX, y: e.clientY }; maybeArmSelectionBar(e.clientX, e.clientY); });
+  // Touch has no dwell (#10). A coarse pointer never fires mousemove, so the dwell test above
+  // can never arm the bubble and selection formatting was mouse-only. On touchend the selection
+  // is already final, which is exactly the moment the bubble should appear — so arm from the
+  // touch point directly rather than waiting for a hover that will never come.
+  document.addEventListener('touchend', (e) => {
+    const t = e.changedTouches && e.changedTouches[0];
+    if (!t) return;
+    _lastPointer = { x: t.clientX, y: t.clientY };
+    setTimeout(() => maybeArmSelectionBar(t.clientX, t.clientY), 0); // let the selection settle first
+  }, { passive: true });
 
   // rwa-lens/1: Esc releases the anchor when one is held. Listener is on
   // `window` so Esc anywhere works (including with focus outside the lens

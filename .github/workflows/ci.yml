@@ -102,6 +102,30 @@ jobs:
       - name: Test
         run: node --test service/tests/*.test.mjs
 
+  browser:
+    name: Real-browser lane (layout + real input)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Install test deps
+        working-directory: tests
+        run: npm install --no-audit --no-fund
+      # Covers what jsdom structurally cannot: layout, real pointer and touch input, actual
+      # rendering. The 42-of-45 jsdom suite reports green on a CSS-only regression that hides a
+      # control outright — verified by injecting `#rwa-st-ask{display:none}`, which jsdom passes and
+      # this lane fails on four assertions.
+      #
+      # REQUIRE_BROWSER=1 makes a missing Chrome a FAILURE here. The lane skips politely on a dev
+      # machine without one, but a lane that silently skips itself in CI is worse than no lane.
+      - name: Run browser lane
+        run: node tests/browser/run.mjs
+        env:
+          REQUIRE_BROWSER: '1'
+
   benchmark:
     name: Conformance + fidelity (stub)
     runs-on: ubuntu-latest

@@ -1372,6 +1372,38 @@ async function handleAiTemplate(send) {
   }, t);
 }
 
+// ─── Usage counters (#15) ────────────────────────────────────────────
+// The service recorded nothing at all: no telemetry (a deliberate privacy stance)
+// but also no request logging, so there was no evidence about whether ANY feature
+// is used — skins, workflows, the artifact bus, the AI gallery, hosted edit. Every
+// roadmap call was intuition.
+//
+// This is the smallest thing that fixes that without becoming tracking. In-memory
+// only (reset on restart), aggregate counts per route FAMILY, and deliberately NO
+// per-user dimension: no IP, no user agent, no referrer, no timestamps, no
+// per-container id. It answers "is this used at all" and cannot answer "who".
+//
+// Deliberately not persisted. A counter that survives restart wants a store, and a
+// store wants a retention policy — that is a bigger decision than this needs, and
+// `GET /metrics` on a running process answers the question that was actually asked.
+const usage = Object.create(null);
+function countRoute(url, isShareHost) {
+  let key;
+  if (isShareHost) key = 'share-host';
+  else if (url === '/') key = 'landing';
+  else if (url === '/new' || url.startsWith('/new/')) key = 'new';
+  else if (url.startsWith('/import')) key = 'import';
+  else if (url === '/publish') key = 'publish';
+  else if (url.startsWith('/share')) key = 'share';
+  else if (url === '/r' || url.startsWith('/r/')) key = 'hosted';
+  else if (url.startsWith('/skills')) key = 'skills';
+  else if (url.startsWith('/ai')) key = 'ai';
+  else if (url.startsWith('/demo')) key = 'demo';
+  else if (url === '/skill.zip') key = 'skill-zip';
+  else return;                       // static assets and 404s are not interesting
+  usage[key] = (usage[key] || 0) + 1;
+}
+
 const server = http.createServer((req, res) => {
   // Per RFC 9110 §9.3.2: HEAD must return identical headers to GET but no body.
   // Closure over `req.method` so every send() call honours this automatically.
@@ -1385,6 +1417,14 @@ const server = http.createServer((req, res) => {
   const reqHost = (req.headers.host || '').toLowerCase();
   const hostShort = reqHost.match(SHORT_HOST_RE);
   const isShareHost = !!hostShort;
+  countRoute(url, isShareHost);   // #15 — aggregate only, no per-user dimension
+
+  // Aggregate usage counts (#15). Apex-only, and it exposes nothing about anyone:
+  // route-family totals since process start, which is what "is this used at all"
+  // actually needs.
+  if (!isShareHost && url === '/metrics') {
+    return sendJson(send, 200, { since: 'process-start', counts: { ...usage } });
+  }
 
   // Connected shares (/share family). Apex-only like /publish (same
   // wrong-host-URL-minting concern). OPTIONS answers the CORS preflight the
