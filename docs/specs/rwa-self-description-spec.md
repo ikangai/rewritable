@@ -74,12 +74,27 @@ emitted two ways, distinguished by `source`; the two agree on every shared field
 | `title` | — | string \| null | first `<h1>` / runtime | Human label. `null` if none. |
 | `blocks` | — | number | body scan | Count of `data-rwa-id`-addressable blocks — a coarse "how structured" signal (from newton's `rwa-identity/1`). |
 | `activeView` | — | string \| null | runtime | **live-only.** The active view provider's name, or `null`. A `static` projection MUST omit it. |
+| `accountIdentity` | — | object \| null | runtime | **live-only.** Account-linked identity (v0.9 I13); `null` by default, never stamped into the file. Added 2026-08-05: the live producer has emitted this on every `describe()` call since I13 shipped, but it was absent from this table and every worked example, so a reader following "producers MUST emit every required field" had no idea it existed. |
 
 A **Provider** entry is `{ kind, name, label?, provenance }`:
 
-- `kind` ∈ `view` · `edit-surface` · `tool` · `compute` · `hook` — the kernel's
-  five provider kinds (design doc §"Provider taxonomy"). **This is the affordance
-  token**, not the provider's display name.
+- `kind` ∈ `view` · `edit-surface` · `tool` · `compute` · `hook` · `agent` — the
+  kernel's **six** provider kinds. **This is the affordance token**, not the
+  provider's display name.
+
+  Two corrections to earlier drafts of this list, both verified against the
+  implementation (`docs/spec-fiction-audit-2026-08-05.md` §3.3):
+
+  - **`agent` was missing.** Installed multi-agent roles (v0.9 I12) surface as
+    affordances and are present in `AFFORDANCE_KINDS` identically across all three
+    producer sites — `tools/self-description.mjs`, `cli/src/identity.mjs`, and the
+    seed's live union. The spec undercounted its own kernel.
+  - **`hook` is not registrable through `runtime.provide()`.** That function accepts
+    only `view`, `edit-surface`, `compute`, and `tool`, and throws
+    `unknown provider kind` for anything else. A `hook` affordance can arrive only
+    as an installed skill (v0.8 §I8), never via the first-party registration API
+    that §3 presents as the producer mechanism. It is an equal *kind*; it is not an
+    equal *entry point*.
 - `name` — the provider's stable identifier (e.g. `"presentation"`).
 - `label` — optional human label (e.g. `"Present"`).
 - `provenance` ∈ `first-party` (ships in the bootstrap) · `installed`
@@ -184,7 +199,7 @@ pure function of `kind`:
 | `document` | — (none) | normative (base) |
 | `presentation` | `view`/`presentation`/`Present` | normative (live §5.10 provider) |
 | `workflow` | — (none; prose + frozen runner) | normative |
-| `datatable` | `view`/`grid`, `edit-surface`/`cell`, `tool`/`derive`, `compute`/`recalc` | illustrative / reserved |
+| `datatable` | ~~`view`/`grid`, `edit-surface`/`cell`, `tool`/`derive`, `compute`/`recalc`~~ → actually `view`/`grid`, `view`/`summary`, `edit-surface`/`cell`, `compute`/`total` | **corrected from the real demo** |
 | `application` | `view`/`app`, `edit-surface`/`form`, `tool`/`command` | illustrative / reserved |
 
 This table **is** the read-time face of the design doc's *type manifest*. The

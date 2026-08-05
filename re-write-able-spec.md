@@ -338,7 +338,7 @@ A container can be **connected to a stable share URL**. The chrome's ↗ panel o
 
 **Lifetime is durable-while-active.** A connected share lives until explicitly unshared, with a long-inactivity backstop (90 days without an update or a view in the reference service). An update attempt against a dead or revoked share clears the local record and surfaces "this link can no longer be updated" — the honest state is *not connected*, never a stale claim.
 
-**Network posture.** These three gestures are the only network requests the runtime performs outside the user-configured agent backends (§6.4). Nothing fires at boot, on edit, or on ⌘S; a container that never opens the ↗ panel never touches the network. The service base defaults to the reference deployment and is overridable per-session (`sessionStorage` `rwa_share_base`) for dev or self-hosted services.
+**Network posture.** Nothing fires at boot, on edit, or on ⌘S — that part holds unconditionally, and it is the property that matters. The stronger claim this sentence used to make, that the three share gestures are the *only* network the runtime performs outside the agent backends, is no longer true: the skill marketplace (`runtime.discoverSkills` / `runtime.fetchSkillFromIndex`, actions v0.9 I6) also reaches the network. Both are explicitly user-triggered, so a container still touches the network only when the user asks it to — but "only the share gestures" undercounts the surfaces. The service base defaults to the reference deployment and is overridable per-session (`sessionStorage` `rwa_share_base`) for dev or self-hosted services.
 
 ---
 

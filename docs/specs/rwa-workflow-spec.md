@@ -365,7 +365,7 @@ fixed `code` string accessible via `err.code`.
 | `parallel_row_mismatch` | Multi-row parallel block: not all rows have the same number of `<td class="rwa-step">` cells. |
 | `parallel_label_mismatch` | Multi-row parallel block: cells in the same column carry different `data-rwa-label` values across rows. |
 | `step_missing_script` | A linear step or parallel cell lacks a `<script type="text/rwa-step">` child. |
-| `step_script_no_run` | Step body executed but did not define an async function named `run`. |
+| ~~`step_script_no_run`~~ | **NOT BUILT.** No such code exists anywhere in the repo, and the runner deliberately does the opposite: `cli/src/seed.mjs` comments that a body without a top-level `run` resolves to `undefined` and calls that "user-acceptable". A consumer catching this code will never see it. Either the runner starts throwing or this row goes — it cannot stay as written. |
 | `pinned_value_invalid_json` | A leaf node has `data-pinned-output` but the value is not valid JSON. |
 | `abort_signaled` | The runner detected `ctx.signal.aborted` at a step boundary (v0.11). User clicked Cancel; pipeline halts; the in-flight step's `.failed` class is set with this code as the message. |
 

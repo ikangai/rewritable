@@ -113,14 +113,29 @@ Applied in this pass — the ones that actively mislead someone building against
 - [x] `rwa-edit-spec.md` — `HIST_CAP` 15 → 1000
 - [x] `re-write-able-spec.md` — default model name
 
-Remaining, tracked on #7 (none of them silently wrong now that this document exists):
+Second pass — all remaining §3 findings now corrected:
 
-- [ ] `rwa-self-description-spec.md` — the `agent` kind, `accountIdentity`, `hook`-not-via-`provide`, the datatable table
-- [ ] `rwa-artifact-conventions.md` — palette/fonts, click-to-anchor
-- [ ] `rwa-lens-spec.md` — the per-section rewrite beneath the header
-- [ ] `rwa-edit-spec.md` §10 — add `reserved_substring`
-- [ ] actions v0.8 `vault_quota_exceeded`; v0.9 `bridge:idb subscribe`; workflow `step_script_no_run`
-- [ ] `re-write-able-spec.md` §5.11 network-posture wording
+- [x] `rwa-self-description-spec.md` — the `agent` kind (kernel undercounted itself), `accountIdentity` added to the field table, `hook` marked as not registrable via `provide()`, the datatable row replaced with what the real demo declares
+- [x] `rwa-artifact-conventions.md` — palette and fonts rewritten to the actual grayscale/system-font system; the click-to-anchor item corrected, and its hazard upgraded (a stray click now drops a caret into live text, worse than the "stale highlight" the Known Limitations promised)
+- [x] `rwa-edit-spec.md` §10 — `reserved_substring` added, with the CLI/runtime split stated
+- [x] actions v0.8 `vault_quota_exceeded` (does not exist); v0.9 `bridge:idb` `subscribe` (never wired); workflow `step_script_no_run` (runner deliberately does the opposite)
+- [x] `re-write-able-spec.md` §5.11 — network posture narrowed to what actually holds
+
+Deliberately **not** done, with reasoning rather than silence:
+
+- **`rwa-lens-spec.md` per-section rewrite.** The header added in pass one enumerates every false
+  claim with evidence, so a reader is warned before reaching any of them. Rewriting §2 and §4 in
+  place would mean re-authoring the document around a surface that no longer exists — that is a
+  rewrite of the lens spec, not a correction to it, and it should be a deliberate editorial decision
+  about whether the document becomes "the edit model" (the part that survived) or is superseded
+  outright.
+- **Stale line-number citations.** Corrected nowhere, on purpose: hand-written line numbers rot by
+  construction, and patching this generation of them just resets a clock. §4 argues for dropping the
+  practice instead.
+
+Two findings are code bugs and are not this document's to fix: the workflow prompt drift
+([#17](https://github.com/ikangai/rewritable/issues/17), fixed) and the missing
+`malformed_envelope` failure hint (open, noted in the DSL spec's new §6 banner).
 
 ---
 

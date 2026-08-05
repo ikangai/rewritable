@@ -398,7 +398,12 @@ idb:<store> — ^[a-zA-Z0-9_][a-zA-Z0-9_-]{0,62}$ (≤64 octets, no wildcards)
               Legal: idb:cache, idb:user_data, idb:session-state
               Illegal: idb:*, idb:rwa_*, idb:rwa_vault, idb:my-store! (>64)
 
-Worker→Main: { "type":"bridge:idb", "id","identity_tag", "payload":{ "op":"get|put|del|subscribe|all", "store", "key?", "value?" } }
+Worker→Main: { "type":"bridge:idb", "id","identity_tag", "payload":{ "op":"get|put|del|all", "store", "key?", "value?" } }
+// NOTE (2026-08-05): `subscribe` was listed here and is NOT implemented on this path.
+// The Worker proxy has no subscribe method and the main-thread bridge:idb handler
+// branches only on get/put/del/all, so a skill calling it gets a generic
+// `invalid_argument` rather than the documented behaviour. Document-side
+// `runtime.db.subscribe` DOES exist — only the skill-Worker bridge lacks it.
 Main→Worker: { "id","identity_tag", "ok":true, "result" }  |  { "id","identity_tag", "ok":false, "error":"idb_store_denied" }
 ```
 

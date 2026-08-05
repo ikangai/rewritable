@@ -292,8 +292,13 @@ Bridge error vocabulary (closed set; **no mid-invoke unlock prompt** — a Worke
 explicit settings action): `get` returns **`null`** on locked-or-missing — `null` is a **contract value, not
 an error**; callers must not treat it as an exception. `set` while locked throws **`vault_locked`**; a
 namespace outside the skill's `vault:` perms throws **`vault_namespace_denied`**; ciphertext present but
-AES-GCM auth fails throws **`vault_decrypt_failed`**; IDB quota/IO failure throws **`vault_quota_exceeded`** /
+AES-GCM auth fails throws **`vault_decrypt_failed`**; IDB quota/IO failure throws
 **`vault_storage_error`**. This is the closed set.
+
+(Corrected 2026-08-05: this sentence also listed **`vault_quota_exceeded`**. No such code exists —
+every vault IDB failure path throws `vault_storage_error`, so a caller written against the
+documented vocabulary could never observe the quota variant. Either the distinction gets built or
+it stays one code; documenting a split that isn't implemented is the worse of the three.)
 
 ---
 

@@ -63,14 +63,21 @@ them is what makes an artifact possible.
    element, read the status pill (`document.querySelector('button')` with
    text matching `^[✓✗●]`).
 
-5. **The lens has click-to-anchor.** Any click inside `#rwa-doc-mount` walks
-   up looking for `.rwa-locked` (reject) or an ANCHORABLE element
-   (`P, H1-H6, BLOCKQUOTE, LI, FIGURE, PRE, ASIDE`). If found, the lens
-   anchors to that element. A subsequent `/`-command through `submitLens`
-   would then route to **anchored** mode, which uses a single-block prompt
-   ("replace the target block with naked HTML") — exactly wrong for
-   artifact actions. This is the primary reason artifacts call
-   `window.modify()` directly: it ignores anchor state.
+5. **Clicking inside the mount is handled — but not the way this said.**
+   *Corrected 2026-08-05.* The original text claimed any click on an anchorable
+   element (`P, H1-H6, BLOCKQUOTE, LI, FIGURE, PRE, ASIDE`) anchors the lens.
+   Since the 2026-06-24 working-block redesign, `handleMountClick` anchors only
+   **non-editable containers** — `figure`, `pre`, `aside`, `table`. Clicking a
+   paragraph, heading, blockquote or list item now enters **inline
+   `contenteditable` editing** instead, and the docked lens the rest of this item
+   described was retired outright on 2026-07-07.
+
+   That makes the hazard *worse* than the original "stale anchor highlight, worst
+   case" framing in Known Limitations: a stray click inside an artifact can drop a
+   caret into live text mid-append rather than merely leaving a highlight. The
+   advice is unchanged and now matters more — **artifacts should call
+   `window.modify()` directly**, which ignores anchor state, and should avoid
+   rendering editable leaf elements they intend to be click targets.
 
 6. **Commits trigger `renderDoc()` which wipes mount state.** Any DOM your
    IIFE built (queue UI, status indicators, ...) vanishes on every
@@ -204,20 +211,33 @@ artifact should explicitly:
 The bootstrap declares a small light-theme palette via custom properties.
 Artifacts should use them rather than hard-coded colours:
 
+> **Corrected 2026-08-05.** This section described the pre-redesign visual system: a warm-cream
+> background, a terracotta accent, and DM Sans / DM Mono / Instrument Serif as "already wired in the
+> bootstrap chrome". None of that is true. The seed was redesigned to a **neutral grayscale palette
+> with system fonts** (modelled on playground.ikangai.com), and the strings `DM Sans`, `DM Mono`,
+> `Instrument Serif`, `terracotta` and `warm cream` appear nowhere in it. The legacy variable *names*
+> below still resolve — they are aliases onto the grayscale ramp, so nothing breaks — but an author
+> following the old descriptions was designing against a system that no longer exists, and one
+> reaching for those font families was getting whatever the browser substituted.
+
+The bootstrap declares a neutral grayscale ramp, `--gray-50` … `--gray-900`, plus semantic accents.
+Legacy aliases resolve onto the ramp and remain safe to use:
+
 | Variable | Use |
 |---|---|
-| `--bg` | page background (warm cream) |
+| `--gray-50` … `--gray-900` | the grayscale ramp — the primary vocabulary |
+| `--bg` | page background (alias — resolves to `--white`) |
 | `--surf` | surface / card background |
 | `--b1` `--b2` | borders (light, strong) |
 | `--text` | primary text |
 | `--muted` | secondary text |
-| `--accent` | terracotta accent (action, link) |
+| `--accent` | primary action colour (alias — resolves to `--gray-900`, **not** a warm accent) |
 | `--blue` | informational accent |
-| `--red` | error / destructive accent |
+| `--green` `--yellow` `--red` | success / warning / error accents |
 
-Fonts available globally: `'DM Sans'` (UI), `'DM Mono'` (labels/code),
-`'Instrument Serif'` (display). No `@import`, no external font loads —
-they're already wired in the bootstrap chrome.
+**Fonts: system stack only.** `--font-ui` and `--font-mono`. There are no web fonts, no `@import`,
+and no named display face — the earlier claim that three families were "already wired in" was the
+most actionable error in this document, because it reads as permission to use them.
 
 ## External dependencies
 
