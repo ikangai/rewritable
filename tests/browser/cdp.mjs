@@ -63,6 +63,16 @@ export async function launch({ url = 'about:blank', headless = true } = {}) {
     '--disable-background-networking', '--disable-sync', '--mute-audio',
     // file:// containers read/write IndexedDB; keep the profile real but disposable.
     ...(headless ? ['--headless=new'] : []),
+    // CI only. GitHub's runners execute as root inside a container, where Chrome's setuid sandbox
+    // refuses to start and the debugging port never opens — which surfaces as "CDP endpoint never
+    // came up" rather than anything mentioning sandboxing. --disable-dev-shm-usage avoids the
+    // small /dev/shm those containers provide, a separate crash with the same symptom.
+    //
+    // Deliberately NOT applied locally: the sandbox works fine on a dev machine, and weakening it
+    // by default would be a real reduction for no benefit. This harness launches its own
+    // disposable-profile Chrome against a local file it just wrote, so the CI relaxation is
+    // bounded to that.
+    ...(process.env.CI ? ['--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu'] : []),
     url,
   ];
   const child = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
