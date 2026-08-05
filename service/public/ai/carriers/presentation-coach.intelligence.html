@@ -2863,7 +2863,13 @@ The script body MUST define an async function named "run" with the signature: as
 
 The "ctx" object the runtime passes carries:
   • ctx.credentials.get(name) — reads a credential by name. On first call, prompts the user; the value goes to sessionStorage. Never persisted in INLINE_DOC; cleared on tab close. Use readable names: "gmail", "stripe", "github".
-  • Future surfaces (ctx.signal for cancellation, ctx.log, ctx.shared) are reserved; do not use them in v0.2.
+  • ctx.signal — an AbortSignal for the current Run, shared by every step. Pass it to any long-running async work so Cancel takes effect immediately: fetch(url, { signal: ctx.signal }). The runtime also checks it at every step boundary and halts the pipeline with abort_signaled. Whenever a step calls fetch, pass the signal.
+  • ctx.iter — present ONLY inside a foreach body. Shape: { index, item, total, parent }. "item" is the current element, "index" its 0-based position, "total" the array length, and "parent" the enclosing foreach's iter (undefined at the outermost loop), so a nested loop can reach the loop above it.
+  • ctx.log and ctx.shared do not exist yet — do not use them.
+
+Beyond the linear step card, two container node types exist. Use them when the request implies iteration or independent branches, and prefer them over hand-rolling loops inside one step body:
+  • Foreach — <li class="rwa-step rwa-foreach"> holding a <header>, then a nested <ol class="rwa-flow"> with the loop body (ordinary step cards, or further foreach/parallel nodes), then <output class="rwa-step-output"></output>. It iterates the PREVIOUS step's array; ctx.iter is available to every step inside the body. The class list must carry BOTH rwa-step and rwa-foreach.
+  • Parallel — <table class="rwa-parallel"><tbody><tr> with one <td class="rwa-step" data-rwa-label="name"> per branch, each cell containing header / details / output exactly like a linear step. Every data-rwa-label must match ^[a-z][a-z0-9_]{0,31}$ and be unique within its row. Branches receive the same "prev" and run concurrently.
 
 CRITICAL — first-prompt path: when the workflow is EMPTY (the doc has a <p class="placeholder"> paragraph and no <ol class="rwa-flow">), your response MUST use replace_document, NOT apply_edits. The first scaffold requires laying down multiple new elements (the title, the description, the <ol> with steps, the <footer> with Run button) in one atomic write — apply_edits cannot do this and using it will produce a structurally broken doc. After at least one <li class="rwa-step"> exists, every subsequent edit uses apply_edits or apply_dsl_plan; the replace_document path is for the first scaffold only.
 
