@@ -125,6 +125,14 @@ jobs:
         run: node tests/browser/run.mjs
         env:
           REQUIRE_BROWSER: '1'
+      # Scale budgets (#8) live here because render cost is a property of the real engine —
+      # measuring it in jsdom measures jsdom. Ceilings are set an order of magnitude above the
+      # measured values so runner variance is not noise; they catch an accidental O(n^2), not a
+      # slow afternoon.
+      - name: Scale budgets
+        run: node tests/browser/scale.mjs
+        env:
+          REQUIRE_BROWSER: '1'
 
   benchmark:
     name: Conformance + fidelity (stub)

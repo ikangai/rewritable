@@ -244,6 +244,28 @@ while the commit write happens once per commit. Stated so it can be wrong: if th
 otherwise, the undo-stack amplification is the real target and this plan was mistaken about which
 one to optimise.
 
+> **Outcome: WRONG, and usefully so** (measured 2026-08-05, headless Chrome, `tests/browser/scale.mjs`).
+>
+> | doc | boot | render | sourcemap | commit |
+> |---|---|---|---|---|
+> | 2 KB | 46 ms | 0 ms | 0 ms | 2 ms |
+> | 50 KB | 50 ms | 13 ms | 1 ms | 14 ms |
+> | 200 KB | 252 ms | 179 ms | 2 ms | 49 ms |
+> | 800 KB | 3350 ms | **2801 ms** | 8 ms | 185 ms |
+>
+> Both named suspects were wrong. The sourcemap costs **8 ms at 800 KB** — roughly 1/350th of
+> render — and the commit path, the other candidate, scales sub-linearly and reaches only 185 ms.
+> Optimising either would have been effort spent on the two cheapest paths in the system.
+>
+> The wall is `renderDoc` itself (innerHTML + script re-execution + block-id backfill), and because
+> it runs on every commit it sets the ceiling for interactive editing. Boot cost is essentially
+> render cost. The spec's ~200 KB caution is about right: 179 ms is noticeable but usable, 800 KB is
+> not.
+>
+> A second, methodological correction: the first attempt measured this in jsdom and was still
+> crawling after four minutes. Render cost is a property of the engine that actually executes it, so
+> jsdom cannot answer this question at all — #8 turned out to depend on #9 having been built first.
+
 ---
 
 ### Phase 4 — Spec truth
