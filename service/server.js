@@ -25,6 +25,7 @@ fs.mkdirSync(DATA_DIR, { recursive: true });
 // Read static assets once at startup. Updates require restart (rebuild+redeploy).
 const TRIGGER_HTML = fs.readFileSync(path.join(PUBLIC_DIR, 'new.html'));
 const IMPORT_HTML = fs.readFileSync(path.join(PUBLIC_DIR, 'import.html'));
+const ABUSE_HTML = fs.readFileSync(path.join(PUBLIC_DIR, 'abuse.html'));   // #13 — the human-facing half of the report route
 const SEED_TEMPLATE = fs.readFileSync(path.join(SEEDS_DIR, 'rewritable.html'), 'utf8');
 
 // AI gallery (/ai). The static storefront page plus the downloadable
@@ -557,6 +558,62 @@ async function handleSkillReport(req, id, send) {
   const at = Date.now();
   try { fs.appendFileSync(path.join(SKILLS_DIR, '_reports.log'), JSON.stringify({ skillId: id, reason, evidence_url: (body && body.evidence_url) || null, at }) + '\n'); } catch { /* best-effort queue */ }
   return sendSkillJson(send, 201, { reported_at: at });
+}
+
+// ─── Abuse reporting + operator takedown for PUBLISHED DOCUMENTS (#13) ──────
+//
+// An abuse-report endpoint already existed, but only for the signed-skill
+// marketplace — the thing almost nobody publishes. The service also hosts
+// arbitrary anonymous HTML at *.rewritable.ikangai.com, which is a far more
+// attractive vehicle (self-contained, inline script, full-fidelity rendering,
+// on a domain with a wildcard cert), and for THAT there was no third-party
+// route at all. docs/plans/2026-05-16-snapshot-publishing.md flagged the gap
+// on day one — "a takedown path should exist" — and it was never closed.
+//
+// Same policy as the skills queue, deliberately: rate-limited, queued, and NO
+// auto-block. An endpoint that lets an anonymous reporter unpublish someone
+// else's document is itself an abuse vector. A human decides.
+async function handleShareReport(req, short, send) {
+  if (!SHORT_RE.test(short)) return sendJson(send, 404, { error: 'not_found' });
+  const rl = checkRateLimit(clientIp(req));
+  if (!rl.ok) return send(429, { ...JSON_CT, 'Retry-After': String(rl.retryAfterSec) },
+    JSON.stringify({ error: 'rate_limited', retryAfterSec: rl.retryAfterSec }) + '\n');
+  let buf; try { buf = await readBody(req, 64 * 1024); } catch { return sendJson(send, 400, { error: 'read_failed' }); }
+  let body; try { body = JSON.parse(buf.toString('utf8')); } catch { return sendJson(send, 400, { error: 'invalid_json' }); }
+  const reason = String((body && body.reason) || '').slice(0, 512);
+  if (!reason) return sendJson(send, 400, { error: 'missing_reason' });
+  if (!fs.existsSync(path.join(DATA_DIR, `${short}.html`))) return sendJson(send, 404, { error: 'not_found' });
+  const at = Date.now();
+  try {
+    fs.appendFileSync(path.join(DATA_DIR, '_abuse_reports.log'),
+      JSON.stringify({ short, reason, contact: (body && body.contact) || null, at }) + '\n');
+  } catch { /* best-effort queue — never fail a report because the disk hiccuped */ }
+  return sendJson(send, 201, { reported_at: at, note: 'queued for human review; no automatic action is taken' });
+}
+
+// Operator takedown. Bearer RWA_ADMIN_TOKEN, which must be set in the
+// environment — when it is absent the route does not exist at all rather than
+// falling back to something weaker, so a misconfigured deploy cannot expose it.
+function handleAdminTakedown(req, short, send) {
+  const token = process.env.RWA_ADMIN_TOKEN;
+  if (!token) return sendJson(send, 404, { error: 'not_found' });          // feature off, not "unauthorised"
+  const auth = req.headers.authorization || '';
+  const given = auth.startsWith('Bearer ') ? auth.slice(7) : '';
+  // Constant-time compare so the token is not discoverable by timing.
+  const a = Buffer.from(given), b = Buffer.from(token);
+  const ok = a.length === b.length && crypto.timingSafeEqual(a, b);
+  if (!ok) return sendJson(send, 401, { error: 'unauthorized' });
+  if (!SHORT_RE.test(short)) return sendJson(send, 404, { error: 'not_found' });
+  let removed = 0;
+  for (const ext of ['html', 'json']) {
+    try { fs.unlinkSync(path.join(DATA_DIR, `${short}.${ext}`)); removed++; } catch { /* already gone */ }
+  }
+  if (!removed) return sendJson(send, 404, { error: 'not_found' });
+  try {
+    fs.appendFileSync(path.join(DATA_DIR, '_takedowns.log'),
+      JSON.stringify({ short, at: Date.now() }) + '\n');
+  } catch { /* best-effort audit */ }
+  return sendJson(send, 200, { taken_down: short });
 }
 
 async function handlePublish(req, send) {
@@ -1426,6 +1483,20 @@ const server = http.createServer((req, res) => {
     return sendJson(send, 200, { since: 'process-start', counts: { ...usage } });
   }
 
+  // Abuse reporting + operator takedown for published documents (#13). Apex-only,
+  // like /publish and /share — a share host must not be able to mint these URLs.
+  {
+    const rep = url.match(/^\/report\/([0-9a-z]{8})$/);
+    if (!isShareHost && rep && req.method === 'POST') {
+      handleShareReport(req, rep[1], send).catch(() => sendJson(send, 500, { error: 'server_error' }));
+      return;
+    }
+    const td = url.match(/^\/admin\/takedown\/([0-9a-z]{8})$/);
+    if (!isShareHost && td && (req.method === 'POST' || req.method === 'DELETE')) {
+      return handleAdminTakedown(req, td[1], send);
+    }
+  }
+
   // Connected shares (/share family). Apex-only like /publish (same
   // wrong-host-URL-minting concern). OPTIONS answers the CORS preflight the
   // seed's file:// share chrome triggers (Authorization header → preflighted).
@@ -1599,6 +1670,14 @@ const server = http.createServer((req, res) => {
       'Content-Type': 'text/html; charset=utf-8',
       'Cache-Control': 'no-store',
     }, IMPORT_HTML);
+  }
+  // #13 — how a third party reports a published document. Apex-only; a share host
+  // must not serve it, or a malicious page could mimic the reporting surface.
+  if (!isShareHost && url === '/abuse') {
+    return send(200, {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'public, max-age=300',
+    }, ABUSE_HTML);
   }
   if (url === '/skill.zip') {
     return send(200, {

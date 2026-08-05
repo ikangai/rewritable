@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Report abuse — rewritable</title>
+<style>
+:root{--gray-50:#fafafa;--gray-100:#f4f4f5;--gray-200:#e4e4e7;--gray-500:#71717a;--gray-700:#3f3f46;--gray-900:#18181b;--white:#fff;--red:#dc2626;
+--font-ui:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;--font-mono:ui-monospace,SFMono-Regular,Menlo,monospace;}
+*{box-sizing:border-box}
+body{margin:0;background:var(--white);color:var(--gray-900);font-family:var(--font-ui);line-height:1.6;}
+main{max-width:680px;margin:64px auto;padding:0 32px;}
+h1{font-size:28px;margin:0 0 8px;}
+h2{font-size:18px;margin:32px 0 8px;}
+p,li{color:var(--gray-700);}
+code{font-family:var(--font-mono);font-size:13px;background:var(--gray-100);padding:1px 5px;border-radius:4px;}
+.lede{font-size:17px;color:var(--gray-700);}
+.box{border:1px solid var(--gray-200);border-radius:8px;padding:16px;background:var(--gray-50);margin:20px 0;}
+a{color:var(--gray-900);}
+footer{margin-top:48px;padding-top:16px;border-top:1px solid var(--gray-200);font-size:13px;color:var(--gray-500);}
+</style>
+</head>
+<body>
+<main>
+<h1>Report abuse</h1>
+<p class="lede">Anyone can publish a document here anonymously. If one of them is being used to
+harm someone, we want to know.</p>
+
+<h2>What to report</h2>
+<ul>
+  <li>Phishing, or any page impersonating a real person, company, or service</li>
+  <li>Malware, or script that attacks the person viewing it</li>
+  <li>Content that targets or endangers a private individual</li>
+  <li>Anything unlawful where the page is hosted</li>
+</ul>
+
+<h2>How</h2>
+<p>Email <a href="mailto:hello@ikangai.com?subject=ABUSE">hello@ikangai.com</a> with
+<code>ABUSE</code> in the subject, and include the full URL. The 8-character code in the
+hostname — <code>abcd1234.rewritable.ikangai.com</code> — is what identifies the document.</p>
+
+<p>There is also a machine route, if you are reporting programmatically:</p>
+<div class="box">
+<code>POST /report/&lt;short&gt;</code> &nbsp;with&nbsp; <code>{"reason": "...", "contact": "..."}</code>
+</div>
+
+<h2>What happens next</h2>
+<p><strong>A person reads it.</strong> Reports are queued for review and never trigger automatic
+removal. That is deliberate: an endpoint where an anonymous reporter can unpublish someone else's
+document would itself be an abuse vector. Removal is an operator action.</p>
+<p>Published snapshots expire on their own — 24 hours for an ordinary publish, 90 days of
+inactivity for a connected share — so many problems age out without anyone acting.</p>
+
+<h2>If it is your own document</h2>
+<p>You do not need us. A connected share carries an update token held only by the browser that
+created it, and that browser can unshare it directly from the ↗ panel.</p>
+
+<footer>
+rewritable · <a href="/">home</a> ·
+<a href="https://github.com/ikangai/rewritable/blob/main/SECURITY.md">security policy</a>
+</footer>
+</main>
+</body>
+</html>
