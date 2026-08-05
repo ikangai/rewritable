@@ -238,6 +238,14 @@ Served over HTTP/HTTPS, each file gets a real origin and `rwa_shared` becomes pe
 
 ### 5.8 Embedding and Composition
 
+> **Status: NOT BUILT.** Nothing in this section is implemented. There is no `srcdoc` rendering and
+> no `runtime.read()` — that method does not exist on the runtime API (§7), and neither identifier
+> appears anywhere in the seed, the CLI, or the service. The code sample below, the three-mode
+> sandbox table, and the dashboard-embedding-siblings example are all design intent that was written
+> in the present tense. Retained as a design sketch; do not build against it. Cross-container
+> composition that *does* ship is `runtime.bus` (BroadcastChannel message passing) — not shared
+> storage and not embedding. See `docs/spec-fiction-audit-2026-08-05.md`.
+
 A re-writeable can embed another re-writeable inline. Because the container lives on disk, the embedder reads the sibling's container file via FSA (or, in browsers without FSA, asks the user to attach it) and renders it via `srcdoc`:
 
 ```javascript
@@ -367,7 +375,7 @@ A diff protocol may return as an automatic optimization for large documents (§1
 
 ### 6.2 Model choice
 
-`google/gemini-3-flash-preview` via OpenRouter is the default — fast, cheap, and a context window that comfortably holds any reasonable single-file document plus instructions. For complex structural modifications, `anthropic/claude-sonnet-4` produces more reliable results at higher cost.
+`google/gemini-3.5-flash` via OpenRouter is the default (`RWA.MODEL` in the seed; `gemini-3-flash-preview` was the earlier default and now survives only as one suggestion in the settings datalist) — fast, cheap, and a context window that comfortably holds any reasonable single-file document plus instructions. For complex structural modifications, `anthropic/claude-sonnet-4` produces more reliable results at higher cost.
 
 The model is configurable per file. The runtime passes the configured model to OpenRouter; users can swap providers (direct Anthropic, OpenAI, self-hosted) by replacing the agent invocation in the runtime's settings.
 

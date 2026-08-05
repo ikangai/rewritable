@@ -468,7 +468,7 @@ type ReplaceDocumentRecord = {
 
 **Ordering.** Newest-first.
 
-**Size pressure.** Worst case: 15 entries × ~8 KB `replace` cap × N edits per batch can put `rwa_hist` into the hundreds of KB in IDB. The cap of 15 is the load-bearing protection. As an additional defence against IDB quota pressure, implementations should elide envelope bodies for entries beyond the most recent 5, keeping `{ ts, kind, reason }` only. This is advisory — implementations are free to keep all 15 envelopes if quota is not a concern. `rwa_hist` is not part of the snapshot/file-on-disk format; elision strategies do not affect cross-implementation file compatibility.
+**Size pressure.** The reference runtime's cap is **1000** entries (`RWA.HIST_CAP` in the seed), not the 15 this section and the §18 pseudocode were originally written against — the pseudocode's `slice(0, 15)` is illustrative of the *shape*, not the current value. Recalibrate accordingly: 1000 entries × ~8 KB `replace` cap × N edits per batch is a megabyte-scale worst case, not "hundreds of KB", so the cap alone is **not** the load-bearing protection it was at 15. As a defence against IDB quota pressure, implementations should elide envelope bodies for entries beyond the most recent few, keeping `{ ts, kind, reason }` only. This is advisory — implementations are free to keep full envelopes if quota is not a concern. `rwa_hist` is not part of the snapshot/file-on-disk format; elision strategies do not affect cross-implementation file compatibility.
 
 ---
 

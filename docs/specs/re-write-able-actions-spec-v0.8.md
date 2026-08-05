@@ -279,7 +279,12 @@ code-execution smell. The defense that *holds* is structural (§5a), not the sca
 
 `runtime.vault.{get,set,has,namespaces,unlock,lock,isLocked}`. PBKDF2-200k(SHA-256) → AES-256-GCM, per-
 container salt + per-entry IV, ciphertext in IDB `rwa_vault`. The unlock passphrase derives a session key
-cached in `sessionStorage` (never persisted); lock clears it. A Worker reaches the vault only via the bridge.
+that lives **only in a runtime closure** — it is not cached in `sessionStorage`, and a reload re-prompts.
+It also auto-locks after `RWA.VAULT_IDLE_MS` (15 min) without a vault operation; `lock()` clears it
+immediately. (Superseded 2026-08-04: this section previously specified a `sessionStorage`-cached key so an
+unlocked vault survived a reload. That put the raw exported key in the most readable place in the browser,
+where a received container's own inline script reads it with one `getItem` — see
+`docs/received-container-threat-model-2026-08-04.md` §3, option B.) A Worker reaches the vault only via the bridge.
 **Vault ciphertext is machine-local — it never travels in the file**; the file carries only namespace
 *references* in manifests. Argon2id deferred.
 

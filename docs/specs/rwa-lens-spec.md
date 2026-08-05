@@ -2,6 +2,29 @@
 
 *A specification for the editing surface*
 
+> **Status: the docked lens card described here was RETIRED on 2026-07-07.** `#rwa-lens` is
+> `display:none` in the seed. The *model* in this document — anchoring, scope, the sourcemap, the
+> Document/Edit boundary — still holds and is still what the runtime implements; the **surface** it
+> describes does not render for any user. Read §2 and §4 as design history, not as behaviour.
+>
+> What replaced it: the unified **`/` gesture** opening the `#rwa-pal` docked prompt, with scope
+> inferred from context (block / selection / whole document), plus a passive `#rwa-slash-hint`
+> for discoverability. `⌘K` opens the same whole-document prompt. See CLAUDE.md's routing entry for
+> the unified `/` gesture and `docs/plans/2026-07-07-slash-unified-edit-gesture-design.md`.
+>
+> Specific claims below that no longer hold, verified against the seed
+> (`docs/spec-fiction-audit-2026-08-05.md` §3.1):
+> - **The blank-state / EOF-append path (§2, §12 Invariant 3)** — the no-model "direct text appends
+>   a block at the end" behaviour is unreachable. `submitLens` is wired only to the hidden input;
+>   every content addition now goes through the agent via `modify()` / `runSlashScope()`.
+> - **Runtime-dispatched slash commands (§5.x)** — `/skin` and `/image` were intercepted before the
+>   agent by `submitLens`, which is dead. `/skin like` is now a plain field on the ✦ Skins panel;
+>   image insert relies on drag-drop/paste. A literal `/skin` typed into the pal today goes to the
+>   model verbatim.
+> - **"A rewritable opens in Document mode on every page load"** — false for the `document` kind,
+>   which boots **edit**-first ("the document is the editor"). View-first kinds still boot Document.
+> - **The anchorable set (§5.5)** — now also includes `table` and `td`.
+
 ---
 
 ## 1. The Problem

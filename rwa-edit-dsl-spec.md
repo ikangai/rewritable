@@ -152,6 +152,18 @@ This means:
 
 ## §6. Error codes
 
+> **Implementation status — these codes are CLI/service only.** The browser runtime does **not**
+> emit any of the six codes below. `compileDslPlan` in `seeds/rewritable.html` throws
+> `malformed_envelope` with a free-text `reason` for every one of these conditions; only
+> `version_unsupported` matches. The distinct codes are implemented in `cli/src/dsl-compiler.mjs`
+> and its byte-identical `service/lib/` copy, so this table specifies the CLI and the hosted
+> `/modify` path, not the runtime most users actually run.
+>
+> This has a consequence worth fixing rather than just documenting: there is no `FAILURE_HINTS`
+> entry for `malformed_envelope`, so an agent that hits a DSL compile failure in the browser gets a
+> bare generic code with no recovery hint — the opposite of the self-documenting-failure property
+> the rest of `rwa-edit/1` maintains. Tracked in `docs/spec-fiction-audit-2026-08-05.md` §3.2.
+
 In addition to all `rwa-edit/1` failure codes (which propagate from the apply phase), the DSL adds:
 
 | code | when |

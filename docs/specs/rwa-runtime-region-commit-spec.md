@@ -260,9 +260,17 @@ Consumers (NOT this spec's code — they call the primitive):
   IDB, survives a reload-before-save, and keeps `commit()` a dumb file-builder.
   v0.8 §7 should be updated to reference this primitive; the observable contract —
   the zone in the exported file — is identical.)
-- **kepler, skinning-v2:** the L1 compose path calls
+- **kepler, skinning-v2:** ~~the L1 compose path calls
   `runtimeRegionCommit({ regions:[{select:style[data-rwa-skin], build:…}], actor:'skin:NAME', reachability:'edit-reachable' })`,
-  optionally batched with the agent's markup edits.
+  optionally batched with the agent's markup edits.~~
+  **This did not happen.** Skinning-v2 shipped against a different, parallel primitive:
+  `applySkinL1` composes via `modify(recipe, …, {compose:{transform,…}, baseDoc, commitBase})` and
+  never calls `runtimeRegionCommit`. All four real call sites of this primitive pass
+  `reachability:'frozen'` and belong to skill/agent install-update-uninstall.
+  **`reachability:'edit-reachable'` therefore has no consumer at all** — it is implemented and
+  tested but nothing in the product uses it. Kept because removing a tested code path to save a
+  branch is not obviously right, but a reader should not infer from this section that a second
+  consumer exists. See `docs/spec-fiction-audit-2026-08-05.md` §3.3.
 
 ---
 
