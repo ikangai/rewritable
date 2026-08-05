@@ -7,7 +7,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { applySeedSubs, kindOverrides } from '../cli/src/seed.mjs';
+import { applySeedSubs, kindOverrides, seedIdentity } from '../cli/src/seed.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '..');
@@ -103,9 +103,19 @@ for (const ref of refs) {
       productHeader: ov.productHeader, lensClickToAnchor: ov.lensClickToAnchor,
     });
   } else {
+    // The document-kind path bypasses applySeedSubs, so it must stamp the derived
+    // seed identity itself (#12) — otherwise references ship the placeholder, which
+    // is precisely the "looks authoritative, identifies nothing" failure the marker
+    // exists to fix. Hash the seed as read, matching applySeedSubs exactly.
+    const seedId = seedIdentity(seed);
     out = seed
+      .replace(/(<meta name="rwa-seed" content=")[^"]*(">)/, (_m, pre, post) => `${pre}${seedId}${post}`)
       .replace(/const DOC_UUID\s*=\s*'[^']+'/, `const DOC_UUID = '${uuid}'`)
       .replace(/FILE\s*:\s*'[^']+'/, `FILE:'${ref.file}'`);
+  }
+  if (out.includes('0000000000pl')) {
+    console.error(`${ref.path}: rwa-seed placeholder survived substitution`);
+    process.exit(1);
   }
   // Replace the seed's INLINE_DOC body with the reference's (already-escaped) body.
   const seedInline = extractInlineDoc(out);

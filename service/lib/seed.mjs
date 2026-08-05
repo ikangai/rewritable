@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 
 export async function loadSeed(candidates) {
   for (const p of candidates) {
@@ -14,6 +15,28 @@ export async function loadSeed(candidates) {
 const UUID_RE = /const DOC_UUID = '[0-9a-f-]{36}';/;
 const TITLE_RE = /<title>[^<]*<\/title>/;
 const FILE_RE = /(FILE\s*:\s*)'[^']*'/;
+// Seed identity (#12). `<meta name="rwa-bootstrap">` is the SEMANTIC compatibility
+// generation — bumped rarely and deliberately, meaning "the container contract
+// changed". It is not an identifier: it was set to 0.9 on 2026-05-16 and 163 seed
+// commits landed on top of it without changing, so every container in the wild
+// claims the same version through images, skinning, the skill layer, drop-in AI
+// and more. A marker that looks authoritative and identifies nothing is worse
+// than none.
+//
+// `<meta name="rwa-seed">` is the DERIVED identity: the first 12 hex of a sha-256
+// over the seed bytes this container was emitted from. It answers the question an
+// upgrade path actually asks — not "which release did this claim to be" but
+// "exactly which bootstrap does this container carry".
+//
+// Computed here rather than in tools/regenerate-refs.mjs because applySeedSubs is
+// the single choke point every emission passes through (rwa new/import/clone, the
+// references, the service), so it cannot go stale for some callers and not others.
+// No fixpoint problem: the hash is taken over the seed WITH the placeholder still
+// in it, exactly as DOC_UUID works.
+const SEED_ID_RE = /(<meta name="rwa-seed" content=")[^"]*(">)/;
+export function seedIdentity(seedText) {
+  return createHash('sha256').update(seedText, 'utf8').digest('hex').slice(0, 12);
+}
 // R9-minimal v0.1.1: per-product-kind substitution sites. The seed hoists
 // the lens-copy strings to const declarations (single source of truth across
 // the textarea declaration, the legacy palette, and releaseAnchor's reset
@@ -46,6 +69,7 @@ export function applySeedSubs(seed, { uuid, title, fileMeta, lensPlaceholder, pa
     { re: UUID_RE, label: 'DOC_UUID' },
     { re: TITLE_RE, label: '<title>' },
     { re: FILE_RE, label: 'FILE:' },
+    { re: SEED_ID_RE, label: 'rwa-seed meta' },
   ]) {
     const matches = seed.match(new RegExp(re.source, 'g')) || [];
     if (matches.length !== 1) {
@@ -65,7 +89,12 @@ export function applySeedSubs(seed, { uuid, title, fileMeta, lensPlaceholder, pa
       throw new Error(`seed must contain exactly one ${label}, found ${matches.length}`);
     }
   }
-  let out = seed.replace(UUID_RE, `const DOC_UUID = '${uuid}';`);
+  // Stamp the derived seed identity FIRST, hashing the seed as received — before
+  // any substitution — so every container emitted from the same seed bytes carries
+  // the same id regardless of kind, title, or uuid.
+  const seedId = seedIdentity(seed);
+  let out = seed.replace(SEED_ID_RE, (_m, pre, post) => `${pre}${seedId}${post}`);
+  out = out.replace(UUID_RE, `const DOC_UUID = '${uuid}';`);
   if (title != null) out = out.replace(TITLE_RE, `<title>${escapeHtml(title)}</title>`);
   if (fileMeta != null) out = out.replace(FILE_RE, (_m, prefix) => `${prefix}'${escapeJsString(fileMeta)}'`);
   // Function-form replacements so a `$` in the substitute value isn't
