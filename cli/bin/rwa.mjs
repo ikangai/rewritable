@@ -37,6 +37,16 @@ Usage:
                               Instruction path: pass a plain-text instruction
                               as the second positional and the CLI runs the
                               agent loop (backend-configurable below).
+  rwa upgrade <path>          re-bootstrap a rewritable onto the current
+                              seed. Preserves DOC_UUID, the INLINE_DOC body
+                              verbatim (frozen zones, signed records, and
+                              all), PRODUCT_KIND, <title>, and RWA.FILE —
+                              everything else in the bootstrap comes from
+                              the current seed. Refuses to write unless the
+                              rebuilt file round-trips DOC_UUID + INLINE_DOC
+                              byte-for-byte. See --check / --dry-run below.
+                              --json emits {path,uuid,kind,currentSeedId,
+                              targetSeedId,needsUpgrade,mode,written}.
   rwa doc <path>              print the editable document body (the exact
                               LF-canonical text the edit contract operates on).
                               The read counterpart to \`rwa edit\`. With --json,
@@ -174,6 +184,11 @@ Flags:
                  deterministic theme-only.
   --theme-only   (skin only) apply just the preset's deterministic theme block
                  — the default behavior — and silence the "theme-only" note.
+  --check        (upgrade only) report current vs. target seed id and
+                 whether an upgrade is needed; never writes.
+  --dry-run      (upgrade only) like --check, but also rebuilds in memory
+                 and verifies the DOC_UUID/INLINE_DOC round-trip; never
+                 writes.
   --version      print version and exit
   --help, -h     this help
 
@@ -555,6 +570,65 @@ function detectProductKind(fileText) {
     // the LF-canonical editable body (plain mode) or the full editing contract
     // (--json). stdout is reserved for the document/contract so pipes stay
     // clean; errors go to stderr, mirroring `rwa edit`'s file_error surface.
+    // `rwa upgrade <path> [--check|--dry-run] [--json]` — re-bootstrap an
+    // existing container onto the current seed (#12), preserving DOC_UUID,
+    // INLINE_DOC (verbatim), PRODUCT_KIND, <title>, and RWA.FILE. See
+    // src/upgrade.mjs for the full contract, including the round-trip
+    // sanity check that gates every write.
+    if (verb === 'upgrade') {
+      const jsonMode = rest.includes('--json');
+      const check = rest.includes('--check');
+      const dryRun = rest.includes('--dry-run');
+      const filePath = rest.find(a => !a.startsWith('-'));
+      const emitUpgrade = (payload) => {
+        if (jsonMode) {
+          process.stderr.write(JSON.stringify(payload) + '\n');
+        } else {
+          const parts = [payload.code, payload.subcode].filter(Boolean);
+          let line = 'rwa upgrade: ' + parts.join('/');
+          if (payload.details && Object.keys(payload.details).length) {
+            line += ' ' + JSON.stringify(payload.details);
+          }
+          process.stderr.write(line + '\n');
+        }
+      };
+      if (!filePath) {
+        emitUpgrade({ code: 'usage_error', subcode: 'missing_file_arg' });
+        process.exitCode = 1;
+        return;
+      }
+      if (check && dryRun) {
+        emitUpgrade({ code: 'usage_error', subcode: 'conflicting_flags', details: { flags: ['--check', '--dry-run'] } });
+        process.exitCode = 1;
+        return;
+      }
+      const mode = dryRun ? 'dry-run' : (check ? 'check' : 'write');
+      const { upgradeCmd } = await import('../src/upgrade.mjs');
+      let result;
+      try {
+        result = await upgradeCmd(filePath, { mode });
+      } catch (e) {
+        if (e && typeof e.exitCode === 'number') {
+          emitUpgrade({ code: codeName(e.exitCode), subcode: e.subcode, details: e.details });
+          process.exitCode = e.exitCode;
+          return;
+        }
+        throw e;
+      }
+      if (jsonMode) {
+        process.stdout.write(JSON.stringify(result) + '\n');
+      } else if (result.mode === 'noop') {
+        process.stdout.write(`${filePath}: already at the current seed (${result.targetSeedId}) — nothing to do\n`);
+      } else if (result.mode === 'checked') {
+        process.stdout.write(`${filePath}: upgrade available (${result.currentSeedId || 'unknown'} → ${result.targetSeedId}) — not written (--check)\n`);
+      } else if (result.mode === 'dry-run') {
+        process.stdout.write(`${filePath}: would upgrade (${result.currentSeedId || 'unknown'} → ${result.targetSeedId}) — verified, not written (--dry-run)\n`);
+      } else {
+        process.stdout.write(`✓ upgraded ${filePath} (${result.currentSeedId || 'unknown'} → ${result.targetSeedId})\n`);
+      }
+      return;
+    }
+
     if (verb === 'doc') {
       const jsonMode = rest.includes('--json');
       const filePath = rest.find(a => !a.startsWith('-'));

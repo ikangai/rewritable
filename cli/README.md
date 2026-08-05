@@ -144,6 +144,25 @@ The agent loop retries up to 3 times when the model emits plain text instead of 
 | `--plan <file>` | read the tool envelope from a file (or `--plan -` for explicit stdin). |
 | `--json` | emit one JSON object per line on stderr for structured failure / retry reporting. Each line is `{code, subcode, details}` (or `{phase:"retry", attempt, reason}` during agent retries). |
 
+### `rwa upgrade <path>`
+
+By Invariant 1 a shipped container's bootstrap is frozen forever, so a bug fixed in `seeds/rewritable.html` after a file ships is fixed only for *new* files. `rwa upgrade` re-bootstraps an existing container onto the CLI's current seed while preserving everything that makes it *that* container.
+
+**Preserved:** `DOC_UUID` (critical — it names the container's IndexedDB, `rwa_<DOC_UUID>`; changing it orphans all local state), the `INLINE_DOC` body verbatim (frozen zones, skill/agent zones, and signed records all live inside it), `PRODUCT_KIND`, `<title>`, and `RWA.FILE`.
+**Replaced:** everything else — the whole bootstrap comes from the current seed.
+
+```sh
+rwa upgrade notes.html            # rebuild in place
+rwa upgrade notes.html --check    # report only: current vs. target seed id — never writes
+rwa upgrade notes.html --dry-run  # --check, plus rebuilds + verifies in memory — never writes
+```
+
+Every emitted container carries a derived seed identity, `<meta name="rwa-seed" content="<12-hex>">` — the first 12 hex of a sha-256 over the exact seed bytes it was emitted from. (This is distinct from `<meta name="rwa-bootstrap">`, the rarely-bumped *semantic* compatibility generation.) `rwa upgrade` compares the file's stamped id against the CLI's own seed and does nothing — exit `0`, no write — when they already match.
+
+The load-bearing guard (Rule 12 — fail loud): after rebuilding, `rwa upgrade` re-extracts `DOC_UUID` and `INLINE_DOC` from the *rebuilt* text and asserts they equal the originals byte-for-byte before writing anything. A mismatch refuses to write — a silent content-mangling upgrade would be worse than no upgrade at all.
+
+`--json` emits `{path, uuid, kind, title, file, currentSeedId, targetSeedId, needsUpgrade, mode, written}`, where `mode` is `noop` (already current), `checked` (`--check`), `dry-run` (`--dry-run`, verified in memory), or `upgraded` (written). Failures reuse the `file_error` (exit `2`) surface: `not_found`, `read_error`, `not_a_rewritable`, `inline_doc_unterminated`, `unknown_kind`, `upgrade_verify_failed`.
+
 ### `rwa doc <path>`
 
 The **read** counterpart to `rwa edit`. `rwa edit` writes the editable body; `rwa doc` reads it. An agent handed a rewritable `.html` shouldn't have to parse the ~4000-line bootstrap to find the document it's allowed to touch — `rwa doc` prints exactly the LF-canonical text the edit contract operates on, so anchors computed against it round-trip through `rwa edit`.
@@ -344,11 +363,11 @@ Because the anchors in step 1 are the *same* text step 3 splices against, what t
 | `3` | envelope_error | malformed JSON, ambiguous/unknown shape, version mismatch, missing required fields, apply-time failures (`frozen_zone_violation`, `find_not_found`, `find_not_unique`, `structural_shape_changed`, `reserved_substring`, `dsl_compile_error`) |
 | `4` | agent_error | agent loop exhausted retries (`no_envelope_after_retries`), backend HTTP/network error (`backend_error`), or missing API key (`no_api_key`) |
 
-Exit codes 1–4 are emitted by `rwa edit` and are stable. `rwa doc` reuses the same `file_error` (exit `2`) surface — `not_found`, `read_error`, `not_a_rewritable` — and exits `1`/`missing_file_arg` when no path is given. Other verbs (`new`, `import`) use `0`/`1`/`2` only — `2` for argument or format issues, `1` for everything else. The `--json` flag turns each `rwa edit` stderr line into a single-line JSON object; on `rwa doc` it switches stdout to the editing-contract object (failures still emit the `{code, subcode, details}` object on stderr).
+Exit codes 1–4 are emitted by `rwa edit` and are stable. `rwa doc` and `rwa upgrade` reuse the same `file_error` (exit `2`) surface — `not_found`, `read_error`, `not_a_rewritable` (plus, for `rwa upgrade`, `inline_doc_unterminated`, `unknown_kind`, `upgrade_verify_failed`) — and exit `1`/`missing_file_arg` when no path is given. Other verbs (`new`, `import`) use `0`/`1`/`2` only — `2` for argument or format issues, `1` for everything else. The `--json` flag turns each `rwa edit` stderr line into a single-line JSON object; on `rwa doc`/`rwa upgrade` it switches stdout to the contract object on success (failures still emit the `{code, subcode, details}` object on stderr).
 
 ## Design
 
-This CLI is **offline-first**. It ships with its own pinned copy of the bootstrap seed; nothing is fetched from a server. The bootstrap version embedded in any file you create is fixed at the moment of `rwa new` / `rwa import`. To upgrade an existing file's bootstrap to a newer version, see the project's `rwa upgrade` (planned).
+This CLI is **offline-first**. It ships with its own pinned copy of the bootstrap seed; nothing is fetched from a server. The bootstrap version embedded in any file you create is fixed at the moment of `rwa new` / `rwa import`. To upgrade an existing file's bootstrap to the CLI's current seed, see [`rwa upgrade`](#rwa-upgrade-path) above.
 
 The seed and the runtime in any file the CLI emits are byte-identical to the seed used by the hosted service at `rewritable.ikangai.com`. Files emitted by either channel are interchangeable.
 
