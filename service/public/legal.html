@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Terms &amp; Privacy — rewritable</title>
+<style>
+:root{--gray-50:#fafafa;--gray-100:#f4f4f5;--gray-200:#e4e4e7;--gray-500:#71717a;--gray-700:#3f3f46;--gray-900:#18181b;--white:#fff;--yellow:#fde68a;
+--font-ui:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;--font-mono:ui-monospace,SFMono-Regular,Menlo,monospace;}
+*{box-sizing:border-box}
+body{margin:0;background:var(--white);color:var(--gray-900);font-family:var(--font-ui);line-height:1.6;}
+main{max-width:680px;margin:64px auto;padding:0 32px;}
+h1{font-size:28px;margin:0 0 4px;} h2{font-size:19px;margin:36px 0 8px;} h3{font-size:15px;margin:20px 0 4px;}
+p,li{color:var(--gray-700);} .lede{font-size:17px;}
+code{font-family:var(--font-mono);font-size:13px;background:var(--gray-100);padding:1px 5px;border-radius:4px;}
+.todo{background:var(--yellow);border-radius:8px;padding:14px 16px;margin:16px 0;color:var(--gray-900);}
+.meta{color:var(--gray-500);font-size:13px;}
+a{color:var(--gray-900);}
+footer{margin-top:48px;padding-top:16px;border-top:1px solid var(--gray-200);font-size:13px;color:var(--gray-500);}
+</style>
+</head>
+<body>
+<main>
+<h1>Terms &amp; Privacy</h1>
+<p class="meta">Last updated 2026-08-05.</p>
+
+<h2>Impressum</h2>
+<div class="todo">
+<strong>Incomplete — operator action required before this page is relied upon.</strong>
+The registered entity name, address, and contact for legal notices must be filled in here.
+These are legal facts about a real company and were deliberately not guessed at; an impressum
+with invented details is worse than none. Replace this block and remove the startup warning in
+<code>service/server.js</code>.
+</div>
+
+<h2>Terms of use</h2>
+
+<h3>What this service does</h3>
+<p>It stores a self-contained HTML file you send it and serves that file back at a URL. That is the
+whole service. It does not run your document, does not read it, and has no model of its own — the
+AI features in a rewritable run in <em>your</em> browser using <em>your</em> credentials, which
+never reach this server.</p>
+
+<h3>Publishing is anonymous, and yours to keep lawful</h3>
+<p>No account is required, so nothing verifies who published what. By publishing you confirm you
+have the right to distribute the content and that it does not break the law where this service is
+hosted. Anything that phishes, impersonates, attacks a viewer, or targets a private individual is
+out of bounds.</p>
+
+<h3>Removal</h3>
+<p>Published snapshots expire on their own: 24 hours for an ordinary publish, 90 days of inactivity
+for a connected share. A connected share can be withdrawn at any time by the browser that created
+it, which holds the update token. Anyone can <a href="/abuse">report a document</a>; reports are
+read by a person and never trigger automatic removal. The operator may remove any published document
+at any time, particularly on a credible abuse report or legal notice.</p>
+
+<h3>No warranty</h3>
+<p>This is provided as-is, with no guarantee of availability, durability, or fitness for anything.
+<strong>Do not treat a published URL as storage.</strong> The durable copy of a rewritable is the
+file on your own disk — that is the entire design, and this service is a convenience on top of it.</p>
+
+<h2>Privacy</h2>
+
+<h3>What is stored</h3>
+<ul>
+  <li><strong>The file you publish</strong>, verbatim, plus a small metadata record. For a connected
+      share that record holds a SHA-256 hash of the update token — never the token itself.</li>
+  <li><strong>Aggregate counters</strong>: how many requests each route family received since the
+      process started. These are integers in memory with no per-visitor dimension — no IP address,
+      no user agent, no referrer, no timestamps, no per-document identifier — and they reset on
+      restart.</li>
+  <li><strong>Abuse reports and takedowns</strong>, queued to a log with the reported short code, the
+      stated reason, and any contact the reporter chose to give.</li>
+</ul>
+
+<h3>What is not stored</h3>
+<ul>
+  <li><strong>No accounts.</strong> There is no sign-up, so there is no profile to keep.</li>
+  <li><strong>No analytics or tracking.</strong> No third-party scripts, no cookies for tracking, no
+      advertising identifiers, no cross-site anything.</li>
+  <li><strong>No API keys and no document content in transit to a model.</strong> The model call
+      happens in your browser, directly to whichever backend you configured. This service is not in
+      that path and could not read it if it wanted to.</li>
+  <li><strong>No per-request logging</strong> beyond the aggregate counters above.</li>
+</ul>
+<p>Rate limiting examines the requesting IP address in memory to enforce a per-hour limit. It is not
+written to disk and not retained.</p>
+
+<h3>Your content is public</h3>
+<p>A published document is served to anyone with the link. There is no access control. Do not
+publish anything you would not put on a public web page.</p>
+
+<h3>Retention</h3>
+<p>Published files are deleted by an automatic sweep once they expire (24 hours, or 90 days of
+inactivity for a connected share). Abuse-report and takedown logs are kept while they are
+operationally useful.</p>
+
+<h3>Contacting us</h3>
+<p>Use the address in the impressum above. For security issues specifically, follow
+<a href="https://github.com/ikangai/rewritable/blob/main/SECURITY.md">SECURITY.md</a> rather than
+emailing details in the clear.</p>
+
+<footer>
+rewritable · <a href="/">home</a> · <a href="/abuse">report abuse</a> ·
+<a href="https://github.com/ikangai/rewritable">source</a>
+</footer>
+</main>
+</body>
+</html>

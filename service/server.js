@@ -26,6 +26,14 @@ fs.mkdirSync(DATA_DIR, { recursive: true });
 const TRIGGER_HTML = fs.readFileSync(path.join(PUBLIC_DIR, 'new.html'));
 const IMPORT_HTML = fs.readFileSync(path.join(PUBLIC_DIR, 'import.html'));
 const ABUSE_HTML = fs.readFileSync(path.join(PUBLIC_DIR, 'abuse.html'));   // #13 — the human-facing half of the report route
+const LEGAL_HTML = fs.readFileSync(path.join(PUBLIC_DIR, 'legal.html'));   // #13 — terms + privacy + impressum
+// Fail loud at startup if the impressum is still a placeholder. An impressum is a
+// legal requirement in the EU and its details are facts about a real company that
+// must not be invented; serving the page with the TODO block still in it is worse
+// than not serving it. Warns rather than exits so a dev/preview deploy still runs.
+if (LEGAL_HTML.includes('operator action required')) {
+  console.error('WARNING: /legal still contains the impressum placeholder — fill it before relying on this deployment (#13).');
+}
 const SEED_TEMPLATE = fs.readFileSync(path.join(SEEDS_DIR, 'rewritable.html'), 'utf8');
 
 // AI gallery (/ai). The static storefront page plus the downloadable
@@ -1678,6 +1686,13 @@ const server = http.createServer((req, res) => {
       'Content-Type': 'text/html; charset=utf-8',
       'Cache-Control': 'public, max-age=300',
     }, ABUSE_HTML);
+  }
+  if (!isShareHost && (url === '/legal' || url === '/terms' || url === '/privacy' || url === '/impressum')) {
+    // One page, four names — the thing people look for varies by jurisdiction and habit.
+    return send(200, {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'public, max-age=300',
+    }, LEGAL_HTML);
   }
   if (url === '/skill.zip') {
     return send(200, {

@@ -52,7 +52,19 @@ Send the file by email, put it on a USB stick, commit it to git. The recipient o
 
 ## Choosing and tuning the AI
 
-The document needs a model to run the `/` gesture and ⌘K. Two ways to give it one:
+The document needs a model to run the `/` gesture and ⌘K. **You bring your own** — there is no
+hosted trial and no demo key, deliberately. Editing by hand, images, skins, printing, saving and
+sharing all work with no model at all; the AI features need either an API key you supply or a model
+running on your own machine, and nothing else in the system does.
+
+That is a real cost at first contact: someone who opens a rewritable for the first time cannot watch
+it rewrite itself without first having a key. It is the price of a property the design keeps
+everywhere else — **the service is model-free and never sees your content or your credentials.** The
+key lives in `sessionStorage` for the tab, never in the file, never on a server, never on disk. A
+hosted trial would mean routing your document through someone else's inference, which is the
+arrangement this whole format exists to avoid.
+
+Two ways to give it a model:
 
 - **The ⚙ settings panel** (above) — paste a key, pick a backend, done. The power-user path.
 - **Drop in an AI.** An **AI** here is a small signed file — a named editor personality (a *concise editor*, a *proofreader*, a *translator*) with a recommended model. Browse a few at [`rewritable.ikangai.com/ai`](https://rewritable.ikangai.com/ai), download one, and drag it onto any rewritable: a **"Use this AI"** card shows who signed it (by key fingerprint, *not* name), what it is allowed to reach, and a preview of its instructions — one confirmation installs, activates, and connects it. The active AI shows as a chip in the status bar. Author your own at [`/ai/maker`](https://rewritable.ikangai.com/ai/maker) — the Ed25519 signing key is generated in your browser and never leaves it.

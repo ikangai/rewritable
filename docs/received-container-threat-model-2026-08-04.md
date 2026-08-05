@@ -153,15 +153,37 @@ interesting, to defend against a threat the user can also avoid by not opening f
 distrust. The honest framing is closer to email attachments than to web pages, and that framing
 should be *stated* (option A) rather than engineered away.
 
-## 8. Decision required
+## 8. Decision — RESOLVED 2026-08-05
 
-Per the remediation plan (§5), this is an operator decision and it blocks Phase 2.
+**A + B, with C–F declined. The residual risk is accepted deliberately.**
 
-1. Which of A–F are in scope?
-2. If the answer is "A only" — **that is a legitimate outcome**, and this document exists so it can
-   be a decision rather than an omission. Record it here and close #4.
-3. Independently of the above: gate the ungated test seams (§5, last bullet)? Small, cheap, no
-   product cost.
+Built:
+
+- **B** — the vault key no longer persists. It lives only in a runtime closure, a reload re-prompts,
+  and it auto-locks after `RWA.VAULT_IDLE_MS` (15 min) without a vault operation. This removed the
+  worst item in §3: a raw AES-GCM key sitting in the most readable place in the browser, unlocked
+  indefinitely.
+- **A** — the risk is stated where users meet it: `README.md` under "Opening a rewritable someone
+  sent you", and `SECURITY.md` as an explicitly accepted risk rather than an unlisted one.
+- The ungated test seams are gated (`bridgeCommand`, `getSourceMap`/`getCurrentDocCache`, the skin
+  block), which shipped in every container while the `window.__*` seams beside them were correctly
+  jsdom-gated.
+
+**Accepted, and unchanged:** a received container's own inline script runs in the same realm as the
+runtime. It can read the API key typed into it, reach other containers' IndexedDB at the shared
+`file://` null origin, and exfiltrate freely — there is no `connect-src`.
+
+**Why C–F were declined.** F (sandboxing the document body) would dismantle interactive documents,
+which are the reason the format is interesting — trading the product's point for a threat a user can
+also avoid by not opening files from people they distrust. C, D and E are each defensible but carry
+blast radius disproportionate to that same threat.
+
+**The condition that should reopen this.** E (moving key entry out of the container's realm) stops
+being optional if drop-in AI becomes a primary acquisition path rather than a power-user feature —
+because the consent card asks for a secret *inside* the attacker-controlled realm, and that is the
+sharpest single edge in this model. The artifact bus and the AI gallery have already moved in that
+direction since this document was written. Revisit when a meaningful number of users arrive by
+being handed a container rather than by making one.
 
 ## Appendix — corrections found while verifying
 

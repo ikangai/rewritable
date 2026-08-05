@@ -17,7 +17,7 @@
 <meta http-equiv="Content-Security-Policy" content="script-src 'unsafe-inline' blob:; worker-src blob:; object-src 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="rwa-bootstrap" content="0.9">
-<meta name="rwa-seed" content="0099b7ef72c5">
+<meta name="rwa-seed" content="febdbc907ccc">
 <title>Intelligence — translator</title>
 <style>
 /* Palette + chrome modeled on playground.ikangai.com — neutral grayscale,
@@ -283,6 +283,12 @@ body:not([data-rwa-mode="document"]) #rwa-view-chrome{display:none!important;}
    capability switch after replace_document is refused for script_introduction_denied. */
 #rwa-scripts-bar{position:fixed;top:0;left:0;right:0;z-index:50;display:flex;align-items:center;justify-content:center;gap:10px;flex-wrap:wrap;padding:10px 16px;background:var(--yellow);color:var(--gray-900);font-family:var(--font-ui);font-size:13px;box-shadow:0 2px 8px rgba(0,0,0,0.08);}
 #rwa-scripts-bar[hidden]{display:none;}
+/* Save-time divergence (#14) — same persistent-bar treatment as the boot reconciliation
+   and script-gate bars; distinct id so the three never collide. */
+#rwa-overwrite-bar{position:fixed;top:0;left:0;right:0;z-index:50;display:flex;align-items:center;justify-content:center;gap:10px;flex-wrap:wrap;padding:10px 16px;background:var(--yellow);color:var(--gray-900);font-family:var(--font-ui);font-size:13px;box-shadow:0 2px 8px rgba(0,0,0,0.08);}
+#rwa-overwrite-bar[hidden]{display:none;}
+#rwa-overwrite-bar button{font:inherit;font-size:12px;padding:5px 10px;border:1px solid var(--gray-900);border-radius:6px;background:var(--white);color:var(--gray-900);cursor:pointer;}
+#rwa-overwrite-bar button:hover{background:var(--gray-100);}
 #rwa-scripts-bar button{font:inherit;font-size:12px;padding:5px 10px;border:1px solid var(--gray-900);border-radius:6px;background:var(--white);color:var(--gray-900);cursor:pointer;}
 #rwa-scripts-bar button:hover{background:var(--gray-100);}
 .rwa-frag-pulse{animation:rwa-frag-pulse 1.6s ease-out;}
@@ -2401,6 +2407,58 @@ function hideReconcileBar() {
   if (bar) bar.hidden = true;
 }
 
+// Save-time divergence (#14). Set only by the user choosing "Overwrite anyway", and cleared after
+// the write, so a forced save never silently becomes the new default.
+let _forceOverwrite = false;
+
+// Has the file changed underneath us since our last successful save?
+//
+// Factored out of commit() so the DECISION is testable on its own: a real
+// FileSystemFileHandle is structured-cloneable and a fake one is not, so a fake cannot be seeded
+// into rwa_fsa (fake-indexeddb rejects it with DataCloneError) — which is why nothing in this repo
+// has ever unit-tested the FSA commit path. Taking the handle as an argument sidesteps that
+// entirely. The wiring inside commit() remains browser-verified only; see
+// docs/cloud-sync-investigation-2026-08-05.md.
+//
+// Absent baseline → false (proceed). A container that has never saved from this browser knows
+// nothing about the file's history, and guessing could destroy work — the same reasoning as boot
+// reconciliation's absent-baseline row.
+async function fileChangedSinceLastSave(handle) {
+  try {
+    const prior = await idbGet(RWA.STATE, 'file_baseline');
+    if (!prior || !prior.hash) return false;
+    const onDisk = await (await handle.getFile()).text();
+    return (await rwaSha256Hex(onDisk)) !== prior.hash;
+  } catch (_) {
+    return false;   // unreadable handle → let the write path report it, don't block on a guess
+  }
+}
+function showOverwriteBar() {
+  let bar = document.getElementById('rwa-overwrite-bar');
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.id = 'rwa-overwrite-bar';
+    bar.setAttribute('role', 'alert');
+    bar.innerHTML =
+      '<span>This file changed on disk since you last saved — a sync client, another tab, or another editor.</span>' +
+      '<button type="button" data-act="overwrite">Overwrite with my version</button>' +
+      '<button type="button" data-act="reload">Reload and compare</button>';
+    bar.addEventListener('click', (e) => {
+      const act = e.target && e.target.getAttribute && e.target.getAttribute('data-act');
+      if (act === 'overwrite') { _forceOverwrite = true; hideOverwriteBar(); commit(); }
+      // "Reload" deliberately just reloads: boot reconciliation already knows how to present this
+      // choice properly, with the undo stack intact. Two mechanisms for one decision would drift.
+      else if (act === 'reload') { location.reload(); }
+    });
+    document.body.appendChild(bar);
+  }
+  bar.hidden = false;
+}
+function hideOverwriteBar() {
+  const bar = document.getElementById('rwa-overwrite-bar');
+  if (bar) bar.hidden = true;
+}
+
 // Issue #5 — a PERSISTENT bar (own id/class, distinct from #rwa-reconcile-bar)
 // telling the user WHY a commit was refused and how to proceed: a user who
 // legitimately wants AI-authored interactive content (a chart, say) needs a
@@ -2491,6 +2549,13 @@ function rwaReconcileShowDiff() {
 }
 
 // Expose for tests only — production code uses the hooks above.
+if (typeof navigator !== 'undefined' && /jsdom/i.test(navigator.userAgent)) {
+  // Save-time divergence seams (#14) — jsdom only, like the other window.__* seams.
+  window.__fileChangedSinceLastSave = fileChangedSinceLastSave;
+  window.__showOverwriteBar = showOverwriteBar;
+  window.__setForceOverwrite = (v) => { _forceOverwrite = !!v; };
+  window.__getForceOverwrite = () => _forceOverwrite;
+}
 window.rwaReconcileKeepMine = rwaReconcileKeepMine;
 window.rwaReconcileUseFile = rwaReconcileUseFile;
 window.rwaGetDivergence = () => rwaDivergence;
@@ -10555,8 +10620,31 @@ async function commit() {
           await idbPut(RWA.FSA, h);
           _fsaState = 'granted';   // showSaveFilePicker only resolves on user pick
         }
+        // Save-time divergence check (#14, and it closes the same hole for #6).
+        //
+        // Boot reconciliation (#1) compares the file against IndexedDB at OPEN time, which cannot
+        // see a change that lands while the tab is already open — a cloud-sync client pulling a
+        // remote edit down, another tab saving, an external editor. In all three the next ⌘S
+        // silently overwrites work that was never seen. The destructive moment is the write, so
+        // that is where this checks.
+        //
+        // Whole-file hash rather than the body: it needs no INLINE_DOC extraction and catches any
+        // external change, including one to the bootstrap. `file_baseline` is written after every
+        // successful save, so it is exactly "the bytes we last put there".
+        //
+        // Absent baseline (a container that has never saved from this browser) → proceed, for the
+        // same reason boot reconciliation does: nothing is known yet, and guessing could destroy
+        // work.
+        if (!_forceOverwrite && await fileChangedSinceLastSave(h)) {
+          showOverwriteBar();
+          setStatus('err', '✗ the file changed on disk — resolve before saving');
+          return;
+        }
         try {
           const w = await h.createWritable(); await w.write(text); await w.close();
+          try { await idbPut(RWA.STATE, { hash: await rwaSha256Hex(text), at: new Date().toISOString() }, 'file_baseline'); } catch (_) {}
+          _forceOverwrite = false;
+          hideOverwriteBar();
         } catch (writeErr) {
           // InvalidStateError surfaces when the handle is no longer valid
           // (file moved/deleted, tab restored from bfcache, etc.). Mark the
