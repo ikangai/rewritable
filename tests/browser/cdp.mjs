@@ -131,6 +131,21 @@ export async function launch({ url = 'about:blank', headless = true } = {}) {
   await send('Runtime.enable');
   await send('Page.enable');
 
+  // Wait for a USABLE execution context before returning. Attaching to a page target does not mean
+  // its initial navigation has settled, and evaluating into a context that is still being torn down
+  // and recreated fails with "Execution context was destroyed" — which on a fast machine never
+  // happens and on a loaded CI runner does. Poll a trivial expression, tolerating exactly that
+  // error, until one succeeds.
+  for (let i = 0; i < 100; i++) {
+    try {
+      const r = await send('Runtime.evaluate', { expression: '1+1', returnByValue: true });
+      if (r && r.result && r.result.value === 2) break;
+    } catch (e) {
+      if (!/context was destroyed|Cannot find context/i.test(e.message || '')) throw e;
+    }
+    await sleep(100);
+  }
+
   const page = {
     send,
     consoleErrors,
@@ -148,9 +163,20 @@ export async function launch({ url = 'about:blank', headless = true } = {}) {
     // page under test is a local container the test itself just built.
     async eval(fn, ...args) {
       const expression = `(${fn.toString()})(${args.map((a) => JSON.stringify(a)).join(',')})`;
-      const r = await send('Runtime.evaluate', {
-        expression, returnByValue: true, awaitPromise: true,
-      });
+      let r;
+      for (let attempt = 0; ; attempt++) {
+        try {
+          r = await send('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true });
+          break;
+        } catch (e) {
+          // A context torn down between attach and evaluate is a timing artefact, not a result.
+          // Retry once after a beat; anything else is a real failure and propagates.
+          if (attempt === 0 && /context was destroyed|Cannot find context/i.test(e.message || '')) {
+            await sleep(300); continue;
+          }
+          throw e;
+        }
+      }
       if (r.exceptionDetails) {
         throw new Error('page eval threw: ' + (r.exceptionDetails.text || '') + ' ' +
           (r.exceptionDetails.exception?.description || ''));
