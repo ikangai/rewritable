@@ -2,6 +2,70 @@
 
 Notable changes to `re-write-able`. The container format is versioned in `re-write-able-spec.md`; the edit protocol in `rwa-edit-spec.md`; the structural-transform DSL in `rwa-edit-dsl-spec.md`. The CLI follows semver in `cli/package.json`.
 
+## 2026-08-06 — durability, a security posture, and gates that catch things (cli 0.19.0)
+
+A two-day blindspot audit turned into seventeen tracked issues and closed all of them. The theme is
+less "new features" than **making the existing promises true and keeping them true** — the repo
+gained CI, a real-browser test lane, measured performance budgets, and a licence, none of which
+existed before.
+
+**Data durability.**
+- **Boot reconciliation.** `getDoc()` consulted the file's `INLINE_DOC` only when IndexedDB was
+  literally empty, so a `git pull`, a checkout, an external edit or a restored backup was silently
+  discarded in favour of stale browser state — the durability promise inverted. A `doc_baseline`
+  hash in `rwa_state` now detects it at open: adopt the file when nothing local is unsaved, otherwise
+  ask. **Invariant 6 narrowed** accordingly (spec 0.16).
+- **Save-time divergence.** Reconciliation runs at boot and cannot see a change landing while a tab
+  is open — a sync client, a second tab, another editor. ⌘S now re-reads the file and refuses to
+  overwrite bytes it did not write, offering *overwrite* or *reload and compare*. Consent is
+  single-shot. This also closes the overwrite half of the multi-tab gap.
+- **Multi-tab honesty.** §10.3 described a `BroadcastChannel` lock that **never existed**. Corrected
+  rather than built (spec 0.17), with what actually happens, why boot reconciliation does not cover
+  it, and what a real fix would need (Web Locks, not `BroadcastChannel` alone).
+
+**Security.**
+- **The vault key no longer persists.** It was exported to `sessionStorage` on every unlock so an
+  unlocked vault survived a reload — the raw AES-GCM key in the most readable place in the browser.
+  Now closure-only, re-prompting after a reload, with an idle auto-lock (`RWA.VAULT_IDLE_MS`).
+- **Agent-authored scripts are gated.** `replace_document` was exempt from the script/style shape
+  check, and `renderDoc` re-executes scripts on the very render that commits them — so injected text
+  could induce the agent to plant a script that ran immediately. Introducing an *executable* script
+  now needs a per-container capability (`allow_agent_scripts`); `<style>` is untouched so skinning
+  works, and `text/rwa-step` workflow bodies are unaffected in every kind.
+- **The prompt is fenced.** The document is wrapped in a per-call nonce fence with an explicit
+  data-not-instructions framing, mirrored across all three `buildUserPrompt` copies.
+- **Test seams gated.** `bridgeCommand`, `getCurrentDocCache`, `getSourceMap` and the skin helpers
+  shipped in every container while the `window.__*` seams beside them were correctly jsdom-gated.
+- **A written threat model** for received containers, recording what is accepted and why —
+  `docs/received-container-threat-model-2026-08-04.md`.
+
+**Longevity.**
+- **`rwa upgrade <file>`** re-bootstraps a shipped container onto the current seed, preserving
+  `DOC_UUID` (it names the IndexedDB), the `INLINE_DOC` body verbatim, kind, title and filename. It
+  verifies the rebuild round-trips byte-for-byte before writing, and refuses to "upgrade" onto a
+  stale seed.
+- **Derived seed identity.** `<meta name="rwa-seed">` carries sha-256 of the seed a container was
+  born from. The pre-existing `rwa-bootstrap` version had sat at `0.9` across 163 seed commits, so it
+  identified nothing.
+
+**Infrastructure that did not exist.**
+- **CI** — six jobs: root, CLI, service, conformance + fidelity, reference freshness, and a
+  **zero-dependency real-browser lane** driving Chrome over CDP for the layout, pointer and touch
+  behaviour jsdom structurally cannot see.
+- **Measured scale budgets** — `renderDoc` is the wall (2.8 s at 800 KB); the source-position map
+  costs 8 ms and the commit path 185 ms, so both earlier suspects were wrong.
+- **MIT LICENSE, `SECURITY.md`**, and npm metadata; the package had been published since April with
+  none of it.
+- **Service**: abuse reporting, operator takedown, `/abuse`, terms + privacy + impressum at
+  `/legal`, and aggregate per-route counters at `/metrics` (no per-user dimension).
+- **Touch reachability** — the whole-document prompt had no tap target after the lens retirement.
+
+**Documentation truth.** A sweep of the eleven current normative specs found seventeen discrepancies
+— an entire unbuilt section written in the present tense, a DSL error table that specifies the CLI
+rather than the runtime, a palette naming fonts that no longer exist. All corrected or explicitly
+marked; audit in `docs/spec-fiction-audit-2026-08-05.md`. The workflow system prompt was also found
+**nine versions behind its own runner**, telling the agent that shipped features were reserved.
+
 ## 2026-07-08 — the unified "/" edit gesture: the document is the editor (cli 0.18.0)
 
 The in-document editing model is reworked around a single idea — **the document is the editor**. Ported from a reference interaction; entirely additive to the inline-edit / mode / selection layer. There is **no new commit or undo path**: the `/` gestures produce edits through the existing agent + anchor pipeline, so the frozen wall, `data-rwa-id` stability, the 3-attempt retry budget, and one-edit-one-`⌘Z` all still hold.

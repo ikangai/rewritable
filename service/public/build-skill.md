@@ -485,8 +485,26 @@ datalist of benchmarked OpenRouter models for autocomplete.
   `_<DOC_UUID>/`; a document that calls `navigator.storage.getDirectory()`
   directly is opting out. Don't.
 - **Multi-tab is uncoordinated.** Two tabs of the same container can step on
-  each other. Last write wins; with FSA, two tabs writing the same handle can
-  corrupt the file. Treat the container as single-tab.
+  each other. Last write wins and the undo stacks diverge; there is no lock, no
+  detection, and no warning at open time. Treat the container as single-tab.
+  (⌘S itself is now guarded — see "the file changed on disk" below — so the
+  *overwrite* is caught even though the divergence is not prevented.)
+- **The runtime notices when the file changed underneath it.** On open it
+  compares the file against its stored state and either adopts the newer file or
+  asks; on ⌘S it re-reads the file and refuses to overwrite bytes it did not
+  write, offering *overwrite* or *reload and compare*. This covers a `git pull`,
+  an external editor, a restored backup, a cloud-sync client, and a second tab.
+  Nothing for a skill to do — but if you build UI around saving, expect a save
+  to be refusable.
+- **The AI cannot add `<script>` unless the container allows it.** Introducing an
+  *executable* script via `replace_document` needs a per-container capability;
+  the refusal offers to enable it. `<style>` is unaffected (skinning depends on
+  it), and `<script type="text/rwa-step">` workflow bodies are never gated. If
+  your artifact needs the model to author behaviour, say so in the instruction
+  and expect one consent step.
+- **The vault re-prompts after a reload** and auto-locks when idle. The derived
+  key lives only in memory, never in `sessionStorage`. A skill that reads
+  credentials should handle `vault_locked` rather than assume a warm vault.
 - **Quota shared per origin.** Many open containers under `file://` add up to
   one shared budget even though state is namespaced.
 - **Agent context grows with document size.** The runtime is in the bootstrap
