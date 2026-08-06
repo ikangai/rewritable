@@ -27,12 +27,16 @@ const TRIGGER_HTML = fs.readFileSync(path.join(PUBLIC_DIR, 'new.html'));
 const IMPORT_HTML = fs.readFileSync(path.join(PUBLIC_DIR, 'import.html'));
 const ABUSE_HTML = fs.readFileSync(path.join(PUBLIC_DIR, 'abuse.html'));   // #13 — the human-facing half of the report route
 const LEGAL_HTML = fs.readFileSync(path.join(PUBLIC_DIR, 'legal.html'));   // #13 — terms + privacy + impressum
-// Fail loud at startup if the impressum is still a placeholder. An impressum is a
-// legal requirement in the EU and its details are facts about a real company that
-// must not be invented; serving the page with the TODO block still in it is worse
-// than not serving it. Warns rather than exits so a dev/preview deploy still runs.
-if (LEGAL_HTML.includes('operator action required')) {
-  console.error('WARNING: /legal still contains the impressum placeholder — fill it before relying on this deployment (#13).');
+// An impressum is a legal requirement in the EU (§5 ECG, §25 MedienG), so assert at
+// startup that the page still carries one. Inverted from the original placeholder
+// check: guarding against the placeholder only helped until it was filled, whereas
+// this keeps helping — an edit that strips the entity or the responsible person
+// leaves a live service without a required legal notice, which is exactly the state
+// nobody notices. Warns rather than exits so a preview deploy still runs.
+for (const required of ['IKANGAI e.U.', 'Blütengasse', 'Martin Treiber']) {
+  if (!LEGAL_HTML.includes(required)) {
+    console.error(`WARNING: /legal is missing "${required}" — the impressum is incomplete (#13).`);
+  }
 }
 const SEED_TEMPLATE = fs.readFileSync(path.join(SEEDS_DIR, 'rewritable.html'), 'utf8');
 

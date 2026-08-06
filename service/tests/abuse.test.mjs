@@ -112,6 +112,27 @@ test('operator takedown requires the configured token and actually removes', asy
   } finally { srv.stop(); }
 });
 
+test('the legal page serves under every name people look for, and carries a real impressum', async () => {
+  // WHY: an impressum is a legal requirement (§5 ECG, §25 MedienG) for a service that hosts
+  // anonymous public content, and the failure mode is silent — an edit that strips the entity or
+  // the responsible person leaves a live service without a required notice and nothing complains.
+  // The four aliases exist because what a visitor looks for varies by jurisdiction and habit.
+  const srv = await startServer();
+  try {
+    for (const p of ['/legal', '/terms', '/privacy', '/impressum']) {
+      const r = await fetch(`${srv.base}${p}`);
+      assert.equal(r.status, 200, `${p} should serve`);
+      const html = await r.text();
+      for (const required of ['IKANGAI e.U.', 'Blütengasse', '8010 Graz', 'Martin Treiber']) {
+        assert.ok(html.includes(required), `${p} must carry "${required}"`);
+      }
+      // The privacy claims are load-bearing promises about behaviour, not marketing copy.
+      assert.ok(/no accounts/i.test(html), 'privacy must state there are no accounts');
+      assert.ok(/aggregate/i.test(html), 'privacy must describe the counters as aggregate');
+    }
+  } finally { srv.stop(); }
+});
+
 test('without RWA_ADMIN_TOKEN the takedown route does not exist at all', async () => {
   // 404 rather than 401: an unconfigured deploy should not advertise an admin surface, and must not
   // fall back to anything weaker than "off".
