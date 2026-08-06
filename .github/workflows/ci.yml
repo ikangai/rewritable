@@ -99,8 +99,19 @@ jobs:
       - name: Install benchmark deps (hosted.test.mjs resolves jsdom there)
         working-directory: benchmark
         run: npm install --no-audit --no-fund
+      # --test-concurrency=1 on purpose. Seven of these files spawn a REAL server.js on a port
+      # obtained by probing for a free one and then closing the probe — an inherent gap between
+      # "this port was free" and "the child bound it". Run in parallel, files race for ports, and
+      # skills.test.mjs went red on CI with a 201 publish followed by an index reporting zero
+      # entries. It was never reproducible locally (5 consecutive clean runs) because the race needs
+      # load. Adding two more server-spawning files (#13, #15) took concurrency from five to seven
+      # and pushed a latent flake over the line.
+      #
+      # Serialising costs ~46s and removes the class. The alternative — teaching server.js to report
+      # its actually-bound port so tests can pass PORT=0 — is the better fix and a bigger change
+      # across seven harnesses; worth doing when this suite gets slow enough to care.
       - name: Test
-        run: node --test service/tests/*.test.mjs
+        run: node --test --test-concurrency=1 service/tests/*.test.mjs
 
   browser:
     name: Real-browser lane (layout + real input)

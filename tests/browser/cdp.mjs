@@ -40,7 +40,12 @@ function freePort() {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-async function fetchJson(url, tries = 40) {
+// Startup budget. 6s was too tight: a loaded CI runner intermittently failed here with "CDP
+// endpoint never came up" while passing on the next run — a flaky lane is worse than a slow one,
+// and this is pure waiting, so it costs nothing when Chrome is quick. `diag` carries Chrome's own
+// stderr so a genuine launch failure (missing library, bad flag) is reported as itself rather than
+// disguised as a timeout.
+async function fetchJson(url, tries = 120, diag = () => '') {
   for (let i = 0; i < tries; i++) {
     try {
       const r = await fetch(url);
@@ -48,7 +53,8 @@ async function fetchJson(url, tries = 40) {
     } catch { /* not up yet */ }
     await sleep(150);
   }
-  throw new Error(`CDP endpoint never came up: ${url}`);
+  const stderr = diag().trim().split('\n').slice(-6).join('\n');
+  throw new Error(`CDP endpoint never came up: ${url}` + (stderr ? `\nchrome stderr:\n${stderr}` : ''));
 }
 
 export async function launch({ url = 'about:blank', headless = true } = {}) {
@@ -76,9 +82,11 @@ export async function launch({ url = 'about:blank', headless = true } = {}) {
     url,
   ];
   const child = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+  let chromeErr = '';
+  child.stderr.on('data', (d) => { chromeErr += d; });
+  child.on('error', (e) => { chromeErr += '\nspawn error: ' + e.message; });
 
-  const version = await fetchJson(`http://127.0.0.1:${port}/json/version`);
-  void version;
+  await fetchJson(`http://127.0.0.1:${port}/json/version`, 120, () => chromeErr);
   // Find the page target for our URL (Chrome may also expose other targets).
   let target = null;
   for (let i = 0; i < 40 && !target; i++) {
