@@ -178,6 +178,13 @@ jobs:
       # references have drifted from seeds/rewritable.html.
       - name: Regenerate
         run: node tools/regenerate-refs.mjs
+      # #18 — seed copies outside seeds/. In CI the in-package copy is gitignored so it does not
+      # exist and this passes trivially; it earns its place by catching the case where one gets
+      # committed by accident, and by being the same command a human runs locally after a seed
+      # change. The copies it cannot reach (the vendored authoring skill) are why the script exists
+      # rather than only a CI step.
+      - name: Seed copies in sync
+        run: node tools/check-seeds.mjs
       - name: Assert no drift
         run: |
           if ! git diff --quiet; then

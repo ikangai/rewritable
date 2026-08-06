@@ -1,15 +1,60 @@
 import fs from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 
-export async function loadSeed(candidates) {
+// Warn once per process, not once per call — several verbs load the seed more than once and a
+// repeated warning trains people to ignore it.
+let _staleSeedWarned = false;
+
+// Exported for the check script and for tests: given the resolved candidate list, report whether a
+// LOSING candidate differs from the winner. Pure, so it can be asserted without spawning a CLI.
+export function seedStaleness(entries) {
+  const present = entries.filter(e => e.text != null);
+  if (present.length < 2) return null;                       // published package: only one seed exists
+  const [winner, ...rest] = present;
+  const winnerId = seedIdentity(winner.text);
+  const differing = rest.filter(e => seedIdentity(e.text) !== winnerId);
+  if (!differing.length) return null;
+  return {
+    using: winner.path,
+    usingSeedId: winnerId,
+    shadowed: differing.map(e => ({ path: e.path, seedId: seedIdentity(e.text) })),
+  };
+}
+
+export async function loadSeed(candidates, { warn = true } = {}) {
+  // Read every candidate rather than returning at the first hit (#18). `cli/seeds/` is gitignored
+  // and written by prepublishOnly, so a leftover copy is never refreshed by pulling — and it WINS
+  // this order, which is correct after `npm publish` (it is the only seed there) and wrong in a dev
+  // checkout. Untracked and ungated, it went stale three times in one day and silently made
+  // `rwa new` emit a week-old runtime. The extra read costs ~1ms and only happens when two seeds
+  // actually exist.
+  const entries = [];
   for (const p of candidates) {
-    try {
-      return await fs.readFile(p, 'utf8');
-    } catch (e) {
+    try { entries.push({ path: p, text: await fs.readFile(p, 'utf8') }); }
+    catch (e) {
       if (e.code !== 'ENOENT') throw e;
+      entries.push({ path: p, text: null });
     }
   }
-  throw new Error(`seed not found in any of: ${candidates.join(', ')}`);
+  const first = entries.find(e => e.text != null);
+  if (!first) throw new Error(`seed not found in any of: ${candidates.join(', ')}`);
+
+  // Detect, don't fix: rewriting or deleting someone's file as a side effect of loading it would be
+  // worse than the staleness. `rwa upgrade` REFUSES on this condition (upgrading onto an older seed
+  // is a downgrade); every other verb still works, so it warns and proceeds.
+  if (warn && !_staleSeedWarned) {
+    const stale = seedStaleness(entries);
+    if (stale) {
+      _staleSeedWarned = true;
+      const shadow = stale.shadowed.map(s => `${s.path} (${s.seedId})`).join(', ');
+      process.stderr.write(
+        `warning: using a seed that shadows a different one — output may be built from stale bytes.\n` +
+        `  using:     ${stale.using} (${stale.usingSeedId})\n` +
+        `  shadowing: ${shadow}\n` +
+        `  fix: cp ${stale.shadowed[0].path} ${stale.using}   (or delete the in-package copy)\n`);
+    }
+  }
+  return first.text;
 }
 
 const UUID_RE = /const DOC_UUID = '[0-9a-f-]{36}';/;
