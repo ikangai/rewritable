@@ -211,6 +211,15 @@ export function bridgeModel(opts = {}) {
   // `claude` so the shim can find it; defaults to bare `claude` for shells
   // that already have it on PATH.
   const claudeBin = opts.claudeBin || process.env.RWA_CLAUDE_BIN || 'claude';
+  // Pin the model instead of riding the CLI default. The default drifts with
+  // CLI updates, which breaks run-to-run comparability — and claude-fable-5
+  // (the default as of CLI 2.1.224) stochastically hard-refuses a subset of
+  // benchmark prompts (stop_reason:"refusal") that opus/sonnet accept.
+  // Charset-gated because the value is spliced into a shell command.
+  const claudeModel = opts.model || process.env.RWA_CLAUDE_MODEL || '';
+  if (claudeModel && !/^[A-Za-z0-9._:@-]+$/.test(claudeModel)) {
+    throw new Error(`bridgeModel: RWA_CLAUDE_MODEL ${JSON.stringify(claudeModel)} — letters/digits/._:@- only`);
+  }
   // Opus calls regularly hit 30–90s on long docs; benchmark scenarios with
   // ~2k input tokens land in that range. 6 minutes leaves headroom for the
   // longest legitimate calls without wedging the bench on a hung claude.
@@ -260,7 +269,7 @@ export function bridgeModel(opts = {}) {
     // would be both pointless and the exact RCE anti-pattern the shared seed's
     // bridgeCommand removed (audit 2026-05-27). Default mode never prompts here
     // because the single-shot prompt asks only for JSON text.
-    const cmd = `echo '${promptB64}' | base64 -d | ${claudeBin} -p --output-format json`;
+    const cmd = `echo '${promptB64}' | base64 -d | ${claudeBin} -p${claudeModel ? ` --model ${claudeModel}` : ''} --output-format json`;
 
     const ctrl = new AbortController();
     const timer = setTimeout(

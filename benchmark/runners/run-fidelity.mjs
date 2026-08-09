@@ -303,17 +303,29 @@ async function main() {
       wall_ms_p95,
       toolCounts,
       runs,
+      // customRun scenarios drive modify() themselves; the harness collects no
+      // token stats on that path, so zero tokens is normal for them.
+      customRun: typeof s.customRun === 'function',
     });
     console.log(`        meanS=${meanS.toFixed(2)}  meanT=${meanT.toFixed(2)}  drift=${medianDrift.toFixed(4)}  tok=${tokens_in_med}/${tokens_out_med} (in/out)  wall=${wall_ms_med}ms`);
   }
 
-  const tsvPath = path.join(RESULTS_DIR, 'fidelity.tsv');
+  // fidelity.tsv is the canonical FULL-run output (multimodel.mjs reads it
+  // right after each child run). A filtered run writes elsewhere so it can
+  // never clobber a full run's results.
+  const tsvPath = path.join(RESULTS_DIR, only ? 'fidelity.partial.tsv' : 'fidelity.tsv');
   const tsvLines = [
     '# model: ' + modelName + ', mode: ' + mode,
     ['id', 'category', 'tag', 'N', 'meanS', 'meanT', 'medianDrift', 'tokens_in_med', 'tokens_out_med', 'tokens_total_med', 'tokens_total_p95', 'wall_ms_med', 'wall_ms_p95'].join('\t'),
     ...allResults.map(r => [r.id, r.category, r.tag, r.N, r.meanS.toFixed(3), r.meanT.toFixed(3), r.medianDrift.toFixed(5), r.tokens_in_med, r.tokens_out_med, r.tokens_total_med, r.tokens_total_p95, r.wall_ms_med, r.wall_ms_p95].join('\t')),
   ];
   fs.writeFileSync(tsvPath, tsvLines.join('\n') + '\n');
+  if (!only && modelName !== 'stub' && modelName !== 'baseline') {
+    // Real-model runs are expensive; keep a model-named copy so the next
+    // invocation's fidelity.tsv overwrite can't erase this one.
+    const slug = modelName.replace(/[^A-Za-z0-9_-]/g, '_');
+    fs.copyFileSync(tsvPath, path.join(RESULTS_DIR, `fidelity.${slug}.tsv`));
+  }
 
   // Headline numbers
   const overallMeanS = mean(allResults.map(r => r.meanS));
@@ -361,6 +373,19 @@ async function main() {
   writeFidelitySummary(modelName, mode, allResults, tagAggregates, {
     overallMeanS, overallMeanT, overallMedianDrift,
   });
+
+  // A real-model scenario that ends with zero tokens never completed a call
+  // (dead API key, API-side refusal, unparseable output) — its score measures
+  // the failed call, not the model's editing. Scoring that silently is how a
+  // dead key produced a plausible-looking all-zero "gemini" run (2026-08-05).
+  if (modelName !== 'stub' && modelName !== 'baseline') {
+    const silent = allResults.filter(r => !r.customRun && r.tokens_total_med === 0);
+    if (silent.length) {
+      console.error(`\n✗ ${silent.length} scenario(s) returned ZERO tokens — the model call itself failed (auth/refusal/parse); their scores are not edit-quality signal:`);
+      console.error('  ' + silent.map(r => r.id).join(', '));
+      process.exitCode = 1;
+    }
+  }
 }
 
 function writeFidelitySummary(modelName, mode, allResults, tagAggregates, headline) {
