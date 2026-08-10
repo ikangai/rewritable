@@ -493,6 +493,9 @@ const RWA = {
   // Unlike single-shot /run, /session/* is token-mandatory + origin-allowlisted,
   // and create() needs a server-side working dir for the claude session.
   K_BRIDGE_TOKEN:'rwa_bridge_token', K_BRIDGE_CWD:'rwa_bridge_cwd',
+  // Optional model pin for the single-shot bridge (`claude -p --model …`).
+  // Empty = the CLI's own default, which drifts with CLI updates.
+  K_BRIDGE_MODEL:'rwa_bridge_model',
   MODEL:'google/gemini-3.5-flash',
   FILE:'rewritable.html',
   // OpenAI-compat localhost defaults — both Ollama and LM Studio ship the
@@ -1581,6 +1584,7 @@ function buildFile(doc) {
     },
     bridge: {
       showKey: false, showBaseUrl: false, showModel: false, showHint: false,
+      showBridgeModel: true,
       hintHTML: '',
     },
     'bridge-session': {
@@ -1652,6 +1656,7 @@ function buildUI() {
   <div class="rwa-set-row" id="rwa-set-row-key"><label>OpenRouter Key</label><input type="password" id="rwa-key" placeholder="sk-or-..." autocomplete="off"></div>
   <div class="rwa-set-row" id="rwa-set-row-bridge-token" style="display:none;"><label>Bridge Token</label><input type="password" id="rwa-bridge-token" placeholder="WEB_CLI_BRIDGE_TOKEN" autocomplete="off"></div>
   <div class="rwa-set-row" id="rwa-set-row-bridge-cwd" style="display:none;"><label>Session Dir</label><input type="text" id="rwa-bridge-cwd" placeholder="/path/on/bridge/host" autocomplete="off" spellcheck="false"></div>
+  <div class="rwa-set-row" id="rwa-set-row-bridge-model" style="display:none;"><label>Bridge Model</label><input type="text" id="rwa-bridge-model" placeholder="claude-sonnet-5 (empty = CLI default)" autocomplete="off" spellcheck="false"></div>
   <div class="rwa-set-row" id="rwa-set-row-base-url" style="display:none;"><label>Base URL</label><div class="rwa-set-base-url-line"><input type="text" id="rwa-base-url" autocomplete="off" spellcheck="false"><button type="button" id="rwa-base-url-test">Test</button></div><div id="rwa-base-url-result" class="rwa-set-hint"></div></div>
   <div class="rwa-set-row" id="rwa-set-row-model"><label>Model</label><input type="text" id="rwa-model" autocomplete="off" list="rwa-model-options"><datalist id="rwa-model-options"></datalist></div>
   <div class="rwa-set-row" id="rwa-set-row-hint" style="display:none;"><div id="rwa-backend-hint" class="rwa-set-hint"></div></div>
@@ -1757,6 +1762,13 @@ function buildUI() {
     if (v) sessionStorage.setItem(RWA.K_BRIDGE_CWD, v);
     else sessionStorage.removeItem(RWA.K_BRIDGE_CWD);
   };
+  const bridgeModelEl = document.getElementById('rwa-bridge-model');
+  bridgeModelEl.value = sessionStorage.getItem(RWA.K_BRIDGE_MODEL) || '';
+  bridgeModelEl.oninput = e => {
+    const v = e.target.value.trim();
+    if (v) sessionStorage.setItem(RWA.K_BRIDGE_MODEL, v);
+    else sessionStorage.removeItem(RWA.K_BRIDGE_MODEL);
+  };
 
   const backendEl = document.getElementById('rwa-backend');
   const baseUrlEl = document.getElementById('rwa-base-url');
@@ -1773,6 +1785,7 @@ function buildUI() {
     document.getElementById('rwa-set-row-hint').style.display   = meta.showHint    ? '' : 'none';
     document.getElementById('rwa-set-row-bridge-token').style.display = meta.showBridgeToken ? '' : 'none';
     document.getElementById('rwa-set-row-bridge-cwd').style.display   = meta.showBridgeCwd   ? '' : 'none';
+    document.getElementById('rwa-set-row-bridge-model').style.display = meta.showBridgeModel ? '' : 'none';
     if (meta.showBaseUrl) {
       baseUrlEl.placeholder = meta.defaultUrl;
       baseUrlEl.value = sessionStorage.getItem(meta.storageKey) || '';
@@ -2768,9 +2781,11 @@ function renderAiPanel(panel) {
     const bridgeKind = cfg.kind === 'bridge' || cfg.kind === 'bridge-session';
     const aff = (active.affinity && active.affinity.length) ? ' · for ' + active.affinity.join('/') : '';
     const desc = active.description ? '<div>' + escRuntimeHtml(active.description) + '</div>' : '';
-    // Bridge shells to `claude -p`; the sessionStorage model is ignored — naming it would be a lie.
+    // Bridge ignores the shared model field; only a pinned Bridge Model is
+    // real there — name it when set, else name just the transport.
+    const bridgeModel = (sessionStorage.getItem(RWA.K_BRIDGE_MODEL) || '').trim();
     const status = !connected ? 'not connected'
-      : bridgeKind ? escRuntimeHtml('using ' + backend)
+      : bridgeKind ? escRuntimeHtml('using ' + (backend === 'bridge' && bridgeModel ? bridgeModel + ' via ' : '') + backend)
       : escRuntimeHtml('using ' + model + ' via ' + backend);
     const btns = (connected ? '' : '<button type="button" data-ai-connect="1">Connect</button>')
       + '<button type="button" data-agent-off="1">Deactivate</button>';
@@ -6227,7 +6242,12 @@ function getActiveActor() {
   // the actor of record (rendered as a history badge). Else fall back to the backend/model string.
   if (activeAgentRole) return 'agents:' + activeAgentRole;
   const backend = sessionStorage.getItem(RWA.K_BACKEND) || 'openrouter';
-  if (backend === 'bridge') return 'bridge:claude-p';
+  if (backend === 'bridge') {
+    // A pinned Bridge Model is the actual model; name it. Unpinned, claude -p
+    // rides the CLI default and doesn't expose which — sentinel only.
+    const bm = (sessionStorage.getItem(RWA.K_BRIDGE_MODEL) || '').trim();
+    return bm ? 'bridge:claude-p:' + bm : 'bridge:claude-p';
+  }
   if (backend === 'bridge-session') return 'bridge:claude-session';
   return sessionStorage.getItem(RWA.K_MODEL) || RWA.MODEL;
 }
@@ -6378,7 +6398,16 @@ async function callAgentSingleShot(prompt) {
 // single-quoted echo (the b64 alphabet is shell-safe inside single quotes).
 function bridgeCommand(prompt) {
   const promptB64 = btoa(unescape(encodeURIComponent(prompt)));
-  return `echo '${promptB64}' | base64 -d | claude -p --output-format text`;
+  // Optional model pin (Settings → Bridge Model). Unpinned, `claude -p` rides
+  // the CLI's default model, which drifts with CLI updates and can change edit
+  // behavior under the user silently. Charset-gated because the value is
+  // spliced into the shell command the bridge executes; an invalid value
+  // throws (surfacing in the modify failure) instead of silently unpinning.
+  const model = (sessionStorage.getItem(RWA.K_BRIDGE_MODEL) || '').trim();
+  if (model && !/^[A-Za-z0-9._:@-]+$/.test(model)) {
+    throw new Error('bridge model ' + JSON.stringify(model) + ' — letters/digits/._:@- only (Settings → Bridge Model)');
+  }
+  return `echo '${promptB64}' | base64 -d | claude -p${model ? ` --model ${model}` : ''} --output-format text`;
 }
 // Test seam — jsdom only. bridgeCommand builds the shell string the localhost
 // bridge executes; it shipped unconditionally, so a received document's own

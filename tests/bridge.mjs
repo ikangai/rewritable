@@ -90,5 +90,29 @@ const roundtrip = (s) => {
 check('base64 round-trips an ASCII prompt unchanged', roundtrip('plain ascii prompt') === 'plain ascii prompt');
 check('base64 round-trips a unicode prompt unchanged', roundtrip('café — 日本語 — 🎉') === 'café — 日本語 — 🎉');
 
+// Bridge Model pin (2026-08-10). Unpinned, `claude -p` rides the CLI's default
+// model — which drifts with CLI updates and (as of CLI 2.1.224, default
+// claude-fable-5) stochastically refuses a subset of ordinary editing prompts.
+// The pin restores reproducibility; because it is spliced into the shell
+// command the bridge EXECUTES, it must be charset-gated, and a bad value must
+// fail LOUD, not silently unpin (the backends.mjs silent-fallback trap).
+console.log('\n== Bridge model pin ==');
+
+check('unpinned command carries no --model flag', !/--model/.test(window.bridgeCommand('x')));
+
+window.sessionStorage.setItem('rwa_bridge_model', 'claude-sonnet-5');
+check('pinned command names the model', /claude -p --model claude-sonnet-5 --output-format text$/.test(window.bridgeCommand('x')));
+check('pinned command still denies unattended tools', !/--permission-mode/.test(window.bridgeCommand('x')));
+
+window.sessionStorage.setItem('rwa_bridge_model', 'bad; touch /tmp/pwned');
+let threw = null;
+try { window.bridgeCommand('x'); } catch (e) { threw = e; }
+check('shell-special model value throws instead of reaching the command', !!threw);
+check('the thrown error points at the setting', !!threw && /Bridge Model/.test(threw.message));
+
+window.sessionStorage.setItem('rwa_bridge_model', '  ');
+check('whitespace-only pin is treated as unset', !/--model/.test(window.bridgeCommand('x')));
+window.sessionStorage.removeItem('rwa_bridge_model');
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
