@@ -67,11 +67,12 @@ const MAX_DOC = 1024 * 1024;
 // authoritative server-side on the hosted /modify path (rwa-edit-spec.md §19).
 export const MAX_DOC_EXPANDED = 10 * 1024 * 1024;
 
-// LF canonicalization — mirror of the seed's canonLF. The seed normalizes the
-// doc AND every find/replace to LF before matching, so a CRLF document or a
-// CRLF-containing anchor behaves identically in the CLI and the browser.
-// Without this a CRLF doc + LF anchor (or vice versa) spuriously misses.
-const canonLF = (s) => (s == null ? '' : String(s).replace(/\r\n/g, '\n').replace(/\r/g, '\n'));
+// Canonical text form — mirror of the seed's canonLF: LF-only + Unicode NFC.
+// The seed canonicalizes the doc AND every find/replace before matching, so a
+// CRLF document or an NFD-containing one (paste artifacts) behaves identically
+// in the CLI and the browser. Without LF, a CRLF doc + LF anchor spuriously
+// misses; without NFC, an NFC anchor misses visually identical NFD text.
+const canonLF = (s) => (s == null ? '' : String(s).replace(/\r\n/g, '\n').replace(/\r/g, '\n').normalize('NFC'));
 
 // UTF-16 well-formedness — a lone surrogate in find/replace becomes U+FFFD on
 // UTF-8 encode (the durable file write) and silently corrupts byte-equality.

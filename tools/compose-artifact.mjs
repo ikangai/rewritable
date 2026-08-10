@@ -25,7 +25,7 @@ if (!seedPath || !bodyPath || !uuid || !fileName || !outPath) {
   process.exit(1);
 }
 
-const canonLF = s => s.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+const canonLF = s => s.replace(/\r\n/g, '\n').replace(/\r/g, '\n').normalize('NFC');
 const escapeTL = s => canonLF(s)
   .replace(/\\/g, '\\\\')
   .replace(/`/g, '\\`')

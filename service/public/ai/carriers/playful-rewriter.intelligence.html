@@ -17,7 +17,7 @@
 <meta http-equiv="Content-Security-Policy" content="script-src 'unsafe-inline' blob:; worker-src blob:; object-src 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="rwa-bootstrap" content="0.9">
-<meta name="rwa-seed" content="c1de501c48e8">
+<meta name="rwa-seed" content="b7abc1c6533d">
 <title>Intelligence — playful-rewriter</title>
 <style>
 /* Palette + chrome modeled on playground.ikangai.com — neutral grayscale,
@@ -571,7 +571,12 @@ try {
 } catch (_) { /* sandboxed contexts can throw on history.replaceState */ }
 
 // LF canonicalization: doc text is stored, validated, and committed LF-only.
-const canonLF = s => s == null ? '' : String(s).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+// Canonical text form = LF-only + Unicode NFC. NFC because apply_edits matches
+// by exact splice: an NFC `find` against NFD document bytes (paste artifacts)
+// fails on visually identical text. Doc, find and replace all pass through
+// here, so matching never sees a non-canonical form. 8 mirrored copies —
+// docs/plans/2026-08-10-nfc-anchor-normalization-design.md lists them.
+const canonLF = s => s == null ? '' : String(s).replace(/\r\n/g, '\n').replace(/\r/g, '\n').normalize('NFC');
 
 let _db;
 const REQUIRED_STORES = [RWA.DOC, RWA.UNDO, RWA.HIST, RWA.FSA, RWA.STATE, RWA.VAULT, RWA.SOURCES, RWA.HOOK_LOG];

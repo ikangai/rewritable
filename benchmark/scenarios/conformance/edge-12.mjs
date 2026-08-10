@@ -1,42 +1,60 @@
-// EDGE-12 — Unicode combining-mark mismatch is not normalized.
+// EDGE-12 — Unicode canonicalization: NFC/NFD byte forms match; nothing else does.
 //
-// Spec §4 rule 1: "find matches exactly — byte-for-byte". The runtime
-// canonicalizes line endings (LF) per §5.4 but performs NO Unicode
-// normalization (NFC/NFD/NFKC/NFKD). This scenario locks that contract.
+// rwa-edit v1.7 (§5.4): the canonical text form is LF + Unicode NFC, applied to
+// the doc AND every find/replace at the same chokepoint. Composed vs decomposed
+// byte forms of visually identical text now MATCH — that combination was the
+// dominant invisible failure (NFD enters docs via paste; models emit NFC), and
+// pre-v1.7 this scenario pinned the opposite contract. Updated 2026-08-10 in the
+// same change as the runtime, by operator decision recorded in the spec bump
+// (rwa-edit v1.6 → v1.7) and docs/plans/2026-08-10-nfc-anchor-normalization-design.md.
 //
-// Construction: the doc contains "café" with U+00E9 (composed). The edit's
-// find is "café" spelled as `c-a-f-e + U+0301 (combining acute accent)`
-// (decomposed). Both visually identical; codepoint sequences differ.
+// The scenario's original job — "variance stays bounded, no fuzzy matching" —
+// is preserved by the second half: canonicalization is NOT transliteration,
+// case folding, or NFKC. "cafe" must still miss "café".
 //
-// Expected: find_not_found. A future "be helpful and normalize" regression
-// would silently accept the decomposed form and produce surprising results.
+// Both fixtures are built from \u escapes so an editor normalizing THIS file
+// to NFC cannot silently destroy the decomposed form.
 
 export default {
   id: 'EDGE-12',
   category: 'EDGE',
-  description: 'combining-mark mismatch (composed vs decomposed) → find_not_found',
+  description: 'combining-mark forms match under NFC canonicalization; transliteration still misses',
   weight: 1,
 
   async run({ harness, expectRwaError }) {
     const ctx = await harness.fresh();
     try {
-      const composed = 'café';                  // U+0063 U+0061 U+0066 U+00E9
-      const decomposed = 'café';               // U+0063 U+0061 U+0066 U+0065 U+0301
-      // Sanity: visually equal, byte-distinct.
+      const composed = 'caf\u00E9';                 // c a f e-acute (U+00E9)
+      const decomposed = 'cafe\u0301';             // c a f e + U+0301 combining acute
       if (composed === decomposed) {
         return { pass: false, reason: 'test setup error: composed and decomposed strings are equal' };
       }
       const docWith = `<div class="hello"><p>${composed} is open</p></div>`;
 
-      const result = await expectRwaError(
+      // Load-bearing half: the decomposed find matches the composed doc.
+      const result = await ctx.applyEdits(
+        { version: 'rwa-edit/1', edits: [{ find: decomposed + ' is open', replace: composed + ' has closed' }] },
+        docWith,
+      );
+      if (typeof result !== 'string' || !result.includes(composed + ' has closed')) {
+        return { pass: false, reason: 'decomposed find did not apply against the composed doc: ' + JSON.stringify(String(result).slice(0, 80)) };
+      }
+      if (/[\u0300-\u036F]/.test(result)) {
+        return { pass: false, reason: 'result carries decomposed sequences — output is not NFC-canonical' };
+      }
+
+      // Boundary half: canonicalization is not fuzziness. A transliterated
+      // anchor ("cafe", no accent at all) is different text and must miss.
+      const bounded = await expectRwaError(
         ctx.applyEdits(
-          { version: 'rwa-edit/1', edits: [{ find: decomposed, replace: 'cafeteria' }] },
+          { version: 'rwa-edit/1', edits: [{ find: 'cafe is open', replace: 'x' }] },
           docWith,
         ),
         'find_not_found',
       );
-      if (!result.pass) return result;
-      return { pass: true, reason: 'find_not_found — decomposed form was not silently normalized' };
+      if (!bounded.pass) return bounded;
+
+      return { pass: true, reason: 'NFC forms unified; transliteration still find_not_found' };
     } finally {
       ctx.dispose();
     }

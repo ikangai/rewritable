@@ -420,6 +420,32 @@ test('canonLF: a CRLF-containing find anchors against an LF doc', () => {
   assert.match(out, /<p>c<\/p>/);
 });
 
+// rwa-edit v1.7: canonical form is LF + NFC. NFD bytes enter documents via
+// paste; models return NFC anchors; pre-v1.7 that was find_not_found on
+// visually identical text. Escapes on purpose — literal NFD would not survive
+// editor normalization of this source file.
+test('canonNFC: an NFC find matches an NFD document (paste parity)', () => {
+  const doc = '<article><p>Herr Mu\u0308ller war da.</p></article>';   // NFD u+diaeresis
+  const out = applyEdits(doc, [{ find: 'Herr M\u00FCller', replace: 'Frau M\u00FCller' }]); // NFC
+  assert.ok(out.includes('Frau M\u00FCller'), 'NFC replacement present');
+  assert.ok(!/[\u0300-\u036F]/.test(out), 'output is NFC-canonical');
+});
+
+test('canonNFC: an NFD find and NFD replace anchor against an NFC doc, stored NFC', () => {
+  const doc = '<article><p>im caf\u00E9 drau\u00DFen</p></article>';    // NFC e-acute
+  const out = applyEdits(doc, [{ find: 'cafe\u0301', replace: 'Cafe\u0301 Zentral' }]); // NFD both ways
+  assert.ok(out.includes('Caf\u00E9 Zentral'), 'stored in NFC form');
+  assert.ok(!/[\u0300-\u036F]/.test(out), 'NFD replace content is stored NFC');
+});
+
+test('canonNFC: transliteration is not canonicalization — ue misses u-umlaut', () => {
+  const doc = '<article><p>M\u00FCller</p></article>';
+  assert.throws(
+    () => applyEdits(doc, [{ find: 'Mueller', replace: 'x' }]),
+    (e) => e.code === 'find_not_found',
+  );
+});
+
 test('surrogate: a lone surrogate in replace throws malformed_envelope', () => {
   const doc = '<article><p>anchor</p></article>';
   assert.throws(

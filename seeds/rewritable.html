@@ -562,7 +562,12 @@ try {
 } catch (_) { /* sandboxed contexts can throw on history.replaceState */ }
 
 // LF canonicalization: doc text is stored, validated, and committed LF-only.
-const canonLF = s => s == null ? '' : String(s).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+// Canonical text form = LF-only + Unicode NFC. NFC because apply_edits matches
+// by exact splice: an NFC `find` against NFD document bytes (paste artifacts)
+// fails on visually identical text. Doc, find and replace all pass through
+// here, so matching never sees a non-canonical form. 8 mirrored copies —
+// docs/plans/2026-08-10-nfc-anchor-normalization-design.md lists them.
+const canonLF = s => s == null ? '' : String(s).replace(/\r\n/g, '\n').replace(/\r/g, '\n').normalize('NFC');
 
 let _db;
 const REQUIRED_STORES = [RWA.DOC, RWA.UNDO, RWA.HIST, RWA.FSA, RWA.STATE, RWA.VAULT, RWA.SOURCES, RWA.HOOK_LOG];

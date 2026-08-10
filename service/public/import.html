@@ -141,7 +141,7 @@ const escapeHtml = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/
 // escapeTL's <\/script handling. (The literal sequence is written escaped HERE
 // too — an unescaped one in this very comment would close THIS script early.)
 const escapeJsString = s => s.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/<\/script/gi, '<\\/script');
-const canonLF = s => s == null ? '' : String(s).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+const canonLF = s => s == null ? '' : String(s).replace(/\r\n/g, '\n').replace(/\r/g, '\n').normalize('NFC');
 const escapeTL = s => canonLF(s)
   .replace(/\\/g, '\\\\')
   .replace(/`/g, '\\`')

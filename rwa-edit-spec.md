@@ -1,6 +1,6 @@
-# rwa-edit v1.6 — Anchor-based edit protocol for rewritable containers
+# rwa-edit v1.7 — Anchor-based edit protocol for rewritable containers
 
-**Status:** draft v1.6.
+**Status:** draft v1.7.
 **Targets:** rwa container spec v0.8 and later.
 **Position in the architecture:** Defines how the agent expresses changes to the document. Adopting rwa-edit v1 requires (a) replacing the modify pathway in the bootstrap with a multi-turn tool-use conversation, (b) updating the system prompt, and (c) adopting the typed-record shape for `rwa_hist` entries. It does **not** require changes to IDB store layouts, snapshot format, or the public `runtime.*` surface; the v0.8 disk format is preserved.
 
@@ -97,7 +97,7 @@ The runtime applies a batch in two phases against an in-memory working copy of t
    - `find` non-empty (else `empty_find`)
    - Neither `find` nor `replace` contains a reserved marker substring (else `frozen_zone_violation`)
    - `replace` length is within the per-edit cap (else `replace_too_large`)
-   - After LF canonicalization of the edit's `find`, it appears in the working copy (else `find_not_found`, returned with a near-miss `closest` per §10)
+   - After canonicalization (LF + NFC, §5.4) of the edit's `find`, it appears in the working copy (else `find_not_found`, returned with a near-miss `closest` per §10)
    - It appears exactly once (else `find_not_unique`)
    - Apply the replacement to the working copy so subsequent edits see the new state.
 5. After all edits are applied to the working copy:
@@ -137,17 +137,17 @@ A successful batch applied a second time will fail at the first edit's `find_not
 
 Edits are applied in array order. Each edit operates on the doc *as modified by* earlier edits in the same batch. This lets a later edit anchor on text produced by an earlier edit, which is occasionally useful. The cost is that order matters, and the agent is responsible for getting it right.
 
-### 5.4 Encoding and line-ending canonicalization
+### 5.4 Encoding and canonicalization
 
-`find` and `replace` are interpreted as their JSON-decoded UTF-8 strings. The runtime performs no normalization beyond the line-ending step below: no Unicode NFC, no whitespace trimming, no quote canonicalization.
+`find` and `replace` are interpreted as their JSON-decoded UTF-8 strings. The canonical text form is **LF-only + Unicode NFC** (v1.7). The runtime performs no normalization beyond those two steps: no whitespace trimming, no quote canonicalization, no case folding, and **no NFKC** — compatibility folding (`ﬁ` → `fi`) changes content, which is an edit, not a canonicalization.
 
-Line endings are a known source of model and provider variance. The runtime canonicalizes to LF (`\n`) at three points:
+Line endings are a known source of model and provider variance; Unicode composition is a known source of *content* variance (NFD sequences enter documents via paste — PDFs, some macOS pipelines — and a model returning NFC anchors then misses visually identical text with `find_not_found`). The runtime canonicalizes to LF (`\n`) + NFC at three points:
 
 1. **At read-time:** when the doc is loaded from `rwa_doc` for the validation working copy.
-2. **At edit-validation-time:** the canonicalized `find` and `replace` are matched against the LF-canonical working copy.
-3. **At commit-time:** the working copy is written back LF-canonical, both into `rwa_doc` and (on save) into the bootstrap's `INLINE_DOC` template literal. The seed's existing template-literal escaper must be updated to LF-normalize as well; commits that round-trip a CRLF doc through the seed without normalization will reintroduce the variance the protocol is trying to eliminate.
+2. **At edit-validation-time:** the canonicalized `find` and `replace` are matched against the canonical working copy.
+3. **At commit-time:** the working copy is written back canonical, both into `rwa_doc` and (on save) into the bootstrap's `INLINE_DOC` template literal. The seed's template-literal escaper canonicalizes as well; commits that round-trip a CRLF or NFD doc through the seed without normalization would reintroduce the variance the protocol is trying to eliminate.
 
-After v1 adoption, on-disk containers carry LF-only docs as an invariant.
+After v1 adoption, on-disk containers carry LF-only docs as an invariant; after v1.7, NFC as well.
 
 ### 5.5 Concurrency: caller-held mutex
 
@@ -476,7 +476,7 @@ type ReplaceDocumentRecord = {
 ## 13. Hard rules
 
 1. **Never modify the bootstrap, the snapshot, or any reserved store via this protocol.**
-2. **Anchors are exact.** No fuzzy matching, no whitespace normalization beyond LF canonicalization, no case folding, no occurrence indexing. This is how variance is bounded.
+2. **Anchors are exact.** No fuzzy matching, no whitespace normalization beyond canonicalization (LF + Unicode NFC, §5.4), no case folding, no occurrence indexing. This is how variance is bounded.
 3. **Validation is total before apply is partial.** All writes go through one IDB transaction.
 4. **Frozen markers are never produced by the agent.** Substring presence in `find` or `replace` is a hard reject. Frozen-zone content is also checked byte-identical post-apply as a backstop.
 5. **The agent emits edits, not documents.** A model that returns a wholesale-rewritten document inside a single `replace` field is technically conforming but architecturally defeating the protocol. The runtime caps individual `replace` length to nudge the model toward smaller edits (default 8 KB; cap enforced as `replace_too_large` failure).
@@ -546,7 +546,7 @@ async function applyEdits(envelope, db) {
   if (envelope.version !== 'rwa-edit/1') throw new RwaEditError('version_unsupported')
   if (!Array.isArray(envelope.edits) || envelope.edits.length === 0) throw new RwaEditError('malformed_envelope')
 
-  const currentDoc = canonicalizeLineEndings(
+  const currentDoc = canonicalize(   // LF + NFC, §5.4
     await reqAsync(db.transaction('rwa_doc').objectStore('rwa_doc').get('self'))
   )
   const originalFrozen = extractFrozenZones(currentDoc)
@@ -559,8 +559,8 @@ async function applyEdits(envelope, db) {
       throw new RwaEditError('frozen_zone_violation', i)
     if ((edit.replace?.length ?? 0) > MAX_REPLACE_BYTES)
       throw new RwaEditError('replace_too_large', i)
-    const find    = canonicalizeLineEndings(edit.find)
-    const replace = canonicalizeLineEndings(edit.replace ?? '')
+    const find    = canonicalize(edit.find)          // LF + NFC, §5.4
+    const replace = canonicalize(edit.replace ?? '')
     const occ = countOccurrences(work, find)
     if (occ === 0) throw new RwaEditError('find_not_found', i)
     if (occ > 1)   throw new RwaEditError('find_not_unique', i, { count: occ, hints: nearbySnippets(work, find) })
@@ -621,26 +621,32 @@ The wire version stays `rwa-edit/1`: tokens ride the existing envelope shapes; a
 
 ---
 
-## Appendix A — Changes from v1.5 to v1.6
+## Appendix A — Changes from v1.6 to v1.7
+
+- **Canonical text form gains Unicode NFC (§5.4).** LF-only becomes LF + NFC, applied inside the single canonicalization chokepoint the doc, `find`, and `replace` already flow through. Fixes `find_not_found` on visually identical text when NFD bytes (paste artifacts) meet NFC anchors — reproduced live 2026-08-08. Explicitly NOT NFKC (compatibility folding is a content edit). §4 validation, §13 rule 2, and the reference implementation updated to match. Wire version stays `rwa-edit/1`. On-disk invariant extended: containers carry LF-only, NFC docs.
+
+---
+
+## Appendix B — Changes from v1.5 to v1.6
 
 - **Image-asset virtualization (§19).** data-URI images stay in the document; agent boundaries see `rwa-asset:<hash8>` tokens; caps measured on the virtual form; expansion post-validation; `unknown_asset_reference` (+ `token` payload field, §10); orphan tolerance; no-assets new-token guard; hist stores virtual envelopes; hosted sink gets expanded envelopes, re-virtualized server-side (`virtualizeEnvelope` + 10 MB `MAX_DOC_EXPANDED` guard).
 - Wire version unchanged (`rwa-edit/1`).
 
-## Appendix B — Changes from v1.4 to v1.5
+## Appendix C — Changes from v1.4 to v1.5
 
 - **`find_not_found` near-miss.** The dominant failure now carries a deterministic, code-derived recovery aid: `closest` (the closest text actually present in the working copy, verbatim and copy-pasteable; oversized matches are elided and flagged `truncated: true`) and `match` (`whitespace` / `case` / `partial`) — so an agent fixes its own anchor inside the existing retry budget and a human sees a legible reason. No model call (Rule 5: code answers). Self-correcting failure, not just a louder code. Updated: §5.1 step 4, §5.1 rejection paragraph, §9.2 post-budget UX, §10 table + payload shape, §18 helper list.
 - **Optional plain-English `hint`.** The tool-use `tool_result` payload MAY include a one-line, failure-code-keyed `hint` to steer weaker/local models toward a fix. Advisory and additive — never a substitute for the structured fields. §10.
 - **`find_not_unique` snippets clarified as mandatory helper context** alongside the new `find_not_found` near-miss (already emitted by the runtime; spec text now enumerates both consistently in §5.1 and §9.2).
 - Wire version unchanged (`rwa-edit/1`): all additions are optional, backward-compatible context fields; a consumer that ignores them behaves exactly as under v1.4.
 
-## Appendix C — Changes from v1.3 to v1.4
+## Appendix D — Changes from v1.3 to v1.4
 
 - **Structural shape narrowed** from triple `(top-level, script, style)` to pair `(script, style)`. Top-level element count is no longer constrained, because adding a top-level section (e.g. a footer) is a common, intentional edit that should remain in `apply_edits` territory. Script/style count drift remains the realistic accidental-damage signal. Updated: §2 vocab, §5.1 step 5, §5.6, §8 `apply_edits` schema description, §9.1 prompt, §10 `structural_shape_changed`, §13 rule 9, §14, §17, §18 pseudocode.
 - **`replace_too_large` added to §10** as an explicit failure code with default cap of 8 KB. Was referenced in §13 rule 5 and §18 pseudocode but missing from the failure-modes table in v1.3.
 - **§12 size-pressure rationale corrected.** Eliding envelope bodies past the most recent 5 entries is now framed as advisory (IDB quota defence), not normative for "snapshot-format compatibility" — `rwa_hist` is in IndexedDB, not in the snapshot, so elision strategies cannot affect file format.
 - **§6 rule 3 and §7.2 tightened** to require set-equality (not subset) of frozen-zone names post-apply. Adding a new frozen-zone name is a `frozen_zone_corrupted` failure, the same way removing one is. Closes a gap where `replace_document` could introduce new author-only invariants. Implementation already enforces this; the spec text now matches.
 
-## Appendix D — Changes from v1.2 to v1.3
+## Appendix E — Changes from v1.2 to v1.3
 
 (Preserved for review continuity.)
 
@@ -657,7 +663,7 @@ The wire version stays `rwa-edit/1`: tokens ride the existing envelope shapes; a
 - §16 source-format expectations refined.
 - System prompt and tool-schema descriptions updated for shape constraint.
 
-## Appendix E — Changes from v1.1 to v1.2
+## Appendix F — Changes from v1.1 to v1.2
 
 (Preserved.)
 
@@ -677,7 +683,7 @@ The wire version stays `rwa-edit/1`: tokens ride the existing envelope shapes; a
 - §15 adds legacy-comment migration note and `#rwa-doc-mount` reservation.
 - §18 pseudocode updated.
 
-## Appendix F — Changes from v1 to v1.1
+## Appendix G — Changes from v1 to v1.1
 
 (Preserved.)
 

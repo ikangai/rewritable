@@ -182,9 +182,11 @@ function touchAccess(id, { dataDir }, owner) {
   } catch { /* non-fatal */ }
 }
 
-// ─── baseBodyHash: sha256 of the LF-canonical editable body ────────────────
+// ─── baseBodyHash: sha256 of the canonical (LF + NFC) editable body ─────────
 
-const canonLF = (s) => (s == null ? '' : String(s).replace(/\r\n/g, '\n').replace(/\r/g, '\n'));
+// Must match the seed's canonLF exactly — the in-page commit sink hashes with
+// the seed's copy and /modify compares against this one.
+const canonLF = (s) => (s == null ? '' : String(s).replace(/\r\n/g, '\n').replace(/\r/g, '\n').normalize('NFC'));
 
 // Lazy-load the vendored ESM seed module once (CJS can't top-level import ESM).
 let _seedModPromise = null;

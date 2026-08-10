@@ -16,7 +16,10 @@
 // should provide an array of expected regions and the oracle checks that
 // the single computed hunk is contained within their union.
 
-const canonLF = (s) => String(s).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+// LF + NFC, matching the runtime's canonical text form (2026-08-10 design).
+// The referee must compare in the same canonical space the contract defines —
+// an NFD fixture against an NFC-committing runtime is normalization, not drift.
+const canonLF = (s) => String(s).replace(/\r\n/g, '\n').replace(/\r/g, '\n').normalize('NFC');
 
 /**
  * Compute the differing region as a single hunk via common-prefix and

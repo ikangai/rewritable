@@ -1548,8 +1548,9 @@ export function kindOverrides(kind) {
 }
 
 // Mirrors the bootstrap's escapeTL — keep in sync with seeds/rewritable.html.
-// LF-canonicalizes first; rwa-edit/1 invariant is that on-disk docs are LF-only.
-const canonLF = s => s == null ? '' : String(s).replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+// Canonicalizes first; rwa-edit/1 invariant is that on-disk docs are LF-only
+// and NFC, so emitted containers are born in the canonical text form.
+const canonLF = s => s == null ? '' : String(s).replace(/\r\n/g, '\n').replace(/\r/g, '\n').normalize('NFC');
 const escapeTL = s => canonLF(s)
   .replace(/\\/g, '\\\\')
   .replace(/`/g, '\\`')
