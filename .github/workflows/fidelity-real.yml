@@ -1,0 +1,82 @@
+name: Real-model fidelity
+
+# Scheduled real-model fidelity run (operator decision, 2026-08-10).
+#
+# CI's fidelity job runs the stub — it verifies the harness, not the product.
+# The product's core promise (a real model edits documents well through this
+# prompt + tool contract) went unmeasured for 62 days while the prompt itself
+# changed (fencing, 2026-08-04), and nothing noticed. This workflow is the
+# staleness gate: a weekly run against a PINNED OpenRouter model, compared by
+# hand (or by a future delta job) against benchmark/results history.
+#
+# Pinned model, not the provider default: defaults drift, and drift in the
+# instrument is indistinguishable from drift in the product. The runner exits
+# non-zero when any real-model scenario returns zero tokens (dead key, API
+# refusal, unparseable output) — a red run here means the MEASUREMENT failed,
+# which is exactly what must not pass silently.
+#
+# Needs the repo secret RWA_OPENROUTER_KEY (Settings → Secrets and variables →
+# Actions). Costs real money per run: ~108 scenarios × ~8 KB prompts on the
+# default flash-class model lands in the cents.
+
+on:
+  schedule:
+    - cron: '17 5 * * 1'   # Mondays 05:17 UTC — off the :00 thundering herd
+  workflow_dispatch:
+    inputs:
+      model:
+        description: 'OpenRouter model id to measure'
+        required: false
+        default: 'google/gemini-3-flash-preview'
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: '24'
+
+jobs:
+  fidelity-real:
+    name: Fidelity (real model, pinned)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Refuse to run without the key
+        # A missing secret must be a red run with a clear reason — the silent
+        # alternative is the runner's stub fallback producing plausible all-zero
+        # numbers, which is how a dead key went unnoticed on 2026-08-05.
+        run: |
+          if [ -z "${{ secrets.RWA_OPENROUTER_KEY }}" ]; then
+            echo "::error::RWA_OPENROUTER_KEY secret is not set — cannot run real-model fidelity."
+            exit 1
+          fi
+      - name: Install benchmark deps
+        working-directory: benchmark
+        run: npm install --no-audit --no-fund
+      - name: Run fidelity against the pinned model
+        working-directory: benchmark
+        env:
+          RWA_OPENROUTER_KEY: ${{ secrets.RWA_OPENROUTER_KEY }}
+          RWA_FID_N: '1'   # matches the recorded baselines (May/June/Aug runs)
+          # Expression → env var, never inlined into the script (workflow-
+          # injection hygiene; inputs are write-gated but the pattern matters).
+          MODEL_INPUT: ${{ github.event.inputs.model }}
+        run: |
+          MODEL="${MODEL_INPUT:-google/gemini-3-flash-preview}"
+          echo "model: $MODEL"
+          node runners/run-fidelity.mjs "$MODEL" apply_edits 2>&1 | tee results/last-fidelity-scheduled.log
+          exit "${PIPESTATUS[0]}"
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fidelity-real-${{ github.run_number }}
+          path: |
+            benchmark/results/fidelity*.tsv
+            benchmark/results/fidelity-summary.md
+            benchmark/results/last-fidelity-scheduled.log
+          retention-days: 90
