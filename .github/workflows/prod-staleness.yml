@@ -1,0 +1,61 @@
+name: Prod staleness
+
+# Does production serve what main ships? (2026-08-10)
+#
+# Twice in one week, main moved ahead of the deployed service and nothing
+# noticed — the first gap ran 4+ weeks and silently withheld a merged security
+# fix and the legal pages. Deploys are a manual file-sync + rebuild; push does
+# not deploy, and every internal signal (CI, tests) stays green while prod
+# drifts. This is the external check: fetch the seed production actually
+# serves and compare it against main's, UUID-normalized (the served copy
+# substitutes a fresh DOC_UUID per request; a UUID is the only legitimate
+# byte difference).
+#
+# Weekly, not daily, on purpose: main being briefly ahead of prod is normal
+# between merge and deploy — the failure mode worth alarming on is the silent
+# WEEKS-long gap. A red run here means "prod has been stale across a week
+# boundary": redeploy main (operator deploy notes; the target and recipe are
+# deliberately not written into this public file).
+#
+# Coverage note, stated honestly: this compares the SEED only. A service-only
+# change (server.js, lib/, public/) that ships no seed delta is invisible to
+# this check — routes-probing for those was considered and dropped; route
+# presence goes stale as a fingerprint, seed bytes do not.
+
+on:
+  schedule:
+    - cron: '43 6 * * 1'   # Mondays 06:43 UTC, after the fidelity run
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compare-seed:
+    name: Served seed vs main
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch the served seed
+        run: |
+          curl -sS --max-time 30 -o served.html https://rewritable.ikangai.com/rewritable.html
+          wc -c served.html seeds/rewritable.html
+      - name: Compare (UUID-normalized)
+        run: |
+          node -e '
+            const fs = require("fs");
+            const crypto = require("crypto");
+            const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
+            const norm = (p) => fs.readFileSync(p, "utf8").replace(UUID, "UUID");
+            const sha = (s) => crypto.createHash("sha256").update(s).digest("hex").slice(0, 16);
+            const repo = norm("seeds/rewritable.html");
+            const served = norm("served.html");
+            console.log("repo  :", sha(repo), repo.length, "chars");
+            console.log("served:", sha(served), served.length, "chars");
+            if (repo !== served) {
+              console.error("::error::Production serves a DIFFERENT seed than main — prod is stale (or ahead). Redeploy main per the operator deploy notes.");
+              process.exit(1);
+            }
+            console.log("prod serves main’s seed — current.");
+          '
