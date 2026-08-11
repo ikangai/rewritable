@@ -17,7 +17,7 @@
 <meta http-equiv="Content-Security-Policy" content="script-src 'unsafe-inline' blob:; worker-src blob:; object-src 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="rwa-bootstrap" content="0.9">
-<meta name="rwa-seed" content="b7abc1c6533d">
+<meta name="rwa-seed" content="01e2fc18963b">
 <title>Intelligence carrier — concise-editor</title>
 <style>
 /* Palette + chrome modeled on playground.ikangai.com — neutral grayscale,
@@ -471,7 +471,7 @@ const INLINE_DOC = `<article>
 <h2>What it carries</h2>
 <ul>
 <li><strong>Role:</strong> <code>concise-editor</code></li>
-<li><strong>Recommended model:</strong> <code>anthropic/claude-sonnet-4-6</code> on backend <code>openrouter</code> — carried as a structured, non-secret recommendation (intelligence/0.2 I-A). On activation the runtime <em>offers</em> to apply it to your session behind a one-line consent; it never auto-applies, never sets a base-URL, and never touches your API key. The model and key live in your session settings and never travel in a file.</li>
+<li><strong>Recommended model:</strong> <code>anthropic/claude-sonnet-5</code> on backend <code>openrouter</code> — carried as a structured, non-secret recommendation (intelligence/0.2 I-A). On activation the runtime <em>offers</em> to apply it to your session behind a one-line consent; it never auto-applies, never sets a base-URL, and never touches your API key. The model and key live in your session settings and never travel in a file.</li>
 <li><strong>Vault namespaces:</strong> none — this intelligence needs no secrets.</li>
 <li><strong>Author:</strong> a throwaway Ed25519 key (fingerprint shown in the install dialog). The record is genuinely signed and verifies live; the recommendation rides <em>outside</em> the signed payload, so it does not change the signature.</li>
 <li><strong>Affinity:</strong> prose documents — a human-read note; nothing gates it.</li>
@@ -480,7 +480,7 @@ const INLINE_DOC = `<article>
 <h2>How to use it</h2>
 <p>Drop this file onto another rewritable to install the role (behind the consent dialog). Then open the <strong>Activity</strong> panel, find <code>concise-editor</code> under <em>Intelligences</em>, and click <strong>Activate</strong> — the runtime offers its recommended model, and &#8984;K runs through the role&rsquo;s framing. This carrier is itself a skill-host, so the role is already installed here; try it directly.</p>
 </article>
-<div data-rwa-frozen id="rwa-agents"><script type="application/rwa-agent+json">eyJhZ2VudCI6eyJhdXRob3JfcHVia2V5IjoiS0p1NUN4ZG4yaEtGQmk0OWsyOGdSUWpvczRzbnhXQW9qTnJRWXY5MzRWcz0iLCJkZXNjcmlwdGlvbiI6IlRpZ2h0ZW5zIHByb3NlIOKAlCBzaG9ydGVyIHNlbnRlbmNlcywgZmV3ZXIgaGVkZ2VzLCBtZWFuaW5nIHByZXNlcnZlZC4gUmVjb21tZW5kZWQgbW9kZWw6IGFudGhyb3BpYy9jbGF1ZGUtc29ubmV0LTQtNi4iLCJyb2xlIjoiY29uY2lzZS1lZGl0b3IiLCJzeXN0ZW1fcHJvbXB0IjoiWW91IGFyZSBhIGNvbmNpc2lvbiBlZGl0b3IuIEZhdm9yIGVkaXRzIHRoYXQgc2hvcnRlbiBzZW50ZW5jZXMsIGN1dCBoZWRnaW5nIGFuZCBmaWxsZXIgd29yZHMsIGFuZCByZW1vdmUgcmVkdW5kYW5jeSDigJQgd2l0aG91dCBkcm9wcGluZyBmYWN0cywgY2F2ZWF0cywgbnVtYmVycywgb3IgdGhlIGF1dGhvcidzIHZvaWNlLiBQcmVmZXIgdGhlIHNtYWxsZXN0IHN1cmdpY2FsIGNoYW5nZSB0aGF0IGFjaGlldmVzIHRoZSBjdXQuIE5ldmVyIHBhZCwgbmV2ZXIgYWRkIG5ldyBjbGFpbXMuIiwidmF1bHRfbmFtZXNwYWNlX3NldCI6W10sInZlcnNpb24iOiJyd2EtYWdlbnQvMSJ9LCJzaWduYXR1cmUiOiJEVDVaZ3lvRldFN0FROFBzcm9UdW41Y3hPdXV5d1djWDUvNkJMdXN2ZjMyU01iR2hERGFmU0xCMERSZmsrZWpDUW16cndiTmhCVzAxckRGcWxFZTBBdz09IiwicmVjb21tZW5kZWRfbW9kZWwiOiJhbnRocm9waWMvY2xhdWRlLXNvbm5ldC00LTYiLCJyZWNvbW1lbmRlZF9iYWNrZW5kIjoib3BlbnJvdXRlciJ9<\/script></div>`;
+<div data-rwa-frozen id="rwa-agents"><script type="application/rwa-agent+json">eyJhZ2VudCI6eyJhdXRob3JfcHVia2V5IjoiS0p1NUN4ZG4yaEtGQmk0OWsyOGdSUWpvczRzbnhXQW9qTnJRWXY5MzRWcz0iLCJkZXNjcmlwdGlvbiI6IlRpZ2h0ZW5zIHByb3NlIOKAlCBzaG9ydGVyIHNlbnRlbmNlcywgZmV3ZXIgaGVkZ2VzLCBtZWFuaW5nIHByZXNlcnZlZC4gUmVjb21tZW5kZWQgbW9kZWw6IGFudGhyb3BpYy9jbGF1ZGUtc29ubmV0LTQtNi4iLCJyb2xlIjoiY29uY2lzZS1lZGl0b3IiLCJzeXN0ZW1fcHJvbXB0IjoiWW91IGFyZSBhIGNvbmNpc2lvbiBlZGl0b3IuIEZhdm9yIGVkaXRzIHRoYXQgc2hvcnRlbiBzZW50ZW5jZXMsIGN1dCBoZWRnaW5nIGFuZCBmaWxsZXIgd29yZHMsIGFuZCByZW1vdmUgcmVkdW5kYW5jeSDigJQgd2l0aG91dCBkcm9wcGluZyBmYWN0cywgY2F2ZWF0cywgbnVtYmVycywgb3IgdGhlIGF1dGhvcidzIHZvaWNlLiBQcmVmZXIgdGhlIHNtYWxsZXN0IHN1cmdpY2FsIGNoYW5nZSB0aGF0IGFjaGlldmVzIHRoZSBjdXQuIE5ldmVyIHBhZCwgbmV2ZXIgYWRkIG5ldyBjbGFpbXMuIiwidmF1bHRfbmFtZXNwYWNlX3NldCI6W10sInZlcnNpb24iOiJyd2EtYWdlbnQvMSJ9LCJzaWduYXR1cmUiOiJEVDVaZ3lvRldFN0FROFBzcm9UdW41Y3hPdXV5d1djWDUvNkJMdXN2ZjMyU01iR2hERGFmU0xCMERSZmsrZWpDUW16cndiTmhCVzAxckRGcWxFZTBBdz09IiwicmVjb21tZW5kZWRfbW9kZWwiOiJhbnRocm9waWMvY2xhdWRlLXNvbm5ldC01IiwicmVjb21tZW5kZWRfYmFja2VuZCI6Im9wZW5yb3V0ZXIifQ==<\/script></div>`;
 // === END PRODUCT: INLINE_DOC stub ===
 
 // === DOCUMENT-PRODUCT DEFAULT: ANCHORABLE_TAGS ===
@@ -1581,6 +1581,7 @@ function buildFile(doc) {
   const BACKEND_META = {
     openrouter: {
       showKey: true, showBaseUrl: false, showModel: true, showHint: false,
+      showModelLoad: true,
       hintHTML: '',
     },
     ollama: {
@@ -1613,19 +1614,26 @@ function buildFile(doc) {
     },
   };
 
-  // Curated OpenRouter model suggestions. Populated into the datalist when the
-  // OpenRouter backend is selected so the model input gets autocomplete out of
-  // the box (local backends populate from `/v1/models` via the Test button).
-  // Default (RWA.MODEL) leads; others are models exercised in benchmark/results.
+  // Curated OpenRouter model suggestions — the zero-network default; the Load
+  // button beside the model field replaces these with the FULL live catalog on
+  // demand. Default (RWA.MODEL) leads; the rest span vendors + price tiers.
+  // Curated ids GO STALE (three dead anthropic ids shipped for weeks before
+  // the 2026-08-11 live-catalog check caught them) — verify against
+  // GET https://openrouter.ai/api/v1/models when touching this list.
   const OPENROUTER_MODEL_SUGGESTIONS = [
     'google/gemini-3.5-flash',
     'google/gemini-3.1-flash-lite',
     'google/gemini-3.1-pro-preview',
-    'google/gemini-3.1-flash-lite-preview',
     'google/gemini-3-flash-preview',
-    'anthropic/claude-opus-4-7',
-    'anthropic/claude-sonnet-4-6',
-    'anthropic/claude-haiku-4-5',
+    'anthropic/claude-sonnet-5',
+    'anthropic/claude-opus-5',
+    'anthropic/claude-haiku-4.5',
+    'openai/gpt-5',
+    'openai/gpt-5-mini',
+    'deepseek/deepseek-chat',
+    'mistralai/mistral-large',
+    'meta-llama/llama-4-maverick',
+    'qwen/qwen3-max',
   ];
 
 // AI chip — persistent status-bar identity for the document's AI (drop-in AI UX §2).
@@ -1677,7 +1685,7 @@ function buildUI() {
   <div class="rwa-set-row" id="rwa-set-row-bridge-cwd" style="display:none;"><label>Session Dir</label><input type="text" id="rwa-bridge-cwd" placeholder="/path/on/bridge/host" autocomplete="off" spellcheck="false"></div>
   <div class="rwa-set-row" id="rwa-set-row-bridge-model" style="display:none;"><label>Bridge Model</label><input type="text" id="rwa-bridge-model" placeholder="claude-sonnet-5 (empty = CLI default)" autocomplete="off" spellcheck="false"></div>
   <div class="rwa-set-row" id="rwa-set-row-base-url" style="display:none;"><label>Base URL</label><div class="rwa-set-base-url-line"><input type="text" id="rwa-base-url" autocomplete="off" spellcheck="false"><button type="button" id="rwa-base-url-test">Test</button></div><div id="rwa-base-url-result" class="rwa-set-hint"></div></div>
-  <div class="rwa-set-row" id="rwa-set-row-model"><label>Model</label><input type="text" id="rwa-model" autocomplete="off" list="rwa-model-options"><datalist id="rwa-model-options"></datalist></div>
+  <div class="rwa-set-row" id="rwa-set-row-model"><label>Model</label><div class="rwa-set-base-url-line"><input type="text" id="rwa-model" autocomplete="off" list="rwa-model-options"><button type="button" id="rwa-model-load" style="display:none;">Load</button></div><datalist id="rwa-model-options"></datalist><div id="rwa-model-load-result" class="rwa-set-hint"></div></div>
   <div class="rwa-set-row" id="rwa-set-row-hint" style="display:none;"><div id="rwa-backend-hint" class="rwa-set-hint"></div></div>
   <div class="rwa-set-row" id="rwa-set-row-vault-kdf" style="display:none;"><label>Vault KDF</label><div><button type="button" id="rwa-vault-upgrade">Upgrade to Argon2id</button><div id="rwa-vault-kdf-result" class="rwa-set-hint"></div></div></div>
 </div>
@@ -1805,6 +1813,8 @@ function buildUI() {
     document.getElementById('rwa-set-row-bridge-token').style.display = meta.showBridgeToken ? '' : 'none';
     document.getElementById('rwa-set-row-bridge-cwd').style.display   = meta.showBridgeCwd   ? '' : 'none';
     document.getElementById('rwa-set-row-bridge-model').style.display = meta.showBridgeModel ? '' : 'none';
+    document.getElementById('rwa-model-load').style.display = meta.showModelLoad ? '' : 'none';
+    document.getElementById('rwa-model-load-result').textContent = '';
     if (meta.showBaseUrl) {
       baseUrlEl.placeholder = meta.defaultUrl;
       baseUrlEl.value = sessionStorage.getItem(meta.storageKey) || '';
@@ -1842,6 +1852,39 @@ function buildUI() {
     else sessionStorage.removeItem(meta.storageKey);
   };
 
+  const populateModelOptions = (models) => {
+    modelOptsEl.innerHTML = '';
+    for (const id of models) {
+      const opt = document.createElement('option');
+      opt.value = id;
+      modelOptsEl.appendChild(opt);
+    }
+  };
+
+  // Load button (OpenRouter only): fetch the FULL live catalog into the model
+  // datalist — the curated defaults are a handful and go stale (three dead
+  // anthropic ids shipped for weeks). Explicit user action, never automatic:
+  // opening settings must not phone home. /models is public, so this works
+  // before a key is entered. No auto-pick — unlike local backends, hundreds of
+  // catalog entries carry no signal about what the user wants.
+  const modelLoadBtn = document.getElementById('rwa-model-load');
+  const modelLoadResultEl = document.getElementById('rwa-model-load-result');
+  modelLoadBtn.onclick = async () => {
+    modelLoadResultEl.textContent = 'loading…';
+    modelLoadResultEl.className = 'rwa-set-hint';
+    try {
+      const cfg = resolveBackendConfig();
+      if (cfg.kind !== 'openai_compat') throw new Error('not an OpenAI-compatible backend');
+      const models = (await listOpenAiCompatModels(cfg)).sort();
+      populateModelOptions(models);
+      modelLoadResultEl.textContent = '✓ ' + models.length + ' model' + (models.length === 1 ? '' : 's') + ' from the live catalog';
+      modelLoadResultEl.className = 'rwa-set-hint ok';
+    } catch (err) {
+      modelLoadResultEl.textContent = '✗ ' + (((err && err.message) || String(err)).slice(0, 120));
+      modelLoadResultEl.className = 'rwa-set-hint err';
+    }
+  };
+
   // Test button: probe /v1/models. On success, populate the model datalist so
   // the model input gets autocomplete from the live server. On failure, show a
   // short diagnostic — the most common cause is CORS, which the inline hint
@@ -1855,12 +1898,7 @@ function buildUI() {
       const models = await listOpenAiCompatModels(cfg);
       baseUrlResultEl.textContent = '✓ ' + models.length + ' model' + (models.length === 1 ? '' : 's') + ' available';
       baseUrlResultEl.className = 'rwa-set-hint ok';
-      modelOptsEl.innerHTML = '';
-      for (const id of models) {
-        const opt = document.createElement('option');
-        opt.value = id;
-        modelOptsEl.appendChild(opt);
-      }
+      populateModelOptions(models);
       // For local OpenAI-compatible backends, pick a discovered model when the
       // current field is empty, still the baked default, or belongs to another
       // backend. The datalist still carries every returned model for manual choice.
@@ -9232,7 +9270,7 @@ window.__rwaGetActiveActor = getActiveActor;
 // through applyRecommendation(), which can only ever write RWA.K_MODEL / RWA.K_BACKEND.
 // A deliberately tiny convenience map — a full model id (with a '/') always applies verbatim; an
 // unknown shorthand declines with a "give the full id" nudge rather than guessing.
-const CHIP_MODEL_ALIASES = { gemini: 'google/gemini-3.5-flash', sonnet: 'anthropic/claude-sonnet-4-6' };
+const CHIP_MODEL_ALIASES = { gemini: 'google/gemini-3.5-flash', sonnet: 'anthropic/claude-sonnet-5' };
 function classifyChipEdit(instruction) {
   const raw = String(instruction == null ? '' : instruction).trim();
   const s = raw.toLowerCase();

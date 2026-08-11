@@ -171,6 +171,48 @@ async function boot({ url = 'https://rwa-backends.local/', session = {} } = {}) 
       && /\.rwa-set-row input,\.rwa-set-row select\{[^}]*width:100%/.test(document.querySelector('style')?.textContent || ''));
   }
 
+  // ── F. OpenRouter Load fills the datalist from the live catalog ────────────
+  // The curated suggestions are a handful and go stale (three dead anthropic
+  // ids shipped for weeks); Load is the explicit gesture that swaps in the
+  // full catalog. Explicit only — opening settings must never phone home.
+  {
+    const { window, document, net } = await boot({ session: { rwa_model: 'keep-me' } });
+    document.getElementById('rwa-st-cog').click();
+    const sel = document.getElementById('rwa-backend');
+    sel.value = 'openrouter';
+    sel.dispatchEvent(new window.Event('change', { bubbles: true }));
+    await tick();
+    check('F1 Load button visible for openrouter',
+      document.getElementById('rwa-model-load').style.display !== 'none');
+    check('F2 no network call from merely opening settings', net.calls.length === 0);
+
+    net.handler = async () => ({
+      ok: true,
+      json: async () => ({ data: [{ id: 'zeta/last' }, { id: 'alpha/first' }] }),
+    });
+    document.getElementById('rwa-model-load').click();
+    await waitFor(() => document.getElementById('rwa-model-load-result').textContent.includes('2 models'));
+    check('F3 Load probes the OpenRouter catalog endpoint',
+      net.calls[0] && net.calls[0].url === 'https://openrouter.ai/api/v1/models');
+    const opts = [...document.getElementById('rwa-model-options').children].map(o => o.value);
+    check('F4 datalist carries the full catalog, sorted',
+      JSON.stringify(opts) === JSON.stringify(['alpha/first', 'zeta/last']));
+    check('F5 no auto-pick — the user\'s model value is untouched',
+      document.getElementById('rwa-model').value === 'keep-me'
+      && window.sessionStorage.getItem('rwa_model') === 'keep-me');
+
+    net.handler = async () => { throw new Error('offline'); };
+    document.getElementById('rwa-model-load').click();
+    await waitFor(() => document.getElementById('rwa-model-load-result').textContent.startsWith('✗'));
+    check('F6 a failed load reports loudly instead of leaving "loading…"', true);
+
+    sel.value = 'lmstudio';
+    sel.dispatchEvent(new window.Event('change', { bubbles: true }));
+    await tick();
+    check('F7 Load button hidden for non-openrouter backends',
+      document.getElementById('rwa-model-load').style.display === 'none');
+  }
+
   console.log(`\n== Summary ==\n${pass} pass, ${fail} fail`);
   process.exit(fail ? 1 : 0);
 })().catch(e => { console.error(e); process.exit(1); });
