@@ -17,6 +17,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { applySeedSubs, kindOverrides } from '../cli/src/seed.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SEED = path.join(__dirname, '..', 'seeds', 'rewritable.html');
@@ -44,6 +45,19 @@ check(`seed stays within its byte budget (${bytes} <= ${BUDGET_BYTES})`, bytes <
 if (bytes <= BUDGET_BYTES && bytes > BUDGET_BYTES * 0.95) {
   console.log('  WARN  seed is above 95% of budget — plan a deletion pass or a deliberate budget raise now');
 }
+
+// What users actually carry: an EMITTED document, which prunes foreign-kind
+// SYSTEM_PROMPTS (2026-08-12). The source seed keeps every kind — this pins
+// that the per-document tax stays meaningfully below the template.
+const ov = kindOverrides('document');
+const emitted = applySeedSubs(fs.readFileSync(SEED, 'utf8'), {
+  uuid: '00000000-0000-4000-8000-000000000000', title: 'S', fileMeta: 's.html', productKind: 'document',
+  lensPlaceholder: ov.lensPlaceholder, palPlaceholder: ov.palPlaceholder,
+  productHeader: ov.productHeader, lensClickToAnchor: ov.lensClickToAnchor,
+});
+const emittedBytes = Buffer.byteLength(emitted);
+console.log(`  emitted document: ${emittedBytes.toLocaleString('en-US')} bytes (${(bytes - emittedBytes).toLocaleString('en-US')} pruned at emission)`);
+check('an emitted document is at least 10 KB lighter than the template', bytes - emittedBytes >= 10 * 1024);
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

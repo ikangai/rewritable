@@ -160,6 +160,33 @@ export function applySeedSubs(seed, { uuid, title, fileMeta, lensPlaceholder, pa
     // Boolean literal — coerce to a literal token, not a JSON string.
     out = out.replace(LENS_CLICK_TO_ANCHOR_RE, () => `const LENS_CLICK_TO_ANCHOR = ${lensClickToAnchor ? 'true' : 'false'};`);
   }
+  out = pruneForeignKindPrompts(out, productKind || 'document');
+  return out;
+}
+
+// Strip SYSTEM_PROMPTS entries the emitted container can never read.
+// PRODUCT_KIND is baked at creation and the only lookup is
+// SYSTEM_PROMPTS[PRODUCT_KIND] || SYSTEM_PROMPTS.document — so every
+// foreign-kind prompt is dead weight in every copy of every document
+// (the workflow prompt alone is ~13 KB). `document` is never marked and
+// never pruned: it is the universal fallback. Marker pairs live in the
+// seed (rwa:kind-prompt:begin/end <kind>); asymmetry fails loud rather
+// than emitting a half-pruned bootstrap.
+const KIND_PROMPT_RE = /[ \t]*\/\/ rwa:kind-prompt:begin ([a-z-]+)\n[\s\S]*?\/\/ rwa:kind-prompt:end \1[^\n]*\n/g;
+export function pruneForeignKindPrompts(seed, productKind) {
+  const begins = (seed.match(/\/\/ rwa:kind-prompt:begin /g) || []).length;
+  const ends = (seed.match(/\/\/ rwa:kind-prompt:end /g) || []).length;
+  if (begins !== ends) {
+    throw new Error(`seed kind-prompt markers are unbalanced (${begins} begin / ${ends} end)`);
+  }
+  let seen = 0;
+  const out = seed.replace(KIND_PROMPT_RE, (whole, kind) => {
+    seen++;
+    return kind === productKind ? whole : '';
+  });
+  if (seen !== begins) {
+    throw new Error(`seed kind-prompt regions malformed: ${begins} begin markers but ${seen} paired regions`);
+  }
   return out;
 }
 

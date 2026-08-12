@@ -40,6 +40,17 @@ for (const required of ['IKANGAI e.U.', 'Blütengasse', 'Martin Treiber']) {
 }
 const SEED_TEMPLATE = fs.readFileSync(path.join(SEEDS_DIR, 'rewritable.html'), 'utf8');
 
+// document-kind template with foreign-kind SYSTEM_PROMPTS stripped — the
+// /rewritable.html download. Computed once, on first use.
+let SEED_DOCUMENT_PROMISE = null;
+function seedDocumentPruned() {
+  if (!SEED_DOCUMENT_PROMISE) {
+    SEED_DOCUMENT_PROMISE = import('./lib/seed.mjs')
+      .then((m) => m.pruneForeignKindPrompts(SEED_TEMPLATE, 'document'));
+  }
+  return SEED_DOCUMENT_PROMISE;
+}
+
 // AI gallery (/ai). The static storefront page plus the downloadable
 // intelligence carriers under public/ai/carriers/. The carrier Map IS the
 // allowlist — a request-time path is never concatenated into a disk read, so
@@ -1810,14 +1821,21 @@ const server = http.createServer((req, res) => {
   }
 
   if (url === '/rewritable.html') {
-    const uuid = crypto.randomUUID();
-    const body = SEED_TEMPLATE.replace(UUID_RE, `const DOC_UUID = '${uuid}';`);
-    // no-store: each download has a unique UUID, caching defeats the isolation.
-    return send(200, {
-      'Content-Type': 'text/html; charset=utf-8',
-      'Content-Disposition': 'attachment; filename="rewritable.html"',
-      'Cache-Control': 'no-store',
-    }, body);
+    // Serve the document-kind emission, not the raw template: foreign-kind
+    // SYSTEM_PROMPTS are stripped exactly like CLI emissions (the pruner is
+    // the vendored seed module so both stay one implementation). Lazy dynamic
+    // import because this file is CJS; cached after the first request.
+    seedDocumentPruned().then((pruned) => {
+      const uuid = crypto.randomUUID();
+      const body = pruned.replace(UUID_RE, `const DOC_UUID = '${uuid}';`);
+      // no-store: each download has a unique UUID, caching defeats the isolation.
+      send(200, {
+        'Content-Type': 'text/html; charset=utf-8',
+        'Content-Disposition': 'attachment; filename="rewritable.html"',
+        'Cache-Control': 'no-store',
+      }, body);
+    }).catch(() => send(500, { 'Content-Type': 'text/plain' }, 'seed emission failed\n'));
+    return;
   }
   send(404, { 'Content-Type': 'text/plain' }, 'not found\n');
 });

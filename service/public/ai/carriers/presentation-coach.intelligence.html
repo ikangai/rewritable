@@ -17,7 +17,7 @@
 <meta http-equiv="Content-Security-Policy" content="script-src 'unsafe-inline' blob:; worker-src blob:; object-src 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="rwa-bootstrap" content="0.9">
-<meta name="rwa-seed" content="3e182b75c208">
+<meta name="rwa-seed" content="3b90e96879fb">
 <title>Intelligence — presentation-coach</title>
 <style>
 /* Palette + chrome modeled on playground.ikangai.com — neutral grayscale,
@@ -3012,140 +3012,13 @@ const SYSTEM_PROMPTS = {
   document: `You are editing a rewritable HTML document. Apply the user's request as a small set of surgical edits via tool calls.
 ${SYSTEM_PROMPT_RULES}`,
 
-  workflow: `You are editing a rewritable HTML workflow file. Apply the user's request as a small set of surgical edits via tool calls.
+  // Foreign-kind entries are wrapped in rwa:kind-prompt markers so emission
+  // (applySeedSubs / the service seed route / regenerate-refs) can strip the
+  // prompts this container can never read: PRODUCT_KIND is baked at creation
+  // and SYSTEM_PROMPTS[PRODUCT_KIND] || SYSTEM_PROMPTS.document is the only
+  // lookup. `document` stays unmarked — it is the fallback every kind needs.
 
-A workflow renders as a vertical sequence of step cards inside <ol class="rwa-flow"> within <article class="rwa-workflow">. Each step is an <li class="rwa-step"> containing:
-  • <header> with <h3> (step name — short, imperative: "Fetch issues", "Summarize each") and <p> (one-sentence description of what the step does)
-  • <details> with <summary>Code</summary> wrapping an inert <script type="text/rwa-step"> whose body is the inline JS for this step
-  • <output class="rwa-step-output"></output> — the runtime fills this with the step's last-run result; leave it empty in your edits
 
-The script body MUST define an async function named "run" with the signature: async function run(ctx, prev) { ... }. The runtime calls run(ctx, prev) and threads "prev" (the previous step's return value, or undefined for the first step) into the next step. Return JSON-serializable values when possible — the runtime renders them via JSON.stringify into the <output> slot. Side-effect-only steps can return null or undefined.
-
-The "ctx" object the runtime passes carries:
-  • ctx.credentials.get(name) — reads a credential by name. On first call, prompts the user; the value goes to sessionStorage. Never persisted in INLINE_DOC; cleared on tab close. Use readable names: "gmail", "stripe", "github".
-  • ctx.signal — an AbortSignal for the current Run, shared by every step. Pass it to any long-running async work so Cancel takes effect immediately: fetch(url, { signal: ctx.signal }). The runtime also checks it at every step boundary and halts the pipeline with abort_signaled. Whenever a step calls fetch, pass the signal.
-  • ctx.iter — present ONLY inside a foreach body. Shape: { index, item, total, parent }. "item" is the current element, "index" its 0-based position, "total" the array length, and "parent" the enclosing foreach's iter (undefined at the outermost loop), so a nested loop can reach the loop above it.
-  • ctx.log and ctx.shared do not exist yet — do not use them.
-
-Beyond the linear step card, two container node types exist. Use them when the request implies iteration or independent branches, and prefer them over hand-rolling loops inside one step body:
-  • Foreach — <li class="rwa-step rwa-foreach"> holding a <header>, then a nested <ol class="rwa-flow"> with the loop body (ordinary step cards, or further foreach/parallel nodes), then <output class="rwa-step-output"></output>. It iterates the PREVIOUS step's array; ctx.iter is available to every step inside the body. The class list must carry BOTH rwa-step and rwa-foreach.
-  • Parallel — <table class="rwa-parallel"><tbody><tr> with one <td class="rwa-step" data-rwa-label="name"> per branch, each cell containing header / details / output exactly like a linear step. Every data-rwa-label must match ^[a-z][a-z0-9_]{0,31}$ and be unique within its row. Branches receive the same "prev" and run concurrently.
-
-CRITICAL — first-prompt path: when the workflow is EMPTY (the doc has a <p class="placeholder"> paragraph and no <ol class="rwa-flow">), your response MUST use replace_document, NOT apply_edits. The first scaffold requires laying down multiple new elements (the title, the description, the <ol> with steps, the <footer> with Run button) in one atomic write — apply_edits cannot do this and using it will produce a structurally broken doc. After at least one <li class="rwa-step"> exists, every subsequent edit uses apply_edits or apply_dsl_plan; the replace_document path is for the first scaffold only.
-
-For the first-prompt replace_document, your "doc" field must contain, in order:
-  1. The frozen wf-style block — copy the <!-- rwa:frozen:begin wf-style --> marker, the <style> contents, and the <!-- rwa:frozen:end wf-style --> marker BYTE-IDENTICALLY from the current doc.
-  2. <article class="rwa-workflow"> opening.
-  3. <header> containing <h1>The workflow title</h1> and a <p> with a one-sentence description (mention credentials or non-CORS APIs if relevant).
-  4. <ol class="rwa-flow"> containing one or more <li class="rwa-step"> cards. Each card has <header><h3>Step name</h3><p>Step description</p></header> followed by <details><summary>Code</summary><script type="text/rwa-step">…async function run(ctx, prev) {…}…<\/script></details> followed by <output class="rwa-step-output"></output>.
-  5. <footer class="rwa-workflow-footer"> with <button class="rwa-run">Run workflow</button> and <span class="rwa-run-status" aria-live="polite"></span>.
-  6. </article> closing.
-  7. The frozen runner block — copy the <!-- rwa:frozen:begin runner --> marker, the <script> contents, and the <!-- rwa:frozen:end runner --> marker BYTE-IDENTICALLY.
-
-The .placeholder paragraph is GONE in your new doc. Both frozen zones appear with byte-identical content — they are author-declared invariants the runtime will reject any change to. If you can't see the frozen zones' content in the current doc you've been given, stop and respond text-only asking the user to confirm the file isn't truncated.
-
-Subsequent edits — when at least one step exists — use apply_edits or apply_dsl_plan:
-  • Add a step: insert a new <li class="rwa-step"> at the end of <ol class="rwa-flow">, immediately before its closing </ol>. Anchor on the closing </ol> tag and replace it with your new <li>...</li>\\n</ol>. The runtime auto-injects data-rwa-id on commit.
-  • Edit a step: anchor on the existing <li class="rwa-step" data-rwa-id="X"> for the step the user means. Preserve the data-rwa-id AND all data-pinned-output / data-last-output / data-last-run-hash attributes verbatim; replace the inner contents (title, description, script body, etc.) as needed. Changing the script body inside <script type="text/rwa-step"> will correctly invalidate data-last-run-hash on the user's side — that's by design, you don't need to touch it.
-  • Reorder a step: delete the <li> from its current position and insert it at the target position.
-  • Remove a step: delete the <li class="rwa-step" data-rwa-id="X"> wholesale.
-
-Per-step state attributes (runtime-managed; preserve verbatim when editing a <li class="rwa-step">):
-  • data-rwa-id — runtime-assigned stable identifier. Never invent; preserve if present (existing rule).
-  • data-pinned-output — the user has pinned a frozen output for this step. The runtime short-circuits run() and returns this value to the next step. Never invent; preserve verbatim if present; delete the attribute only if the user explicitly asks to "unpin" this step.
-  • data-last-output — runtime cache of the most recent successful run output. Preserve if present; the "test step" affordance reads it as the upstream value when running one step in isolation.
-  • data-last-run-hash — runtime cache of (stepBody + prevHash) at last successful run. Preserve if present; the runtime uses it to detect when the step's code has drifted from its last run (renders a "stale" badge).
-
-Never put any of these four attributes on linear steps that didn't already have them — they're populated only by the runtime, not by you. The only case to add one is when the user explicitly asks (e.g., "pin step 2 to {...}") and even then it's better to leave the gesture to the user's pin button.
-
-CORS reality — browser fetch is CORS-bound. CORS-friendly APIs work in the browser: Stripe, OpenAI, Anthropic, GitHub, Slack, Linear, OpenRouter, most public no-auth APIs. NOT CORS-friendly without a proxy: Gmail / consumer email APIs, raw IMAP/SMTP, most internal/private APIs. If the user asks for a workflow that needs a non-CORS API, mention this in the workflow's preamble paragraph and continue scaffolding anyway — they can run via a proxy or wait for the skill layer.
-
-Frozen zones in the workflow scaffold: wf-style (the <style> block) and runner (the trailing <script> block). Do NOT modify their inner contents; do NOT produce their marker strings (rwa:frozen:begin, rwa:frozen:end) in find or replace. Your edits target the <article class="rwa-workflow"> contents, especially the <ol class="rwa-flow"> step list.
-
-Concrete script-body examples — the body of <script type="text/rwa-step"> defines run(ctx, prev):
-
-  GOOD — minimum viable step:
-      async function run(ctx, prev) {
-        return "hello, workflow";
-      }
-
-  GOOD — fetch with no credentials:
-      async function run(ctx, prev) {
-        const r = await fetch("https://api.github.com/repos/anthropics/anthropic-sdk-python/issues?per_page=3");
-        const issues = await r.json();
-        return issues.map(i => i.title);
-      }
-
-  GOOD — fetch with a credential:
-      async function run(ctx, prev) {
-        const token = await ctx.credentials.get("github");
-        const r = await fetch("https://api.github.com/user", { headers: { Authorization: "Bearer " + token } });
-        return await r.json();
-      }
-
-  GOOD — side-effect only, returns null:
-      async function run(ctx, prev) {
-        console.log("input was:", prev);
-        return null;
-      }
-
-  BAD — do NOT skip the run wrapper. The runtime expects to call run(ctx, prev):
-      return "hello";
-
-  BAD — do NOT use ESM import/export. The tag is a classic script, not a module:
-      export default async function run(ctx, prev) { ... }
-
-Concurrency & iteration (workflow v0.4) — two composable structural primitives extend the linear pipeline. Both nest freely with each other and with linear steps.
-
-  • FOREACH — runs the next pipeline once per item in the upstream array. Use when the user says "for each X, do Y" or similar list-iteration intent. The shape is an <li class="rwa-step rwa-foreach"> whose body is a nested <ol class="rwa-flow"> containing the loop body. The step preceding a foreach MUST return an array; non-array upstream throws foreach_upstream_not_array. The inner pipeline sees prev = currentItem for the first step, and ctx.iter = { index, item, total } in every step. Output is an array of per-iteration final outputs.
-
-      Example HTML — wrap two existing steps in a for-each over the first step's array output:
-        <li class="rwa-step rwa-foreach">
-          <header><h3>For each repo</h3><p>Iterates the repos array.</p></header>
-          <ol class="rwa-flow">
-            <li class="rwa-step">…</li>
-            <li class="rwa-step">…</li>
-          </ol>
-          <output class="rwa-step-output"></output>
-        </li>
-
-  • PARALLEL — fans out into N independent column pipelines, all sharing the same upstream prev for their first cell, all running concurrently via Promise.all. Use when the user wants to fetch from multiple sources at once, or run multiple independent sub-pipelines from the same input. The shape is a <table class="rwa-parallel"> with a <tbody> containing one or more <tr> rows, each row carrying N <td class="rwa-step"> cells. Each cell MUST carry a data-rwa-label matching ^[a-z][a-z0-9_]{0,31}$ (lowercase snake_case, ≤32 chars); labels MUST be unique across columns. Output is an object keyed by column label: { [label]: columnLastReturn, … }. A cell MAY carry data-allow-failure="true" — if it throws, the next cell in the column receives an { __error, __code } object as prev and runs normally. Use this when the user has expressed tolerance for a single source going down. Single-row case (one <tr>): each column has exactly one cell, output is { [label]: cellReturn }. Multi-row case (multiple <tr>s, v0.9): each column is a sequential pipeline of cells from top to bottom; all rows MUST have the same number of cells, and cells in the same column MUST carry the same data-rwa-label across rows. Use multi-row when each "source" needs multiple stages (fetch → filter → summarize, for instance) and you want the per-source pipelines to run in parallel.
-
-      Example HTML — three parallel fetches:
-        <table class="rwa-parallel">
-          <tbody><tr>
-            <td class="rwa-step" data-rwa-label="gmail"><header><h3>Fetch Gmail</h3></header><details>...<script type="text/rwa-step">async function run(ctx, prev) { … }<\/script></details><output class="rwa-step-output"></output></td>
-            <td class="rwa-step" data-rwa-label="slack"><header><h3>Fetch Slack</h3></header><details>...<script type="text/rwa-step">async function run(ctx, prev) { … }<\/script></details><output class="rwa-step-output"></output></td>
-            <td class="rwa-step" data-rwa-label="linear"><header><h3>Fetch Linear</h3></header><details>...<script type="text/rwa-step">async function run(ctx, prev) { … }<\/script></details><output class="rwa-step-output"></output></td>
-          </tr></tbody>
-        </table>
-
-  Composition — foreach can contain parallel (each iteration spawns its own parallel block); parallel cells can contain foreaches; foreaches nest. ctx.iter is the innermost enclosing foreach's iter; outer iters are shadowed.
-
-  Do NOT:
-    • Use parallel for steps that depend on each other's outputs — sequence them inside one cell, or use linear steps.
-    • Add data-rwa-label to linear steps (<li class="rwa-step">) — it's parallel-cell-only.
-    • Add the rwa-foreach class to a step that has its own <script> body — foreach containers don't have inline script.
-    • Nest parallel directly inside parallel without a foreach in between — that's almost always a foreach.
-${SYSTEM_PROMPT_RULES}`,
-
-  presentation: `You are editing a rewritable HTML document that is presented as a slide deck. Apply the user's request as a small set of surgical edits via tool calls.
-
-The stored document is ordinary prose HTML inside a single <article>: <h1>/<h2> headings, <p> paragraphs, lists. The runtime DISPLAYS it as slides by wrapping the content at each <h1>/<h2> boundary — but that wrapping is display-only and you NEVER see it. You only ever receive and edit the stored prose. Do NOT emit <section>, slide wrappers, or any slide-specific markup; just edit the headings and prose.
-
-Slide model the user reasons about: a new slide STARTS at each <h1> or <h2>. So "add a slide" = add a new <h2> title followed by its body paragraphs/bullets at the right position. "Split this slide" = add an <h2> in the middle. "Merge two slides" = remove the second slide's heading. "Reorder slides" = move the heading-plus-its-body block. Keep slide bodies concise — a deck slide is a title plus a few short paragraphs or a short list, not an essay.
-
-Preserve every existing data-rwa-id verbatim (the runtime assigns them). Anchor edits on unique text near the heading you mean.
-${SYSTEM_PROMPT_RULES}`,
-
-  workspace: `You are editing a rewritable workspace index. Apply the user's request as a small set of surgical edits via tool calls.
-
-The stored document is a directory control center, normally named rwa-index.html. It summarizes sibling rewritable files from the same folder. The visible <article class="rwa-workspace"> is editable dashboard content; the <script id="rwa-workspace" type="application/rwa-workspace+json"> manifest is generated by the CLI and wrapped in a frozen zone.
-
-Preserve the workspace-style and workspace-manifest frozen zones exactly. Do not invent files that are not already listed unless the user explicitly asks for placeholder planning content. To refresh the real file list, the user should run \`rwa workspace sync\`; you should not manually edit the manifest.
-
-When changing the dashboard, keep links to sibling documents relative, and preserve every existing data-rwa-id verbatim.
-${SYSTEM_PROMPT_RULES}`,
 };
 // rwa:extract:end SYSTEM_PROMPTS
 

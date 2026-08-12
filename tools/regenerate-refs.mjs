@@ -7,7 +7,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { applySeedSubs, kindOverrides, seedIdentity } from '../cli/src/seed.mjs';
+import { applySeedSubs, kindOverrides, seedIdentity, pruneForeignKindPrompts } from '../cli/src/seed.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '..');
@@ -112,6 +112,9 @@ for (const ref of refs) {
       .replace(/(<meta name="rwa-seed" content=")[^"]*(">)/, (_m, pre, post) => `${pre}${seedId}${post}`)
       .replace(/const DOC_UUID\s*=\s*'[^']+'/, `const DOC_UUID = '${uuid}'`)
       .replace(/FILE\s*:\s*'[^']+'/, `FILE:'${ref.file}'`);
+    // This path bypasses applySeedSubs, so it must prune foreign-kind
+    // SYSTEM_PROMPTS itself — same reason it stamps the seed id itself.
+    out = pruneForeignKindPrompts(out, 'document');
   }
   if (out.includes('0000000000pl')) {
     console.error(`${ref.path}: rwa-seed placeholder survived substitution`);
