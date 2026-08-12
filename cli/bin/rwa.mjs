@@ -75,6 +75,15 @@ Usage:
                               https://rewritable.ikangai.com. --json emits
                               {short,url,expiresAt}.
   rwa publish-site <path>     scp a rewritable to a static site (needs RWA_SITE_* env)
+  rwa proxy [--port N]        run a local OpenRouter key broker on 127.0.0.1: the
+                              key stays on this machine (env or ~/.rwa/openrouter-key)
+                              and containers use the KEYLESS Ollama/LM Studio backend
+                              with Base URL http://127.0.0.1:11435/v1 — no more
+                              per-tab key pasting, and no key in any browser. Web
+                              origins are refused unless --allow-origin is given
+                              (file:// containers and local tools always pass).
+  rwa proxy set-key           prompt for the key (hidden input) and store it at
+                              ~/.rwa/openrouter-key with mode 600.
   rwa host <path>             ingest a rewritable into a hosted runtime (POST /r)
                               and print {id, token, url}. The network-bearing
                               counterpart of \`publish\` for round-trip hosted
@@ -881,6 +890,67 @@ function detectProductKind(fileText) {
         );
       }
       return;
+    }
+
+    // `rwa proxy [--port N] [--allow-origin O]... [--upstream U]` + `rwa proxy set-key`
+    // — local OpenRouter key broker; see src/proxy.mjs for the threat notes.
+    // Network-bearing by design (offline-first excludes it, like clone/publish-site).
+    if (verb === 'proxy') {
+      const { startProxy, setKeyCmd, resolveProxyKey, DEFAULT_PORT } = await import('../src/proxy.mjs');
+      if (rest[0] === 'set-key') {
+        try {
+          const r = await setKeyCmd({});
+          process.stderr.write(`✓ key stored at ${r.keyFile} (mode 600)\n`);
+        } catch (e) {
+          process.stderr.write(`rwa proxy set-key: usage_error/${e.subcode || 'failed'}\n`);
+          process.exitCode = e.exitCode || 1;
+        }
+        return;
+      }
+      const portFlag = getFlag('--port', rest);
+      const upstreamFlag = getFlag('--upstream', rest);
+      const allowOrigins = [];
+      for (let i = 0; i < rest.length; i++) {
+        if (rest[i] === '--allow-origin' && rest[i + 1] && !rest[i + 1].startsWith('-')) allowOrigins.push(rest[i + 1]);
+      }
+      const resolved = resolveProxyKey({});
+      if (!resolved) {
+        process.stderr.write('rwa proxy: usage_error/no_key — run `rwa proxy set-key` or set RWA_OPENROUTER_KEY\n');
+        process.exitCode = 1;
+        return;
+      }
+      if (resolved.conflict) {
+        process.stderr.write('rwa proxy: WARNING — an environment key is shadowing a DIFFERENT stored key (set-key file). The environment wins; unset the env var if the stored key is the current one.\n');
+      }
+      // Validate before serving: /models is public, so a dead key looks alive
+      // until the first paid call. Skipped only when --upstream points at a
+      // custom (test) endpoint that may not implement /auth/key.
+      if (!upstreamFlag.value) {
+        const { validateKey } = await import('../src/proxy.mjs');
+        const v = await validateKey({ key: resolved.key });
+        if (!v.ok) {
+          process.stderr.write(`rwa proxy: key_error/invalid_key — the ${resolved.source === 'env' ? 'environment' : 'stored'} key failed auth (${v.status}: ${v.message}). ` +
+            (resolved.source === 'env' ? 'Your shell profile may carry a stale key — fix it there or unset it and use `rwa proxy set-key`.\n' : 'Re-run `rwa proxy set-key` with a current key.\n'));
+          process.exitCode = 1;
+          return;
+        }
+      }
+      const { port } = await startProxy({
+        port: portFlag.value ? parseInt(portFlag.value, 10) : DEFAULT_PORT,
+        key: resolved.key,
+        upstream: upstreamFlag.value,
+        allowOrigins,
+        allowNullOrigin: !rest.includes('--no-null-origin'),
+        log: (line) => process.stderr.write(`[proxy] ${line}\n`),
+      });
+      process.stderr.write([
+        `rwa proxy listening on http://127.0.0.1:${port}/v1  (key: ${resolved.source === 'env' ? 'environment' : resolved.source})`,
+        `  container setup (once per tab): ⚙ → Backend "Ollama (localhost)" → Base URL http://127.0.0.1:${port}/v1 → pick a model (Test lists the catalog)`,
+        `  origins: file:// containers + local tools${allowOrigins.length ? ' + ' + allowOrigins.join(', ') : ''}; other web origins are refused`,
+        `  NOTE: while this runs, any local process or file:// page on this machine can spend through it. Ctrl-C stops it.`,
+        '',
+      ].join('\n'));
+      return; // server keeps the process alive
     }
 
     // `rwa publish-site <file> [--host h] [--path p] [--url base] [--json]` —

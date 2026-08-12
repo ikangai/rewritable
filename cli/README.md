@@ -241,6 +241,42 @@ It POSTs **your edited bytes** (the current `INLINE_DOC`), unlike the browser `/
 
 **Target** resolves `--url <base>` › `$RWA_PUBLISH_URL` › `https://rewritable.ikangai.com` (point it at a self-hosted service or local dev with either). The file is checked locally first — a non-rewritable exits `2` (`not_a_rewritable`) **before any network call**. Remote/network failures exit `4` with an honest reason on stderr (`publish_error/network_error`, `/rate_limited`, `/body_too_large`, `/validation_failed`, …); `--json` emits those as `{code, subcode, details}`. stdout stays clean for the URL/JSON.
 
+### `rwa proxy` — never paste your API key into a container again
+
+A local OpenRouter **key broker**. The container posture keeps the API key in
+sessionStorage (per tab, never persisted) because a received document's own
+script can read anything the page reaches — the price is re-pasting the key in
+every tab. The broker removes the key from the browser **entirely**: it runs on
+`127.0.0.1` and injects the `Authorization` header server-side, and containers
+use the existing **keyless** local-backend path.
+
+```
+rwa proxy set-key      # paste once, hidden input → ~/.rwa/openrouter-key (600)
+rwa proxy              # validates the key, then listens on 127.0.0.1:11435
+```
+
+In any container: **⚙ → Backend "Ollama (localhost)" → Base URL
+`http://127.0.0.1:11435/v1`** → pick a model (the Test button lists the full
+OpenRouter catalog). No key field, nothing secret in the browser.
+
+Safety properties (pinned by `cli/tests/proxy.test.mjs`): a client-supplied
+`Authorization` is discarded — upstream only ever sees the broker's key; a
+strict Host check refuses DNS-rebinding-shaped requests outright; named web
+origins are refused while `file://` containers and local tools pass — add
+hosted origins with `--allow-origin`; the key is validated against
+`/auth/key` at startup, so a stale key fails loud instead of surfacing as a
+confusing 401 mid-edit; and a stale env key shadowing a fresh stored key is
+warned about explicitly.
+
+Stated honestly: `Origin: null` is not proof of a local file — sandboxed
+iframes on arbitrary websites also send it, so a hostile page could shape
+requests that pass the origin gate (modern Chrome/Safari additionally gate
+public→loopback via Local Network Access). If your containers are hosted
+rather than `file://`, run with `--no-null-origin` plus `--allow-origin` for
+your host. And while the broker runs, any *local* process can spend through
+it — same exposure class as running Ollama. Network-bearing by design, like
+`clone`.
+
 ### `rwa publish-site <path>`
 
 The **durable** counterpart to `rwa publish`. Where `rwa publish` POSTs to the hosted service for an *anonymous, ephemeral (24h)* share, `rwa publish-site` copies the file **verbatim** onto a static site you control via `scp` and prints the live URL. Same bytes, your own host, no expiry.
