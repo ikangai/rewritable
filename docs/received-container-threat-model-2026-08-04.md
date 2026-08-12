@@ -173,6 +173,33 @@ Built:
 runtime. It can read the API key typed into it, reach other containers' IndexedDB at the shared
 `file://` null origin, and exfiltrate freely — there is no `connect-src`.
 
+## 9. Amendment — API key persistence (operator decision, 2026-08-12)
+
+The 2026-08-05 decision kept the API key in `sessionStorage` (per tab, never persisted). The whole
+value proposition, though, is a non-technical user opening a document — and for that user, re-pasting
+the key in every tab of every document is the entire friction. The `rwa proxy` broker removes the key
+from the browser but requires a local install, which that user cannot do. So the posture was
+reconsidered deliberately.
+
+**Decision: default to remembering the key.** A "Remember" toggle (⚙ → OpenRouter, **on by default**)
+mirrors the key into `localStorage` — shared across all local rewritables at the `file://` null origin,
+per-origin when hosted — so it is entered once and every document reuses it (`persistApiKey` /
+`rememberKeyOn` / boot hydration in the seed; pinned by `tests/key-persist.mjs`).
+
+**What this changes vs. §8.** A remembered key now sits in `localStorage`, which is *more durable* than
+`sessionStorage` and readable by the same in-realm script a received container already runs — so a
+**malicious rewritable opened from an untrusted source could read the remembered key** without the
+user ever typing it into that document. This is a real widening of the §2 threat, accepted knowingly:
+the target audience is trusted-source documents, and the friction otherwise makes the product
+unusable for them. The vault key decision (B) is untouched — secrets in the encrypted vault never
+persist; only the single OpenRouter key does.
+
+**The off-switch is first-class.** Turning "Remember" off clears the stored key immediately and
+restores the exact per-tab posture of §8 — the security-conscious user gives up nothing. The safe
+path for the friction-free *and* isolated case remains a hosted origin, where `localStorage` is
+per-origin and a `file://` document cannot read it (and the browser password manager becomes
+available — it does not work at `file://`).
+
 **Why C–F were declined.** F (sandboxing the document body) would dismantle interactive documents,
 which are the reason the format is interesting — trading the product's point for a threat a user can
 also avoid by not opening files from people they distrust. C, D and E are each defensible but carry

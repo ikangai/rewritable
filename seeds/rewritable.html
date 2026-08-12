@@ -495,6 +495,9 @@ const RWA = {
   UNDO_CAP:10, HIST_CAP:1000, NUDGE_THRESHOLD:5,
   VAULT_IDLE_MS: 15 * 60 * 1000, // auto-lock the vault after this long with no vault operation
   K_API:'rwa_apikey', K_MODEL:'rwa_model', K_BACKEND:'rwa_backend',
+  // "Remember key on this device" preference (not the key — a boolean). See
+  // the persistApiKey block below.
+  K_REMEMBER:'rwa_remember_key',
   // Per-backend base-URL overrides for local OpenAI-compatible servers.
   // Empty/unset falls back to DEFAULT_*_URL below.
   K_BASE_URL_OLLAMA:'rwa_base_url_ollama', K_BASE_URL_LMSTUDIO:'rwa_base_url_lmstudio',
@@ -539,6 +542,50 @@ const RWA = {
   SHARE_BASE:'https://rewritable.ikangai.com',
   K_SHARE_BASE:'rwa_share_base',
 };
+
+// ─── API key persistence — "Remember on this device", all documents ────────
+// The key lives in sessionStorage (per tab) by contract. When "Remember" is on
+// (the default), it is ALSO mirrored to localStorage, which at file:// is shared
+// across every local rewritable (the null origin) and per-origin when hosted —
+// so the key is entered once and every document reuses it, no re-paste. This is
+// a deliberate posture choice for the target audience: a non-technical user for
+// whom re-entry is the entire friction (operator decision 2026-08-12). The
+// accepted cost, recorded in docs/received-container-threat-model-2026-08-04.md:
+// a MALICIOUS rewritable opened from an untrusted source could read a remembered
+// key from shared file:// storage. The toggle (⚙ → OpenRouter) turns it off,
+// clearing the stored copy and restoring the strict per-tab posture.
+function rememberKeyOn() {
+  try { return (localStorage.getItem(RWA.K_REMEMBER) || 'on') !== 'off'; } catch (_) { return false; }
+}
+function setRememberKey(on) {
+  try {
+    localStorage.setItem(RWA.K_REMEMBER, on ? 'on' : 'off');
+    if (on) { const k = sessionStorage.getItem(RWA.K_API); if (k) localStorage.setItem(RWA.K_API, k); }
+    else localStorage.removeItem(RWA.K_API);
+  } catch (_) {}
+}
+// Single write path for a USER-ENTERED key: always the per-tab store, plus the
+// remembered store when the toggle is on. (The ?key= URL channel below stays
+// sessionStorage-only on purpose — it is the explicitly-ephemeral path.)
+function persistApiKey(v) {
+  const key = (v == null ? '' : String(v)).trim();
+  sessionStorage.setItem(RWA.K_API, key);
+  try {
+    if (rememberKeyOn() && key) localStorage.setItem(RWA.K_API, key);
+    else localStorage.removeItem(RWA.K_API);
+  } catch (_) {}
+}
+// Boot hydration: seed the per-tab key from the remembered one, so every read
+// site (all of which read sessionStorage) works unchanged and every tab/document
+// starts connected. Runs before the ⌘K path and the no-key connect prompt; a
+// ?key= URL param below still wins (explicit intent). localStorage can throw in
+// locked-down privacy modes — tolerate and fall back to per-tab entry.
+try {
+  if (!sessionStorage.getItem(RWA.K_API) && rememberKeyOn()) {
+    const remembered = localStorage.getItem(RWA.K_API);
+    if (remembered) sessionStorage.setItem(RWA.K_API, remembered);
+  }
+} catch (_) {}
 
 // `rwa new -o` / `rwa import -o` can pass first-paint configuration via URL
 // params so the user doesn't have to open ⚙ before pressing ⌘K. Supported:
@@ -1676,6 +1723,7 @@ function buildUI() {
 <div id="rwa-set-panel">
   <div class="rwa-set-row"><label>Backend</label><select id="rwa-backend"><option value="openrouter">OpenRouter (API key)</option><option value="ollama">Ollama (localhost)</option><option value="lmstudio">LM Studio (localhost)</option><option value="atomic">atomic.chat (localhost)</option><option value="bridge">Bridge (claude -p, localhost)</option><option value="bridge-session">Bridge session (claude, persistent)</option></select></div>
   <div class="rwa-set-row" id="rwa-set-row-key"><label>OpenRouter Key</label><input type="password" id="rwa-key" placeholder="sk-or-..." autocomplete="off"></div>
+  <div class="rwa-set-row" id="rwa-set-row-remember"><label>Remember</label><label style="display:flex;align-items:center;gap:7px;font-size:12px;color:var(--gray-600);cursor:pointer;"><input type="checkbox" id="rwa-remember-key" style="width:auto;margin:0;"> keep the key on this device (all documents)</label></div>
   <div class="rwa-set-row" id="rwa-set-row-bridge-token" style="display:none;"><label>Bridge Token</label><input type="password" id="rwa-bridge-token" placeholder="WEB_CLI_BRIDGE_TOKEN" autocomplete="off"></div>
   <div class="rwa-set-row" id="rwa-set-row-bridge-cwd" style="display:none;"><label>Session Dir</label><input type="text" id="rwa-bridge-cwd" placeholder="/path/on/bridge/host" autocomplete="off" spellcheck="false"></div>
   <div class="rwa-set-row" id="rwa-set-row-bridge-model" style="display:none;"><label>Bridge Model</label><input type="text" id="rwa-bridge-model" placeholder="claude-sonnet-5 (empty = CLI default)" autocomplete="off" spellcheck="false"></div>
@@ -1761,7 +1809,12 @@ function buildUI() {
   const k = document.getElementById('rwa-key'), m = document.getElementById('rwa-model');
   k.value = sessionStorage.getItem(RWA.K_API) || '';
   m.value = sessionStorage.getItem(RWA.K_MODEL) || RWA.MODEL;
-  k.oninput = e => sessionStorage.setItem(RWA.K_API, e.target.value.trim());
+  k.oninput = e => persistApiKey(e.target.value);
+  const rememberEl = document.getElementById('rwa-remember-key');
+  if (rememberEl) {
+    rememberEl.checked = rememberKeyOn();
+    rememberEl.onchange = e => setRememberKey(e.target.checked);
+  }
   m.oninput = e => sessionStorage.setItem(RWA.K_MODEL, e.target.value.trim() || RWA.MODEL);
   attachModeTabs(); // wires the View/Edit segments + the Activity/Skills menu items (data-rwa-mode-target)
   // Skills is a skill-host-only menu item.
@@ -1802,6 +1855,7 @@ function buildUI() {
   const syncBackendRows = () => {
     const meta = BACKEND_META[backendEl.value] || BACKEND_META.openrouter;
     document.getElementById('rwa-set-row-key').style.display    = meta.showKey     ? '' : 'none';
+    document.getElementById('rwa-set-row-remember').style.display = meta.showKey   ? '' : 'none';
     document.getElementById('rwa-set-row-base-url').style.display = meta.showBaseUrl ? '' : 'none';
     document.getElementById('rwa-set-row-model').style.display  = meta.showModel   ? '' : 'none';
     document.getElementById('rwa-set-row-hint').style.display   = meta.showHint    ? '' : 'none';
@@ -8903,7 +8957,7 @@ function showAgentInstallDialog(envelope) {
         if (recDiffers && chosenChoice() !== 'keep') applyRecommendation(rec); // a matching rec must not flip implicit defaults into explicit sessionStorage
         const kf = card.querySelector('[data-ai-key]');
         if (kf && kf.value.trim()) {
-          sessionStorage.setItem(RWA.K_API, kf.value.trim());
+          persistApiKey(kf.value);
           try { const ki = document.getElementById('rwa-key'); if (ki) ki.value = kf.value.trim(); } catch (_) {}
         }
       }
@@ -8979,7 +9033,7 @@ function showAiInvite() {
       // (the AI-aware branch only fires for a verified target), so setActive can't throw.
       try { runtimeSetActiveAgent(installed.role); } catch (_) {}
       if (field && field.value.trim()) {
-        sessionStorage.setItem(RWA.K_API, field.value.trim());
+        persistApiKey(field.value);
         try { const ki = document.getElementById('rwa-key'); if (ki) ki.value = field.value.trim(); } catch (_) {}
       }
       close();
