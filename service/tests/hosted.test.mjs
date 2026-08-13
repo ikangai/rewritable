@@ -1537,6 +1537,13 @@ test('GET /r/:id serves current.html with the shim injected BEFORE the bootstrap
     // bootstrap + INLINE_DOC are intact).
     assert.ok(html.includes('Hosted Test Doc'), 'served body is the real rewritable content');
 
+    // Phase 2 (design 2026-08-13 §4.4): a visible Download affordance so the
+    // non-technical user knows the canonical file is theirs to pull down —
+    // maps to GET /r/<id>/export (byte-identical to a ⌘S save).
+    assert.ok(html.includes("'rwa-hosted-download'"), 'the shim mounts a Download button');
+    assert.ok(html.includes("'/r/' + RWA_ID + '/export'"),
+      'the Download button pulls the canonical bytes from /export');
+
     // Unknown id → 404.
     const unknown = await fetch(`${srv.base}/r/zzzzzzzzzzzz`);
     assert.equal(unknown.status, 404, 'unknown id → 404');

@@ -248,6 +248,47 @@
     document.body.appendChild(undoBtn);
   }
 
+  // ── 3b. Download button — the "your document is a file you own" affordance.
+  // A hosted rwa is a projection; the canonical bytes are always pullable via
+  // GET /r/<id>/export (byte-identical to what ⌘S would write). ⌘S works too,
+  // but is undiscoverable for a non-technical user — this makes the escape
+  // hatch visible (design 2026-08-13 §4.4). Fetches export (Bearer) and saves
+  // a blob; on a real https origin <a download> is fully supported.
+  async function doDownload() {
+    var res;
+    try {
+      res = await window.fetch('/r/' + RWA_ID + '/export', { headers: authHeaders() });
+    } catch (_e) { notice('Server error — could not download.'); return; }
+    if (res.status === 401) { notice('Your edit token is invalid or expired.'); return; }
+    if (res.status !== 200) { notice('Could not download (' + res.status + ').'); return; }
+    var text = await res.text();
+    if (TEST) return text; // tests assert on the fetched bytes, not a real save
+    try {
+      var blob = new Blob([text], { type: 'text/html' });
+      var objUrl = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = objUrl;
+      a.download = (document.title ? document.title.replace(/[^\w.-]+/g, '_').slice(0, 80) : RWA_ID) + '.html';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(function () { URL.revokeObjectURL(objUrl); }, 1000);
+    } catch (_e) { notice('Could not start the download.'); }
+  }
+
+  function mountDownloadButton() {
+    if (document.getElementById('rwa-hosted-download')) return;
+    var b = document.createElement('button');
+    b.id = 'rwa-hosted-download';
+    b.type = 'button';
+    b.textContent = 'Download';
+    b.title = 'Download this document as a file you own (works offline, no server)';
+    b.style.cssText = 'position:fixed;left:24px;bottom:64px;z-index:2147483645;' +
+      'padding:8px 14px;border:1px solid #d4d4d4;border-radius:10px;background:#fff;' +
+      'color:#171717;font:14px/1 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;' +
+      'cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.08);';
+    b.addEventListener('click', function () { doDownload(); });
+    document.body.appendChild(b);
+  }
+
   // Initial undoLen on load: there is NO GET that returns the undo depth (/doc
   // carries {doc, baseHash, selfDescription}, not undoLen), so we cannot
   // pre-populate it without a server change (out of Task-6 scope: route + shim +
@@ -260,6 +301,7 @@
 
   function boot() {
     mountUndoButton();
+    mountDownloadButton();
     initUndoState();
   }
   if (!TEST) {
@@ -270,8 +312,9 @@
     }
   } else {
     // In test mode the harness DOM is ready; mount immediately so tests can read
-    // the button without a DOMContentLoaded round-trip.
+    // the buttons without a DOMContentLoaded round-trip.
     mountUndoButton();
+    mountDownloadButton();
   }
 
   // ── Test-only API (gated on window.__RWA_SHIM_TEST__) ────────────────────────
@@ -281,6 +324,7 @@
     window.__rwaHostedShimTestApi = {
       getToken: getToken,
       doUndo: doUndo,
+      doDownload: doDownload,
       getUndoLen: function () { return undoLen; },
       setUndoLen: setUndoLen,
       deletePromise: deletePromise,

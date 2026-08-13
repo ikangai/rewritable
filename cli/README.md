@@ -301,18 +301,22 @@ This command is **network-bearing** (like `rwa clone`), so the offline-first rul
 
 ### `rwa host <path>`
 
-Ingest a local rewritable into a **hosted runtime** and get back the keys to keep editing it there. Where `rwa publish` makes an *anonymous, read-only* snapshot, `rwa host` POSTs the file's bytes to a hosted runtime's `POST /r`, which mints an `id` and a per-rwa **capability token** and returns `{id, token, url}`. The `url` is `<base>/r/<id>#k=<token>` — the token rides the `#k=` fragment (so it never reaches the server on a navigation), which is how you keep editing the hosted copy. It is the round-trip-editing foundation, the network-bearing counterpart of `publish`.
+Ingest a local rewritable into a **hosted runtime** and get back the keys to keep editing it there. Where `rwa publish` makes an *anonymous, read-only* snapshot, `rwa host` POSTs the file's bytes to a hosted runtime's `POST /r`, which mints an `id` and a per-rwa **capability token** and returns `{id, token, url}`. The token rides the `url`'s `#k=` fragment (so it never reaches the server on a navigation), which is how you keep editing the hosted copy. It is the round-trip-editing foundation, the network-bearing counterpart of `publish`.
+
+In **production** each hosted rwa gets its **own isolated origin** — the `url` is `https://<id>.<host>/#k=<token>` (a 12-char id; per-subdomain so one hosted doc can never read another's token). In **local dev** it's path-keyed (`http://localhost/r/<id>#k=<token>`) because wildcard DNS doesn't resolve against localhost.
 
 ```
-rwa host notes.html --url https://host.example
+rwa host notes.html --url https://rewritable.ikangai.com
 # ✓ Hosted!
-#   id:    abc12345
+#   id:    8qqnq6xa28ly
 #   token: cap-tok-…
-#   url:   https://host.example/r/abc12345#k=cap-tok-…
+#   url:   https://8qqnq6xa28ly.rewritable.ikangai.com/#k=cap-tok-…
 #   Note:  the url carries your capability token in its #k= fragment — keep it to keep editing.
 
 rwa host notes.html --url https://host.example --json   # {"id":"…","token":"…","url":"…"} on stdout
 ```
+
+**The no-install on-ramp for a non-technical user.** This is how someone who can't install anything edits a rewritable with zero friction: a technical author (or the org) runs `rwa host`, then sends the returned `url`. The recipient just opens the link — no CLI, no key hunting. Because the projection is served from its own real `https://` origin, "remember my key on this device" is both frictionless **and** safe there (per-origin storage — a different document can't read it), and the browser's own password manager works (it can't at `file://`). And it stays a document they own: the projection carries a **Download** button (and ⌘S) that pulls the canonical `.html` back down at any time. Design: `docs/plans/2026-08-13-hosted-regular-user-flow-design.md`.
 
 **Target** resolves `--url <base>` › `$RWA_HOST_URL` (no baked-in default — a hosted runtime is your own service). The file is checked locally first — a non-rewritable exits `2` (`not_a_rewritable`) **before any network call**, and a missing target exits `1` (`config_error`). Transport/HTTP failures exit `4` with an honest reason on stderr (`host_error/network_error`, `/server_error`, `/body_too_large`); `--json` emits those as `{code, subcode, details}`. stdout stays clean for the result. **Only the file bytes are sent** — a rewritable carries no secret (the API key lives in sessionStorage, never in the file).
 
