@@ -118,10 +118,10 @@ body{font-family:var(--font-ui);background:var(--bg);color:var(--text);min-heigh
 #rwa-info-panel .rwa-info-foot{margin-top:12px;padding-top:10px;border-top:1px solid var(--gray-100);font-size:11px;color:var(--gray-500);line-height:1.5;}
 #rwa-info-panel strong{color:var(--gray-900);font-weight:600;}
 #rwa-info-panel code{font-family:var(--font-mono);font-size:11px;background:var(--gray-50);padding:1px 5px;border-radius:4px;color:var(--gray-700);}
-#rwa-share-panel{position:fixed;top:50px;right:12px;background:var(--white);border:1px solid var(--gray-200);border-radius:var(--radius-sm);padding:18px 20px;display:none;max-width:340px;z-index:999;box-shadow:0 4px 16px rgba(0,0,0,0.08);font-family:var(--font-ui);font-size:13px;line-height:1.55;color:var(--gray-700);}
-#rwa-share-panel.open{display:block;}
-#rwa-share-panel h4{margin:0 0 6px;font-size:15px;color:var(--gray-900);font-weight:600;}
-#rwa-share-panel p{margin:0 0 10px;}
+#rwa-share-panel,#rwa-hostedit-panel{position:fixed;top:50px;right:12px;background:var(--white);border:1px solid var(--gray-200);border-radius:var(--radius-sm);padding:18px 20px;display:none;max-width:340px;z-index:999;box-shadow:0 4px 16px rgba(0,0,0,0.08);font-family:var(--font-ui);font-size:13px;line-height:1.55;color:var(--gray-700);}
+#rwa-share-panel.open,#rwa-hostedit-panel.open{display:block;}
+#rwa-share-panel h4,#rwa-hostedit-panel h4{margin:0 0 6px;font-size:15px;color:var(--gray-900);font-weight:600;}
+#rwa-share-panel p,#rwa-hostedit-panel p{margin:0 0 10px;}
 .rwa-share-url{font-family:var(--font-mono);font-size:11px;background:var(--gray-50);border:1px solid var(--gray-100);border-radius:6px;padding:6px 8px;margin:0 0 8px;cursor:pointer;word-break:break-all;color:var(--gray-700);}
 .rwa-share-fresh{font-family:var(--font-mono);font-size:10px;color:var(--gray-500);margin-bottom:10px;}
 .rwa-share-msg{font-size:12px;color:var(--gray-600);background:var(--gray-50);border-radius:6px;padding:6px 8px;margin-bottom:8px;}
@@ -1143,7 +1143,7 @@ function isRwaSkillHost() {
 }
 
 function closeRuntimePanels() {
-  for (const id of ['rwa-set-panel', 'rwa-info-panel', 'rwa-skin-panel', 'rwa-share-panel', 'rwa-ai-panel', 'rwa-mode-panel']) {
+  for (const id of ['rwa-set-panel', 'rwa-info-panel', 'rwa-skin-panel', 'rwa-share-panel', 'rwa-hostedit-panel', 'rwa-ai-panel', 'rwa-mode-panel']) {
     const el = document.getElementById(id);
     if (el) el.classList.remove('open');
   }
@@ -1717,6 +1717,7 @@ function buildUI() {
   <button class="rwa-st-menu-item" id="rwa-st-cog" role="menuitem"><span class="rwa-st-menu-ic" aria-hidden="true">⚙</span>Settings</button>
   <button class="rwa-st-menu-item" id="rwa-st-skin" role="menuitem" title="skins — pick a look"><span class="rwa-st-menu-ic" aria-hidden="true">✦</span>Skins</button>
   <button class="rwa-st-menu-item" id="rwa-st-share" role="menuitem" title="share at a link"><span class="rwa-st-menu-ic" aria-hidden="true">↗</span>Share…</button>
+  <button class="rwa-st-menu-item" id="rwa-st-hostedit" role="menuitem" title="create a live editable copy at a link"><span class="rwa-st-menu-ic" aria-hidden="true">✎</span>Edit online…</button>
   <button class="rwa-st-menu-item" id="rwa-st-skills" role="menuitem" data-rwa-mode-target="skills" title="manage installed skills" hidden><span class="rwa-st-menu-ic" aria-hidden="true">◈</span>Skills</button>
   <button class="rwa-st-menu-item" id="rwa-st-activity" role="menuitem" data-rwa-mode-target="actions" title="recent edits, history and live affordances"><span class="rwa-st-menu-ic" aria-hidden="true">↻</span>Activity</button>
 </div>
@@ -1735,6 +1736,7 @@ function buildUI() {
 <div id="rwa-info-panel"></div>
 <div id="rwa-skin-panel"></div>
 <div id="rwa-share-panel"></div>
+<div id="rwa-hostedit-panel"></div>
 <div id="rwa-ai-panel"></div>
 <div id="rwa-mode-panel"></div>
 <div id="rwa-pal">
@@ -2003,6 +2005,7 @@ function buildUI() {
     document.getElementById('rwa-info-panel').classList.remove('open');   // panels are mutually exclusive
     document.getElementById('rwa-skin-panel').classList.remove('open');
     document.getElementById('rwa-share-panel').classList.remove('open');
+    document.getElementById('rwa-hostedit-panel').classList.remove('open');
     document.getElementById('rwa-ai-panel').classList.remove('open');
     document.getElementById('rwa-mode-panel').classList.remove('open');
     document.getElementById('rwa-set-panel').classList.toggle('open');
@@ -2014,6 +2017,7 @@ function buildUI() {
     document.getElementById('rwa-info-panel').classList.remove('open');
     document.getElementById('rwa-skin-panel').classList.remove('open');
     document.getElementById('rwa-share-panel').classList.remove('open');
+    document.getElementById('rwa-hostedit-panel').classList.remove('open');
     document.getElementById('rwa-mode-panel').classList.remove('open');
     const panel = document.getElementById('rwa-ai-panel');
     if (panel.classList.contains('open')) { panel.classList.remove('open'); return; }
@@ -2042,6 +2046,7 @@ function buildUI() {
     document.getElementById('rwa-set-panel').classList.remove('open');
     document.getElementById('rwa-skin-panel').classList.remove('open');
     document.getElementById('rwa-share-panel').classList.remove('open');
+    document.getElementById('rwa-hostedit-panel').classList.remove('open');
     document.getElementById('rwa-ai-panel').classList.remove('open');
     document.getElementById('rwa-mode-panel').classList.remove('open');
     const panel = document.getElementById('rwa-info-panel');
@@ -2063,9 +2068,19 @@ function buildUI() {
     document.getElementById('rwa-set-panel').classList.remove('open');
     document.getElementById('rwa-info-panel').classList.remove('open');
     document.getElementById('rwa-skin-panel').classList.remove('open');
+    document.getElementById('rwa-hostedit-panel').classList.remove('open');
     document.getElementById('rwa-ai-panel').classList.remove('open');
     document.getElementById('rwa-mode-panel').classList.remove('open');
     renderSharePanel().then(() => panel.classList.add('open'));
+  };
+  // ✎ Edit online — the canon-moving sibling of ↗ Share. Same mutual-exclusion
+  // (closeRuntimePanels closes every panel incl. this one), then open + render.
+  document.getElementById('rwa-st-hostedit').onclick = () => {
+    const panel = document.getElementById('rwa-hostedit-panel');
+    const wasOpen = panel.classList.contains('open');
+    closeRuntimePanels();
+    if (wasOpen) return;
+    renderHostedEditPanel().then(() => panel.classList.add('open'));
   };
   document.getElementById('rwa-st-commit').onclick = commit;
 
@@ -9892,6 +9907,88 @@ async function renderSharePanel(msg) {
   document.getElementById('rwa-share-stop').onclick = () => shareAction(shareUnshare);
   document.getElementById('rwa-share-copy').onclick = () => copyShareUrl(conn.url);
   document.getElementById('rwa-share-url').onclick = () => copyShareUrl(conn.url);
+}
+
+// ─── Edit online (hosted live projection) ────────────────────────────
+// "Edit online" POSTs the current file bytes to the hosted runtime's POST /r,
+// which returns {id, token, url} — a LIVE, editable copy at its own isolated
+// origin (design 2026-08-13). DISTINCT from ↗ Share on purpose: Share publishes
+// a read-only VERSION and the canon stays in this file; Edit-online is
+// CANON-MOVING — edits then happen on the hosted copy, and THIS file is a
+// snapshot until you pull the hosted copy back with its Download button. The
+// record {id,url,createdAt} lives in rwa_state (machine-local); the url embeds
+// the capability token in its #k= fragment, so — like the share token — it can
+// never travel in the exported file. Reuses the share base (same service).
+const getHostedEdit   = () => idbGet(RWA.STATE, 'hosted_edit');
+const setHostedEdit   = v  => idbPut(RWA.STATE, v, 'hosted_edit');
+const clearHostedEdit = () => idbDel(RWA.STATE, 'hosted_edit');
+
+async function hostedEditCreate() {
+  const d = await getDoc();
+  let res;
+  try {
+    res = await fetch(shareBaseUrl() + '/r', { method: 'POST', headers: { 'Content-Type': 'text/html' }, body: buildFile(d) });
+  } catch (_) {
+    throw new ShareError('hosted_unreachable', 'Hosting service unreachable — check your connection and try again.');
+  }
+  if (res.status !== 200) throw new ShareError('hosted_failed', 'Could not create the editable link (' + await shareErrDetail(res) + ').');
+  const out = await res.json();
+  const rec = { id: out.id, url: out.url, createdAt: Date.now() };
+  await setHostedEdit(rec);
+  return rec;
+}
+
+let hostedBusy = false;
+async function hostedAction(fn) {
+  if (hostedBusy) return;
+  hostedBusy = true;
+  try { await renderHostedEditPanel(); } catch (_) {}
+  let msg = null;
+  try { await fn(); } catch (e) { msg = (e && e.message) || String(e); }
+  hostedBusy = false;
+  await renderHostedEditPanel(msg);
+}
+
+function copyHostedUrl(url) {
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(url).then(() => renderHostedEditPanel('Link copied.')).catch(() => {});
+  }
+}
+
+async function renderHostedEditPanel(msg) {
+  const panel = document.getElementById('rwa-hostedit-panel');
+  if (!panel) return;
+  const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const note = msg ? '<div class="rwa-share-msg">' + esc(msg) + '</div>' : '';
+  const dis = hostedBusy ? ' disabled' : '';
+  const rec = await getHostedEdit();
+  if (!rec) {
+    panel.innerHTML = [
+      '<h4>Edit online</h4>',
+      '<p>Create a live, editable copy at its own link — for editing from another device, or handing to someone who can’t install anything. This file stays as it is; edits happen on the hosted copy, and its <b>Download</b> button pulls them back into a file.</p>',
+      note,
+      '<div class="rwa-share-actions"><button type="button" id="rwa-hostedit-create"' + dis + '>Create an editable link</button></div>',
+    ].join('');
+    document.getElementById('rwa-hostedit-create').onclick = () => hostedAction(hostedEditCreate);
+    return;
+  }
+  panel.innerHTML = [
+    '<h4>Editable online</h4>',
+    '<div class="rwa-share-url" id="rwa-hostedit-url" title="click to copy">' + esc(rec.url) + '</div>',
+    '<div class="rwa-share-fresh">Created ' + esc(shareRelTime(rec.createdAt)) + ' · edits happen on the hosted copy, not this file</div>',
+    note,
+    '<div class="rwa-share-actions">',
+    '<button type="button" id="rwa-hostedit-open">Open</button>',
+    '<button type="button" id="rwa-hostedit-copy">Copy link</button>',
+    '<button type="button" id="rwa-hostedit-forget">Forget link</button>',
+    '</div>',
+  ].join('');
+  document.getElementById('rwa-hostedit-open').onclick = () => { try { window.open(rec.url, '_blank', 'noopener'); } catch (_) {} };
+  document.getElementById('rwa-hostedit-copy').onclick = () => copyHostedUrl(rec.url);
+  document.getElementById('rwa-hostedit-url').onclick = () => copyHostedUrl(rec.url);
+  // Forget clears only the machine-local record (the hosted copy + its link
+  // live on until deleted from the hosted page); it does not touch the server.
+  document.getElementById('rwa-hostedit-forget').onclick = () => hostedAction(clearHostedEdit);
 }
 
 // ─── First-party 'presentation' view provider (spec §5.10) ──────────
