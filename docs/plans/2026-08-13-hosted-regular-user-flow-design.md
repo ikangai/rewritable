@@ -11,8 +11,24 @@ apex `GET /r/:id` 301-redirects to the subdomain; 8-char share routing intact.
 The wildcard DNS + cert already covered 12-char labels — no new DNS/cert needed.
 Pinned by `service/tests/hosted-isolation.test.mjs` (4). Decisions adopted: §6 #1 =
 A (distinct-length label), #4 = writes/reads on the subdomain (host-id guarded).
-Phases 2–4 (export affordance, on-ramp A docs, in-container "Edit online" button)
-not built. **Origin isolation — the /r/ deploy gate — is now CLOSED.**
+**Origin isolation — the /r/ deploy gate — is CLOSED.**
+
+**Phases 2–4 also SHIPPED + deployed + prod-verified (2026-08-14):**
+- **Phase 2** — the projection shim mounts a **Download** button (`GET /r/<id>/export`),
+  making the file-ownership escape hatch visible to a non-technical user
+  (`service/public/hosted-shim.js`; pinned in the projection test).
+- **Phase 3** — the author-provisioned-link on-ramp is documented in `cli/README.md`
+  (`rwa host` → send the link → recipient opens it, no install).
+- **Phase 4** (on-ramp B, §4.3) — an in-container **✎ "Edit online…"** menu item +
+  panel beside ↗ Share: one click POSTs the current bytes to `POST /r` and shows
+  the editable link. Framed as CANON-MOVING (distinct from Share's read-only
+  version), mutually exclusive with the Share panel, capability url in `rwa_state`
+  only (never in the file). Pinned by `tests/hosted-edit.mjs` (14).
+
+The whole hosted regular-user flow is now live: a non-technical user opens a link
+(author-provisioned or self-served via Edit-online), edits on an isolated origin
+where the key persists safely, and can Download the file back at any time. Not
+built: managed keys (#11, out of scope), lifecycle/expiry (§6 #3, still open).
 **Builds on:** the hosted-edit foundation (`docs/plans/2026-06-07-hosted-edit-foundation-design.md`,
 built + `service/` `/r/` routes), share subdomain isolation
 (`docs/plans/2026-05-17-share-subdomain-isolation.md`, shipped for `/s/`), the API-key
