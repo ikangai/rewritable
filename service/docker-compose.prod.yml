@@ -29,7 +29,19 @@ services:
       - "traefik.http.routers.rewritable-shares.tls.domains[0].main=rewritable.ikangai.com"
       - "traefik.http.routers.rewritable-shares.tls.domains[0].sans=*.rewritable.ikangai.com"
       - "traefik.http.routers.rewritable-shares.service=rewritable-svc"
-      # Service definition — single backend, shared by both routers.
+      # Hosted-edit router — <id>.rewritable.ikangai.com where <id> is exactly
+      # 12 lowercase-alphanumeric chars. DELIBERATELY a different length from the
+      # 8-char share pattern so the two HostRegexp rules are mutually exclusive
+      # (a host can never match both). Each hosted rwa thus gets its own isolated
+      # origin — the /r/ deploy gate (design 2026-08-13 §4.1). Same wildcard cert
+      # as shares; no new DNS/cert. Single-quoted YAML so backslashes pass through.
+      - 'traefik.http.routers.rewritable-hosted.rule=HostRegexp(`^[0-9a-z]{12}\.rewritable\.ikangai\.com$`)'
+      - "traefik.http.routers.rewritable-hosted.entrypoints=websecure"
+      - "traefik.http.routers.rewritable-hosted.tls.certresolver=letsencrypt-dns"
+      - "traefik.http.routers.rewritable-hosted.tls.domains[0].main=rewritable.ikangai.com"
+      - "traefik.http.routers.rewritable-hosted.tls.domains[0].sans=*.rewritable.ikangai.com"
+      - "traefik.http.routers.rewritable-hosted.service=rewritable-svc"
+      # Service definition — single backend, shared by all routers.
       - "traefik.http.services.rewritable-svc.loadbalancer.server.port=80"
     networks:
       - router_web

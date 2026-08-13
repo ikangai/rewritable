@@ -98,7 +98,7 @@ test('ingest validates a rewritable, rotates DOC_UUID, returns {id, token}', () 
     const bytes = makeRewritable(inputUuid);
     const { id, token } = hosted.ingest(bytes, { dataDir: dir });
 
-    assert.match(id, /^[0-9a-z]{8}$/, 'id reuses the 8-char short-code shape');
+    assert.match(id, /^[0-9a-z]{12}$/, 'hosted id is the 12-char shape (distinct from 8-char shares for subdomain isolation)');
     assert.equal(token.length, 43, 'token is a freshly minted capability token');
 
     const stored = readFileSync(join(dir, 'r', id, 'current.html'), 'utf8');
@@ -156,7 +156,7 @@ test('readHosted returns the stored bytes + owner for a known id, null for unkno
     assert.equal(rec.bytes, readFileSync(join(dir, 'r', id, 'current.html'), 'utf8'));
     assert.equal(typeof rec.owner.capHash, 'string');
 
-    assert.equal(hosted.readHosted('zzzzzzzz', { dataDir: dir }), null, 'unknown id → null');
+    assert.equal(hosted.readHosted('zzzzzzzzzzzz', { dataDir: dir }), null, 'unknown id → null');
     // A traversal-shaped id must not escape the store.
     assert.equal(hosted.readHosted('../../etc', { dataDir: dir }), null, 'malformed id → null, no traversal');
   } finally {
@@ -235,7 +235,7 @@ test('POST /r creates a hosted rwa; describe/export/doc round-trip with the cap 
     });
     assert.equal(createRes.status, 200, 'create returns 200');
     const created = await createRes.json();
-    assert.match(created.id, /^[0-9a-z]{8}$/);
+    assert.match(created.id, /^[0-9a-z]{12}$/);
     assert.equal(created.token.length, 43);
     assert.equal(created.url, `${srv.base}/r/${created.id}#k=${created.token}`,
       'url is the projection URL with the token in the fragment');
@@ -306,7 +306,7 @@ test('auth failures: 401 on missing/wrong token, 404 on unknown id', async () =>
 
     // Unknown id with a VALID-shaped token → 404 (the id check precedes nothing
     // that would leak existence; an unknown id is 404 regardless of token).
-    const unknown = await fetch(`${srv.base}/r/zzzzzzzz/describe`, {
+    const unknown = await fetch(`${srv.base}/r/zzzzzzzzzzzz/describe`, {
       headers: { Authorization: `Bearer ${token}` },
     });
     assert.equal(unknown.status, 404);
@@ -595,7 +595,7 @@ test('modify auth + bad-request: 401 / 404 / 400', async () => {
     assert.equal(wrong.status, 401);
 
     // Unknown id (valid-shaped token) → 404.
-    const unknown = await fetch(`${srv.base}/r/zzzzzzzz/modify`, {
+    const unknown = await fetch(`${srv.base}/r/zzzzzzzzzzzz/modify`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: goodBody,
@@ -1095,7 +1095,7 @@ test('undo auth: 401 on missing/wrong token, 404 on unknown id', async () => {
       method: 'POST', headers: { Authorization: `Bearer ${hosted.mintToken()}` },
     });
     assert.equal(wrong.status, 401);
-    const unknown = await fetch(`${srv.base}/r/zzzzzzzz/undo`, {
+    const unknown = await fetch(`${srv.base}/r/zzzzzzzzzzzz/undo`, {
       method: 'POST', headers: { Authorization: `Bearer ${token}` },
     });
     assert.equal(unknown.status, 404);
@@ -1200,7 +1200,7 @@ test('rotate auth: 401 on wrong token, 404 on unknown id', async () => {
       method: 'POST', headers: { Authorization: `Bearer ${hosted.mintToken()}` },
     });
     assert.equal(wrong.status, 401);
-    const unknown = await fetch(`${srv.base}/r/zzzzzzzz/rotate`, {
+    const unknown = await fetch(`${srv.base}/r/zzzzzzzzzzzz/rotate`, {
       method: 'POST', headers: { Authorization: `Bearer ${token}` },
     });
     assert.equal(unknown.status, 404);
@@ -1247,7 +1247,7 @@ test('delete auth: 401 on wrong token, 404 on unknown id; a wrong token does NOT
     assert.equal(wrong.status, 401);
     assert.ok(existsSync(join(srv.dataDir, 'r', id)), 'a wrong-token delete must NOT remove the dir');
 
-    const unknown = await fetch(`${srv.base}/r/zzzzzzzz`, {
+    const unknown = await fetch(`${srv.base}/r/zzzzzzzzzzzz`, {
       method: 'DELETE', headers: { Authorization: `Bearer ${token}` },
     });
     assert.equal(unknown.status, 404);
@@ -1538,7 +1538,7 @@ test('GET /r/:id serves current.html with the shim injected BEFORE the bootstrap
     assert.ok(html.includes('Hosted Test Doc'), 'served body is the real rewritable content');
 
     // Unknown id → 404.
-    const unknown = await fetch(`${srv.base}/r/zzzzzzzz`);
+    const unknown = await fetch(`${srv.base}/r/zzzzzzzzzzzz`);
     assert.equal(unknown.status, 404, 'unknown id → 404');
   } finally {
     await srv.stop();

@@ -41,8 +41,17 @@ function validateContainer(text) {
   return { ok: true };
 }
 
-// ─── Id generation (reuses the /s/ short-code shape) ────────────────────────
-const ID_RE = /^[0-9a-z]{8}$/;
+// ─── Id generation ──────────────────────────────────────────────────────────
+// Hosted ids are 12-char base36 — a DIFFERENT length from the 8-char /s/ share
+// short codes ON PURPOSE. Per-subdomain origin isolation (the /r/ deploy gate,
+// docs/plans/2026-08-13-hosted-regular-user-flow-design.md §4.1) serves each
+// hosted rwa at <id>.rewritable.<tld>; distinct lengths keep the hosted host
+// pattern disjoint from the share host pattern under one wildcard cert, so the
+// two Traefik HostRegexp rules ({8} vs {12}) can never both match a host.
+const HOSTED_ID_LEN = 12;
+// Traversal guard for readHosted: lenient on length (8..20) so any pre-existing
+// short id still resolves; the exact-12 constraint lives in the host router.
+const ID_RE = /^[0-9a-z]{8,20}$/;
 const ID_ALPHABET = '0123456789abcdefghijklmnopqrstuvwxyz';
 
 function hostedRoot(dataDir) {
@@ -55,9 +64,9 @@ function idDir(dataDir, id) {
 
 function generateId(dataDir) {
   for (let attempt = 0; attempt < 5; attempt++) {
-    const bytes = crypto.randomBytes(8);
+    const bytes = crypto.randomBytes(HOSTED_ID_LEN);
     let s = '';
-    for (let i = 0; i < 8; i++) s += ID_ALPHABET[bytes[i] % 36];
+    for (let i = 0; i < HOSTED_ID_LEN; i++) s += ID_ALPHABET[bytes[i] % 36];
     if (!fs.existsSync(idDir(dataDir, s))) return s;
   }
   throw new Error('could not generate unique hosted id after 5 attempts');

@@ -1,6 +1,13 @@
 # Hosted regular-user flow — design
 
-**Status:** DESIGN (draft), author agent-18, 2026-08-13. Nothing built.
+**Status:** DESIGN + PHASE 1 CODE BUILT (deploy-gated), author agent-18, 2026-08-13.
+Phase 1 (§7.1, origin isolation) is implemented and tested in `service/` — hosted
+ids are 12-char, the `HOSTED_HOST_RE` clean-origin branch + apex prod-redirect
+mirror `/s/`, and the Traefik `{12}` rule is in `docker-compose.prod.yml` (unapplied).
+Pinned by `service/tests/hosted-isolation.test.mjs` (4). **NOT DEPLOYED** — the
+DNS/TLS/Traefik apply needs staging (§6.5). Decisions adopted: §6 #1 = A
+(distinct-length label), #4 = writes/reads served on the subdomain (host-id
+guarded). Phases 2–4 (export affordance, on-ramp A, in-container button) not built.
 **Builds on:** the hosted-edit foundation (`docs/plans/2026-06-07-hosted-edit-foundation-design.md`,
 built + `service/` `/r/` routes), share subdomain isolation
 (`docs/plans/2026-05-17-share-subdomain-isolation.md`, shipped for `/s/`), the API-key

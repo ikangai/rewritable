@@ -243,6 +243,11 @@ const INLINE_DOC_RE = /const INLINE_DOC = `/;
 // hostnames like `abc12345.rewritable.local` as well as production
 // `abc12345.rewritable.ikangai.com`).
 const SHORT_HOST_RE = /^([0-9a-z]{8})\.rewritable\./;
+// Hosted-edit projections get their OWN isolated origin — a 12-char id label,
+// disjoint from the 8-char share pattern above so the two Traefik HostRegexp
+// rules can never both match one host. The deploy gate for /r/ origin
+// isolation; design docs/plans/2026-08-13-hosted-regular-user-flow-design.md §4.1.
+const HOSTED_HOST_RE = /^([0-9a-z]{12})\.rewritable\./;
 const ROBOTS_TXT = 'User-agent: *\nDisallow: /\n';
 
 // Local dev: wildcard DNS doesn't resolve against localhost, so dev keeps
@@ -929,8 +934,16 @@ async function handleHostedCreate(req, send) {
   // never reaches the server on a navigation (Task 6 builds the projection page).
   const scheme = (req.headers['x-forwarded-proto'] || 'http').split(',')[0].trim();
   const host = req.headers.host || 'localhost';
-  const base = `${scheme}://${host}`;
-  return sendJson(send, 200, { id, token, url: `${base}/r/${id}#k=${token}` });
+  // Per-subdomain isolation (design 2026-08-13 §4.1): in production the
+  // projection lives at its own origin <id>.<apex>/ so its sessionStorage
+  // (the capability token) and IndexedDB are walled off from every other
+  // hosted doc. In local dev the projection is path-keyed on the apex because
+  // wildcard DNS doesn't resolve against localhost. The token rides the #k=
+  // fragment either way — it never reaches the server on navigation.
+  const url = isLocalHost(host)
+    ? `${scheme}://${host}/r/${id}#k=${token}`
+    : `${scheme}://${id}.${host}/#k=${token}`;
+  return sendJson(send, 200, { id, token, url });
 }
 
 // Compute the self-description/1 projection over a container's bytes + its
@@ -1497,12 +1510,14 @@ const server = http.createServer((req, res) => {
   const reqHost = (req.headers.host || '').toLowerCase();
   const hostShort = reqHost.match(SHORT_HOST_RE);
   const isShareHost = !!hostShort;
+  const hostHosted = reqHost.match(HOSTED_HOST_RE);
+  const isHostedHost = !!hostHosted;   // <12-char-id>.rewritable.<tld> — isolated hosted-edit origin
   countRoute(url, isShareHost);   // #15 — aggregate only, no per-user dimension
 
   // Aggregate usage counts (#15). Apex-only, and it exposes nothing about anyone:
   // route-family totals since process start, which is what "is this used at all"
   // actually needs.
-  if (!isShareHost && url === '/metrics') {
+  if (!isShareHost && !isHostedHost && url === '/metrics') {
     return sendJson(send, 200, { since: 'process-start', counts: { ...usage } });
   }
 
@@ -1510,12 +1525,12 @@ const server = http.createServer((req, res) => {
   // like /publish and /share — a share host must not be able to mint these URLs.
   {
     const rep = url.match(/^\/report\/([0-9a-z]{8})$/);
-    if (!isShareHost && rep && req.method === 'POST') {
+    if (!isShareHost && !isHostedHost && rep && req.method === 'POST') {
       handleShareReport(req, rep[1], send).catch(() => sendJson(send, 500, { error: 'server_error' }));
       return;
     }
     const td = url.match(/^\/admin\/takedown\/([0-9a-z]{8})$/);
-    if (!isShareHost && td && (req.method === 'POST' || req.method === 'DELETE')) {
+    if (!isShareHost && !isHostedHost && td && (req.method === 'POST' || req.method === 'DELETE')) {
       return handleAdminTakedown(req, td[1], send);
     }
   }
@@ -1523,7 +1538,7 @@ const server = http.createServer((req, res) => {
   // Connected shares (/share family). Apex-only like /publish (same
   // wrong-host-URL-minting concern). OPTIONS answers the CORS preflight the
   // seed's file:// share chrome triggers (Authorization header → preflighted).
-  if (!isShareHost && (url === '/share' || /^\/share\/[0-9a-z]{8}$/.test(url))) {
+  if (!isShareHost && !isHostedHost && (url === '/share' || /^\/share\/[0-9a-z]{8}$/.test(url))) {
     if (req.method === 'OPTIONS') return handleSharePreflight(send);
     if (req.method === 'POST' && url === '/share') {
       handleShareCreate(req, send).catch(err => {
@@ -1545,7 +1560,7 @@ const server = http.createServer((req, res) => {
 
   // I6 — signed-skill marketplace (/skills/*). Apex-only (like /publish): a read-only index plus
   // publish/revoke/report. GET reads are cacheable + nosniff; writes are rate-limited.
-  if (!isShareHost && (url === '/skills/publish' || url === '/skills/index' || url.startsWith('/skills/index/') || url.startsWith('/skills/revoke/') || url.startsWith('/skills/report/'))) {
+  if (!isShareHost && !isHostedHost && (url === '/skills/publish' || url === '/skills/index' || url.startsWith('/skills/index/') || url.startsWith('/skills/revoke/') || url.startsWith('/skills/report/'))) {
     const fail = (err) => { console.error('skills: unhandled error', err); if (!res.headersSent) sendSkillJson(send, 500, { error: 'internal_error' }); };
     if (req.method === 'POST' && url === '/skills/publish') { handleSkillPublish(req, send).catch(fail); return; }
     if (req.method === 'GET' && url === '/skills/index') { handleSkillIndex(req.url, send); return; }
@@ -1558,7 +1573,7 @@ const server = http.createServer((req, res) => {
   // POST /publish is the only non-GET endpoint. It lives only on the apex
   // host — a malicious publisher must not be able to bounce /publish off
   // a share host and have us mint a URL relative to that wrong host.
-  if (req.method === 'POST' && url === '/publish' && !isShareHost) {
+  if (req.method === 'POST' && url === '/publish' && !isShareHost && !isHostedHost) {
     handlePublish(req, send).catch(err => {
       console.error('publish: unhandled error', err);
       if (!res.headersSent) {
@@ -1571,7 +1586,7 @@ const server = http.createServer((req, res) => {
 
   // POST /r — create a hosted rwa. Apex-only, like /publish (a share host must
   // not be able to bounce a create off it and have us mint a wrong-origin URL).
-  if (req.method === 'POST' && url === '/r' && !isShareHost) {
+  if (req.method === 'POST' && url === '/r' && !isShareHost && !isHostedHost) {
     handleHostedCreate(req, send).catch(err => {
       console.error('hosted: create unhandled error', err);
       if (!res.headersSent) {
@@ -1587,8 +1602,12 @@ const server = http.createServer((req, res) => {
   // it). Bearer-auth inside each handler; modify/undo run under the per-id write
   // lock (rotate too, to serialize with a /modify owner.json touch).
   if (req.method === 'POST' && !isShareHost) {
-    const m = url.match(/^\/r\/([0-9a-z]{8})\/(modify|undo|rotate)$/);
+    const m = url.match(/^\/r\/([0-9a-z]{12})\/(modify|undo|rotate)$/);
     if (m) {
+      // On an isolated hosted origin, the only id that origin may act on is its
+      // own — <A>.host must never write B (defense-in-depth; origins are already
+      // storage-isolated, but keep the surface honest).
+      if (isHostedHost && m[1] !== hostHosted[1]) return send(404, { 'Content-Type': 'text/plain' }, 'not found\n');
       const action = m[2];
       const handler = action === 'modify' ? handleHostedModify
         : action === 'undo' ? handleHostedUndo
@@ -1607,8 +1626,9 @@ const server = http.createServer((req, res) => {
   // DELETE /r/:id — remove the hosted rwa subtree. Apex-only, Bearer-auth, under
   // the per-id write lock (serializes with modify/undo).
   if (req.method === 'DELETE' && !isShareHost) {
-    const m = url.match(/^\/r\/([0-9a-z]{8})$/);
+    const m = url.match(/^\/r\/([0-9a-z]{12})$/);
     if (m) {
+      if (isHostedHost && m[1] !== hostHosted[1]) return send(404, { 'Content-Type': 'text/plain' }, 'not found\n');
       handleHostedDelete(m[1], req, send).catch(err => {
         console.error('hosted: delete unhandled error', err);
         if (!res.headersSent) {
@@ -1638,11 +1658,41 @@ const server = http.createServer((req, res) => {
     return send(404, { 'Content-Type': 'text/plain' }, 'not found\n');
   }
 
+  // Hosted-edit origin (<12-char-id>.rewritable.<tld>): serves ONLY its own
+  // projection at / plus that id's authenticated reads (writes/deletes were
+  // handled above under the same host-id guard). Like the share host, it must
+  // stay clean of apex content so the browser's same-origin policy isolates
+  // each hosted doc's sessionStorage (the capability token) + IndexedDB.
+  // Everything else 404s. Design 2026-08-13 §4.1.
+  if (isHostedHost) {
+    const id = hostHosted[1];
+    if (url === '/robots.txt') {
+      return send(200, { 'Content-Type': 'text/plain; charset=utf-8' }, ROBOTS_TXT);
+    }
+    if (url === '/' || url === '') {
+      try { return handleHostedProjection(id, send); }
+      catch (err) {
+        console.error('hosted: projection unhandled error', err);
+        if (!res.headersSent) sendJson(send, 500, { error: 'internal_error' });
+        return;
+      }
+    }
+    const rd = url.match(/^\/r\/([0-9a-z]{12})\/(describe|export|doc)$/);
+    if (rd && rd[1] === id) {
+      handleHostedRead(rd[1], rd[2], req, send).catch(err => {
+        console.error('hosted: read unhandled error', err);
+        if (!res.headersSent) sendJson(send, 500, { error: 'internal_error' });
+      });
+      return;
+    }
+    return send(404, { 'Content-Type': 'text/plain' }, 'not found\n');
+  }
+
   // GET /r/:id/{describe,export,doc} — authenticated hosted reads. Apex-only
   // (the share-host branch above already returned for share origins). /r is a
   // NEW reserved prefix, disjoint from /s/.
   {
-    const m = url.match(/^\/r\/([0-9a-z]{8})\/(describe|export|doc)$/);
+    const m = url.match(/^\/r\/([0-9a-z]{12})\/(describe|export|doc)$/);
     if (m) {
       handleHostedRead(m[1], m[2], req, send).catch(err => {
         console.error('hosted: read unhandled error', err);
@@ -1655,12 +1705,19 @@ const server = http.createServer((req, res) => {
     }
   }
 
-  // GET /r/:id — the live editable web projection (current.html + injected shim).
-  // Apex-only (share-host branch returned above). Synchronous: no body read, no
-  // dynamic import — just template the in-memory shim into the stored bytes.
+  // GET /r/:id — the live editable web projection. In PRODUCTION this redirects
+  // to the isolated origin <id>.<host>/ so the apex never serves hosted bytes
+  // (origin isolation — the deploy gate); in local dev it serves path-keyed
+  // because wildcard DNS doesn't resolve against localhost. Mirrors the legacy
+  // /s/ redirect; the #k= token fragment is reattached by the browser. Design
+  // 2026-08-13 §4.1.
   {
-    const m = url.match(/^\/r\/([0-9a-z]{8})$/);
+    const m = url.match(/^\/r\/([0-9a-z]{12})$/);
     if (m) {
+      if (!isLocalHost(reqHost)) {
+        const scheme = (req.headers['x-forwarded-proto'] || 'https').split(',')[0].trim();
+        return send(301, { 'Location': `${scheme}://${m[1]}.${reqHost}/`, 'Cache-Control': 'public, max-age=86400' }, '');
+      }
       try { return handleHostedProjection(m[1], send); }
       catch (err) {
         console.error('hosted: projection unhandled error', err);
