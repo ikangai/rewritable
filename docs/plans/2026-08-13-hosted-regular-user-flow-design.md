@@ -1,13 +1,18 @@
 # Hosted regular-user flow — design
 
-**Status:** DESIGN + PHASE 1 CODE BUILT (deploy-gated), author agent-18, 2026-08-13.
-Phase 1 (§7.1, origin isolation) is implemented and tested in `service/` — hosted
-ids are 12-char, the `HOSTED_HOST_RE` clean-origin branch + apex prod-redirect
-mirror `/s/`, and the Traefik `{12}` rule is in `docker-compose.prod.yml` (unapplied).
-Pinned by `service/tests/hosted-isolation.test.mjs` (4). **NOT DEPLOYED** — the
-DNS/TLS/Traefik apply needs staging (§6.5). Decisions adopted: §6 #1 = A
-(distinct-length label), #4 = writes/reads served on the subdomain (host-id
-guarded). Phases 2–4 (export affordance, on-ramp A, in-container button) not built.
+**Status:** DESIGN + PHASE 1 DEPLOYED & VERIFIED (2026-08-14), author agent-18.
+Phase 1 (§7.1, origin isolation) is live on production. The `{12}` Traefik router
+was added to the on-server `docker-compose.yml` (the repo's `docker-compose.prod.yml`
+mirrors it; note the on-server file is separate, `build: .`) and applied; the
+service code is deployed. Verified end-to-end on prod: `POST /r` → 12-char id +
+subdomain create-URL; `https://<id>.rewritable.ikangai.com/` serves the projection
+with a valid wildcard cert (`cert_verify=0`); apex content 404s on that origin;
+apex `GET /r/:id` 301-redirects to the subdomain; 8-char share routing intact.
+The wildcard DNS + cert already covered 12-char labels — no new DNS/cert needed.
+Pinned by `service/tests/hosted-isolation.test.mjs` (4). Decisions adopted: §6 #1 =
+A (distinct-length label), #4 = writes/reads on the subdomain (host-id guarded).
+Phases 2–4 (export affordance, on-ramp A docs, in-container "Edit online" button)
+not built. **Origin isolation — the /r/ deploy gate — is now CLOSED.**
 **Builds on:** the hosted-edit foundation (`docs/plans/2026-06-07-hosted-edit-foundation-design.md`,
 built + `service/` `/r/` routes), share subdomain isolation
 (`docs/plans/2026-05-17-share-subdomain-isolation.md`, shipped for `/s/`), the API-key
