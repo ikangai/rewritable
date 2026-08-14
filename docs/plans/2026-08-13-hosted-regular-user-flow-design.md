@@ -27,8 +27,15 @@ A (distinct-length label), #4 = writes/reads on the subdomain (host-id guarded).
 
 The whole hosted regular-user flow is now live: a non-technical user opens a link
 (author-provisioned or self-served via Edit-online), edits on an isolated origin
-where the key persists safely, and can Download the file back at any time. Not
-built: managed keys (#11, out of scope), lifecycle/expiry (§6 #3, still open).
+where the key persists safely, and can Download the file back at any time.
+
+**Lifecycle (§6 #3) — DECIDED + shipped 2026-08-14:** hosted rwas are kept
+INDEFINITELY (no age expiry); the creator removes their own with the ✎ panel's
+"Delete online copy" (DELETE /r/:id, capability-gated) — the sweep now clears
+only failed-ingest orphans. Storage grows unbounded; creator-delete is the only
+GC (revisit with a quota if volume demands). Also fixed here: /r create+delete
+now carry CORS + a preflight so the file:// Edit-online panel actually works
+cross-origin (the phase-4 gap jsdom/curl missed). Out of scope: managed keys (#11).
 **Builds on:** the hosted-edit foundation (`docs/plans/2026-06-07-hosted-edit-foundation-design.md`,
 built + `service/` `/r/` routes), share subdomain isolation
 (`docs/plans/2026-05-17-share-subdomain-isolation.md`, shipped for `/s/`), the API-key
