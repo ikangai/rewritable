@@ -749,6 +749,13 @@ function bearerToken(req) {
 const SHARE_CORS = { 'Access-Control-Allow-Origin': '*' };
 const sendShareJson = (send, status, obj) =>
   send(status, { ...JSON_CT, ...SHARE_CORS }, JSON.stringify(obj) + '\n');
+// Wrap a `send` so every response it emits carries the share CORS header.
+// Used for the /r endpoints a file:// container calls CROSS-ORIGIN (create +
+// delete via the ✎ Edit-online panel); the projection's own /modify+/undo are
+// same-origin (the shim runs on the subdomain) and don't need it. Safe wide-
+// open: no cookies, the only credential is the capability token.
+const withShareCors = (send) => (status, headers, body) =>
+  send(status, { ...SHARE_CORS, ...(headers || {}) }, body);
 
 function handleSharePreflight(send) {
   return send(204, {
@@ -1584,10 +1591,20 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // CORS preflight for the /r endpoints a file:// container calls cross-origin:
+  // POST /r (create) and DELETE /r/:id (delete), both from the ✎ Edit-online
+  // panel. Same preflight the /share panel uses (POST, DELETE, OPTIONS). Apex-
+  // only, like the calls themselves.
+  if (req.method === 'OPTIONS' && !isShareHost && !isHostedHost
+      && (url === '/r' || /^\/r\/[0-9a-z]{12}$/.test(url))) {
+    return handleSharePreflight(send);
+  }
+
   // POST /r — create a hosted rwa. Apex-only, like /publish (a share host must
   // not be able to bounce a create off it and have us mint a wrong-origin URL).
+  // CORS-wrapped: the ✎ Edit-online panel POSTs here from a file:// container.
   if (req.method === 'POST' && url === '/r' && !isShareHost && !isHostedHost) {
-    handleHostedCreate(req, send).catch(err => {
+    handleHostedCreate(req, withShareCors(send)).catch(err => {
       console.error('hosted: create unhandled error', err);
       if (!res.headersSent) {
         send(500, { 'Content-Type': 'application/json; charset=utf-8' },
@@ -1629,7 +1646,8 @@ const server = http.createServer((req, res) => {
     const m = url.match(/^\/r\/([0-9a-z]{12})$/);
     if (m) {
       if (isHostedHost && m[1] !== hostHosted[1]) return send(404, { 'Content-Type': 'text/plain' }, 'not found\n');
-      handleHostedDelete(m[1], req, send).catch(err => {
+      // CORS-wrapped: the ✎ Edit-online panel DELETEs here from a file:// container.
+      handleHostedDelete(m[1], req, withShareCors(send)).catch(err => {
         console.error('hosted: delete unhandled error', err);
         if (!res.headersSent) {
           send(500, { 'Content-Type': 'application/json; charset=utf-8' },

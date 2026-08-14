@@ -394,21 +394,23 @@ function deleteHosted(id, { dataDir }) {
   fs.rmSync(idDir(dataDir, id), { recursive: true, force: true });
 }
 
-// ─── 90-day inactivity sweep (the hosted r/ subtree ONLY) ───────────────────
-
+// ─── Orphan cleanup (the hosted r/ subtree ONLY) ────────────────────────────
+// Retained + exported because the CONNECTED-SHARE expiry (server.js shareExpired)
+// reuses it for its own 90-day inactivity class — hosted /r no longer uses it.
 const NINETY_DAYS_MS = 90 * 24 * 60 * 60 * 1000;
-
-/**
- * Scan DATA_DIR/r/* and remove every hosted rwa whose owner.json.lastAccess is
- * older than 90 days (or whose owner.json is missing/corrupt — treated as stale).
- * NEVER touches the /s/ share files (those live directly under DATA_DIR, not in
- * the r/ subtree this scans). Pure + synchronous + testable: pass a synthetic
- * `now` to exercise it without waiting. Returns the list of removed ids.
- *
- * @param {number} now — the reference time (ms since epoch)
- * @param {{dataDir:string}} opts
- * @returns {string[]} the ids removed this sweep
- */
+// Hosted rwas are kept INDEFINITELY (operator decision 2026-08-14). There is no
+// age-based expiry: a creator removes their own copy with DELETE /r/:id (its
+// capability token), and nothing else deletes it. This sweep therefore only
+// clears FAILED-INGEST ORPHANS — a dir whose owner.json is missing or has no
+// capHash, which no creator could ever authenticate against to delete (ingest
+// writes owner.json last, so such a dir is a crashed mid-write, not a real
+// rwa). NEVER touches the /s/ share files (they live directly under DATA_DIR,
+// not in the r/ subtree this scans). Synchronous + testable. The `now` arg is
+// retained for call-site/signature stability but is unused — nothing expires.
+//
+// Storage note (the tradeoff of "keep indefinitely"): valid hosted rwas grow
+// without bound; the only GC is creator-initiated DELETE. Acceptable per the
+// decision — revisit with a quota if the data volume ever demands it.
 function sweepHosted(now, { dataDir }) {
   const root = hostedRoot(dataDir);
   let entries;
@@ -420,14 +422,14 @@ function sweepHosted(now, { dataDir }) {
   const removed = [];
   for (const id of entries) {
     if (!ID_RE.test(id)) continue; // skip anything not a hosted id (defensive)
-    let stale = false;
+    let orphaned = false;
     try {
       const owner = JSON.parse(fs.readFileSync(path.join(root, id, 'owner.json'), 'utf8'));
-      if (typeof owner.lastAccess !== 'number' || now - owner.lastAccess > NINETY_DAYS_MS) stale = true;
+      if (!owner || typeof owner.capHash !== 'string') orphaned = true; // unusable — no creator can delete it
     } catch {
-      stale = true; // missing/corrupt owner.json → treat as expired
+      orphaned = true; // missing/corrupt owner.json → a crashed mid-ingest, not a real rwa
     }
-    if (stale) {
+    if (orphaned) {
       try { fs.rmSync(path.join(root, id), { recursive: true, force: true }); removed.push(id); }
       catch { /* best-effort; a failed unlink is retried next sweep */ }
     }

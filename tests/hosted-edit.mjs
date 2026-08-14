@@ -116,8 +116,9 @@ const openHosted = async (document) => {
       typeof c.opts.body === 'string' && c.opts.body.includes('const DOC_UUID') && c.opts.body.includes('seed text here'));
     const panel = document.getElementById('rwa-hostedit-panel');
     check('B4 panel shows the editable link', panel.textContent.includes('8qqnq6xa28ly.rewritable.ikangai.com'));
-    check('B5 Open/Copy/Forget affordances present',
-      !!document.getElementById('rwa-hostedit-open') && !!document.getElementById('rwa-hostedit-copy') && !!document.getElementById('rwa-hostedit-forget'));
+    check('B5 Open/Copy/Delete/Forget affordances present',
+      !!document.getElementById('rwa-hostedit-open') && !!document.getElementById('rwa-hostedit-copy')
+      && !!document.getElementById('rwa-hostedit-delete') && !!document.getElementById('rwa-hostedit-forget'));
   }
 
   // ── C. The url IS the capability (token in #k=) — never in the file ────────
@@ -136,13 +137,32 @@ const openHosted = async (document) => {
       panel.textContent.includes('8qqnq6xa28ly.rewritable.ikangai.com') && !!document.getElementById('rwa-hostedit-open'));
   }
 
-  // ── E. Forget clears the machine-local record, back to create state ───────
+  // ── E. Forget clears the machine-local record only (server copy untouched) ─
   {
     document.getElementById('rwa-hostedit-forget').click();
     await waitFor(() => document.getElementById('rwa-hostedit-create'));
     check('E1 Forget returns the panel to the create state', !!document.getElementById('rwa-hostedit-create')
       && !document.getElementById('rwa-hostedit-open'));
-    check('E2 no further fetch was made by Forget (server copy untouched)', net.calls.length === 1);
+    check('E2 Forget made NO fetch — the hosted copy lives on for link-holders', net.calls.length === 1);
+  }
+
+  // ── F. Delete removes the hosted copy server-side (creator capability) ─────
+  {
+    net.calls.length = 0;
+    net.handler = async () => jres(200, { id: '8qqnq6xa28ly', token: 'cap_secret_tok', url: HOSTED_URL });
+    document.getElementById('rwa-hostedit-create').click();
+    await waitFor(() => document.getElementById('rwa-hostedit-delete'));
+    net.calls.length = 0; // isolate the DELETE
+    net.handler = async () => jres(200, { deleted: true });
+    document.getElementById('rwa-hostedit-delete').click();
+    await waitFor(() => document.getElementById('rwa-hostedit-create'));
+    check('F1 exactly one fetch for delete', net.calls.length === 1);
+    const c = net.calls[0];
+    check('F2 DELETE to <base>/r/<id>', c.url === 'https://rewritable.ikangai.com/r/8qqnq6xa28ly' && c.opts.method === 'DELETE');
+    check('F3 carries the Bearer capability (token was stored in rwa_state)',
+      (c.opts.headers || {}).Authorization === 'Bearer cap_secret_tok');
+    check('F4 the local record is cleared → back to create state',
+      !!document.getElementById('rwa-hostedit-create') && !document.getElementById('rwa-hostedit-open'));
   }
 
   console.log(`\n${pass} passed, ${fail} failed`);

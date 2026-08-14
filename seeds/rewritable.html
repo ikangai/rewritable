@@ -9933,9 +9933,33 @@ async function hostedEditCreate() {
   }
   if (res.status !== 200) throw new ShareError('hosted_failed', 'Could not create the editable link (' + await shareErrDetail(res) + ').');
   const out = await res.json();
-  const rec = { id: out.id, url: out.url, createdAt: Date.now() };
+  // Store the capability token so the creator can later DELETE the hosted copy
+  // (rwa_state only, machine-local — like share_conn; never in the file).
+  const rec = { id: out.id, url: out.url, token: out.token, createdAt: Date.now() };
   await setHostedEdit(rec);
   return rec;
+}
+
+// Creator removal (operator decision 2026-08-14: keep hosted copies
+// indefinitely, but let the creator delete their own). DELETEs the hosted copy
+// server-side with its capability token, then clears the local record.
+// Distinct from Forget, which only drops the local record and leaves the copy
+// live for anyone still holding the link.
+async function hostedEditDelete() {
+  const rec = await getHostedEdit();
+  if (!rec) return;
+  if (rec.token) {
+    let res;
+    try {
+      res = await fetch(shareBaseUrl() + '/r/' + rec.id, { method: 'DELETE', headers: { Authorization: 'Bearer ' + rec.token } });
+    } catch (_) {
+      throw new ShareError('hosted_unreachable', 'Hosting service unreachable — the copy was not deleted.');
+    }
+    // 200 deleted, 404 already gone, 401 token no longer valid — in every case
+    // the honest local state is "no link", so clear it. A 5xx keeps the record.
+    if (res.status >= 500) throw new ShareError('hosted_failed', 'Could not delete the hosted copy (' + await shareErrDetail(res) + ').');
+  }
+  await clearHostedEdit();
 }
 
 let hostedBusy = false;
@@ -9980,14 +10004,17 @@ async function renderHostedEditPanel(msg) {
     '<div class="rwa-share-actions">',
     '<button type="button" id="rwa-hostedit-open">Open</button>',
     '<button type="button" id="rwa-hostedit-copy">Copy link</button>',
+    '<button type="button" id="rwa-hostedit-delete"' + dis + '>Delete online copy</button>',
     '<button type="button" id="rwa-hostedit-forget">Forget link</button>',
     '</div>',
   ].join('');
   document.getElementById('rwa-hostedit-open').onclick = () => { try { window.open(rec.url, '_blank', 'noopener'); } catch (_) {} };
   document.getElementById('rwa-hostedit-copy').onclick = () => copyHostedUrl(rec.url);
   document.getElementById('rwa-hostedit-url').onclick = () => copyHostedUrl(rec.url);
-  // Forget clears only the machine-local record (the hosted copy + its link
-  // live on until deleted from the hosted page); it does not touch the server.
+  // Delete removes the hosted copy server-side (creator capability) then clears
+  // the local record — the copy is gone for everyone. Forget clears ONLY the
+  // local record; the copy + its link live on for anyone still holding it.
+  document.getElementById('rwa-hostedit-delete').onclick = () => hostedAction(hostedEditDelete);
   document.getElementById('rwa-hostedit-forget').onclick = () => hostedAction(clearHostedEdit);
 }
 

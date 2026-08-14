@@ -22,7 +22,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync, readdirSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -1264,24 +1264,61 @@ test('delete auth: 401 on wrong token, 404 on unknown id; a wrong token does NOT
 
 // ─── 90-day inactivity sweep (pure function) ────────────────────────────────
 
-test('sweepHosted removes dirs idle > 90 days, keeps fresh ones, NEVER touches /s/', () => {
+test('/r create + delete carry CORS for the file:// container (Edit-online panel)', async () => {
+  // The ✎ Edit-online panel POSTs /r and DELETEs /r/:id from a file:// (null
+  // origin) container — cross-origin, so both need CORS + a preflight, or the
+  // browser blocks them. (jsdom/curl don't enforce CORS; this is the guard that
+  // would have caught the gap. Reuses the /share CORS machinery.)
+  const srv = await startServer();
+  try {
+    // Preflight for create.
+    const pf = await fetch(srv.base + '/r', { method: 'OPTIONS' });
+    assert.equal(pf.status, 204, 'OPTIONS /r preflight → 204');
+    assert.equal(pf.headers.get('access-control-allow-origin'), '*', 'preflight allows any origin');
+    assert.match(pf.headers.get('access-control-allow-methods') || '', /POST/);
+    assert.match(pf.headers.get('access-control-allow-methods') || '', /DELETE/);
+
+    // Create response carries CORS.
+    const createRes = await fetch(srv.base + '/r', { method: 'POST', headers: { 'Content-Type': 'text/html' }, body: RWA });
+    assert.equal(createRes.headers.get('access-control-allow-origin'), '*', 'POST /r response carries CORS');
+    const { id, token } = await createRes.json();
+
+    // Preflight + response for delete.
+    const dpf = await fetch(`${srv.base}/r/${id}`, { method: 'OPTIONS' });
+    assert.equal(dpf.status, 204, 'OPTIONS /r/:id preflight → 204');
+    assert.equal(dpf.headers.get('access-control-allow-origin'), '*');
+    const del = await fetch(`${srv.base}/r/${id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } });
+    assert.equal(del.status, 200, 'creator delete succeeds');
+    assert.equal(del.headers.get('access-control-allow-origin'), '*', 'DELETE /r/:id response carries CORS');
+  } finally {
+    await srv.stop();
+  }
+});
+
+test('sweepHosted keeps rwas INDEFINITELY (no age expiry), clears only orphans, NEVER touches /s/', () => {
   const dir = mkdtempSync(join(tmpdir(), 'rwa-sweep-'));
   try {
     const now = Date.now();
     const DAY = 24 * 60 * 60 * 1000;
 
-    // Two hosted rwas: one stale (idle 100 days), one fresh (idle 1 day).
-    const stale = hosted.ingest(MODIFY_RWA, { dataDir: dir });
+    // Two valid hosted rwas — one idle 100 days, one fresh. Keep-indefinitely
+    // (operator decision 2026-08-14): BOTH survive; age no longer expires.
+    const old = hosted.ingest(MODIFY_RWA, { dataDir: dir });
     const fresh = hosted.ingest(MODIFY_RWA, { dataDir: dir });
-    // Backdate lastAccess by rewriting owner.json with synthetic timestamps.
     const setLastAccess = (id, ms) => {
       const p = join(dir, 'r', id, 'owner.json');
       const o = JSON.parse(readFileSync(p, 'utf8'));
       o.lastAccess = ms;
       writeFileSync(p, JSON.stringify(o));
     };
-    setLastAccess(stale.id, now - 100 * DAY);
+    setLastAccess(old.id, now - 100 * DAY);
     setLastAccess(fresh.id, now - 1 * DAY);
+
+    // A failed-ingest ORPHAN: a hosted-id dir with NO owner.json — no creator
+    // could ever authenticate to delete it, so the sweep clears it.
+    const orphanId = 'orphanidabcd'; // 12-char, matches ID_RE
+    mkdirSync(join(dir, 'r', orphanId), { recursive: true });
+    writeFileSync(join(dir, 'r', orphanId, 'current.html'), '<html>partial</html>');
 
     // A /s/ share file in the SAME DATA_DIR — the sweep must not touch it.
     const sharePath = join(dir, 'aaaaaaaa.html');
@@ -1291,9 +1328,10 @@ test('sweepHosted removes dirs idle > 90 days, keeps fresh ones, NEVER touches /
 
     const removed = hosted.sweepHosted(now, { dataDir: dir });
 
-    assert.deepEqual(removed, [stale.id], 'only the stale hosted rwa is removed');
-    assert.ok(!existsSync(join(dir, 'r', stale.id)), 'stale hosted dir gone');
-    assert.ok(existsSync(join(dir, 'r', fresh.id)), 'fresh hosted dir kept');
+    assert.deepEqual(removed, [orphanId], 'only the owner-less orphan is removed');
+    assert.ok(existsSync(join(dir, 'r', old.id)), '100-day-idle rwa is KEPT (no age expiry)');
+    assert.ok(existsSync(join(dir, 'r', fresh.id)), 'fresh rwa kept');
+    assert.ok(!existsSync(join(dir, 'r', orphanId)), 'orphan (no owner.json) gone');
     // /s/ share files are UNTOUCHED.
     assert.ok(existsSync(sharePath), 'sweepHosted never removes /s/ share .html');
     assert.ok(existsSync(shareMetaPath), 'sweepHosted never removes /s/ share .json');
