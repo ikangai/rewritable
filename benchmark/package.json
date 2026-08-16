@@ -13,7 +13,7 @@
     "calibrate": "node runners/calibrate.mjs",
     "multimodel": "node runners/multimodel.mjs",
     "test": "node runners/run-conformance.mjs",
-    "test:oracles": "node oracles/diff.test.mjs && node oracles/selector.test.mjs"
+    "test:oracles": "node oracles/diff.test.mjs && node oracles/selector.test.mjs && node oracles/import-facts.test.mjs"
   },
   "dependencies": {
     "fake-indexeddb": "^6.0.0",
