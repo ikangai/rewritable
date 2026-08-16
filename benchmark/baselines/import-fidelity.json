@@ -1,0 +1,46 @@
+{
+  "fixtures": {
+    "csv/sales": {
+      "coverage": 1,
+      "order": 1,
+      "garble": 1,
+      "structure": 1,
+      "special": 1
+    },
+    "docx/report": {
+      "coverage": 1,
+      "order": 1,
+      "garble": 1,
+      "structure": 1,
+      "special": 1
+    },
+    "html/article": {
+      "coverage": 1,
+      "order": 1,
+      "garble": 1,
+      "structure": 1,
+      "special": 1
+    },
+    "md/guide": {
+      "coverage": 1,
+      "order": 1,
+      "garble": 1,
+      "structure": 1,
+      "special": 0
+    },
+    "pdf/invoice": {
+      "coverage": 1,
+      "order": 1,
+      "garble": 1,
+      "structure": 0,
+      "special": 1
+    },
+    "pdf/memo": {
+      "coverage": 1,
+      "order": 1,
+      "garble": 1,
+      "structure": 0,
+      "special": 1
+    }
+  }
+}

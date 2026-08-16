@@ -11,6 +11,7 @@
     "fidelity:baseline": "node runners/run-fidelity.mjs baseline",
     "fidelity:dsl": "node runners/run-fidelity-dsl.mjs",
     "fidelity:import": "node runners/run-import.mjs",
+    "fidelity:import:check": "node runners/run-import.mjs --check",
     "calibrate": "node runners/calibrate.mjs",
     "multimodel": "node runners/multimodel.mjs",
     "test": "node runners/run-conformance.mjs",
