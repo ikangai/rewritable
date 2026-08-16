@@ -157,12 +157,32 @@ jobs:
       - name: Install
         working-directory: benchmark
         run: npm install --no-audit --no-fund
+      # The import-fidelity ratchet runs the REAL shipped converters:
+      # cli/src/import.mjs's convert() pulls pdfjs-dist/mammoth/papaparse/marked
+      # as bare specifiers, which Node resolves from cli/node_modules by walking
+      # up from import.mjs's own path — so the CLI deps must be installed even
+      # though the runner lives in benchmark/. Invisible locally where
+      # cli/node_modules already exists (same pattern as root/service jobs).
+      - name: Install CLI deps (import fidelity runs the real converters)
+        working-directory: cli
+        run: npm ci --no-audit --no-fund
       - name: Conformance
         working-directory: benchmark
         run: npm run conformance
       - name: Fidelity (stub model — no API key needed)
         working-directory: benchmark
         run: npm run fidelity:stub
+      # The regression ratchet for document import (issue: "measure fidelity
+      # first"). Re-scores the golden corpus on 5 dimensions
+      # (benchmark/oracles/import-facts.mjs) and fails if any dimension drops
+      # >0.02 below benchmark/baselines/import-fidelity.json, or a fixture
+      # errors / goes missing / is new-and-un-baselined. Deterministic and
+      # model-free — no API key. It gates the CLI converters; the browser
+      # /import mirror stays pinned by the existing parity unit tests.
+      # Design: docs/plans/2026-08-16-import-fidelity-benchmark-design.md.
+      - name: Import fidelity (ratchet)
+        working-directory: benchmark
+        run: npm run fidelity:import:check
 
   refs-fresh:
     name: References regenerate cleanly
