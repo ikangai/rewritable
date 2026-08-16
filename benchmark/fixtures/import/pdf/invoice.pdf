@@ -1,0 +1,77 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R /F2 6 0 R >> >> /Contents 4 0 R >>
+endobj
+4 0 obj
+<< /Length 1313 >>
+stream
+BT /F2 20 Tf 1 0 0 1 72 702 Tm (INVOICE) Tj ET
+BT /F1 11 Tf 1 0 0 1 72 674 Tm (Acme Robotics Inc.) Tj ET
+BT /F1 11 Tf 1 0 0 1 72 658 Tm (Invoice #2026-0417) Tj ET
+BT /F1 11 Tf 1 0 0 1 72 642 Tm (Bill To: Northwind Traders) Tj ET
+BT /F1 10 Tf 1 0 0 1 72 622 Tm (Issue date: 2026-07-01    Due date: 2026-07-31) Tj ET
+1.2 w
+72 462 468 120 re S
+1 w
+72 582 m 72 462 l S
+1 w
+322 582 m 322 462 l S
+1 w
+402 582 m 402 462 l S
+1 w
+540 582 m 540 462 l S
+1 w
+72 582 m 540 582 l S
+1 w
+72 558 m 540 558 l S
+1 w
+72 534 m 540 534 l S
+1 w
+72 510 m 540 510 l S
+1 w
+72 486 m 540 486 l S
+1 w
+72 462 m 540 462 l S
+BT /F2 10.5 Tf 1 0 0 1 80 566.5 Tm (Description) Tj ET
+BT /F2 10.5 Tf 1 0 0 1 330 566.5 Tm (Qty) Tj ET
+BT /F2 10.5 Tf 1 0 0 1 497.35 566.5 Tm (Amount) Tj ET
+BT /F1 10.5 Tf 1 0 0 1 80 542.5 Tm (Widget A) Tj ET
+BT /F1 10.5 Tf 1 0 0 1 330 542.5 Tm (4) Tj ET
+BT /F1 10.5 Tf 1 0 0 1 491.575 542.5 Tm ($120.00) Tj ET
+BT /F1 10.5 Tf 1 0 0 1 80 518.5 Tm (Widget B) Tj ET
+BT /F1 10.5 Tf 1 0 0 1 330 518.5 Tm (2) Tj ET
+BT /F1 10.5 Tf 1 0 0 1 497.35 518.5 Tm ($75.50) Tj ET
+BT /F1 10.5 Tf 1 0 0 1 80 494.5 Tm (Shipping) Tj ET
+BT /F1 10.5 Tf 1 0 0 1 330 494.5 Tm (1) Tj ET
+BT /F1 10.5 Tf 1 0 0 1 497.35 494.5 Tm ($15.00) Tj ET
+BT /F1 10.5 Tf 1 0 0 1 80 470.5 Tm (Total) Tj ET
+BT /F1 10.5 Tf 1 0 0 1 491.575 470.5 Tm ($210.50) Tj ET
+
+endstream
+endobj
+5 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+6 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>
+endobj
+xref
+0 7
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000251 00000 n 
+0000001616 00000 n 
+0000001686 00000 n 
+trailer
+<< /Size 7 /Root 1 0 R >>
+startxref
+1761
+%%EOF

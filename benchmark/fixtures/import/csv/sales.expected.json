@@ -1,0 +1,20 @@
+{
+  "format": "csv",
+  "converter": "convertCsv",
+  "keyPhrasesInOrder": [
+    "Region",
+    "Units Sold",
+    "North America",
+    "Europe",
+    "Asia Pacific"
+  ],
+  "headings": [],
+  "tables": [
+    { "rows": 7, "cols": 4 }
+  ],
+  "lists": 0,
+  "expectSvg": false,
+  "expectMath": false,
+  "approxWordCount": 35,
+  "notes": "Header row (Region/Month/Units Sold/Revenue) + 6 data rows, 4 columns throughout, no ragged rows. `rows` counts the header row too (7 total), matching this corpus's convention — see the fixtures README."
+}

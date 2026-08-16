@@ -1,0 +1,21 @@
+{
+  "format": "pdf",
+  "converter": "convertPdf",
+  "keyPhrasesInOrder": [
+    "INVOICE",
+    "Acme Robotics Inc.",
+    "Widget A",
+    "Widget B",
+    "Total",
+    "$210.50"
+  ],
+  "headings": [],
+  "tables": [
+    { "rows": 5, "cols": 3 }
+  ],
+  "lists": 0,
+  "expectSvg": false,
+  "expectMath": false,
+  "approxWordCount": 35,
+  "notes": "Visible table (1 header row + 4 data rows = 5 rows, 3 cols: Description/Qty/Amount) drawn with vector rules — an outer border via `re`+S plus internal grid lines via `m`/`l`+S — and a right-aligned Amount column. This is the `structure` dimension baseline: today's convertPdf reconstructs absolutely-positioned text spans with NO <table> element at all, so it will score ~0 on structure even though every phrase (including the totals row) is present in the extracted text. That gap is intentional and documented — the semantic PDF reconstructor is expected to raise it later."
+}

@@ -1,0 +1,27 @@
+{
+  "format": "md",
+  "converter": "convertMd",
+  "keyPhrasesInOrder": [
+    "API Key Rotation Guide",
+    "Prerequisites",
+    "Generate a new key",
+    "Rate limits",
+    "Latency budget"
+  ],
+  "headings": [
+    { "level": 1, "text": "API Key Rotation Guide" },
+    { "level": 2, "text": "Prerequisites" },
+    { "level": 2, "text": "Steps" },
+    { "level": 2, "text": "Rate limits" },
+    { "level": 2, "text": "Latency budget" },
+    { "level": 2, "text": "Code example" }
+  ],
+  "tables": [
+    { "rows": 4, "cols": 3 }
+  ],
+  "lists": 2,
+  "expectSvg": true,
+  "expectMath": true,
+  "approxWordCount": 140,
+  "notes": "One bulleted list (Prerequisites, 3 items) + one numbered list (Steps, 4 items), a 4-row x 3-col rate-limit table, a fenced bash code block, an inline <svg> request-path diagram, and a <math>/MathML latency formula. The svg/math are raw HTML blocks (not `$$...$$` — MathML is what sanitizeImportedHtml's _ACTIVE_TAGS list actually strips) so this fixture pins the silently-dropped-special-content behavior as a measured special=0 baseline, not an assumed one."
+}

@@ -1,0 +1,25 @@
+{
+  "format": "docx",
+  "converter": "convertDocx",
+  "keyPhrasesInOrder": [
+    "Q2 Product Report",
+    "Highlights",
+    "enterprise segment",
+    "Roadmap",
+    "Active Users",
+    "$159k"
+  ],
+  "headings": [
+    { "level": 1, "text": "Q2 Product Report" },
+    { "level": 2, "text": "Highlights" },
+    { "level": 2, "text": "Roadmap" }
+  ],
+  "tables": [
+    { "rows": 3, "cols": 3 }
+  ],
+  "lists": 2,
+  "expectSvg": false,
+  "expectMath": false,
+  "approxWordCount": 90,
+  "notes": "Real Heading1/Heading2 paragraph styles (mammoth's default style map keys off both the style ID `Heading1`/`Heading2` and the style name 'heading 1'/'heading 2' — this fixture uses the ID form), one bulleted list (numFmt=bullet) and one numbered list (numFmt=decimal) each with 3 items, a 3-row x 3-col table (Metric/Q1/Q2 header + 2 data rows), and bold + italic runs inside one paragraph. Also carries one tiny (68-byte) inline PNG via a real wp:inline/a:blip drawing + word/media/image1.png + the document.xml.rels relationship — see the fixtures README for whether it actually survived mammoth's default dataUri image conversion."
+}

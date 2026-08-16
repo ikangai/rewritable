@@ -1,0 +1,20 @@
+{
+  "format": "pdf",
+  "converter": "convertPdf",
+  "keyPhrasesInOrder": [
+    "Quarterly Business Memo",
+    "Revenue rose 12%",
+    "Next steps",
+    "Conclusion"
+  ],
+  "headings": [
+    { "level": 1, "text": "Quarterly Business Memo" },
+    { "level": 2, "text": "Next steps" }
+  ],
+  "tables": [],
+  "lists": 0,
+  "expectSvg": false,
+  "expectMath": false,
+  "approxWordCount": 145,
+  "notes": "Plain multi-paragraph memo, no table, one base-14 Helvetica page. Exercises coverage/order/garble on the default PDF import. Each source line is emitted as a single PDF text run (one Tj per line), so every keyPhrase survives as one contiguous pdf.js text item regardless of the geometry importer's run-merge heuristics."
+}

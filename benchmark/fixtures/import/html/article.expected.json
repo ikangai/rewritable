@@ -1,0 +1,21 @@
+{
+  "format": "html",
+  "converter": "extractArticle",
+  "keyPhrasesInOrder": [
+    "How Distributed Teams Ship Faster",
+    "write things down before they build them",
+    "smaller batches",
+    "Why async reviews work",
+    "removes the tax of matching time zones"
+  ],
+  "headings": [
+    { "level": 1, "text": "How Distributed Teams Ship Faster" },
+    { "level": 2, "text": "Why async reviews work" }
+  ],
+  "tables": [],
+  "lists": 0,
+  "expectSvg": false,
+  "expectMath": false,
+  "approxWordCount": 140,
+  "notes": "A saved WordPress-style page: <header>/<nav>, a <aside class=\"sidebar\"> with its own <ul>, and a <footer> + tracking <script> surround the real content, which lives in <article class=\"post entry-content\">. Exercises extractArticle's profile-1 (entry-content class) path. Title comes from <title> ('How Distributed Teams Ship Faster | Ikangai Blog') with the ' | Site' suffix stripped — the manifest's first heading doubles as the expected title."
+}
