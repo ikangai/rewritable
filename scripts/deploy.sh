@@ -26,11 +26,13 @@
 #
 # USAGE:
 #   scripts/deploy.sh preflight   # read-only: show remote layout + container
+#   scripts/deploy.sh status      # read-only: is prod behind this checkout? (exit 3 = stale)
 #   scripts/deploy.sh push        # rsync the four content paths (no rebuild)
 #   scripts/deploy.sh deploy      # push + docker compose up -d --build + verify  (default)
 #   scripts/deploy.sh verify      # curl the live site, assert it serves the seed
 #
 #   DRY_RUN=1 scripts/deploy.sh deploy   # show what rsync would change; no transfer/build
+#   STATUS_DEPTH=80 scripts/deploy.sh status   # widen the behind-vs-diverged commit walk
 #
 # INFRA (Dockerfile / docker-compose.yml changes — rare, do manually):
 #   The host keeps these at the TOP level, not under service/. To update:
@@ -85,6 +87,87 @@ cmd_preflight() {
   echo
   log "Local will ship (relative to $REPO_ROOT), via rsync -R into $REMOTE_DIR/:"
   printf '    %s\n' "${SOURCES[@]}"
+}
+
+cmd_status() {
+  # WHY: nothing anywhere alerts when main moves ahead of prod. There is no CI
+  # on push, `preflight` only lists the remote layout, and `verify` merely proves
+  # SOMETHING is served — none of them answer "is what's live the current code?".
+  # Prod once ran 4+ weeks stale (2026-07-06 -> 2026-08-08) with merged security
+  # fixes unshipped while every internal signal stayed green. This is the check
+  # that would have caught it: content hashes, both sides, read-only.
+  #
+  # It compares by CONTENT, not mtime/size as rsync does by default, and it
+  # includes Dockerfile — which `push` deliberately never syncs (see INFRA), so
+  # a forgotten Dockerfile is exactly the drift no other subcommand can see.
+  cd "$REPO_ROOT"
+  local SHA=(sha256sum)
+  command -v sha256sum >/dev/null 2>&1 || SHA=(shasum -a 256)
+
+  # NOT `local`: a RETURN trap runs after the frame's locals are popped, so a
+  # local here would be unset by the time cleanup fires and `set -u` would turn
+  # every successful status run into an exit-1.
+  STATUS_TMP="$(mktemp -d)"
+  trap 'rm -rf "$STATUS_TMP"' RETURN
+  local lf="$STATUS_TMP/local" rf="$STATUS_TMP/remote" lp="$STATUS_TMP/lpaths" rp="$STATUS_TMP/rpaths" mod="$STATUS_TMP/mod"
+
+  # "<path> <hash>", sorted. Repo service/Dockerfile is reported under the name
+  # the host uses (bare Dockerfile at the build-context root).
+  { find "${SOURCES[@]}" -type f ! -name '.DS_Store' -print0 | xargs -0 "${SHA[@]}"
+    "${SHA[@]}" service/Dockerfile
+  } | sed -E 's|^([0-9a-f]+)[[:space:]]+(.*)$|\2 \1|; s|^service/Dockerfile |Dockerfile |' \
+    | sort > "$lf"
+
+  log "currency check — $REMOTE_HOST:$REMOTE_DIR"
+  "${SSH[@]}" "cd '$REMOTE_DIR' 2>/dev/null && find ${SOURCES[*]} Dockerfile -type f -print0 2>/dev/null | xargs -0 sha256sum" \
+    2>/dev/null | sed -E 's|^([0-9a-f]+)[[:space:]]+(.*)$|\2 \1|' | sort > "$rf" || true
+  [[ -s "$rf" ]] || die "no remote hashes — host unreachable, or $REMOTE_DIR missing"
+
+  cut -d' ' -f1 "$lf" | sort > "$lp"
+  cut -d' ' -f1 "$rf" | sort > "$rp"
+  : > "$mod"
+  local p lh rh
+  while read -r p; do
+    lh="$(awk -v p="$p" '$1==p{print $2; exit}' "$lf")"
+    rh="$(awk -v p="$p" '$1==p{print $2; exit}' "$rf")"
+    [[ "$lh" == "$rh" ]] || printf '%s %s\n' "$p" "$rh" >> "$mod"
+  done < <(comm -12 "$lp" "$rp")
+
+  local n_mod n_new n_orphan
+  n_mod=$(wc -l < "$mod" | tr -d ' ')
+  n_new=$(comm -23 "$lp" "$rp" | wc -l | tr -d ' ')
+  n_orphan=$(comm -13 "$lp" "$rp" | wc -l | tr -d ' ')
+  echo "    $(wc -l < "$lf" | tr -d ' ') image files compared (the Dockerfile COPY set + Dockerfile)"
+
+  if (( n_mod == 0 && n_new == 0 )); then
+    (( n_orphan > 0 )) && warn "$n_orphan host-only file(s) — unmanaged, not shipped by push:" && comm -13 "$lp" "$rp" | sed 's|^|      - |'
+    log "prod is CURRENT — every image file matches this checkout"
+    return 0
+  fi
+
+  # Classify each difference: is the host simply running an OLDER commit of this
+  # file (normal staleness), or content that appears in no recent commit at all
+  # (someone hand-edited prod — do NOT blindly rsync over that)?
+  local depth="${STATUS_DEPTH:-40}" gp c found
+  while read -r p rh; do
+    gp="$p"; [[ "$p" == Dockerfile ]] && gp=service/Dockerfile
+    found=""
+    for c in $(git rev-list -n "$depth" HEAD -- "$gp" 2>/dev/null); do
+      if [[ "$(git show "$c:$gp" 2>/dev/null | "${SHA[@]}" | cut -d' ' -f1)" == "$rh" ]]; then
+        found="$c"; break
+      fi
+    done
+    if [[ -n "$found" ]]; then
+      printf '      M %-62shost = %s\n' "$p" "$(git show -s --format='%h  %ad' --date=short "$found")"
+    else
+      printf '      M %-62shost content is in NO commit within %s — DIVERGED, inspect before pushing\n' "$p" "$depth"
+    fi
+  done < "$mod"
+  (( n_new > 0 ))    && { echo "    never shipped (in repo, absent on host):"; comm -23 "$lp" "$rp" | sed 's|^|      + |'; }
+  (( n_orphan > 0 )) && { echo "    host-only (unmanaged, push leaves these):";  comm -13 "$lp" "$rp" | sed 's|^|      - |'; }
+
+  warn "prod is STALE — $n_mod changed, $n_new missing.  Ship with: scripts/deploy.sh deploy"
+  return 3
 }
 
 cmd_push() {
@@ -147,11 +230,12 @@ cmd_verify() {
 main() {
   case "${1:-deploy}" in
     preflight) cmd_preflight ;;
+    status)    cmd_status ;;
     push)      cmd_push ;;
     build)     cmd_build ;;
     deploy)    cmd_push && cmd_build && cmd_verify ;;
     verify)    cmd_verify ;;
-    *) die "unknown subcommand '${1:-}' — use: preflight | push | build | deploy | verify" ;;
+    *) die "unknown subcommand '${1:-}' — use: preflight | status | push | build | deploy | verify" ;;
   esac
 }
 main "$@"
