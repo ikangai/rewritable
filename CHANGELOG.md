@@ -2,7 +2,82 @@
 
 Notable changes to `re-write-able`. The container format is versioned in `re-write-able-spec.md`; the edit protocol in `rwa-edit-spec.md`; the structural-transform DSL in `rwa-edit-dsl-spec.md`. The CLI follows semver in `cli/package.json`.
 
-## 2026-08-06 — durability, a security posture, and gates that catch things (cli 0.19.0)
+## 2026-08-16 — reaching the user: a key you paste once, a link you can edit (cli 0.20.0)
+
+The through-line is the **regular user** — someone who has a file open and no local install.
+Most of what follows removes a step that only a developer could have taken.
+
+**Getting connected.**
+- **The API key is remembered on this device by default.** The posture kept it in
+  `sessionStorage` — per tab, never persisted — so a non-technical user re-pasted it in every
+  tab of every document. A "Remember" toggle (⚙ → OpenRouter, on by default) mirrors it to
+  `localStorage`; the `?key=` URL channel stays session-only, keeping its explicit ephemeral
+  contract. Operator decision, 2026-08-12.
+- **`rwa proxy`** is the developer-side answer to the same problem: a loopback
+  OpenAI-compatible forwarder that injects `Authorization` server-side, so containers run the
+  **keyless** local-backend path and the key never enters a browser context. Key at rest in
+  env or `~/.rwa/openrouter-key` (600, hidden stdin — never argv), validated against
+  `/auth/key` at startup so a dead key fails loud. Any local process can spend through it —
+  the same class as running Ollama, and documented as such.
+- **The full OpenRouter catalog on demand**, behind an explicit Load button — opening settings
+  must never phone home. It also found that **three of the eight curated model ids no longer
+  existed**; the same dead trio shipped in the benchmark model set, the AI-maker suggestions,
+  and — user-facing — as a carrier's effective `recommended_model`, so "Use this AI" could
+  consent someone onto a nonexistent model.
+
+**Editing online.** The hosted `/r/` runtime became reachable without the CLI.
+- **Per-subdomain origin isolation shipped and deployed** — hosted ids are 12 chars, disjoint
+  from the 8-char share codes, each served at its own `<id>.rewritable.<tld>` origin. This was
+  the deploy gate on `/r/`, and it is now closed. No new cert or DNS: the existing wildcard
+  already covers any label length.
+- **A Download affordance**, an author-provisioned-link on-ramp, and an in-container **✎ "Edit
+  online…"** button that POSTs the open file and hands back an editable link — deliberately
+  framed apart from ↗ Share, the confusion the design flagged: Share publishes a read-only
+  *version* and the canon stays in your file; Edit-online *moves* the canon to the hosted copy.
+- **Hosted copies are kept indefinitely**, with the creator able to delete their own (operator
+  decision, 2026-08-14). The age sweep is gone; only failed-ingest orphans are collected.
+  Storage now grows unbounded — creator delete is the only GC, a documented tradeoff.
+
+**Correctness.**
+- **`rwa-edit/1` canonical text is now LF + Unicode NFC (spec v1.7).** `apply_edits` matches by
+  exact splice, and Unicode has two byte forms for visually identical text: an NFC `find`
+  against NFD bytes — a routine paste artifact from PDFs and some macOS pipelines — failed
+  `find_not_found` on text nobody can see a difference in. Reproduced live 2026-08-08; the
+  suite contained zero non-ASCII anchors, so nothing could have caught it. NFC lands inside
+  `canonLF`, the single chokepoint, so matching stays an exact splice. All nine copies move in
+  lockstep. Explicitly **not** NFKC — compatibility folding is a content edit.
+- **Card chrome no longer prints as a frame around every page.** The `@media print` reset
+  turned the root `<article>` card into the page for geometry but not for chrome, and
+  `print-color-adjust:exact` forced its border and shadow to print as a hairline frame
+  continuing across every break. Diagnosed and proven in a real browser — the first fix
+  cleared only the shadow and the frame remained.
+- **A pinnable model for the single-shot `bridge` backend.** The bridge shells to `claude -p`
+  with no model flag, so edits rode whatever the CLI defaulted to — which drifts with CLI
+  updates and had begun stochastically refusing ordinary editing prompts.
+- **Stale seed copies are detected.** `loadSeed()` reads every candidate instead of stopping at
+  the first, and warns when one shadows another — `rwa new` had been emitting a week-old
+  runtime this way. `npm run check:seeds` reaches copies no CI job can see.
+
+**Weight.** Every emitted container carried all four kind prompts although `PRODUCT_KIND` is
+baked at creation and only one is ever read — the workflow prompt alone was 13.0 KB of dead
+bytes in every plain document. Foreign kinds are now stripped at emission: **−15.9 KB per
+document**. The source seed keeps every kind; it is the template.
+
+**Gates.** An **import-fidelity benchmark** — golden fact-manifest corpus, a five-dimension
+scorer (coverage / order / garble / structure / special), a runner over the *real* shipped
+converters, a committed baseline with a `--check` ratchet, and a CI job — so import quality is
+measured and regression-protected before anyone tries to improve it. Baselines are honest
+where they are bad (PDF structure 0, Markdown special 0). Also a weekly real-model fidelity
+run, guards for two failure modes previously caught only by hand, and `scripts/deploy.sh
+status`: a read-only currency check answering "is production running this code?", which
+nothing had answered before — prod once ran four weeks stale with every internal signal green.
+
+**Licensing.** The vendored `@noble/hashes` bundle is redistributed verbatim inside every
+emitted container, but the vendoring step stripped its MIT notice, leaving only the word
+"MIT" in a comment. The notice now travels with the copy, and the generator emits it so a
+re-vendor keeps it.
+
+## 2026-08-06 — durability, a security posture, and gates that catch things (cli 0.19.0, never published — shipped in 0.20.0)
 
 A two-day blindspot audit turned into seventeen tracked issues and closed all of them. The theme is
 less "new features" than **making the existing promises true and keeping them true** — the repo

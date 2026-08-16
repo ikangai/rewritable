@@ -2,6 +2,92 @@
 
 All notable changes to the `rewritable` CLI (`rwa`).
 
+## [0.20.0] - 2026-08-16
+
+The first published release since 0.18.0. **0.19.0 was bumped in-repo on 2026-08-06 but
+never published**, so everything from both windows reaches npm here — including the package
+metadata itself: the MIT `LICENSE`, author and repository fields landed in-repo on
+2026-08-04, but every version published to date reported `license: None`.
+
+Changes to the bundled seed ship via `rwa new` / `rwa import`; `rwa upgrade` carries them to
+files that already exist. Full detail in the root [`CHANGELOG.md`](../CHANGELOG.md)
+(2026-08-06 and 2026-08-16).
+
+### Added
+- **`rwa proxy` — a local OpenRouter key broker.** A loopback OpenAI-compatible forwarder
+  that injects `Authorization` server-side, so containers drive the **keyless** local-backend
+  path (Ollama preset + base URL `127.0.0.1:11435/v1`) and the key never enters a browser
+  context. Key at rest in env or `~/.rwa/openrouter-key` (600, written by `rwa proxy set-key`
+  via hidden stdin — never argv). Startup validates against `/auth/key`, so a dead key fails
+  loud. Network-bearing, like `rwa clone`. Any local process can spend through it — same
+  class as running Ollama.
+- **`rwa upgrade <file>`** re-bootstraps a shipped container onto the CLI's current seed,
+  preserving `DOC_UUID` (it names the IndexedDB), the `INLINE_DOC` body verbatim, kind, title
+  and filename. It re-extracts `DOC_UUID` and `INLINE_DOC` from the *rebuilt* bytes and
+  refuses to write unless both match byte-for-byte. `--check` / `--dry-run` never write.
+- **Derived seed identity** — emitted containers carry `<meta name="rwa-seed">`, the first 12
+  hex of sha-256 over the exact seed they were born from. (`rwa-bootstrap` had sat at `0.9`
+  across 163 seed commits, so it identified nothing.)
+- **Stale-seed detection.** `loadSeed()` now reads every candidate rather than returning at
+  the first hit, and warns when the winning seed shadows a different one — naming both paths
+  and the fix. `rwa new` had been emitting a week-old runtime this way. `npm run check:seeds`
+  covers every copy, including ones outside the repo that no CI job can see.
+- **Remember the API key on this device** — a "Remember" toggle (⚙ → OpenRouter, on by
+  default) mirrors the key to `localStorage`, so it is entered once instead of per tab. The
+  `?key=` URL channel stays `sessionStorage`-only, keeping its ephemeral contract.
+- **The full OpenRouter catalog on demand** — a Load button beside the model field fetches the
+  live catalog into the datalist. Explicit gesture only: opening settings never phones home.
+- **A pinnable model for the single-shot `bridge` backend** (`rwa_bridge_model`); empty keeps
+  the prior byte-identical command. An invalid value throws into the modify failure rather
+  than silently unpinning.
+- **"Edit online"** — a ✎ button that POSTs the open file to the hosted runtime and returns an
+  editable link, plus a "Delete online copy" control. Deliberately framed apart from ↗ Share:
+  Share publishes a read-only version and the canon stays in the file; Edit-online *moves* the
+  canon to the hosted copy.
+
+### Changed
+- **`rwa-edit/1` canonical text form is now LF + Unicode NFC (spec v1.7).** An NFC `find`
+  against NFD document bytes — a routine paste artifact from PDFs and some macOS pipelines —
+  failed `find_not_found` on text a user cannot visually tell apart. Normalization lands
+  inside `canonLF`, the chokepoint the document and every `find`/`replace` already flow
+  through, so matching stays an exact splice with no position mapping. Explicitly **not**
+  NFKC: compatibility folding is a content edit, not a canonicalization.
+- **Emitted containers are 15.9 KB smaller.** `PRODUCT_KIND` is baked at creation and only one
+  prompt is ever read, yet every container carried all four kind prompts — the workflow prompt
+  alone was 13.0 KB of dead bytes in every plain document. Foreign kinds are now stripped at
+  emission; the source seed still carries every kind, since it is the template.
+- **Durability: the file can now win.** `getDoc()` consulted `INLINE_DOC` only when IndexedDB
+  was literally empty, so a `git pull`, checkout or restored backup was silently discarded in
+  favour of stale browser state. A `doc_baseline` hash detects it at open; ⌘S additionally
+  re-reads the file and refuses to overwrite bytes it did not write.
+
+### Fixed
+- **Card chrome no longer prints as a frame around every page.** Documents style the root
+  `<article>` as a screen card; `print-color-adjust:exact` forced its border and shadow to
+  print as a hairline frame continuing across every page break. The root-article print reset
+  now clears `box-shadow`, `border` and `border-radius` — borders and fills *inside* the
+  article are content and keep printing exactly.
+- **Dead model ids purged.** Three of the eight curated OpenRouter suggestions no longer
+  existed upstream; the same trio shipped in the benchmark model set, the AI-maker
+  suggestions and — user-facing — as a carrier's effective `recommended_model`, so "Use this
+  AI" could consent a user onto a nonexistent model. Curated list refreshed to 13
+  live-verified ids across 6 vendors.
+
+### Security
+- **The vault key no longer persists.** It was exported to `sessionStorage` on every unlock,
+  leaving a raw AES-GCM key in the most readable place in the browser. Now closure-only, with
+  an idle auto-lock.
+- **Agent-authored scripts are gated.** `replace_document` was exempt from the script/style
+  shape check while `renderDoc` re-executes scripts on the very render that commits them.
+  Introducing an *executable* script now needs a per-container capability; `<style>` is
+  untouched so skinning still works.
+- **The prompt is fenced** — the document is wrapped in a per-call nonce fence with explicit
+  data-not-instructions framing.
+- **Test seams no longer ship** in every container.
+- **The vendored `@noble/hashes` MIT notice travels with the copy** — the bundle was
+  redistributed verbatim in every emitted container with the notice stripped by the vendoring
+  step.
+
 ## [0.18.0] - 2026-07-08
 
 Seed-only release — no change to the CLI's own code (verified: `cli/src` and `cli/bin`
