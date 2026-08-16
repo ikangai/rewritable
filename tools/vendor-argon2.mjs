@@ -41,6 +41,35 @@ if (bundle.includes('</script')) throw new Error('bundle contains </script — u
 
 if (process.argv.includes('--raw')) { process.stdout.write(bundle + '\n'); process.exit(0); }
 
+// The upstream notice, verbatim from @noble/hashes' LICENSE. esbuild runs with
+// --legal-comments=none (keeping the bundle bytes minimal and the RFC-9106 pin
+// stable), so the notice does not survive bundling and must be reproduced here:
+// MIT requires it to travel with the copy, and the seed is redistributed verbatim
+// inside every emitted rewritable. Keep this in step with NOBLE_VERSION.
+const NOBLE_NOTICE = [
+  'The MIT License (MIT)',
+  '',
+  'Copyright (c) 2022 Paul Miller (https://paulmillr.com)',
+  '',
+  'Permission is hereby granted, free of charge, to any person obtaining a copy',
+  'of this software and associated documentation files (the “Software”), to deal',
+  'in the Software without restriction, including without limitation the rights',
+  'to use, copy, modify, merge, publish, distribute, sublicense, and/or sell',
+  'copies of the Software, and to permit persons to whom the Software is',
+  'furnished to do so, subject to the following conditions:',
+  '',
+  'The above copyright notice and this permission notice shall be included in',
+  'all copies or substantial portions of the Software.',
+  '',
+  'THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR',
+  'IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,',
+  'FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE',
+  'AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER',
+  'LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,',
+  'OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN',
+  'THE SOFTWARE.',
+].map((l) => (l ? `//   ${l}` : '//')).join('\n');
+
 // The seed-ready block: a string constant (no main-thread eval; CSP-safe).
 const block =
   `// rwa:argon2:begin ARGON2_SRC\n` +
@@ -48,6 +77,10 @@ const block =
   `// tools/vendor-argon2.mjs (esbuild iife/min). Assigns globalThis._argon2id(pw,salt,\n` +
   `// {t,m,p,dkLen,key?,ad?}). Used to build the blob: Worker in _argon2idViaWorker; the\n` +
   `// frozen CSP is unchanged (no WASM, no eval). RFC-9106-pinned by tests/vault-kdf.mjs.\n` +
+  `//\n` +
+  `// ARGON2_SRC below is a verbatim copy of @noble/hashes. Its notice, as required:\n` +
+  `//\n` +
+  `${NOBLE_NOTICE}\n` +
   `const ARGON2_SRC = ${JSON.stringify(bundle)};\n` +
   `// rwa:argon2:end ARGON2_SRC`;
 process.stdout.write(block + '\n');
