@@ -372,6 +372,15 @@ body:not([data-rwa-mode="document"]) #rwa-view-chrome{display:none!important;}
   #rwa-view-chrome.active{display:inline-flex;}
   #rwa-view-chrome .count{font-family:var(--font-mono);font-size:11px;color:var(--gray-500);min-width:42px;text-align:center;}
 }
+/* Print vocabulary (2026-08-26): four author/agent-facing utility classes the
+   system prompt teaches, so "start a new page before the appendix" through the
+   / gesture compiles to markup instead of being impossible. Conventional names
+   (no-print/print-only are the web's de-facto idiom) so imported HTML that
+   already uses them just works. Screen half here; print half in @media print
+   below. NOT position:fixed running headers — Chrome's print engine repeats
+   fixed elements but places them flipped and overlapping content (probed
+   2026-08-26); per-page furniture belongs to the browser's print dialog. */
+:where(#rwa-doc-mount) .print-only{display:none;}
 @page{margin:18mm;}
 @media print{
   #rwa-runtime{display:none!important;}
@@ -419,6 +428,13 @@ body:not([data-rwa-mode="document"]) #rwa-view-chrome{display:none!important;}
   :where(#rwa-doc-mount) td,:where(#rwa-doc-mount) th{white-space:normal!important;overflow-wrap:anywhere;}
   :where(#rwa-doc-mount) table{max-width:100%!important;}
   :where(#rwa-doc-mount) img{max-width:100%!important;height:auto!important;}
+  /* Print vocabulary, print half (see the comment above @page). display:revert
+     restores the element's UA default (div→block, span→inline, tr→table-row)
+     rather than forcing block on everything. */
+  :where(#rwa-doc-mount) .no-print{display:none!important;}
+  :where(#rwa-doc-mount) .print-only{display:revert!important;}
+  :where(#rwa-doc-mount) .print-break{break-before:page!important;page-break-before:always!important;}
+  :where(#rwa-doc-mount) .print-keep{break-inside:avoid!important;page-break-inside:avoid!important;}
   :where(#rwa-doc-mount) a{color:#000!important;}
   /* presentation (spec §5.10): print the deck as a linear document — reset the
      slide framing and hide the nav chrome. Inert unless presenting. */
@@ -3085,6 +3101,11 @@ Stable block identifiers (data-rwa-id):
 
 Embedded images (rwa-asset tokens):
   • Image src values appear as opaque \`rwa-asset:<id>\` tokens — stable identifiers for images embedded in the file. Move, copy, or delete the whole <img>/<figure> tag freely (quote the token verbatim in find/replace), but never edit a token, invent a new one, or replace one with a URL. An unknown token is rejected as unknown_asset_reference.
+
+Print & pagination (the document prints through the browser; the runtime honors these on paper):
+  • class="print-break" on a block starts a new printed page before it. class="print-keep" keeps a block together on one page. class="no-print" hides a block on paper. class="print-only" shows a block only on paper (hidden on screen).
+  • Give data tables a <thead> around the header row — the browser then repeats it on every printed page.
+  • The runtime already prevents stranded headings and widowed lines. Per-page running headers/footers and page numbers come from the browser's print dialog (Headers and Footers option), not from document markup — never simulate them with position:fixed; that prints broken.
 
 Always call a tool. Respond with text-only only when you genuinely need to ask for clarification before editing.`;
 // rwa:extract:end SYSTEM_PROMPT_RULES
