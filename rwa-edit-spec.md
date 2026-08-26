@@ -164,7 +164,7 @@ release mutex
 
 A second ⌘K issued while the mutex is held returns `concurrent_modify` immediately, before any model round-trip is wasted. `apply_edits` and `replace_document` themselves do not acquire the mutex; they assume it is already held by the caller.
 
-This is single-tab concurrency. Cross-tab modify on the same container is already not supported by v0.7/v0.8.
+This is single-tab concurrency: the mutex serialises modify within one tab and does not extend across tabs. Two tabs open on the same container therefore still resolve last-write-wins on `rwa_doc` — but as of 2026-08-26 that no longer happens **silently**. Every write to `rwa_doc` (commit, hosted commit, undo, adopting the file version) broadcasts a content hash on a per-container channel, and a tab whose hash no longer matches surfaces a persistent bar offering reload; a tab that never received the message re-checks against IDB when it returns to the foreground, so the signal degrades to "noticed later" rather than to nothing. The runtime does not pick a side — it refuses to lose one without saying so, the same stance boot reconciliation takes for the file (§5.11 is the file-side sibling). Cross-tab *coordination* (a shared lock, merge) remains out of scope.
 
 ### 5.6 The post-apply parse check, in detail
 

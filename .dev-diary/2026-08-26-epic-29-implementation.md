@@ -81,3 +81,83 @@ would keep passing while doing so.
 
 Green: `tests/print.mjs` 24/24 (text pins), `tests/browser/print.mjs` 15/15
 (new), root suite 53 files / 1580 assertions.
+
+---
+
+## #20 — R4: cross-tab commit signal
+
+**Done. 16 jsdom assertions + a real two-tab browser verification. The
+interesting part was catching my own bad verification.**
+
+The defect: two tabs on one container. Every commit path re-reads `rwa_doc`
+first, which makes the window look tiny — until you notice `modify()` re-reads
+it *before* a model call that takes seconds, then applies and commits. A commit
+landing from the other tab inside that window is overwritten with no error, no
+history entry, nothing on screen.
+
+**The shape of the fix.** Boot reconciliation already owns "the FILE changed
+underneath us"; this is its sibling for "another TAB did". Every write to
+`rwa_doc` — commit, hosted commit, undo, adopting the file version — broadcasts a
+content hash; a tab whose hash no longer matches raises a persistent bar
+offering reload. It **warns rather than blocks**: the bar appears when the other
+tab commits, i.e. before this tab's next edit, while the choice is still the
+user's. Hard-blocking a commit mid-agent-retry is a much larger behavioural
+change than the bug warrants, and boot reconciliation already owns the
+"two versions, pick one" conversation on reload.
+
+**Where I nearly fooled myself.** The whole design rests on BroadcastChannel
+delivering between two `file://` tabs — not obvious, since `file://` pages are
+opaque origins, and the `runtime.db` fan-out that already used BroadcastChannel
+and calls itself "cross-tab" had never actually been checked across tabs. So I
+probed it, got a clean delivery, and moved on.
+
+Then, writing the browser test, I re-read my probe and realised `cdp.mjs`'s
+`send()` puts `sessionId` inside `params`, not at the top level — so my "tab 2"
+evaluation may have been running in **tab 1 the whole time**. And
+BroadcastChannel happily delivers between two channel *objects in one page*.
+My evidence was consistent with the feature being completely dead.
+
+Re-verified properly: separate WebSocket to each page target's own debugger URL
+(no session multiplexing to get wrong), and each tab stamped with a distinct
+marker to prove they are different pages.
+
+```
+page targets on the file: 2
+tab1 mark=TAB_ONE  tab2 mark=null  → genuinely distinct pages: true
+tab2 bar before any commit: false
+tab1 commit: ok
+tab2 bar AFTER tab1 commit: true  ("Another tab changed this document…")
+tab1 warned itself (must be false): false
+✓ REAL cross-tab signal confirmed between two file:// tabs
+```
+
+The conclusion survived the scepticism, but it very nearly didn't get tested at
+all. Same lesson as #19 one issue earlier: the probe is only worth what its
+controls are worth.
+
+**A test that corrected the code's spec, not the code.** X3 originally asserted
+"undo in tab A warns tab B" and failed. The cause turned out to be right: B's
+known hash was still the original document, A's single commit had been undone,
+so the store had returned to exactly the bytes B was displaying — the two sides
+*agreed*, and warning would have been wrong. Fixed the test (two commits, so the
+undo lands somewhere B has never seen) and added the inverse as an explicit
+assertion: *an undo restoring what the other tab already shows stays quiet*. A
+warning that fires when both sides agree trains people to ignore the one that
+matters.
+
+**Found while building: the divergence bars printed.** All three bars
+(`#rwa-reconcile-bar`, `#rwa-overwrite-bar`, and my new `#rwa-foreign-bar`) are
+appended to `<body>`, not into `#rwa-runtime` — so the print block's chrome hide
+never reached them and a yellow "this file changed" banner printed across page
+one. Pre-existing for the two older bars. I fixed all three rather than shipping
+a fourth element with the same flaw, and — because #19 had just landed a print
+lane the day it was needed — asserted it as a real paper measurement rather than
+another text pin. That is the perception gap closing on itself.
+
+Also refreshed `cli/seeds/rewritable.html`, which was stale again (the trap
+CLAUDE.md records having been hit three times in one day), and updated
+`rwa-edit-spec.md`, which still claimed cross-tab modify was simply "not
+supported" — true for coordination, no longer true for detection.
+
+Green: `tests/cross-tab.mjs` 16/16 (new) · root 54 files / 1597 assertions ·
+CLI 595 · conformance 86/86 · browser lane 14/14 + print 18/18.

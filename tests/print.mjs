@@ -52,6 +52,11 @@ check('table cells wrap on paper (fit-to-width shrink defused)',
 check('tables cap at page width', printBlock.includes(':where(#rwa-doc-mount) table{max-width:100%!important;}'));
 check('images cap at page width, ratio kept',
   printBlock.includes(':where(#rwa-doc-mount) img{max-width:100%!important;height:auto!important;}'));
+// The divergence bars are appended to <body>, not into #rwa-runtime, so the
+// chrome hide above never reached them and they printed as a yellow banner
+// across page 1. Found while adding the third bar (#20).
+check('the divergence bars are runtime chrome and stay off paper',
+  printBlock.includes('#rwa-reconcile-bar,#rwa-overwrite-bar,#rwa-foreign-bar{display:none!important;}'));
 
 // ── Print vocabulary: CSS half ──────────────────────────────────────────────
 check('.print-break forces a page break in print',

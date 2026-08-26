@@ -234,6 +234,40 @@ try {
     // rather than trusting the containment.
     check('#rwa-lens occupies no space in print even though it can be reparented to <body>',
       m.lens !== null && m.lens.w === 0 && m.lens.h === 0);
+
+    // The three divergence bars live on <body> for the same reason and had the
+    // same escape: a yellow "this file changed" banner printed across page 1.
+    // Inject them rather than driving the runtime into a divergence — the CSS
+    // rule is the thing under test, and the lane must not reach for the seed's
+    // jsdom-gated window.__* hooks.
+    const bars = await page.eval((ids) => {
+      const out = {};
+      for (const id of ids) {
+        const el = document.createElement('div');
+        el.id = id; el.textContent = 'divergence bar';
+        document.body.appendChild(el);
+        const r = el.getBoundingClientRect();
+        out[id] = { w: r.width, h: r.height, display: getComputedStyle(el).display };
+      }
+      return out;
+    }, ['rwa-reconcile-bar', 'rwa-overwrite-bar', 'rwa-foreign-bar']);
+    // Injected AFTER measure() restored screen media, so re-emulate for these.
+    await page.send('Emulation.setEmulatedMedia', { media: 'print' });
+    const barsPrint = await page.eval((ids) => {
+      const out = {};
+      for (const id of ids) {
+        const el = document.getElementById(id);
+        const r = el.getBoundingClientRect();
+        out[id] = { w: r.width, h: r.height, display: getComputedStyle(el).display };
+      }
+      return out;
+    }, ['rwa-reconcile-bar', 'rwa-overwrite-bar', 'rwa-foreign-bar']);
+    await page.send('Emulation.setEmulatedMedia', { media: '' });
+    for (const id of ['rwa-reconcile-bar', 'rwa-overwrite-bar', 'rwa-foreign-bar']) {
+      check(`#${id} is visible on screen but absent from paper`,
+        bars[id].display !== 'none' && barsPrint[id].display === 'none' &&
+        barsPrint[id].w === 0 && barsPrint[id].h === 0);
+    }
   }
 
   console.log('\n== P4: the print vocabulary the agent is taught actually computes ==');

@@ -17,7 +17,7 @@
 <meta http-equiv="Content-Security-Policy" content="script-src 'unsafe-inline' blob:; worker-src blob:; object-src 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="rwa-bootstrap" content="0.9">
-<meta name="rwa-seed" content="331805e168d1">
+<meta name="rwa-seed" content="459bc7b99188">
 <title>Intelligence — proofreader</title>
 <style>
 /* Palette + chrome modeled on playground.ikangai.com — neutral grayscale,
@@ -285,10 +285,10 @@ body:not([data-rwa-mode="document"]) #rwa-view-chrome{display:none!important;}
 #rwa-scripts-bar[hidden]{display:none;}
 /* Save-time divergence (#14) — same persistent-bar treatment as the boot reconciliation
    and script-gate bars; distinct id so the three never collide. */
-#rwa-overwrite-bar{position:fixed;top:0;left:0;right:0;z-index:50;display:flex;align-items:center;justify-content:center;gap:10px;flex-wrap:wrap;padding:10px 16px;background:var(--yellow);color:var(--gray-900);font-family:var(--font-ui);font-size:13px;box-shadow:0 2px 8px rgba(0,0,0,0.08);}
-#rwa-overwrite-bar[hidden]{display:none;}
-#rwa-overwrite-bar button{font:inherit;font-size:12px;padding:5px 10px;border:1px solid var(--gray-900);border-radius:6px;background:var(--white);color:var(--gray-900);cursor:pointer;}
-#rwa-overwrite-bar button:hover{background:var(--gray-100);}
+#rwa-overwrite-bar,#rwa-foreign-bar{position:fixed;top:0;left:0;right:0;z-index:50;display:flex;align-items:center;justify-content:center;gap:10px;flex-wrap:wrap;padding:10px 16px;background:var(--yellow);color:var(--gray-900);font-family:var(--font-ui);font-size:13px;box-shadow:0 2px 8px rgba(0,0,0,0.08);}
+#rwa-overwrite-bar[hidden],#rwa-foreign-bar[hidden]{display:none;}
+#rwa-overwrite-bar button,#rwa-foreign-bar button{font:inherit;font-size:12px;padding:5px 10px;border:1px solid var(--gray-900);border-radius:6px;background:var(--white);color:var(--gray-900);cursor:pointer;}
+#rwa-overwrite-bar button:hover,#rwa-foreign-bar button:hover{background:var(--gray-100);}
 #rwa-scripts-bar button{font:inherit;font-size:12px;padding:5px 10px;border:1px solid var(--gray-900);border-radius:6px;background:var(--white);color:var(--gray-900);cursor:pointer;}
 #rwa-scripts-bar button:hover{background:var(--gray-100);}
 .rwa-frag-pulse{animation:rwa-frag-pulse 1.6s ease-out;}
@@ -387,6 +387,12 @@ body:not([data-rwa-mode="document"]) #rwa-view-chrome{display:none!important;}
   /* releaseAnchor() reparents #rwa-lens to <body> (see runtime), escaping the
      transitive hide above — hide it explicitly so it never prints. */
   #rwa-lens{display:none!important;}
+  /* Same escape, same fix: the divergence bars are appended to <body>, not to
+     #rwa-runtime, so the hide above never reached them and a yellow "this file
+     changed" banner printed across the top of page 1. Pre-existing for the
+     reconcile/overwrite bars; found while adding the third (#20) and fixed for
+     all of them rather than shipping a fourth element with the same flaw. */
+  #rwa-reconcile-bar,#rwa-overwrite-bar,#rwa-foreign-bar{display:none!important;}
   body{background:#fff!important;color:#000!important;min-height:0!important;padding-bottom:0!important;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
   #rwa-doc-mount{margin:0!important;padding:0!important;}
   /* The card becomes the page: the root <article> is a screen-layout container
@@ -2580,6 +2586,121 @@ function hideReconcileBar() {
   if (bar) bar.hidden = true;
 }
 
+// ─── Cross-tab commit signal (#20) ──────────────────────────────────
+// Boot reconciliation closed "the FILE changed underneath us". This closes its
+// sibling: another TAB of the same container changed rwa_doc underneath us.
+//
+// Why it can lose work despite every commit path re-reading rwa_doc first:
+// modify() reads the doc, then spends SECONDS in a model call, and only then
+// applies its edits and commits. A commit landing from another tab inside that
+// window is overwritten with no trace anywhere — no error, no history entry,
+// no bar. rwa-edit-spec §5.6 records cross-tab modify as "not supported", which
+// in practice meant "silently picks one side", the exact thing boot
+// reconciliation exists to refuse.
+//
+// BroadcastChannel carries the signal. That it works at all here is NOT
+// obvious and was verified before this was built (2026-08-26): file:// pages
+// are opaque origins, and although the runtime.db fan-out already used
+// BroadcastChannel and called itself "cross-tab", nothing had ever checked
+// delivery BETWEEN two file:// tabs. It delivers.
+//
+// The channel name reuses the runtime.db namespace with the store slot set to a
+// RESERVED store name, so no document-declared store can ever subscribe to it —
+// assertRuntimeDbStore rejects the rwa_ prefix.
+//
+// This WARNS; it deliberately does not block. The bar appears when the other tab
+// commits — i.e. before this tab's next edit, while the choice is still the
+// user's — so the loss stops being silent, which is the defect. Hard-blocking a
+// commit mid-agent-retry would be a far larger behavioural change than the bug
+// warrants, and boot reconciliation already owns the "two versions, pick one"
+// conversation on reload.
+const RWA_TAB_ID = (() => {
+  try { return crypto.randomUUID(); } catch (_) { return String(Math.random()).slice(2) + Date.now(); }
+})();
+const RWA_DOC_CHANNEL = 'rwa_' + DOC_UUID + ':rwa_doc';
+let rwaLastKnownDocHash = null; // what THIS tab believes rwa_doc holds
+let rwaForeignCommit = null;    // { at } while unresolved
+let _rwaDocChannel;             // undefined = not tried, null = unavailable
+
+function rwaDocChannel() {
+  if (_rwaDocChannel === undefined) {
+    try { _rwaDocChannel = new BroadcastChannel(RWA_DOC_CHANNEL); }
+    catch (_) { _rwaDocChannel = null; } // degrade to the visibility re-check below
+  }
+  return _rwaDocChannel;
+}
+
+// Record what this tab now believes the document is. `broadcast` tells sibling
+// tabs; boot passes false because nothing was committed. Every failure is
+// swallowed: this is an advisory signal and must never break a commit that has
+// already landed, nor a boot on a runtime without crypto.subtle (where the hash
+// stays null and staleness simply goes unreported rather than misreported).
+async function rwaNoteDocSeen(doc, broadcast) {
+  try {
+    rwaLastKnownDocHash = await rwaSha256Hex(canonLF(doc));
+    if (!broadcast) return;
+    const ch = rwaDocChannel();
+    if (ch) ch.postMessage({ from: RWA_TAB_ID, hash: rwaLastKnownDocHash, at: Date.now() });
+  } catch (_) { /* advisory only */ }
+}
+
+async function rwaCheckForeignCommit() {
+  try {
+    if (rwaLastKnownDocHash === null) return;  // nothing to compare against
+    const stored = await idbGet(RWA.DOC);
+    if (typeof stored !== 'string') return;
+    if ((await rwaSha256Hex(canonLF(stored))) === rwaLastKnownDocHash) return;
+    rwaForeignCommit = { at: Date.now() };
+    showForeignCommitBar();
+  } catch (_) { /* advisory only */ }
+}
+
+function startCrossTabWatch() {
+  const ch = rwaDocChannel();
+  if (ch) {
+    ch.onmessage = (e) => {
+      const d = e && e.data;
+      if (!d || d.from === RWA_TAB_ID) return;            // our own echo
+      if (!d.hash || d.hash === rwaLastKnownDocHash) return; // same bytes, nothing to say
+      rwaForeignCommit = { at: d.at || Date.now() };
+      showForeignCommitBar();
+    };
+  }
+  // A frozen or throttled tab may never be handed the message, and BroadcastChannel
+  // is absent entirely on some runtimes. Re-checking against IDB on foreground is
+  // deterministic and is the only path that works with no channel at all — so the
+  // signal degrades to "noticed a little later" rather than to nothing.
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') rwaCheckForeignCommit();
+  });
+}
+
+function showForeignCommitBar() {
+  let bar = document.getElementById('rwa-foreign-bar');
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.id = 'rwa-foreign-bar';
+    bar.setAttribute('role', 'alert');
+    bar.innerHTML =
+      '<span>Another tab changed this document. What you see here is older — saving or editing now would drop that change.</span>' +
+      '<button type="button" data-act="reload">Reload this tab</button>' +
+      '<button type="button" data-act="dismiss">Keep this version</button>';
+    bar.addEventListener('click', (e) => {
+      const act = e.target && e.target.getAttribute && e.target.getAttribute('data-act');
+      // Reload deliberately just reloads: boot reconciliation already knows how to
+      // present two versions properly. Two mechanisms for one decision would drift.
+      if (act === 'reload') location.reload();
+      else if (act === 'dismiss') { rwaForeignCommit = null; hideForeignCommitBar(); }
+    });
+    document.body.appendChild(bar);
+  }
+  bar.hidden = false;
+}
+function hideForeignCommitBar() {
+  const bar = document.getElementById('rwa-foreign-bar');
+  if (bar) bar.hidden = true;
+}
+
 // Save-time divergence (#14). Set only by the user choosing "Overwrite anyway", and cleared after
 // the write, so a forced save never silently becomes the new default.
 let _forceOverwrite = false;
@@ -2705,6 +2826,7 @@ async function rwaReconcileUseFile() {
     const idRes = injectMissingBlockIds(adopted);
     if (idRes.assigned > 0) adopted = idRes.text;
     await idbPut(RWA.DOC, adopted);
+    await rwaNoteDocSeen(adopted, true); // #20 — adopting the file version moves rwa_doc
     await rwaWriteBaseline(rwaDivergence.fileHash);
     await rwaResetDirtyCount();
     rwaDivergence = null;
@@ -7110,6 +7232,7 @@ async function commitDoc(currentDoc, newDoc, histRecord, assets, orphans) {
     }
     const serverDoc = await window.__rwaCommitSink(envelope, histRecord, currentDoc);
     await idbPut(RWA.DOC, serverDoc);
+    await rwaNoteDocSeen(serverDoc, true); // #20 — tell sibling tabs
     return serverDoc;
   }
   // Web-citizen: backfill data-rwa-id on any anchorable block the agent
@@ -7143,6 +7266,7 @@ async function commitDoc(currentDoc, newDoc, histRecord, assets, orphans) {
     tx.objectStore(RWA.UNDO).put(undoArr, RWA.KEY);
     tx.objectStore(RWA.HIST).put(histTrimmed, RWA.KEY);
   });
+  await rwaNoteDocSeen(persistDoc, true); // #20 — tell sibling tabs
   return persistDoc;
 }
 
@@ -10779,6 +10903,7 @@ async function undo() {
   const p = await popUndo();
   if (!p) { setStatus('err', '✗ nothing to undo'); return; }
   await idbPut(RWA.DOC, p);
+  await rwaNoteDocSeen(p, true); // #20 — an undo moves rwa_doc too; sibling tabs are now stale
   renderDoc(p);
   setDirty(true);
   setStatus('ok', '↩ undone');
@@ -10969,6 +11094,10 @@ document.addEventListener('keydown', e => {
         await idbPut(RWA.DOC, doc);
       }
     }
+    // #20 — record what this tab believes the document is (no broadcast: nothing
+    // was committed), then listen for a sibling tab committing over it.
+    await rwaNoteDocSeen(doc, false);
+    startCrossTabWatch();
     // Skill runtime (shannon): populate the installed-skill registry from the frozen
     // #rwa-skills zone (parse + re-verify) BEFORE the runtime is exposed, so describe()
     // and the ⓘ panel see installed skills on first paint. Soft-fail: a bad/absent zone
