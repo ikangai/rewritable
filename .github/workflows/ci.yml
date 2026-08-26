@@ -192,6 +192,22 @@ jobs:
       - name: Import fidelity (ratchet)
         working-directory: benchmark
         run: npm run fidelity:import:check
+      # The regression ratchet for multi-edit coherence (issue #22: "measure
+      # what a document looks like after 50 sequential edits"). Runs each
+      # scripted, deterministic scenario in benchmark/scenarios/trajectory/
+      # through the real commit path and scores start-vs-end coherence on 5
+      # dimensions (benchmark/oracles/coherence.mjs — heading outline, class
+      # churn, dead CSS, id hygiene, markup-vs-text growth), failing if any
+      # dimension drops >0.02 below benchmark/baselines/trajectory.json, or a
+      # scenario errors / a scripted step is rejected by the runtime / a
+      # scenario is new and un-baselined. Deterministic and model-free — no
+      # API key, and NOT a model-drift gate: every step's envelope is scripted
+      # ahead of time, so this only tests whether the SUBSTRATE accumulates
+      # structural damage across a long edit session on its own. See
+      # benchmark/runners/run-trajectory.mjs's header for the full framing.
+      - name: Trajectory coherence (ratchet)
+        working-directory: benchmark
+        run: npm run trajectory:check
 
   refs-fresh:
     name: References regenerate cleanly

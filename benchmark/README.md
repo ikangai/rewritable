@@ -66,6 +66,8 @@ export default {
 };
 ```
 
+`npm run trajectory` / `npm run trajectory:check` score document coherence (heading outline, class churn, dead CSS, id hygiene, markup-vs-text growth — `oracles/coherence.mjs`) across a scripted, model-free N-edit sequence per `scenarios/trajectory/*.mjs`, applied through the real commit path — see `runners/run-trajectory.mjs`'s header for exactly what the stub run does and doesn't measure.
+
 ## Print-fidelity scenarios
 
 `scenarios/print/` is a separate test surface from conformance / fidelity:

@@ -1,0 +1,25 @@
+{
+  "scenarios": {
+    "TRAJ-01": {
+      "headings": 1,
+      "classChurn": 1,
+      "deadStyles": 1,
+      "idHygiene": 1,
+      "growth": 1
+    },
+    "TRAJ-02": {
+      "headings": 1,
+      "classChurn": 0,
+      "deadStyles": 0.6667,
+      "idHygiene": 1,
+      "growth": 0
+    },
+    "TRAJ-03": {
+      "headings": 0.5,
+      "classChurn": 1,
+      "deadStyles": 1,
+      "idHygiene": 1,
+      "growth": 1
+    }
+  }
+}

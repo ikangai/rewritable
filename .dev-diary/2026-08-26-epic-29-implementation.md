@@ -395,3 +395,60 @@ private keys stayed in a scratch directory; nothing key-shaped is in the tree.
 
 Green: `tests/ai-gallery.mjs` 35/35 (new) · root 57 files / 1690 assertions ·
 service 108/108.
+
+---
+
+## #22 — R3: the trajectory benchmark
+
+**Done. A coherence scorer over N-edit sequences, with a CI ratchet. The
+delegated build was strong; the review's job was proving the gate can fail.**
+
+`benchmark/` proved single edits are side-effect-free and the import ratchet
+scores one converter pass. Nobody measured what a document looks like after
+fifty sequential edits — and coherence is exactly the property that can degrade
+while every individual commit is perfect.
+
+Five model-free dimensions over start-vs-end: heading outline, class churn, dead
+CSS selectors, id hygiene, and markup-vs-text growth. Three scripted scenarios,
+twelve steps each, driven through the real commit path. The scorer discriminates
+sharply, which is the whole point:
+
+```
+scenario  steps  headings  classChurn  deadStyles  idHygiene  growth
+TRAJ-01   12     1.000     1.000       1.000       1.000      1.000
+TRAJ-02   12     1.000     0.000       0.667       1.000      0.000
+TRAJ-03   12     0.500     1.000       1.000       1.000      1.000
+```
+
+TRAJ-02 is the wrap/re-wrap shape: 24 distinct classes grown from 0, +552 tag
+characters against +0 characters of text. TRAJ-03 drifts an outline into three
+h1s and five level jumps. TRAJ-01 is a healthy editing session and stays at 1.
+
+**What I checked rather than took on trust.** The report said the ratchet has
+teeth and showed it printing FAIL. Printing FAIL is not gating: I perturbed the
+committed baseline and ran the checker directly, because `npm run … | tail`
+reports *tail's* exit code and would hide a checker that reports a regression and
+still exits 0. Real exit code on regression: 1. Clean: 0. It gates.
+
+**Two real findings the builder surfaced, both worth keeping.** First,
+`classChurn`'s original form scored the end document's raw single-use-class
+fraction, which flags any *small* document as bloated even with zero edits — its
+own no-op test caught that, and it became delta-against-start. Second, and more
+valuable: `modify()` does **not** throw when its retry budget exhausts on a
+rejected tool call — it swallows the failure and leaves the document unchanged
+(real, deliberate seed behaviour). So "modify didn't throw" is not evidence a
+step landed. The runner now checks `rwa_hist` grew after every step and fails
+loud otherwise. Without that, a scenario whose scripted anchors stopped matching
+would have scored a trajectory that never happened — a benchmark quietly
+measuring nothing, which is the failure mode this whole epic is about.
+
+**The framing is documented, not implied.** With scripted envelopes the
+trajectory is deterministic, so the ratchet measures the **substrate** — whether
+N edits accumulate structural damage on their own. It does **not** measure model
+drift; that needs real-model runs, like fidelity's optional modes. Both the
+runner header and the CI comment say so plainly, because a green tick labelled
+"trajectory coherence" is otherwise very easy to read as "the model keeps
+documents coherent".
+
+Green: `oracles/coherence.test.mjs` 13/13 · trajectory ratchet PASS · conformance
+86/86.
