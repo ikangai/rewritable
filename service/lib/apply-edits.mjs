@@ -61,7 +61,11 @@ export class RwaEditError extends Error {
 // these are measured on the VIRTUAL (rwa-asset token) form when the caller
 // virtualizes — a text budget, never a pixel budget (rwa-edit-spec.md §19).
 const MAX_REPLACE = 8 * 1024;
-const MAX_DOC = 1024 * 1024;
+// Exported so `rwa doctor` can report size headroom against the SAME cap
+// applyEdits enforces (rather than re-declaring a shadow constant that could
+// drift). MAX_REPLACE stays unexported — it's a per-edit cap, not meaningful
+// to a static single-document health check.
+export const MAX_DOC = 1024 * 1024;
 // Real-bytes whole-document cap for the image paths, where MAX_DOC measures the
 // VIRTUAL (token) form. Mirrors the GUI's container budget (RWA_IMG.FILE_STOP);
 // authoritative server-side on the hosted /modify path (rwa-edit-spec.md §19).
@@ -100,6 +104,18 @@ export const FAILURE_HINTS = {
   // (browser-only IDB) so it does not enforce this gate itself; the seed's
   // replaceDocument is the sole enforcement point.
   script_introduction_denied: 'This document does not allow the AI to add <script> tags. Make the edit without introducing a script, or ask the user to allow scripts for this document first.',
+  // #24 — the codes the retry loop could already feed back but had nothing to say
+  // about, so the model got a bare code and spent its remaining attempts guessing.
+  // Mirrored from the seed's FAILURE_HINTS; tests/doc-budget.mjs gates the pair.
+  target_size_exceeded: 'The document would exceed its size budget. Nothing larger can be committed, so retrying the same edit cannot work — make the change smaller, or replace existing content instead of adding to it.',
+  class_lock_violation: 'This region is marked rwa-locked by the author. Anchor on text outside the locked region — locked regions change only by editing the file directly.',
+  class_lock_uncovered: 'A replace_document was refused because an rwa-locked region is not fully inside a frozen zone in the new document. Preserve every locked region and its surrounding frozen markers verbatim.',
+  frozen_zone_corrupted: 'The result changed a frozen zone — its markers, its name, or its contents. Reproduce every frozen zone byte-for-byte, including the begin/end marker comments, and edit only the text between them.',
+  reserved_id_used: 'The runtime owns the id "rwa-doc-mount"; a document element may not use it. Choose a different id.',
+  rwa_id_stripped: 'This document requires data-rwa-id attributes to survive. Copy each one verbatim into the replacement — never drop, renumber, or invent them.',
+  malformed_envelope: 'The tool call did not match the expected shape. Re-read the tool schema and send every required field, with edits as a non-empty array of {find, replace} objects.',
+  version_unsupported: 'The envelope version must be exactly "rwa-edit/1".',
+  unknown_tool: 'That tool does not exist. Use apply_dsl_plan, apply_edits, or replace_document.',
 };
 
 // ─── Image-asset virtualization (images-v1) ─────────────────────────
@@ -396,8 +412,10 @@ function editCrossesFrozenZone(doc, find, zones) {
 }
 
 // Void HTML elements have no closing tag, so the depth-matcher below must not
-// scan to EOF looking for a close that never comes.
-const VOID_ELEMENTS = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img',
+// scan to EOF looking for a close that never comes. Exported so `rwa doctor`
+// can tell a self-contained data-rwa-frozen element (fine, no close expected)
+// from a genuinely unterminated one, without re-deriving the HTML void list.
+export const VOID_ELEMENTS = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img',
   'input', 'link', 'meta', 'param', 'source', 'track', 'wbr']);
 
 // Index just past the matching `</tag>` for an element opened at `from`,
@@ -407,8 +425,11 @@ const VOID_ELEMENTS = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img'
 // for the non-void container tags this is called with (void tags are guarded
 // before the call), HTML ignores the trailing slash and treats it as an open.
 // (A prior CLI deviation exempted `<tag/>`, diverging from the seed on
-// malformed self-closing same-tag nesting — removed for parity.)
-function matchingCloseEnd(doc, tag, from) {
+// malformed self-closing same-tag nesting — removed for parity.) Exported so
+// `rwa doctor` can detect an unterminated data-rwa-frozen element (the same
+// depth-tracked match dataRwaFrozenSnapshot uses internally) without
+// reimplementing the tag-matching logic.
+export function matchingCloseEnd(doc, tag, from) {
   const tagRe = new RegExp('<(/?)' + tag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b[^>]*>', 'gi');
   tagRe.lastIndex = from;
   let depth = 1, t;

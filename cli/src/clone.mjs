@@ -119,6 +119,14 @@ export async function cloneFromHtml(html, outPath, sourceUrl, opts = {}) {
     uuid: crypto.randomUUID(),
     title,
     fileMeta: basename(outPath),
+    // #25 — record the source in the FROZEN head, not just the visible footer.
+    // The footer is inside INLINE_DOC, so it is content: an edit can remove it,
+    // and it reaches the model inside the fenced DATA region where it carries no
+    // authority. The runtime reads this meta instead, and tells the model on
+    // every later edit that the text it is holding came from elsewhere. Only
+    // http/https is recorded — the same gate the visible provenance link uses,
+    // so a hostile scheme cannot ride into the prompt.
+    origin: safeProvenance ? String(sourceUrl) : '',
   });
   const result = replaceInlineDoc(subbed, body);
   await atomicWrite(outPath, result);

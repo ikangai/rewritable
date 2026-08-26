@@ -37,6 +37,11 @@ const PRODUCT_KIND_RE = /const PRODUCT_KIND = '([^']*)';/;
 const TITLE_TAG_RE = /<title>([\s\S]*?)<\/title>/i;
 const FILE_KV_RE = /(FILE\s*:\s*)'([^']*)'/;
 const SEED_ID_TAG_RE = /(<meta name="rwa-seed" content=")[^"]*(">)/;
+// #25 — provenance, preserved across an upgrade like <title> and RWA.FILE.
+// Two forms: the value capture (what the old container says) and the tag
+// capture (where to write it back).
+const ORIGIN_TAG_RE = /(<meta name="rwa-origin" content=")[^"]*(">)/;
+const ORIGIN_VALUE_RE = /<meta name="rwa-origin" content="([^"]*)">/;
 const SEED_ID_VALUE_RE = /<meta name="rwa-seed" content="([0-9a-f]{12})">/;
 
 // Rebuild the bootstrap for `kind` from the current `seed`, preserving
@@ -45,7 +50,7 @@ const SEED_ID_VALUE_RE = /<meta name="rwa-seed" content="([0-9a-f]{12})">/;
 // spliced back in directly rather than round-tripped through applySeedSubs's
 // escapeHtml/escapeJsString, which expect a raw display string and would
 // double-escape an already-escaped value.
-function buildUpgraded({ seed, uuid, kind, titleRaw, fileRaw, currentDoc }) {
+function buildUpgraded({ seed, uuid, kind, titleRaw, fileRaw, originRaw, currentDoc }) {
   let out;
   if (kind === 'document') {
     const seedId = seedIdentity(seed);
@@ -72,6 +77,11 @@ function buildUpgraded({ seed, uuid, kind, titleRaw, fileRaw, currentDoc }) {
   }
   if (titleRaw != null) out = out.replace(TITLE_TAG_RE, () => `<title>${titleRaw}</title>`);
   if (fileRaw != null) out = out.replace(FILE_KV_RE, (_m, prefix) => `${prefix}'${fileRaw}'`);
+  // #25 — provenance survives an upgrade. Dropping it would silently un-mark a
+  // cloned container as foreign, which is the one direction this marker must
+  // never move: an upgrade is supposed to gain fixes, not lose facts. Spliced
+  // raw, like title/file, because the captured bytes are already escaped.
+  if (originRaw) out = out.replace(ORIGIN_TAG_RE, (_m, pre, post) => `${pre}${originRaw}${post}`);
   return replaceInlineDoc(out, currentDoc);
 }
 
@@ -125,6 +135,9 @@ export async function upgradeCmd(filePath, { mode = 'write' } = {}) {
   const fileMatch = fileText.match(FILE_KV_RE);
   const fileRaw = fileMatch ? fileMatch[2] : null;
   const currentSeedId = (fileText.match(SEED_ID_VALUE_RE) || [])[1] || null;
+  // Absent in every container emitted before #25 — treated as "no origin", which
+  // is the honest answer for a container whose source was never recorded.
+  const originRaw = (fileText.match(ORIGIN_VALUE_RE) || [])[1] || null;
 
   const seed = await loadSeed(SEED_CANDIDATES);
   const targetSeedId = seedIdentity(seed);
@@ -168,7 +181,7 @@ export async function upgradeCmd(filePath, { mode = 'write' } = {}) {
 
   let rebuilt;
   try {
-    rebuilt = buildUpgraded({ seed, uuid, kind, titleRaw, fileRaw, currentDoc });
+    rebuilt = buildUpgraded({ seed, uuid, kind, titleRaw, fileRaw, originRaw, currentDoc });
   } catch (e) {
     if (e && e.unknownKind) throw new CliError(2, 'unknown_kind', { kind, message: e.message });
     throw e;

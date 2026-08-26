@@ -513,6 +513,12 @@ function detectProductKind(fileText) {
             currentDoc: promptDoc,
             instruction,
             frozenZoneNames,
+            // #25 — read from the container's FROZEN head, never from the
+            // document body: a marker inside INLINE_DOC is content, and content
+            // is what an injected instruction can delete. Absent in every
+            // container emitted before #25, and empty for anything the user
+            // authored themselves.
+            origin: (fileText.match(/<meta name="rwa-origin" content="([^"]*)">/) || [])[1] || null,
             backend: { baseUrl, model: modelId, apiKey, maxTokens: backendMaxTokens(backendName) },
             onRetry: r => {
               if (jsonMode) {

@@ -114,3 +114,43 @@ test('cloneFromHtml drops the provenance link for a non-http(s) sourceUrl (B1)',
     'a javascript: sourceUrl never becomes a live href');
   rmSync(out, { force: true });
 });
+
+// #25 — provenance in the FROZEN head, not just the visible footer.
+//
+// The footer lives inside INLINE_DOC, which makes it content: an edit can remove
+// it, and it reaches the model inside the fenced DATA region where it carries no
+// authority. The runtime reads this meta instead and tells the model, on every
+// later edit, that the text it is holding came from somewhere else. A marker the
+// document can edit is a marker injected text can delete.
+test('cloneFromHtml stamps the source URL into the edit-unreachable head (#25)', async () => {
+  const out = '/tmp/clone-origin-' + process.pid + '.html';
+  await cloneFromHtml(fixture, out, 'https://www.ikangai.com/post/');
+  const text = readFileSync(out, 'utf8');
+  assert.match(text, /<meta name="rwa-origin" content="https:\/\/www\.ikangai\.com\/post\/">/);
+  const { extractInlineDoc } = await import('../src/seed.mjs');
+  assert.ok(!extractInlineDoc(text).includes('rwa-origin'),
+    'the marker must be outside INLINE_DOC — inside, an edit could delete it');
+  rmSync(out, { force: true });
+});
+
+test('a non-http scheme is never recorded as provenance (#25)', async () => {
+  // Mirrors the gate on the visible provenance link: only http/https becomes a
+  // live reference. A hostile scheme must not ride into the model's prompt.
+  const out = '/tmp/clone-origin-bad-' + process.pid + '.html';
+  await cloneFromHtml(fixture, out, 'javascript:alert(1)');
+  const text = readFileSync(out, 'utf8');
+  assert.match(text, /<meta name="rwa-origin" content="">/);
+  assert.ok(!text.includes('content="javascript:'), 'no javascript: scheme in the head');
+  rmSync(out, { force: true });
+});
+
+test('rwa upgrade preserves provenance — an upgrade gains fixes, never loses facts (#25)', async () => {
+  const out = '/tmp/clone-origin-upg-' + process.pid + '.html';
+  await cloneFromHtml(fixture, out, 'https://www.ikangai.com/post/');
+  const { upgradeCmd } = await import('../src/upgrade.mjs');
+  await upgradeCmd(out, { mode: 'write' });
+  const text = readFileSync(out, 'utf8');
+  assert.match(text, /<meta name="rwa-origin" content="https:\/\/www\.ikangai\.com\/post\/">/,
+    'dropping this would silently un-mark a cloned container as foreign');
+  rmSync(out, { force: true });
+});

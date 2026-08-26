@@ -295,3 +295,51 @@ div runs 2359px past the page — it will be cut off or scroll sideways
 
 Green: root 55 files / 1643 assertions · browser print lane 21/21 · CLI 613 ·
 conformance 86/86 · browser lane 14/14.
+
+---
+
+## #25 — R7: provenance for fetched content
+
+**Done. 12 seed assertions + 3 CLI tests. Argued myself out of the cheap version.**
+
+`rwa clone` is the one verb that fetches from the network, and the page it brings
+home rides into the prompt of every later edit — so instruction-shaped sentences
+in it get re-read forever. The nonce fence already says "the fenced region is
+data"; this adds *whose* data, which is the part a model can weigh when a
+paragraph starts addressing it directly.
+
+**The design decision worth recording.** The obvious cheap implementation reads
+the visible "Cloned from …" footer that `clone.mjs` already writes. I started
+there and stopped: that footer lives inside `INLINE_DOC`, which makes it
+**content**. A marker the document can edit is a marker injected text can ask
+the model to delete — and the deletion is invisible, because the document simply
+stops looking cloned. This repo already refuses to trust an edit-reachable
+declaration: the `accepts` gate ignores one that isn't edit-unreachable, for
+exactly this reason. Being inconsistent with that in a security-adjacent marker
+buys a smaller diff and sells false confidence.
+
+So the marker is `<meta name="rwa-origin">` in the frozen head — stamped by
+`applySeedSubs` (the single choke point every emission passes through),
+attribute-escaped because the value is a URL from outside, gated to http/https
+like the visible provenance link, and **preserved across `rwa upgrade`**. That
+last one matters: an upgrade is supposed to gain fixes, never lose facts, and
+silently un-marking a cloned container as foreign is the one direction this
+marker must not move.
+
+The hostile-page fixture in the test is deliberately mundane — prose that
+addresses the model in the second person, the shape that actually occurs on the
+open web, not an exotic payload. The test also pins that the hostile sentence
+still travels through **unaltered**: provenance frames the text, it does not
+sanitise it, and pretending otherwise would be the worse failure.
+
+**A gate caught me.** `service/lib/` holds byte-identical mirrors of `cli/src`,
+and my #23/#24 edits to `apply-edits.mjs` made them stale — so commits `a6ee258`
+and `293bf12` left main with a failing service test for about an hour. I had run
+the service suite before those commits and not after. Re-vendored (`apply-edits`
+and `seed`), 108/108 again. Worth naming rather than quietly fixing: the
+cross-site mirrors in this repo are exactly the thing that goes stale when you
+change one side and test the other, and the gate existing is why it was an hour
+and not a release.
+
+Green: `tests/provenance.mjs` 12/12 (new) · root 56 files / 1655 assertions ·
+CLI 613 · service 108/108 · conformance 86/86.

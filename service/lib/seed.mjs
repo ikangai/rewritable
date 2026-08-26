@@ -79,6 +79,13 @@ const FILE_RE = /(FILE\s*:\s*)'[^']*'/;
 // No fixpoint problem: the hash is taken over the seed WITH the placeholder still
 // in it, exactly as DOC_UUID works.
 const SEED_ID_RE = /(<meta name="rwa-seed" content=")[^"]*(">)/;
+// #25 — provenance. Where this container's content came from, when it came from
+// somewhere: stamped by `rwa clone` (the only network-fetching verb) and read by
+// the runtime's buildUserPrompt so every later edit tells the model the text it
+// holds is foreign. Lives in the frozen head rather than the document body
+// because a marker the document can edit is a marker injected text can delete —
+// the same reason an edit-reachable `accepts` declaration is ignored.
+export const ORIGIN_RE = /(<meta name="rwa-origin" content=")[^"]*(">)/;
 export function seedIdentity(seedText) {
   return createHash('sha256').update(seedText, 'utf8').digest('hex').slice(0, 12);
 }
@@ -103,7 +110,7 @@ const PRODUCT_KIND_RE = /const PRODUCT_KIND = '[^']*';/;
 // anchorable and a stray click would lock the lens onto an item.
 const LENS_CLICK_TO_ANCHOR_RE = /const LENS_CLICK_TO_ANCHOR = (?:true|false);/;
 
-export function applySeedSubs(seed, { uuid, title, fileMeta, lensPlaceholder, palPlaceholder, productHeader, productKind, lensClickToAnchor }) {
+export function applySeedSubs(seed, { uuid, title, fileMeta, origin, lensPlaceholder, palPlaceholder, productHeader, productKind, lensClickToAnchor }) {
   // All three required substitution sites must appear exactly once. A
   // regression in the seed (title removed, FILE renamed, etc.) would
   // otherwise silently no-op and ship a CLI emitting partially-substituted
@@ -115,6 +122,7 @@ export function applySeedSubs(seed, { uuid, title, fileMeta, lensPlaceholder, pa
     { re: TITLE_RE, label: '<title>' },
     { re: FILE_RE, label: 'FILE:' },
     { re: SEED_ID_RE, label: 'rwa-seed meta' },
+    { re: ORIGIN_RE, label: 'rwa-origin meta' },
   ]) {
     const matches = seed.match(new RegExp(re.source, 'g')) || [];
     if (matches.length !== 1) {
@@ -142,6 +150,10 @@ export function applySeedSubs(seed, { uuid, title, fileMeta, lensPlaceholder, pa
   out = out.replace(UUID_RE, `const DOC_UUID = '${uuid}';`);
   if (title != null) out = out.replace(TITLE_RE, `<title>${escapeHtml(title)}</title>`);
   if (fileMeta != null) out = out.replace(FILE_RE, (_m, prefix) => `${prefix}'${escapeJsString(fileMeta)}'`);
+  // Attribute-escaped: the origin is a URL from outside, and it is being written
+  // into an HTML attribute in the frozen head. A quote in it would otherwise end
+  // the attribute and let the rest of the string become markup in the bootstrap.
+  if (origin != null) out = out.replace(ORIGIN_RE, (_m, pre, post) => `${pre}${escapeHtml(String(origin))}${post}`);
   // Function-form replacements so a `$` in the substitute value isn't
   // interpreted by String.replace as a backreference.
   if (lensPlaceholder != null) {
