@@ -17,7 +17,7 @@
 <meta http-equiv="Content-Security-Policy" content="script-src 'unsafe-inline' blob:; worker-src blob:; object-src 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="rwa-bootstrap" content="0.9">
-<meta name="rwa-seed" content="459bc7b99188">
+<meta name="rwa-seed" content="6e2aa52a6266">
 <title>Intelligence carrier — concise-editor</title>
 <style>
 /* Palette + chrome modeled on playground.ikangai.com — neutral grayscale,
@@ -2454,6 +2454,39 @@ function showQuotaWarning(usedMB, quotaMB) {
 function clearQuotaWarning() {
   document.querySelector('.rwa-lens-toast[data-kind="quota-warn"]')?.remove();
 }
+
+// #24 — the document's own size budget, which had no meter at all. Images warn
+// at 5 MB of container and refuse at 10 MB; browser storage warns at 80% of
+// quota. The 1 MB text budget the edit contract actually enforces
+// (RWA_EDIT.MAX_DOC) had neither, so a growing document degraded invisibly until
+// an edit failed with target_size_exceeded — a failure the model then retried
+// three times at a size that could never succeed.
+//
+// Measured on the VIRTUALIZED form, because that is the form the cap is applied
+// to: a document holding 3 MB of embedded images virtualizes to a few KB of
+// rwa-asset tokens, and measuring raw bytes would scream at every image-bearing
+// document while its real headroom was untouched.
+const RWA_DOC_SIZE_WARN = 0.8;
+function rwaCheckDocSize(doc) {
+  try {
+    if (typeof doc !== 'string') return;
+    const cap = RWA_EDIT.MAX_DOC;
+    const used = virtualizeImages(canonLF(doc)).doc.length;
+    const el = document.querySelector('.rwa-lens-toast[data-kind="docsize-warn"]');
+    if (used < cap * RWA_DOC_SIZE_WARN) { el?.remove(); return; }
+    let t = el;
+    if (!t) {
+      t = document.createElement('div');
+      t.className = 'rwa-lens-toast';
+      t.setAttribute('data-kind', 'docsize-warn');
+      document.body.appendChild(t);
+    }
+    const pct = Math.round((used / cap) * 100);
+    t.textContent = used >= cap
+      ? `document ${pct}% of its ${Math.round(cap / 1024)} KB edit budget — edits will be refused; shorten it`
+      : `document ${pct}% of its ${Math.round(cap / 1024)} KB edit budget — split it before edits start failing`;
+  } catch (_) { /* advisory only — never break a commit over a meter */ }
+}
 async function rwaCheckQuota() {
   if (!navigator.storage || !navigator.storage.estimate) return;
   let est;
@@ -2641,6 +2674,10 @@ function rwaDocChannel() {
 // already landed, nor a boot on a runtime without crypto.subtle (where the hash
 // stays null and staleness simply goes unreported rather than misreported).
 async function rwaNoteDocSeen(doc, broadcast) {
+  // Every path that moves rwa_doc calls this, plus boot — so it is also the one
+  // place that reliably knows "the document is now X", which is exactly what the
+  // size meter (#24) needs. Kept first: a hash failure must not skip the meter.
+  rwaCheckDocSize(doc);
   try {
     rwaLastKnownDocHash = await rwaSha256Hex(canonLF(doc));
     if (!broadcast) return;
@@ -10250,6 +10287,19 @@ const FAILURE_HINTS = {
   parse_error_post_apply: 'The result was not well-formed HTML — check that the tags in replace are balanced.',
   unknown_asset_reference: 'src uses an rwa-asset: token that does not exist in this document. Copy tokens verbatim from existing <img> tags; never invent or edit them.',
   script_introduction_denied: 'This document does not allow the AI to add <script> tags. Make the edit without introducing a script, or ask the user to allow scripts for this document first.',
+  // #24 — the codes the retry loop could already feed back but had nothing to say
+  // about. Without an entry here the model gets the bare code plus context and
+  // burns its remaining attempts guessing; target_size_exceeded in particular
+  // would retry three times at a size that cannot succeed.
+  target_size_exceeded: 'The document would exceed its size budget. Nothing larger can be committed, so retrying the same edit cannot work — make the change smaller, or replace existing content instead of adding to it.',
+  class_lock_violation: 'This region is marked rwa-locked by the author. Anchor on text outside the locked region — locked regions change only by editing the file directly.',
+  class_lock_uncovered: 'A replace_document was refused because an rwa-locked region is not fully inside a frozen zone in the new document. Preserve every locked region and its surrounding frozen markers verbatim.',
+  frozen_zone_corrupted: 'The result changed a frozen zone — its markers, its name, or its contents. Reproduce every frozen zone byte-for-byte, including the begin/end marker comments, and edit only the text between them.',
+  reserved_id_used: 'The runtime owns the id "rwa-doc-mount"; a document element may not use it. Choose a different id.',
+  rwa_id_stripped: 'This document requires data-rwa-id attributes to survive. Copy each one verbatim into the replacement — never drop, renumber, or invent them.',
+  malformed_envelope: 'The tool call did not match the expected shape. Re-read the tool schema and send every required field, with edits as a non-empty array of {find, replace} objects.',
+  version_unsupported: 'The envelope version must be exactly "rwa-edit/1".',
+  unknown_tool: 'That tool does not exist. Use apply_dsl_plan, apply_edits, or replace_document.',
 };
 
 function failureToToolResult(err) {

@@ -104,6 +104,18 @@ export const FAILURE_HINTS = {
   // (browser-only IDB) so it does not enforce this gate itself; the seed's
   // replaceDocument is the sole enforcement point.
   script_introduction_denied: 'This document does not allow the AI to add <script> tags. Make the edit without introducing a script, or ask the user to allow scripts for this document first.',
+  // #24 — the codes the retry loop could already feed back but had nothing to say
+  // about, so the model got a bare code and spent its remaining attempts guessing.
+  // Mirrored from the seed's FAILURE_HINTS; tests/doc-budget.mjs gates the pair.
+  target_size_exceeded: 'The document would exceed its size budget. Nothing larger can be committed, so retrying the same edit cannot work — make the change smaller, or replace existing content instead of adding to it.',
+  class_lock_violation: 'This region is marked rwa-locked by the author. Anchor on text outside the locked region — locked regions change only by editing the file directly.',
+  class_lock_uncovered: 'A replace_document was refused because an rwa-locked region is not fully inside a frozen zone in the new document. Preserve every locked region and its surrounding frozen markers verbatim.',
+  frozen_zone_corrupted: 'The result changed a frozen zone — its markers, its name, or its contents. Reproduce every frozen zone byte-for-byte, including the begin/end marker comments, and edit only the text between them.',
+  reserved_id_used: 'The runtime owns the id "rwa-doc-mount"; a document element may not use it. Choose a different id.',
+  rwa_id_stripped: 'This document requires data-rwa-id attributes to survive. Copy each one verbatim into the replacement — never drop, renumber, or invent them.',
+  malformed_envelope: 'The tool call did not match the expected shape. Re-read the tool schema and send every required field, with edits as a non-empty array of {find, replace} objects.',
+  version_unsupported: 'The envelope version must be exactly "rwa-edit/1".',
+  unknown_tool: 'That tool does not exist. Use apply_dsl_plan, apply_edits, or replace_document.',
 };
 
 // ─── Image-asset virtualization (images-v1) ─────────────────────────
