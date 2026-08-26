@@ -3339,6 +3339,11 @@ Print & pagination (the document prints through the browser; the runtime honors 
   • Give data tables a <thead> around the header row — the browser then repeats it on every printed page.
   • The runtime already prevents stranded headings and widowed lines. Per-page running headers/footers and page numbers come from the browser's print dialog (Headers and Footers option), not from document markup — never simulate them with position:fixed; that prints broken.
 
+Accessibility (these documents are made to be shared; some readers arrive with a screen reader):
+  • Every <img> needs an alt attribute. Describe what the image conveys in its context; use alt="" only for purely decorative images.
+  • Keep the heading outline well formed: one h1, and never skip a level going down (an h2 is followed by h2 or h3, never h4). It is how a screen-reader user navigates the document.
+  • Write link text that still makes sense read on its own — "the 2026 audit" rather than "click here" or a bare URL.
+
 Always call a tool. Respond with text-only only when you genuinely need to ask for clarification before editing.`;
 // rwa:extract:end SYSTEM_PROMPT_RULES
 

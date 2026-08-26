@@ -96,8 +96,9 @@ test('a freshly-created container is all-green: exit 0, ok:true, no errors or wa
     // Every declared check id is present — Rule 12: never silently omit a check.
     const ids = result.findings.map(f => f.id).sort();
     assert.deepEqual(ids, [
-      'asset_tokens', 'block_ids', 'frozen_attr', 'frozen_unterminated',
-      'frozen_zones', 'reserved_id', 'seed_freshness', 'size_headroom', 'tag_balance',
+      'alt_text', 'asset_tokens', 'block_ids', 'frozen_attr', 'frozen_unterminated',
+      'frozen_zones', 'heading_outline', 'reserved_id', 'seed_freshness', 'size_headroom',
+      'tag_balance',
     ].sort());
     // Fresh `rwa new` output is built from the CLI's own current seed.
     assert.equal(findingById(result, 'seed_freshness').currentSeedId, CURRENT_SEED_ID);
@@ -328,5 +329,64 @@ test('precondition: mkFixture bodies round-trip through extractInlineDoc', () =>
   const fx = mkFixture('<article><h1>RT</h1></article>');
   try {
     assert.equal(extractInlineDoc(readFileSync(fx.path, 'utf8')), '<article><h1>RT</h1></article>');
+  } finally { fx.cleanup(); }
+});
+
+// #28 — accessibility of the AUTHORED document, decided in scope 2026-08-26.
+// Reported, never enforced: both checks are warn-severity, so a document that
+// trips them still exits 0. `rwa doctor` tells an author what they are shipping;
+// it does not refuse to let them ship it.
+test('alt_text: an image with no alt is a warning, not an error — exit 0 (#28)', async () => {
+  const body = '<article><h1>Report</h1><p>Prose.</p><img src="data:image/png;base64,AAAA"></article>';
+  const fx = mkFixture(body);
+  try {
+    const { code, stdout } = await runRwa(['doctor', fx.path, '--json']);
+    const result = JSON.parse(stdout);
+    const f = findingById(result, 'alt_text');
+    assert.equal(f.severity, 'warn');
+    assert.equal(f.missing, 1);
+    assert.equal(f.images, 1);
+    assert.equal(code, 0, 'accessibility findings inform, they do not fail the check');
+  } finally { fx.cleanup(); }
+});
+
+test('alt_text: a described image passes, and alt="" counts as described (#28)', async () => {
+  // alt="" is the correct, meaningful marking for a decorative image — treating
+  // it as missing would push authors toward writing noise for a spacer rule.
+  const body = '<article><h1>Report</h1><img src="data:image/png;base64,AAAA" alt="Revenue by quarter">'
+    + '<img src="data:image/png;base64,BBBB" alt=""></article>';
+  const fx = mkFixture(body);
+  try {
+    const { code, stdout } = await runRwa(['doctor', fx.path, '--json']);
+    const result = JSON.parse(stdout);
+    const f = findingById(result, 'alt_text');
+    assert.equal(f.severity, 'info');
+    assert.equal(f.missing, 0);
+    assert.equal(code, 0);
+  } finally { fx.cleanup(); }
+});
+
+test('heading_outline: multiple h1s and skipped levels are reported (#28)', async () => {
+  const body = '<article><h1>One</h1><h4>Skipped to four</h4><h1>Two</h1></article>';
+  const fx = mkFixture(body);
+  try {
+    const { code, stdout } = await runRwa(['doctor', fx.path, '--json']);
+    const result = JSON.parse(stdout);
+    const f = findingById(result, 'heading_outline');
+    assert.equal(f.severity, 'warn');
+    assert.equal(f.h1, 2);
+    assert.equal(f.jumps, 1);
+    assert.equal(code, 0);
+  } finally { fx.cleanup(); }
+});
+
+test('heading_outline: a well-formed outline passes (#28)', async () => {
+  const body = '<article><h1>One</h1><h2>Two</h2><h3>Three</h3><h2>Back up</h2></article>';
+  const fx = mkFixture(body);
+  try {
+    const { stdout } = await runRwa(['doctor', fx.path, '--json']);
+    const f = findingById(JSON.parse(stdout), 'heading_outline');
+    assert.equal(f.severity, 'info');
+    assert.equal(f.jumps, 0);
   } finally { fx.cleanup(); }
 });

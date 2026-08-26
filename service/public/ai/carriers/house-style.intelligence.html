@@ -17,7 +17,7 @@
 <meta http-equiv="Content-Security-Policy" content="script-src 'unsafe-inline' blob:; worker-src blob:; object-src 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="rwa-bootstrap" content="0.9">
-<meta name="rwa-seed" content="e7f6f778dc97">
+<meta name="rwa-seed" content="ae66eb953223">
 <!-- Where this container's content came from, when it came from somewhere. Empty
      for a container the user authored. Stamped at emission by `rwa clone`, the
      one CLI verb that fetches from the network, and read by buildUserPrompt so
@@ -3354,6 +3354,11 @@ Print & pagination (the document prints through the browser; the runtime honors 
   • class="print-break" on a block starts a new printed page before it. class="print-keep" keeps a block together on one page. class="no-print" hides a block on paper. class="print-only" shows a block only on paper (hidden on screen).
   • Give data tables a <thead> around the header row — the browser then repeats it on every printed page.
   • The runtime already prevents stranded headings and widowed lines. Per-page running headers/footers and page numbers come from the browser's print dialog (Headers and Footers option), not from document markup — never simulate them with position:fixed; that prints broken.
+
+Accessibility (these documents are made to be shared; some readers arrive with a screen reader):
+  • Every <img> needs an alt attribute. Describe what the image conveys in its context; use alt="" only for purely decorative images.
+  • Keep the heading outline well formed: one h1, and never skip a level going down (an h2 is followed by h2 or h3, never h4). It is how a screen-reader user navigates the document.
+  • Write link text that still makes sense read on its own — "the 2026 audit" rather than "click here" or a bare URL.
 
 Always call a tool. Respond with text-only only when you genuinely need to ask for clarification before editing.`;
 // rwa:extract:end SYSTEM_PROMPT_RULES

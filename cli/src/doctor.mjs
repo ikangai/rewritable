@@ -238,6 +238,40 @@ export async function diagnose(filePath) {
         { duplicates: dupIds })
     : ok('block_ids', 'No duplicate data-rwa-id values', null, { duplicates: [] }));
 
+  // ── alt_text / heading_outline (#28) ──────────────────────────────
+  // Accessibility of the AUTHORED document, decided in scope 2026-08-26: these
+  // containers exist to be shared, and a shared document meets a reader who may
+  // arrive with a screen reader. Reported, never enforced — `rwa doctor` is a
+  // health check, and an author is allowed to ship a document it complains
+  // about. Both checks are warn-severity for that reason: they never fail a
+  // build, they only make the state visible. The runtime teaches the same two
+  // rules to the agent (SYSTEM_PROMPT_RULES, "Accessibility"), so the common
+  // case is that nothing here ever fires.
+  const imgs = [...doc.matchAll(/<img\b[^>]*>/gi)].map(m => m[0]);
+  const noAlt = imgs.filter(t => !/\balt\s*=/i.test(t));
+  findings.push(noAlt.length
+    ? warn('alt_text', 'Image(s) without an alt attribute',
+        `${noAlt.length} of ${imgs.length} <img> tag(s) carry no alt — a screen reader announces the file name, or nothing. Use alt="" only for purely decorative images.`,
+        { images: imgs.length, missing: noAlt.length })
+    : ok('alt_text', imgs.length ? 'Every image has an alt attribute' : 'No images to describe', null,
+        { images: imgs.length, missing: 0 }));
+
+  // Outline well-formedness: one h1, no level skipped going down. Same rule the
+  // trajectory scorer's `headings` dimension measures, applied to one document
+  // instead of a sequence.
+  const levels = [...doc.matchAll(/<h([1-6])\b/gi)].map(m => Number(m[1]));
+  const h1s = levels.filter(l => l === 1).length;
+  const jumps = levels.reduce((n, l, i) => (i > 0 && l > levels[i - 1] + 1 ? n + 1 : n), 0);
+  const outlineProblems = [];
+  if (h1s > 1) outlineProblems.push(`${h1s} h1 elements (expected at most 1)`);
+  if (jumps > 0) outlineProblems.push(`${jumps} skipped heading level(s)`);
+  findings.push(outlineProblems.length
+    ? warn('heading_outline', 'Heading outline is not well formed',
+        `${outlineProblems.join('; ')} — screen-reader users navigate by this outline.`,
+        { headings: levels.length, h1: h1s, jumps })
+    : ok('heading_outline', levels.length ? 'Heading outline is well formed' : 'No headings', null,
+        { headings: levels.length, h1: h1s, jumps: 0 }));
+
   // ── seed_freshness ────────────────────────────────────────────────
   // Reuses upgrade.mjs's approach (same SEED_CANDIDATES resolution +
   // seedIdentity hash) rather than a new staleness check — see

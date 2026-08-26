@@ -452,3 +452,49 @@ documents coherent".
 
 Green: `oracles/coherence.test.mjs` 13/13 · trajectory ratchet PASS · conformance
 86/86.
+
+---
+
+## #28 — B8 decision: accessibility of authored documents
+
+**Decided IN SCOPE, minimally. Teach it and report it; never enforce it.**
+
+The audit found accessibility of *produced* documents examined exactly once ever,
+in one line, about runtime chrome. Nothing nudged or checked alt text, heading
+structure, or link text in authored content — while the whole premise of the
+format is that these documents get shared.
+
+The decision, and the reasoning I'd defend: a format whose entire pitch is "send
+this file to someone" cannot treat the reader arriving with a screen reader as
+out of scope. But it also should not become a linter that refuses to let an
+author ship. So the two cheapest interventions, and deliberately no more:
+
+1. **Teach the agent.** Three bullets in `SYSTEM_PROMPT_RULES`, in the same
+   shape as the print vocabulary block: every `<img>` needs an alt (with `alt=""`
+   named as the correct marking for decorative images, not an omission); keep one
+   h1 and never skip a level; write link text that reads on its own. ~380
+   characters on every request — a real cost, paid because this is a baseline
+   property rather than a style preference.
+2. **Report it in `rwa doctor`.** Two new checks, both **warn**, both exit 0. The
+   verb tells an author what they are shipping; it does not refuse to let them
+   ship it. `alt=""` counts as described, because treating it as missing would
+   push authors toward writing noise for a spacer rule.
+
+What I did **not** do: contrast checking (needs computed style and a rendering
+context `rwa doctor` doesn't have, and would guess wrong on any themed document),
+ARIA advice (the failure mode of well-meant ARIA guidance is worse markup than
+none), and any enforcement anywhere. Each of those is a real decision, not an
+oversight — recorded here so the next audit doesn't re-open them as gaps.
+
+The `heading_outline` check is the same rule #22's trajectory scorer measures,
+applied to one document instead of a sequence. That was not planned; it's just
+what "well-formed outline" means, and the two arriving at it independently is a
+small sign the definition is the right one.
+
+**Caught by an existing guard, again:** editing the seed without refreshing
+`cli/seeds/rewritable.html` made the CLI warn that it was using a shadowing seed
+— the trap CLAUDE.md records being hit three times in one day. It is now four,
+and the guard turned it into a clear message instead of a mystery.
+
+Green: `cli/tests/doctor.test.mjs` 22/22 · CLI 620 · root 57 files / 1690 ·
+conformance 86/86 · trajectory ratchet PASS · service 108/108.
