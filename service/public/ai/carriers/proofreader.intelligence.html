@@ -17,7 +17,7 @@
 <meta http-equiv="Content-Security-Policy" content="script-src 'unsafe-inline' blob:; worker-src blob:; object-src 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="rwa-bootstrap" content="0.9">
-<meta name="rwa-seed" content="3054be90c2e5">
+<meta name="rwa-seed" content="442b314d226f">
 <title>Intelligence — proofreader</title>
 <style>
 /* Palette + chrome modeled on playground.ikangai.com — neutral grayscale,
@@ -390,12 +390,35 @@ body:not([data-rwa-mode="document"]) #rwa-view-chrome{display:none!important;}
      acceptably anyway. Borders/fills on elements INSIDE the article are
      content and stay untouched. */
   :where(#rwa-doc-mount) article{margin:0 auto!important;padding:0!important;max-width:none!important;box-shadow:none!important;border:none!important;border-radius:0!important;}
+  /* Same policy for a root-level WRAPPER (<div>/<main>/<section>): imported and
+     AI-drafted docs often build the card as a padded div instead of an
+     <article>, and its screen padding/max-width printed as a huge dead border
+     inside the @page margin (reported live 2026-08-26: 56px padding + 640px
+     column ≈ 33mm extra margin around ~10.5pt text). Root-level children only —
+     boxes INSIDE the wrapper are content and stay untouched. The root
+     container's font-size is also pinned to the 12pt print baseline (16px ≡
+     12pt, so the seed default is byte-identical on paper); inner elements with
+     explicit sizes keep them. */
+  :where(#rwa-doc-mount)>div,:where(#rwa-doc-mount)>main,:where(#rwa-doc-mount)>section{margin:0 auto!important;padding:0!important;max-width:none!important;box-shadow:none!important;border:none!important;border-radius:0!important;}
+  :where(#rwa-doc-mount)>article,:where(#rwa-doc-mount)>div,:where(#rwa-doc-mount)>main,:where(#rwa-doc-mount)>section{font-size:12pt!important;}
   :where(#rwa-doc-mount) h1,:where(#rwa-doc-mount) h2,:where(#rwa-doc-mount) h3,:where(#rwa-doc-mount) h4,:where(#rwa-doc-mount) h5,:where(#rwa-doc-mount) h6{break-after:avoid;page-break-after:avoid;}
   :where(#rwa-doc-mount) figure,:where(#rwa-doc-mount) pre,:where(#rwa-doc-mount) table,:where(#rwa-doc-mount) img{break-inside:avoid;page-break-inside:avoid;}
   :where(#rwa-doc-mount) tr,:where(#rwa-doc-mount) li{break-inside:avoid;page-break-inside:avoid;}
   :where(#rwa-doc-mount) p{orphans:3;widows:3;}
   :where(#rwa-doc-mount) p,:where(#rwa-doc-mount) li,:where(#rwa-doc-mount) td,:where(#rwa-doc-mount) th,:where(#rwa-doc-mount) code,:where(#rwa-doc-mount) a{overflow-wrap:break-word;}
   :where(#rwa-doc-mount) pre{white-space:pre-wrap;overflow:visible;overflow-wrap:anywhere;}
+  /* One over-wide element makes the print dialog's fit-to-width shrink the
+     WHOLE page — measured 2026-08-26: a 2053px nowrap table on A4/18mm scales
+     everything to 0.32× ≈ 3.8pt body text. There is no horizontal scroll on
+     paper, so nowrap cells must wrap and wide media must cap. Cells get
+     overflow-wrap:anywhere (overriding the gentler break-word above): only
+     `anywhere` lowers a cell's min-content width, and without that a column of
+     unbreakable tokens (URLs, IDs, hashes) keeps its full width no matter what
+     — same lost-data-vs-column-width trade <pre> already makes. height:auto
+     keeps an attribute-sized <img>'s aspect ratio once max-width bites. */
+  :where(#rwa-doc-mount) td,:where(#rwa-doc-mount) th{white-space:normal!important;overflow-wrap:anywhere;}
+  :where(#rwa-doc-mount) table{max-width:100%!important;}
+  :where(#rwa-doc-mount) img{max-width:100%!important;height:auto!important;}
   :where(#rwa-doc-mount) a{color:#000!important;}
   /* presentation (spec §5.10): print the deck as a linear document — reset the
      slide framing and hide the nav chrome. Inert unless presenting. */
