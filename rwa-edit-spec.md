@@ -1,6 +1,6 @@
-# rwa-edit v1.7 — Anchor-based edit protocol for rewritable containers
+# rwa-edit v1.8 — Anchor-based edit protocol for rewritable containers
 
-**Status:** draft v1.7.
+**Status:** draft v1.8.
 **Targets:** rwa container spec v0.8 and later.
 **Position in the architecture:** Defines how the agent expresses changes to the document. Adopting rwa-edit v1 requires (a) replacing the modify pathway in the bootstrap with a multi-turn tool-use conversation, (b) updating the system prompt, and (c) adopting the typed-record shape for `rwa_hist` entries. It does **not** require changes to IDB store layouts, snapshot format, or the public `runtime.*` surface; the v0.8 disk format is preserved.
 
@@ -627,7 +627,13 @@ The wire version stays `rwa-edit/1`: tokens ride the existing envelope shapes; a
 
 ---
 
-## Appendix B — Changes from v1.5 to v1.6
+## Appendix B — Changes from v1.7 to v1.8
+
+- **Cross-tab divergence is signalled, not silent (§5.6).** The mutex still serialises modify within one tab only, and two tabs still resolve last-write-wins on `rwa_doc` — but every write to `rwa_doc` now broadcasts a content hash on a per-container channel, and a tab whose hash no longer matches surfaces a persistent bar offering reload. A tab that never received the message re-checks against IDB on foreground, so the signal degrades to "noticed later" rather than to nothing. Previously §5.6 recorded cross-tab modify as "not supported", which in practice meant "silently picks one side" — the loss that motivated boot reconciliation for the file, left open for the sibling tab. Cross-tab *coordination* (a shared lock, merge) remains out of scope.
+- **Failure hints cover the whole battery (§10).** Nine codes the retry loop could already feed back carried no `hint`, so a model received a bare code and spent its remaining attempts guessing — `target_size_exceeded` worst, retrying three times at a size that could never succeed. Hints are still advisory and additive (v1.5 semantics unchanged); the set is now complete, and gated by a test that fails when a new throwable code has neither a hint nor an explicit "not model-facing" classification.
+- Wire version unchanged (`rwa-edit/1`): no envelope, tool, or failure-code shape changed.
+
+## Appendix B2 — Changes from v1.5 to v1.6
 
 - **Image-asset virtualization (§19).** data-URI images stay in the document; agent boundaries see `rwa-asset:<hash8>` tokens; caps measured on the virtual form; expansion post-validation; `unknown_asset_reference` (+ `token` payload field, §10); orphan tolerance; no-assets new-token guard; hist stores virtual envelopes; hosted sink gets expanded envelopes, re-virtualized server-side (`virtualizeEnvelope` + 10 MB `MAX_DOC_EXPANDED` guard).
 - Wire version unchanged (`rwa-edit/1`).

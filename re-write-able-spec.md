@@ -491,7 +491,21 @@ A user authors a tracker on their iPhone, doesn't open it for two weeks, and iOS
 2. **`navigator.storage.persist()`** is requested on boot. Chrome Android honors it. Safari ignores it.
 3. **Private/incognito mode is unsupported.** The runtime detects it and shows a clear message: *"re-write-able requires normal browsing mode."*
 
-### 9.2 The Null Origin and Shared Quotas
+### 9.2 Capability Rot — Self-Containment in Time
+
+Self-containment holds in **space**: the bytes render, store, undo, export, and print in any browser, offline, with no server, no build step, and no network fetch of any kind. That property has no expiry date, and nothing in this spec may weaken it.
+
+Self-containment does **not** hold in time for *modification*. `modify()` is deliberately not self-contained: a container recommends a model and never carries one (`docs/specs/rwa-intelligence-spec.md`), so the rewrite loop depends on something outside the file remaining reachable and remaining shaped the way it is today. Naming that plainly is the point of this section — it was an unstated assumption until 2026-08-26.
+
+The position is:
+
+1. **Rendering is the promise; modification is the feature.** A container whose backends have all disappeared is a document that still opens, still renders, still exports, and still prints. It stops being able to rewrite *itself*, and stays fully editable by hand and by any external tool. Degradation, not failure.
+2. **The wire contract is the hedge, not any one vendor.** Four of the five backends speak the OpenAI-compatible `/v1/chat/completions` shape, two of those run entirely on the user's own machine (Ollama, LM Studio), and base URLs are user-overridable. Surviving the loss of any single provider — including all hosted ones — requires no change to a container that has already shipped.
+3. **`rwa upgrade` is the migration path for everything else.** It re-bootstraps an existing container onto a current seed while preserving `DOC_UUID`, the document body verbatim, kind, title, provenance, and every signed record. A protocol change that a shipped container cannot absorb is absorbed by re-bootstrapping it, and refuses to write unless the preserved regions round-trip byte-for-byte.
+
+What this rules out: a container that *requires* a specific vendor, a hosted endpoint baked into the file, or an API key stored in the artifact. All three are already forbidden elsewhere in this spec; this section records **why** those prohibitions are load-bearing rather than stylistic.
+
+### 9.3 The Null Origin and Shared Quotas
 
 Under `file://`, all re-writeable files share the same origin and therefore the same storage quota — even though their IndexedDB databases are now isolated by `DOC_UUID` (§5.7). Per-container isolation prevents state collisions, not quota collisions. Many open containers add up to one shared budget. The runtime monitors usage and warns before exhaustion. Eviction under pressure can drop a container's private database without warning, which is why the inline snapshot in the file on disk remains the only durable artifact (§5.6).
 
@@ -536,20 +550,24 @@ If headroom is still needed, the runtime sheds the oldest undo entry first. `rwa
 
 ### 10.3 Multi-Tab Concurrency
 
-**Status: NOT BUILT.** This section previously described a `BroadcastChannel` soft lock in the present tense — other tabs detecting it and opening read-only with a "take over" affordance. No such mechanism exists in the runtime, and none ever did. The description was a design intent that read as shipped behaviour; it is recorded here as an open limitation instead.
+**Status: DETECTION BUILT (2026-08-26); COORDINATION NOT BUILT.** This section once described a `BroadcastChannel` soft lock in the present tense — other tabs detecting it and opening read-only with a "take over" affordance — and no such mechanism existed. v0.17 replaced that fiction with an honest "there is no detection and no warning". Half of that is now also out of date, in the better direction: the loss is no longer silent. The lock still does not exist.
 
-**What actually happens today.** Two tabs of the same file share one `DOC_UUID` and therefore one IndexedDB. There is no coordination between them:
+**What actually happens today.** Two tabs of the same file share one `DOC_UUID` and therefore one IndexedDB. There is no *coordination* between them:
 
 - Both read `rwa_doc` at boot and hold independent in-memory documents.
-- Both write on commit — last write wins, silently.
+- Both write on commit — last write still wins.
 - Undo stacks diverge: each tab pushes onto `rwa_undo` without seeing the other's frames, so ⌘Z in one tab can restore a state the other never had.
-- Both may hold an FSA handle to the same file. Two ⌘S operations can interleave, and the later one overwrites the earlier without either tab noticing.
+- Both may hold an FSA handle to the same file. Two ⌘S operations can interleave, and the later one overwrites the earlier.
 
-**What does not help.** The boot reconciliation of §11.2 compares the *file* against IndexedDB at open time. It cannot see a second tab: both tabs read the same snapshot and the same baseline, so the divergence it detects is orthogonal to this one. A tab that saves while another holds unsaved edits leaves the second tab's next save free to overwrite it, and nothing in the current runtime notices.
+**What is detected.** Every write to `rwa_doc` — an agent commit, a hosted commit, an undo, adopting the file version — broadcasts a content hash on a per-container channel keyed by `DOC_UUID`. A tab whose hash no longer matches raises a persistent bar naming what happened and offering reload. A tab that never received the message (frozen, throttled, or on a runtime without `BroadcastChannel`) re-checks against IndexedDB when it returns to the foreground, so the signal degrades to *noticed later* rather than to nothing. The comparison is on content, not events: an undo that restores exactly what the other tab is already showing stays quiet, because the two sides agree.
 
-**Practical guidance.** Do not keep the same container open in two tabs while editing. There is no detection and no warning; the failure is silent and the losing tab's work is recoverable only from that tab's own undo stack, until it is closed.
+Delivery between two `file://` tabs was verified rather than assumed (2026-08-26) — `file://` pages are opaque origins, and the pre-existing `runtime.db` fan-out that already used `BroadcastChannel` and called itself cross-tab had never been checked across tabs.
 
-**If this is built.** `BroadcastChannel` is the wrong primitive on its own — it provides no atomicity and no leader election, so two tabs opening within milliseconds can both claim the lock and neither observe the other. The Web Locks API (`navigator.locks.request`) is designed for exactly this and releases automatically when a tab dies; `BroadcastChannel` is then useful only to *tell* the losing tab why it is read-only. Whether Web Locks is available under `file://` requires verification rather than assumption — it is gated on secure-context rules that treat local files inconsistently across browsers.
+**What is still not built.** Nothing serialises the two tabs. The runtime warns; it does not arbitrate, and it does not merge. The window between the warning and the overwrite belongs to the user.
+
+**Practical guidance.** Editing the same container in two tabs is now visible rather than silent, but the second tab's commit still wins. On seeing the bar, reload — the losing tab's work remains recoverable only from its own undo stack until it is closed.
+
+**If coordination is built.** `BroadcastChannel` is the wrong primitive for a *lock* on its own — it provides no atomicity and no leader election, so two tabs opening within milliseconds can both claim one and neither observe the other. That is precisely why it is used here for notification only. The Web Locks API (`navigator.locks.request`) is designed for the arbitration half and releases automatically when a tab dies. Whether Web Locks is available under `file://` requires verification rather than assumption — it is gated on secure-context rules that treat local files inconsistently across browsers.
 
 ---
 
@@ -722,6 +740,8 @@ These properties are load-bearing — every change to the runtime, bootstrap, or
 9. The document the agent receives is derived from the stored document text, never from a render mode's mounted output. Render modes are invisible to the agent.
 
 ---
+
+*Spec version 0.18 — the perception pass (epic #29, from the 2026-08-26 core-assumption audit). Three sections change, none of them a wire-format change. **§9.2 (new) names capability rot**: self-containment holds in space — the bytes render, store, export and print in any browser, offline, forever — but NOT in time for modification, because `modify()` deliberately depends on a model the container recommends and never carries. The position is recorded rather than left as an unstated assumption: rendering is the promise and modification is the feature (a container with no reachable backend degrades to a document that still opens and is still editable by hand); the OpenAI-compatible wire shape plus two local backends is the hedge, not any one vendor; and `rwa upgrade` is the migration path for anything a shipped container cannot absorb. The old §9.2 becomes §9.3. **§10.3 is corrected again, in the better direction**: v0.17 replaced a fiction ("a BroadcastChannel soft lock exists") with an honest "there is no detection and no warning", and detection now exists. Every write to `rwa_doc` broadcasts a content hash on a per-container channel; a stale tab raises a persistent bar and, if it never received the message, re-checks against IndexedDB on foreground. Delivery between two `file://` tabs was verified, not assumed — `file://` pages are opaque origins, and the pre-existing `runtime.db` fan-out that already used BroadcastChannel and called itself cross-tab had never been checked across tabs. Coordination is still NOT built: the runtime warns, it does not arbitrate or merge, and v0.17's guidance that Web Locks (not BroadcastChannel alone) is the right primitive for the arbitration half stands unchanged — which is exactly why BroadcastChannel is used here for notification only. Also shipped in this pass, without spec-surface change: a post-render layout probe (deterministic, advisory, silent where there is no layout engine), a document size meter against the edit budget measured on the virtualized form, complete failure-hint coverage for the retry loop, `<meta name="rwa-origin">` provenance for network-fetched content, and `rwa doctor`. Verified: root 57 files / 1690 assertions, CLI 613, service 108/108, conformance 86/86, browser lane 14/14 + print lane 21/21.*
 
 *Spec version 0.17 — §10.3 corrected; no behaviour change. The section described a `BroadcastChannel` soft lock in the present tense — other tabs detecting it and opening read-only with a "take over" affordance — and no such mechanism has ever existed in the runtime (`navigator.locks` and any lock channel are absent from the seed; the only `BroadcastChannel` uses are `runtime.db` pub/sub and `runtime.bus`). A design intent had been written as shipped behaviour. §10.3 now states what actually happens (shared `DOC_UUID` means one IndexedDB, last write wins, undo stacks diverge, two FSA saves can interleave and silently overwrite), why the §11.2 boot reconciliation does not cover it (it compares the file against IndexedDB at open time and cannot see a second tab), practical guidance (do not edit the same container in two tabs — there is no detection and no warning), and what to reach for if it is ever built (Web Locks, not `BroadcastChannel` alone, which offers neither atomicity nor leader election — subject to verifying secure-context availability under `file://`). Every other multi-tab statement in the repository was already honest, including `rwa-edit-spec.md` §"single-tab concurrency" and the user-facing `service/public/build-skill.md`; the canonical spec was the sole outlier. Filed and closed as [#6](https://github.com/ikangai/rewritable/issues/6); the class of defect is tracked by [#7](https://github.com/ikangai/rewritable/issues/7).*
 
