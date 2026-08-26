@@ -17,7 +17,7 @@
 <meta http-equiv="Content-Security-Policy" content="script-src 'unsafe-inline' blob:; worker-src blob:; object-src 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="rwa-bootstrap" content="0.9">
-<meta name="rwa-seed" content="6e2aa52a6266">
+<meta name="rwa-seed" content="ebd597b1d129">
 <title>re-writeable</title>
 <style>
 /* Palette + chrome modeled on playground.ikangai.com — neutral grayscale,
@@ -1466,6 +1466,10 @@ function renderDoc(html) {
   if (PRODUCT_KIND === 'workspace' && typeof renderWorkspacePresence === 'function') {
     renderWorkspacePresence();
   }
+  // #21 — the loop's first sense: measure the page that was just painted.
+  // Last, so it sees the final mounted state (view render, restored form state,
+  // re-run scripts); advisory, so nothing above it depends on the result.
+  rwaProbeRender(m);
 }
 
 // ─── Workspace presence over runtime.bus ─────────────────────────────
@@ -2439,6 +2443,66 @@ function showQuotaWarning(usedMB, quotaMB) {
 }
 function clearQuotaWarning() {
   document.querySelector('.rwa-lens-toast[data-kind="quota-warn"]')?.remove();
+}
+
+// ─── Post-render layout probe (#21) ─────────────────────────────────
+// The loop's first sense. Every gate between an instruction and a commit reads
+// STRINGS — anchors, tag shape, size caps, frozen zones — and renderDoc runs
+// after the commit has already landed, with its outcome feeding back nowhere.
+// So the agent edits a document it cannot look at, and an edit that parses
+// perfectly and lays out wrong stays invisible until a person sees it.
+//
+// Deliberately:
+//   * DETERMINISTIC — geometry only, never a model call (Rule 5).
+//   * ADVISORY — never blocks a commit, never touches rwa_doc, never throws.
+//   * SILENT WHEN IT CANNOT SEE — jsdom reports every box as 0x0, so an
+//     environment without layout must produce NO findings rather than a page of
+//     false ones.
+//
+// It measures the one thing a browser answers exactly: does the content overflow
+// horizontally. It deliberately does NOT predict PAPER from screen layout —
+// print rules re-flow the document (cells wrap, tables and images cap), so a
+// screen-overflowing element frequently prints fine. Guessing would manufacture
+// exactly the false alarms #23 and #24 were about. Paper is measured properly,
+// in the print lane, against a real printable box.
+const RWA_OVERFLOW_SLACK = 2; // px — sub-pixel rounding is not an overflow
+function rwaClearLayoutNote() {
+  document.querySelector('.rwa-lens-toast[data-kind="layout-warn"]')?.remove();
+}
+function rwaProbeRender(mount) {
+  try {
+    if (!mount || typeof mount.getBoundingClientRect !== 'function') return;
+    // No layout engine (jsdom), detached, or hidden — measure nothing, say
+    // nothing. A probe that reports when it cannot see is worse than no probe.
+    const box = mount.getBoundingClientRect();
+    if (!box.width || !mount.clientWidth) { rwaClearLayoutNote(); return; }
+    const limit = mount.clientWidth + RWA_OVERFLOW_SLACK;
+    if (mount.scrollWidth <= limit) { rwaClearLayoutNote(); return; }
+    // Name the widest offender: "something overflows" is a mood, "the table
+    // overflows by 340px" is something the next instruction can act on. Only
+    // walked when an overflow already exists, so the common path stays two
+    // property reads.
+    // Widest wins, and an ancestor may legitimately beat the child that caused it
+    // (a padded wrapper is wider than the element overflowing inside it). Chasing
+    // the innermost culprit was tried and dropped: "deepest" picks a <tr> over the
+    // <table> that is the actionable unit, and the extra machinery bought nothing
+    // the pixel figure below does not already convey.
+    let worst = null, worstW = 0;
+    mount.querySelectorAll('*').forEach(el => {
+      const w = el.scrollWidth;
+      if (w > limit && w > worstW) { worstW = w; worst = el; }
+    });
+    let t = document.querySelector('.rwa-lens-toast[data-kind="layout-warn"]');
+    if (!t) {
+      t = document.createElement('div');
+      t.className = 'rwa-lens-toast';
+      t.setAttribute('data-kind', 'layout-warn');
+      document.body.appendChild(t);
+    }
+    const over = Math.round(mount.scrollWidth - mount.clientWidth);
+    const what = worst ? (worst.tagName.toLowerCase() + (worst.id ? '#' + worst.id : '')) : 'content';
+    t.textContent = `${what} runs ${over}px past the page — it will be cut off or scroll sideways`;
+  } catch (_) { /* advisory only — a probe must never break a render */ }
 }
 
 // #24 — the document's own size budget, which had no meter at all. Images warn

@@ -279,6 +279,43 @@ try {
     check('.print-keep avoids splitting across pages', m.breakInside === 'avoid');
   }
 
+  console.log('\n== P6: the post-render layout probe actually measures (#21) ==');
+  {
+    // jsdom proves the probe stays SILENT with no layout engine (tests/doc-budget.mjs);
+    // only a real engine can prove it SPEAKS when there is something to see. Both
+    // halves are needed — a probe that never fires passes the silence test forever.
+    await page.goto(urls.card);
+    await page.eval(() => new Promise((r) => setTimeout(r, 900)));
+    const quiet = await page.eval(() =>
+      !document.querySelector('.rwa-lens-toast[data-kind="layout-warn"]'));
+    check('a well-behaved document raises no layout note', quiet === true);
+
+    // Re-render with content that genuinely cannot fit, through the same path a
+    // commit uses, and let the probe run on the result.
+    const noted = await page.eval(async () => {
+      // Anchor on TEXT, not on the opening tag: boot blesses every anchorable
+      // block with a data-rwa-id, so `<p id="probe">` no longer exists verbatim
+      // in the stored document.
+      await window.runtime.applyEnvelope({
+        version: 'rwa-edit/1',
+        edits: [{
+          find: 'Quarterly figures are reconciled against the ledger before publication.',
+          replace: '<span id="toowide" style="display:inline-block;width:3000px"></span>Quarterly figures are reconciled against the ledger before publication.',
+        }],
+      }, { surface: 'probe-test' });
+      await new Promise((r) => setTimeout(r, 400));
+      const t = document.querySelector('.rwa-lens-toast[data-kind="layout-warn"]');
+      return t ? t.textContent : null;
+    });
+    check('content wider than the page is reported after the commit renders',
+      typeof noted === 'string' && /past the page/.test(noted));
+    // Names an element and quantifies the overflow, so the next instruction has
+    // something to act on rather than a mood.
+    check('the note names an element and how far past the page it runs',
+      typeof noted === 'string' && /^[a-z]+(#[\w-]+)? runs \d+px past the page/.test(noted));
+    if (noted) console.log('       ' + noted);
+  }
+
   console.log('\n== P5: printToPDF smoke — the document still prints at all ==');
   {
     // Deliberately a smoke check, not a measurement. See the header: headless

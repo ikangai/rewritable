@@ -183,6 +183,23 @@ const imgDoc = await boot('<article><p>one line of prose</p><img src="' + dataUr
 check('a document that is mostly image bytes is NOT warned (the cap is on the virtualized form)',
   meter(imgDoc.window) === null);
 
-for (const t of [small, big, imgDoc]) { try { t.window.close(); } catch (_) { /* best effort */ } }
+// ── The render probe must stay QUIET where it cannot see (#21) ─────────────
+// jsdom has no layout engine: every box measures 0x0. A probe that reports
+// findings there would fire on every document in every test in this suite, and
+// the noise would be indistinguishable from a real signal. Silence in the
+// absence of layout is the contract, and it is only assertable here — the
+// browser lane, by construction, always has layout.
+console.log('\n== C: the render probe is silent without a layout engine ==');
+const probeNote = (w) => w.document.querySelector('.rwa-lens-toast[data-kind="layout-warn"]');
+check('an ordinary document raises no layout note in jsdom', probeNote(small.window) === null);
+const wide = await boot('<article><p>prose</p><table><tbody><tr>' +
+  Array.from({ length: 12 }, (_, i) => `<td style="white-space:nowrap">REF-${i}-0123456789ABCDEF</td>`).join('') +
+  '</tr></tbody></table></article>');
+check('even a deliberately over-wide table raises none (no layout to measure)',
+  probeNote(wide.window) === null);
+check('the container still booted normally with the probe in the render path',
+  typeof wide.window.runtime?.applyEnvelope === 'function');
+
+for (const t of [small, big, imgDoc, wide]) { try { t.window.close(); } catch (_) { /* best effort */ } }
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

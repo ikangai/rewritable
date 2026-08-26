@@ -250,3 +250,48 @@ a `data-rwa-id`. Same bytes as ten long paragraphs, wrong shape: 1.2 s after the
 fix.
 
 Green: `tests/doc-budget.mjs` 43/43 (new).
+
+---
+
+## #21 — R2: the post-commit render probe
+
+**Done. The loop's first sense — and the first one I deliberately kept narrow.**
+
+Every gate between an instruction and a commit reads strings. `renderDoc` runs
+*after* the commit has landed and its outcome feeds back nowhere, so the agent
+edits a document it cannot look at. This takes the first measurement from the
+rendered page: after the mount is final, does content overflow horizontally, and
+by how much, and which element.
+
+Three properties it holds on purpose:
+
+- **Deterministic.** Geometry only, no model call (Rule 5).
+- **Advisory.** Never blocks a commit, never touches `rwa_doc`, never throws.
+- **Silent when it cannot see.** jsdom measures every box as 0×0. A probe that
+  reports where there is no layout would fire on every document in the suite,
+  and that noise is indistinguishable from signal. jsdom asserts the silence;
+  the browser lane asserts it speaks. Both halves are needed — a probe that
+  never fires passes the silence test forever.
+
+**What I refused to build.** The issue also asked for print-width overflow at
+runtime. I didn't, and the reason is the lesson from the two issues before it:
+print rules *re-flow* the document — cells wrap, tables and images cap — so a
+screen-overflowing element frequently prints fine. Predicting paper from screen
+layout would manufacture precisely the false alarms #23's 21547× overstatement
+and #24's image-bytes case were about. Paper is already measured properly, in
+the print lane, against a real printable box. A cheap wrong signal is worse than
+no signal, and this probe's whole value is that people believe it.
+
+**One design I tried and dropped.** The first version named the *deepest*
+overflowing element, on the theory that the innermost is the culprit. It isn't
+reliably: a padded wrapper is genuinely wider than the element overflowing
+inside it, and "deepest" picks a `<tr>` over the `<table>` that is the
+actionable unit. Reverted to widest-wins and let the pixel figure carry the
+information:
+
+```
+div runs 2359px past the page — it will be cut off or scroll sideways
+```
+
+Green: root 55 files / 1643 assertions · browser print lane 21/21 · CLI 613 ·
+conformance 86/86 · browser lane 14/14.
