@@ -33,6 +33,11 @@ const refs = [
   { path: path.join(repoRoot, 'service', 'public', 'ai', 'carriers', 'translator.intelligence.html'), file: 'translator.intelligence.html', kind: 'skill-host' },
   { path: path.join(repoRoot, 'service', 'public', 'ai', 'carriers', 'presentation-coach.intelligence.html'), file: 'presentation-coach.intelligence.html', kind: 'skill-host' },
   { path: path.join(repoRoot, 'service', 'public', 'ai', 'carriers', 'playful-rewriter.intelligence.html'), file: 'playful-rewriter.intelligence.html', kind: 'skill-host' },
+  // The two ADVISOR carriers (#26). Same discipline as the roles above — the
+  // signed record is preserved, so a seed change re-bootstraps the carrier
+  // without invalidating its signature.
+  { path: path.join(repoRoot, 'service', 'public', 'ai', 'carriers', 'print-aware.intelligence.html'), file: 'print-aware.intelligence.html', kind: 'skill-host' },
+  { path: path.join(repoRoot, 'service', 'public', 'ai', 'carriers', 'house-style.intelligence.html'), file: 'house-style.intelligence.html', kind: 'skill-host' },
 ];
 
 const seed = fs.readFileSync(seedPath, 'utf8');

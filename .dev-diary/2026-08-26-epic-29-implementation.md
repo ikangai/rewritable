@@ -343,3 +343,55 @@ and not a release.
 
 Green: `tests/provenance.mjs` 12/12 (new) · root 56 files / 1655 assertions ·
 CLI 613 · service 108/108 · conformance 86/86.
+
+---
+
+## #26 — R8: the two advisor carriers
+
+**Done. Two signed intelligences, 35 assertions, zero new runtime machinery.**
+
+This is the user-facing half of the aspect-guardian story, and it needed no new
+mechanism at all — the I-E blended-overlay machinery (verified-only, capped at 3,
+ephemeral, appended as a subordinate prompt block) already shipped. What was
+missing was content: advisors people can actually drop on.
+
+**print-aware** teaches the four-class print vocabulary, `<thead>` for repeating
+headers, the warning against faking running headers with `position:fixed`, and
+why one over-wide element ruins a whole sheet. That last paragraph is the
+2026-08-26 print bug, written as guidance — the same defect #19 now gates in CI,
+told to the model before it makes the mistake rather than caught after.
+
+**house-style** is the direct answer to blindspot B2 (trajectory drift): keep
+one h1 and never skip a level, prefer editing what exists to adding alongside
+it, don't add a style rule for a selector used once, remove classes when their
+content goes, and match the document's existing voice rather than imposing your
+own. It is the prose form of the coherence dimensions #22 measures.
+
+**The design call worth recording: neither advisor recommends a model.** All
+five existing gallery entries do. An advisor layers on top of whichever AI is
+already driving the document, and the *primary* owns the model choice — so a
+carrier that both advises and pushes a model would silently retune the
+document's main editor as a side effect of adding a second opinion. The gallery
+badge says so ("advisor · layers on your main AI") and a test pins it, because
+"we forgot to set a model" and "we deliberately set none" look identical in a
+file.
+
+**A test that protects more than it was written for.** `tests/ai-gallery.mjs`
+verifies the actual Ed25519 signature of *every* carrier in the gallery, not
+just the two new ones. Carriers are rewritables, so `regenerate-refs` re-bootstraps
+them on every seed change, and that regeneration must preserve the signed record
+byte-for-byte. If it ever stopped doing so the carrier would still open, render
+and download perfectly — and simply fail to verify on the receiving end. Silent,
+and visible only to the person who trusted it. That is the worst failure shape a
+trust artefact has, and until now nothing checked for it.
+
+It also cross-checks that print-aware teaches classes the seed's print CSS
+actually defines — the `tests/print.mjs` trap one step further out, since a
+rename would otherwise leave this carrier teaching dead classes to every
+document it touches.
+
+Verified the new carriers with `rwa doctor`, shipped an hour earlier in #23. The
+private keys stayed in a scratch directory; nothing key-shaped is in the tree.
+
+Green: `tests/ai-gallery.mjs` 35/35 (new) · root 57 files / 1690 assertions ·
+service 108/108.
