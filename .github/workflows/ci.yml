@@ -144,6 +144,15 @@ jobs:
         run: node tests/browser/scale.mjs
         env:
           REQUIRE_BROWSER: '1'
+      # Paged media (#19). Print defects have reached real users three times and were each fixed
+      # and verified BY HAND with printToPDF; tests/print.mjs pins the CSS and prompt as text,
+      # which proves the rules are spelled right and never that paper comes out right. This
+      # measures layout in the real printable box. Each fix pin carries a negative control that
+      # must fail the same measurement, so "no overflow" can never quietly mean "detector broken".
+      - name: Print lane
+        run: node tests/browser/print.mjs
+        env:
+          REQUIRE_BROWSER: '1'
 
   benchmark:
     name: Conformance + fidelity (stub)
