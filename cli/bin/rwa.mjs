@@ -56,6 +56,15 @@ Usage:
                               baseline, frozenZones, …, doc}.
                               Exit 2 on a non-rewritable file — a clean
                               "is this a rewritable?" probe.
+  rwa doctor <path>           offline, read-only health check: frozen-zone
+                              integrity, size headroom, orphaned rwa-asset
+                              image tokens, <script>/<style> tag balance,
+                              reserved-id/duplicate-block-id hygiene, and
+                              seed freshness. Never writes. Exit 0 (clean),
+                              5 (an error-severity finding exists), or the
+                              usual 1/2 usage/file errors. --json emits
+                              {ok, uuid, kind, findings:[{id, severity,
+                              title, detail, …}]}.
   rwa ls [paths...]           list the rewritables in a folder (or file list;
                               default: ./), one line each: kind · title ·
                               affordances. The "what are all these?" counterpart
@@ -173,6 +182,9 @@ Flags:
                  (doc) emit the editing-contract object on stdout instead of
                  the raw body; on failure, the \`{code, subcode, details}\`
                  object goes to stderr.
+                 (doctor) emit the {ok, uuid, kind, findings} object on
+                 stdout instead of the plain-text report; failures use the
+                 same \`{code, subcode, details}\` stderr shape.
   --backend <n>  (edit instruction path / skin --l1) backend name. One of:
                  openrouter (default), ollama, lmstudio, atomic. Falls back
                  to \$RWA_BACKEND if unset.
@@ -246,6 +258,7 @@ function codeName(n) {
     case 2: return 'file_error';
     case 3: return 'envelope_error';
     case 4: return 'agent_error';
+    case 5: return 'doctor_findings';
     default: throw new Error(`codeName: unexpected exit code ${n}`);
   }
 }
@@ -690,6 +703,56 @@ function detectProductKind(fileText) {
         // The byte-exact path is --json's `doc` field.
         process.stdout.write(info.doc.endsWith('\n') ? info.doc : info.doc + '\n');
       }
+      return;
+    }
+
+    // `rwa doctor <path>` — standalone, offline, READ-ONLY health check
+    // (issue #23). Runs the same validation battery apply-edits.mjs enforces
+    // as a side effect of `rwa edit`, without writing anything, so a
+    // received/hand-edited/years-old file can be asked "is this valid?"
+    // directly. Exit 0 (clean) / 5 doctor_findings (an error-severity finding
+    // exists) / 2 file_error (mirrors `rwa doc`) / 1 usage_error.
+    if (verb === 'doctor') {
+      const jsonMode = rest.includes('--json');
+      const filePath = rest.find(a => !a.startsWith('-'));
+      const emitDoctor = (payload) => {
+        if (jsonMode) {
+          process.stderr.write(JSON.stringify(payload) + '\n');
+        } else {
+          const parts = [payload.code, payload.subcode].filter(Boolean);
+          let line = 'rwa doctor: ' + parts.join('/');
+          if (payload.details && Object.keys(payload.details).length) {
+            line += ' ' + JSON.stringify(payload.details);
+          }
+          process.stderr.write(line + '\n');
+        }
+      };
+      if (!filePath) {
+        emitDoctor({ code: 'usage_error', subcode: 'missing_file_arg' });
+        process.exitCode = 1;
+        return;
+      }
+      const { diagnose, formatReport } = await import('../src/doctor.mjs');
+      let result;
+      try {
+        result = await diagnose(filePath);
+      } catch (e) {
+        if (e && typeof e.exitCode === 'number') {
+          emitDoctor({ code: codeName(e.exitCode), subcode: e.subcode, details: e.details });
+          process.exitCode = e.exitCode;
+          return;
+        }
+        throw e;
+      }
+      // The report itself is not an error surface — it's the tool's normal
+      // output, whether the container is clean or not. stdout stays reserved
+      // for the report; errors above (usage/file) are the only stderr path.
+      if (jsonMode) {
+        process.stdout.write(JSON.stringify(result) + '\n');
+      } else {
+        process.stdout.write(formatReport(filePath, result) + '\n');
+      }
+      if (!result.ok) process.exitCode = 5;
       return;
     }
 

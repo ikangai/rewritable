@@ -31,6 +31,7 @@ rwa edit notes.html --plan plan.json                # envelope from a file
 
 rwa doc notes.html                                  # print the editable body
 rwa doc notes.html --json                           # read + edit-contract, one call
+rwa doctor notes.html                               # offline read-only health check (frozen zones, size, asset tokens, …)
 rwa workspace create research                       # → research/rwa-index.html
 rwa workspace sync research                         # refresh the index from sibling rewritables
 

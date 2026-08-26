@@ -161,3 +161,92 @@ supported" — true for coordination, no longer true for detection.
 
 Green: `tests/cross-tab.mjs` 16/16 (new) · root 54 files / 1597 assertions ·
 CLI 595 · conformance 86/86 · browser lane 14/14 + print 18/18.
+
+---
+
+## #23 — R5: `rwa doctor`
+
+**Done. 18 CLI tests. Delegated the build, kept the review — and the review is
+what earned its keep.**
+
+The validation battery only ever ran as a side effect of an actual `rwa edit`,
+so there was no way to ask "is this container currently valid?" of a received,
+hand-edited, or years-old file without risking a write. `cli/src/apply-edits.mjs`
+already held the machinery; `doctor` just needed to point it at a document that
+never changes underneath it.
+
+Nine checks, each ALWAYS emitting a finding (info/warn/error) so a `--json`
+consumer can tell "ran and passed" from "didn't run": frozen-marker termination,
+frozen-zone inventory, malformed `data-rwa-frozen` zones, `<script>`/`<style>`
+balance, size headroom, unbacked `rwa-asset` tokens, reserved runtime id,
+duplicate `data-rwa-id`, seed freshness. Exit 0 clean (warnings fine), 5 on any
+error finding, 1/2 for usage/file errors as `rwa doc` does.
+
+**The review caught a real bug, and a well-disguised one.** `size_headroom`
+measured `doc.length` — the raw document — while its comment stated confidently
+that this was "the SAME number that would trip target_size_exceeded". It isn't.
+`apply-edits.mjs` says so at the throw site itself: the cap is applied to the
+*virtual* form, "so image bytes never count against the text budget". Measured:
+
+```
+raw        : 1572941  → OVER CAP → error, exit 5   (the bug)
+virtualized: 73       → info, exit 0               (correct)
+ratio      : 21547x overstatement
+```
+
+A document with a megabyte of embedded images would have been failed by the
+health check while its real edit budget was untouched — a false alarm that reads
+as *delete your content*. One-line fix (`virtualizeImages` was already imported
+two checks below), plus the regression test the delegated suite didn't have.
+
+Worth naming: this is the **same mistake I had avoided an hour earlier** in
+#24's size meter, where I stopped specifically to check which form the cap
+applies to. The confident comment is what makes it dangerous — a reviewer
+skimming for "does it measure the right thing" reads the comment, agrees, and
+moves on. Delegation didn't cause the bug so much as it moved where the bug
+could hide.
+
+Also hardened `seed_freshness`: it was the one check reaching outside the file,
+and an unresolvable seed threw straight out of `diagnose()`. A health check that
+crashes instead of reporting is the failure mode the verb exists to end — now a
+warn finding, with every other check still reported.
+
+Green: `cli/tests/doctor.test.mjs` 18/18 · CLI suite 613.
+
+---
+
+## #24 — R6: hints for hintless failure codes + a document size meter
+
+**Done. 43 assertions. The audit said six codes; the seed says nine.**
+
+Two halves of the same complaint: when an edit fails near a limit, nothing tells
+anyone anything useful.
+
+**The hints.** `failureToToolResult` hands the model a code, some context, and —
+if one exists — a hint. Eight codes the validation battery could already throw
+had no entry, so the model got a bare code and burned its remaining attempts
+guessing. `target_size_exceeded` was the worst: three retries at a size that
+could never succeed. The audit named six; mapping every `RwaEditError` throw site
+to its enclosing function found eight in the battery plus `unknown_tool` in tool
+dispatch — nine.
+
+Rather than pin those nine (stale the moment a tenth appears), the test derives
+the requirement from the seed: every code thrown by the battery must have a
+hint, and every code that ISN'T must be listed with a reason. A new code lands
+in neither list and fails, forcing an explicit decision. Same shape as
+`workflow-prompt-parity`. It also gates the hand-mirrored CLI copy, which has no
+`cmp` gate — and immediately caught all nine missing there.
+
+**The meter.** Images warn at 5 MB of container, storage warns at 80% of quota;
+the 1 MB text budget the contract actually enforces had nothing. Measured on the
+virtualized form for the reason #23 proves the hard way — a document that is
+mostly image bytes has all its text budget intact and must not be warned. That
+case is now an explicit assertion.
+
+**A test that was 250× too slow.** The first draft built the near-cap fixture
+from 12,000 short paragraphs and ran past 300 s. Byte count is what the budget
+measures, but *block count* is what boot pays for — every anchorable block gets
+a `data-rwa-id`. Same bytes as ten long paragraphs, wrong shape: 1.2 s after the
+fix.
+
+Green: `tests/doc-budget.mjs` 43/43 (new).

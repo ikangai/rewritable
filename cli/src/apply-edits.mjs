@@ -61,7 +61,11 @@ export class RwaEditError extends Error {
 // these are measured on the VIRTUAL (rwa-asset token) form when the caller
 // virtualizes — a text budget, never a pixel budget (rwa-edit-spec.md §19).
 const MAX_REPLACE = 8 * 1024;
-const MAX_DOC = 1024 * 1024;
+// Exported so `rwa doctor` can report size headroom against the SAME cap
+// applyEdits enforces (rather than re-declaring a shadow constant that could
+// drift). MAX_REPLACE stays unexported — it's a per-edit cap, not meaningful
+// to a static single-document health check.
+export const MAX_DOC = 1024 * 1024;
 // Real-bytes whole-document cap for the image paths, where MAX_DOC measures the
 // VIRTUAL (token) form. Mirrors the GUI's container budget (RWA_IMG.FILE_STOP);
 // authoritative server-side on the hosted /modify path (rwa-edit-spec.md §19).
@@ -396,8 +400,10 @@ function editCrossesFrozenZone(doc, find, zones) {
 }
 
 // Void HTML elements have no closing tag, so the depth-matcher below must not
-// scan to EOF looking for a close that never comes.
-const VOID_ELEMENTS = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img',
+// scan to EOF looking for a close that never comes. Exported so `rwa doctor`
+// can tell a self-contained data-rwa-frozen element (fine, no close expected)
+// from a genuinely unterminated one, without re-deriving the HTML void list.
+export const VOID_ELEMENTS = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img',
   'input', 'link', 'meta', 'param', 'source', 'track', 'wbr']);
 
 // Index just past the matching `</tag>` for an element opened at `from`,
@@ -407,8 +413,11 @@ const VOID_ELEMENTS = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img'
 // for the non-void container tags this is called with (void tags are guarded
 // before the call), HTML ignores the trailing slash and treats it as an open.
 // (A prior CLI deviation exempted `<tag/>`, diverging from the seed on
-// malformed self-closing same-tag nesting — removed for parity.)
-function matchingCloseEnd(doc, tag, from) {
+// malformed self-closing same-tag nesting — removed for parity.) Exported so
+// `rwa doctor` can detect an unterminated data-rwa-frozen element (the same
+// depth-tracked match dataRwaFrozenSnapshot uses internally) without
+// reimplementing the tag-matching logic.
+export function matchingCloseEnd(doc, tag, from) {
   const tagRe = new RegExp('<(/?)' + tag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b[^>]*>', 'gi');
   tagRe.lastIndex = from;
   let depth = 1, t;
