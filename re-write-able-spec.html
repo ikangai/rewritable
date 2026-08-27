@@ -37,7 +37,7 @@
 <meta http-equiv="Content-Security-Policy" content="script-src 'unsafe-inline' blob:; worker-src blob:; object-src 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="rwa-bootstrap" content="0.9">
-<meta name="rwa-seed" content="29a888280be0">
+<meta name="rwa-seed" content="d53b602832ba">
 <!-- Where this container's content came from, when it came from somewhere. Empty
      for a container the user authored. Stamped at emission by `rwa clone` (the
      source URL), `rwa import` (`import:<file>`) and `rwa create --from/--data`
@@ -10371,7 +10371,7 @@ function runtimeDescribe() {
     // Substrate-universals — true of every container, NOT type affordances (spec
     // §2). Surfaced so a reader can see "what can be done with me"; history is
     // undo-only — there is no redo (re-write-able-spec Invariant 7).
-    baseline: { edit: ['lens'], tools: ['apply_dsl_plan', 'apply_edits', 'replace_document'], export: ['html', 'print'], history: ['undo'] },
+    baseline: { edit: ['command', 'slash', 'inline', 'selection'], tools: ['apply_dsl_plan', 'apply_edits', 'replace_document'], export: ['html', 'print'], history: ['undo'] },
     activeView: activeView ? activeView.name : null,
     // I13 (v0.9 §14) — opt-in account identity, LIVE-only (never stamped into the file). null unless
     // the user linked an account this session (sessionStorage rwa_account); machine-local is the default.

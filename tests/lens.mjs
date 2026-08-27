@@ -183,7 +183,7 @@ console.log('\n== Test L1.4: source-position map lifetime ==');
         id: 'm1', type: 'function',
         function: { name: 'apply_edits', arguments: JSON.stringify({
           version: 'rwa-edit/1',
-          edits: [{ find: 'something for you.', replace: 'something for you.</p>\n<p>Added.' }]
+          edits: [{ find: 'drafted for you.', replace: 'drafted for you.</p>\n<p>Added.' }]
         })}
       }]}}]
     })

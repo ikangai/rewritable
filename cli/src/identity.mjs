@@ -44,7 +44,9 @@ export const KIND_PROVIDERS = {
 // kernel-pure: a base document is []). `history` is undo-only — there is no redo
 // (re-write-able-spec Invariant 7).
 export const SUBSTRATE_BASELINE = Object.freeze({
-  edit: ['lens'],
+  // #41 — mirror of tools/self-description.mjs SUBSTRATE_BASELINE (see there
+  // for why `lens` is gone). Deep-equal pinned by cli/tests/identity.test.mjs.
+  edit: ['command', 'slash', 'inline', 'selection'],
   tools: ['apply_dsl_plan', 'apply_edits', 'replace_document'],
   export: ['html', 'print'],
   history: ['undo'],

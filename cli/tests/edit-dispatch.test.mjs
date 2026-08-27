@@ -145,10 +145,13 @@ test('plan path — find_not_found --json is self-correcting (closest + hint)', 
     await runRwa(['new', path]);
     const { extractInlineDoc } = await import('../src/seed.mjs');
     const body = extractInlineDoc(readFileSync(path, 'utf8'));
-    const real = 'Start writing, or ask the lens';
+    // Anchored on the starter doc's placeholder copy. #41 changed that copy
+    // (the docked lens is retired), so the phrase moved with it — this test is
+    // about self-correcting failures, not about the prose.
+    const real = 'Start writing, or press';
     assert.ok(body.includes(real), 'fixture must contain the anchor phrase');
 
-    const nearMiss = 'Start writing,  or ask the lens'; // double space — whitespace-only miss
+    const nearMiss = 'Start writing,  or press'; // double space — whitespace-only miss
     const envelope = JSON.stringify({ version: 'rwa-edit/1', edits: [{ find: nearMiss, replace: 'X' }] });
     const { code, stderr } = await runRwa(['edit', path, '--json'], { stdin: envelope });
     assert.equal(code, 3);

@@ -223,7 +223,7 @@ const ALIGNED_DECL_JSON = JSON.stringify({
     { kind: 'edit-surface', name: 'cell', label: 'Edit cells', provenance: 'first-party', surface: 'datatable:cell-edit', target: '#dt-data' },
     { kind: 'compute', name: 'total', label: 'Total', provenance: 'first-party', inputs: ['qty', 'unit_price'], output: 'total' },
   ],
-  baseline: { edit: ['lens'], tools: ['apply_dsl_plan', 'apply_edits', 'replace_document'], export: ['html', 'print'], history: ['undo'] },
+  baseline: { edit: ['command', 'slash', 'inline', 'selection'], tools: ['apply_dsl_plan', 'apply_edits', 'replace_document'], export: ['html', 'print'], history: ['undo'] },
 });
 const declBody = (frozen) =>
   `<article><h1>Budget</h1>\n<script type="application/rwa-affordances+json" id="rwa-affordances"${frozen ? ' data-rwa-frozen' : ''}>${ALIGNED_DECL_JSON}</script>\n<div id="dt-data">[]</div></article>`;

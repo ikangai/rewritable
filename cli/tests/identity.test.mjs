@@ -83,7 +83,10 @@ test('buildSelfDescription assembles the full self-description/1 object', () => 
   ]);
   assert.deepEqual(self.frozenZones, ['sig']);
   assert.deepEqual(self.baseline, {
-    edit: ['lens'],
+    // #41 — the literal is deliberate belt-and-braces beside the deepEqual
+    // against the oracle: it catches BOTH sides being changed together by
+    // accident, which a mirror test alone cannot.
+    edit: ['command', 'slash', 'inline', 'selection'],
     tools: ['apply_dsl_plan', 'apply_edits', 'replace_document'],
     export: ['html', 'print'],
     history: ['undo'],   // undo-only — there is no redo (Invariant 7)
@@ -113,7 +116,7 @@ const ALIGNED_DECL = {
     { kind: 'edit-surface', name: 'cell', label: 'Edit cells', provenance: 'first-party', surface: 'datatable:cell-edit', target: '#dt-data' },
     { kind: 'compute', name: 'total', label: 'Total', provenance: 'first-party', inputs: ['qty', 'unit_price'], output: 'total' },
   ],
-  baseline: { edit: ['lens'], tools: ['apply_dsl_plan', 'apply_edits', 'replace_document'], export: ['html', 'print'], history: ['undo'] },
+  baseline: { edit: ['command', 'slash', 'inline', 'selection'], tools: ['apply_dsl_plan', 'apply_edits', 'replace_document'], export: ['html', 'print'], history: ['undo'] },
 };
 // tesla's CURRENT (pre-align) shape: `schema` instead of the `rwa` discriminator.
 const NONCONFORMING_DECL = (() => { const { rwa, ...rest } = ALIGNED_DECL; return { schema: rwa, ...rest }; })();
