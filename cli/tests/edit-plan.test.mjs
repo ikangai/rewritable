@@ -16,6 +16,15 @@ import { replaceInlineDoc, extractInlineDoc } from '../src/seed.mjs';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const RWA_BIN = join(__dirname, '..', 'bin', 'rwa.mjs');
 
+// #32: the CLI commit path now backfills data-rwa-id, so block open tags carry
+// an attribute they did not before. Where a test asserts on exact document bytes
+// (rather than on the content of a block), strip the ids first: the assertion's
+// subject was always the CONTENT transformation, never the runtime's own
+// bookkeeping. Which blocks get an id, and that frozen zones are skipped, is
+// pinned in cli/tests/block-ids.test.mjs and tests/block-id-parity.mjs.
+const stripIds = (s) => s.replace(/ data-rwa-id="[a-z2-7]{8}"/g, '');
+
+
 function mkFixture(inlineDocBody = '<article><h1>Old</h1></article>') {
   const dir = mkdtempSync(join(tmpdir(), 'rwa-edit-test-'));
   const path = join(dir, 'test.html');
@@ -38,8 +47,8 @@ test('apply_edits envelope applies and writes', async () => {
     assert.equal(result.exitCode, 0);
     const written = readFileSync(fx.path, 'utf8');
     const body = extractInlineDoc(written);
-    assert.ok(body.includes('<h1>New</h1>'));
-    assert.ok(!body.includes('<h1>Old</h1>'));
+    assert.match(body, /<h1[^>]*>New<\/h1>/);
+    assert.doesNotMatch(body, /<h1[^>]*>Old<\/h1>/);
   } finally { fx.cleanup(); }
 });
 
@@ -53,7 +62,7 @@ test('apply_dsl_plan envelope routes through compiler and applies', async () => 
     const result = await applyPlan(fx.path, envelope);
     assert.equal(result.exitCode, 0);
     const body = extractInlineDoc(readFileSync(fx.path, 'utf8'));
-    assert.ok(body.includes('<h1>New</h1>'));
+    assert.match(body, /<h1[^>]*>New<\/h1>/);
   } finally { fx.cleanup(); }
 });
 
@@ -113,7 +122,7 @@ test('replace_document envelope swaps the whole doc', async () => {
     const result = await applyPlan(fx.path, envelope);
     assert.equal(result.exitCode, 0);
     const body = extractInlineDoc(readFileSync(fx.path, 'utf8'));
-    assert.equal(body, '<article><h1>Brand new</h1></article>');
+    assert.equal(stripIds(body), '<article><h1>Brand new</h1></article>');
   } finally { fx.cleanup(); }
 });
 

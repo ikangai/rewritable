@@ -444,12 +444,24 @@ test('byte-parity: /modify result equals the local seed/CLI apply of the same en
       const out = await res.json();
 
       const hostedBytes = readFileSync(join(srv.dataDir, 'r', id, 'current.html'), 'utf8');
-      assert.equal(hostedBytes, localBytes,
+      // #32: both doors backfill data-rwa-id, and ids come from a CSPRNG — two
+      // applies of the same envelope legitimately mint different ones. There is
+      // no shared RNG to inject across an HTTP boundary, so normalise the ids
+      // away and keep asserting what this test is FOR: the hosted door and the
+      // local door produce the same bytes for the same edit. That the two agree
+      // on WHICH blocks get an id is pinned in tests/block-id-parity.mjs.
+      const stripIds = (x) => x.replace(/ data-rwa-id="[a-z2-7]{8}"/g, '');
+      assert.equal(stripIds(hostedBytes), stripIds(localBytes),
         'hosted /modify produced byte-identical container to the local applyPlan');
       // And the returned doc body equals the local editable body (LF-canonical).
       const { extractInlineDoc } = await import(join(SERVICE, 'lib', 'seed.mjs'));
       const localBody = hosted.canonLF(extractInlineDoc(localBytes));
-      assert.equal(out.doc, localBody, 'returned doc equals the local apply body');
+      assert.equal(stripIds(out.doc), stripIds(localBody), 'returned doc equals the local apply body');
+      // Guard: the normalisation above must not be hiding an ABSENT backfill —
+      // the hosted door has to be assigning ids too, not merely matching by
+      // both sides doing nothing.
+      assert.match(hostedBytes, / data-rwa-id="[a-z2-7]{8}"/,
+        'the hosted door backfills block ids like every other commit path');
     } finally {
       rmSync(localDir, { recursive: true, force: true });
     }

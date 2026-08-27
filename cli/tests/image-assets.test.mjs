@@ -23,6 +23,34 @@ import {
 import { applyPlan, CliError } from '../src/edit.mjs';
 import { extractInlineDoc } from '../src/seed.mjs';
 
+// #32: the CLI commit path now backfills data-rwa-id, so block open tags carry
+// an attribute they did not before. Where a test asserts on exact document bytes
+// (rather than on the content of a block), strip the ids first: the assertion's
+// subject was always the CONTENT transformation, never the runtime's own
+// bookkeeping. Which blocks get an id, and that frozen zones are skipped, is
+// pinned in cli/tests/block-ids.test.mjs and tests/block-id-parity.mjs.
+const stripIds = (s) => s.replace(/ data-rwa-id="[a-z2-7]{8}"/g, '');
+
+// #32: stored block open tags now carry a data-rwa-id, so an anchor built from a
+// literal template no longer matches what is on disk. blockIn() lifts the block's
+// ACTUAL stored source out of the body — which is what a real caller does after
+// reading the document, and what these tests were always standing in for.
+const blockIn = (doc, needle) => {
+  const i = doc.indexOf(needle);
+  if (i < 0) throw new Error('blockIn: needle not in doc: ' + needle);
+  const open = doc.lastIndexOf('<', i);
+  const tag = doc.slice(open + 1).match(/^[a-zA-Z][a-zA-Z0-9]*/)[0];
+  const close = doc.indexOf('</' + tag + '>', i) + tag.length + 3;
+  return doc.slice(open, close);
+};
+const figIn = (doc, uri) => {
+  const i = doc.indexOf(uri);
+  const open = doc.lastIndexOf('<figure', i);
+  return doc.slice(open, doc.indexOf('</figure>', i) + '</figure>'.length);
+};
+
+
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const RWA = ['node', join(__dirname, '..', 'bin', 'rwa.mjs')];
 
@@ -54,7 +82,13 @@ async function imageFixture(uri = URI_A) {
   const env = JSON.stringify({ version: 'rwa-edit/1', doc: body, reason: 'fixture: image doc' });
   const w = await runRwa(['edit', path], { stdin: env });
   assert.equal(w.code, 0, 'fixture replace_document must succeed: ' + w.stderr);
-  return { dir, path, body };
+  // Read the body back rather than returning the string we sent (#32): the
+  // commit path backfills data-rwa-id, so what is STORED is not byte-identical
+  // to what was written. Anchors must be composed against the stored text — that
+  // is exactly the read-then-anchor cycle a real caller performs, and anchoring
+  // against a remembered pre-commit string is the mistake this now catches.
+  const stored = extractInlineDoc(readFileSync(path, 'utf8'));
+  return { dir, path, body: stored, sent: body };
 }
 
 // ── Unit: virtualize/expand parity with the seed ──
@@ -92,25 +126,27 @@ test('virtual apply: token-form move envelope expands to real bytes on disk', as
   const { dir, path, body } = await imageFixture(URI_BIG);
   try {
     const v = virtualizeImages(body);
-    const vfig = virtualizeWithMap(FIG(URI_BIG), v.assets);
+    const vfig = virtualizeWithMap(figIn(body, URI_BIG), v.assets);
+    const tail = blockIn(body, 'tail paragraph');
     const envelope = { version: 'rwa-edit/1', edits: [{
-      find: vfig + '\n<p>tail paragraph</p>',
-      replace: '<p>tail paragraph</p>\n' + vfig,
+      find: vfig + '\n' + tail,
+      replace: tail + '\n' + vfig,
     }] };
     await applyPlan(path, envelope, { virtualImages: true });
     const after = extractInlineDoc(readFileSync(path, 'utf8'));
-    assert.ok(after.includes('<p>tail paragraph</p>\n' + FIG(URI_BIG)), 'image moved with real bytes');
+    assert.ok(stripIds(after).includes('<p>tail paragraph</p>\n' + FIG(URI_BIG)), 'image moved with real bytes');
     assert.ok(!after.includes('rwa-asset:'), 'no token persisted');
   } finally { rmSync(dir, { recursive: true }); }
 });
 
 test('virtual apply: invented token rejects as unknown_asset_reference, file untouched', async () => {
-  const { dir, path } = await imageFixture();
+  const { dir, path, body } = await imageFixture();
   try {
     const beforeBytes = readFileSync(path, 'utf8');
+    const intro = blockIn(body, 'intro paragraph');
     const envelope = { version: 'rwa-edit/1', edits: [{
-      find: '<p>intro paragraph</p>',
-      replace: '<p>intro paragraph</p>\n<img src="rwa-asset:0badf00d" alt="ghost">',
+      find: intro,
+      replace: intro + '\n<img src="rwa-asset:0badf00d" alt="ghost">',
     }] };
     await assert.rejects(
       () => applyPlan(path, envelope, { virtualImages: true }),
@@ -123,11 +159,12 @@ test('virtual apply: invented token rejects as unknown_asset_reference, file unt
 // ── Raw envelope paths (piped / --plan): real bytes, fail-loud guard ──
 
 test('raw path: introducing a NEW rwa-asset token without bytes rejects (no silent broken image)', async () => {
-  const { dir, path } = await imageFixture();
+  const { dir, path, body } = await imageFixture();
   try {
+    const intro = blockIn(body, 'intro paragraph');
     const env = JSON.stringify({ version: 'rwa-edit/1', edits: [{
-      find: '<p>intro paragraph</p>',
-      replace: '<p>intro paragraph</p>\n<img src="rwa-asset:0badf00d" alt="ghost">',
+      find: intro,
+      replace: intro + '\n<img src="rwa-asset:0badf00d" alt="ghost">',
     }] });
     const { code, stderr } = await runRwa(['edit', path], { stdin: env });
     assert.equal(code, 3);
@@ -160,13 +197,14 @@ test('raw path: moving a PRE-EXISTING orphan token stays legal (pre-broken docs 
 test('rwa edit <instruction>: prompt carries tokens, commit restores bytes', async () => {
   const { dir, path, body } = await imageFixture(URI_BIG);
   const v = virtualizeImages(body);
-  const vfig = virtualizeWithMap(FIG(URI_BIG), v.assets);
+  const vfig = virtualizeWithMap(figIn(body, URI_BIG), v.assets);
+  const tail = blockIn(body, 'tail paragraph');
   const mock = await startMockBackend([{
     tool_calls: [{
       id: 'tc1', type: 'function',
       function: { name: 'apply_edits', arguments: JSON.stringify({
         version: 'rwa-edit/1',
-        edits: [{ find: vfig + '\n<p>tail paragraph</p>', replace: '<p>tail paragraph</p>\n' + vfig }],
+        edits: [{ find: vfig + '\n' + tail, replace: tail + '\n' + vfig }],
       }) },
     }],
   }]);
@@ -180,7 +218,7 @@ test('rwa edit <instruction>: prompt carries tokens, commit restores bytes', asy
     assert.ok(!userMsg.includes('data:image/'), 'prompt carries no pixels');
     assert.ok(userMsg.length < 20 * 1024, 'prompt stays small for a 200 KB image doc');
     const after = extractInlineDoc(readFileSync(path, 'utf8'));
-    assert.ok(after.includes('<p>tail paragraph</p>\n' + FIG(URI_BIG)), 'real bytes moved on disk');
+    assert.ok(stripIds(after).includes('<p>tail paragraph</p>\n' + FIG(URI_BIG)), 'real bytes moved on disk');
     assert.ok(!after.includes('rwa-asset:'));
   } finally {
     await mock.stop();
@@ -206,29 +244,31 @@ test('unknown_asset_reference hint is identical across seed and CLI', async () =
 // what lets a hosted image insert (replace ~200 KB) survive the 8 KB cap.
 
 test('virtualizeEnvelope: an EXPANDED ~200KB image-insert envelope applies (cap measures tokens)', async () => {
-  const { dir, path } = await imageFixture();          // doc has one URI_A figure already
+  const { dir, path, body } = await imageFixture();    // doc has one URI_A figure already
   try {
     // Insert a NEW (different) large image via a fully-expanded envelope, as the
     // hosted sink would POST it: the data URI lives in `replace`, far over 8 KB.
+    const tail = blockIn(body, 'tail paragraph');
     const envelope = { version: 'rwa-edit/1', edits: [{
-      find: '<p>tail paragraph</p>',
-      replace: '<p>tail paragraph</p>\n' + FIG(URI_BIG, 'new'),
+      find: tail,
+      replace: tail + '\n' + FIG(URI_BIG, 'new'),
     }] };
     assert.ok(envelope.edits[0].replace.length > 8 * 1024, 'fixture: replace is over the 8KB per-edit cap');
     await applyPlan(path, envelope, { virtualizeEnvelope: true });
     const after = extractInlineDoc(readFileSync(path, 'utf8'));
-    assert.ok(after.includes(FIG(URI_BIG, 'new')), 'new image landed with real bytes');
-    assert.ok(after.includes(FIG(URI_A)), 'pre-existing image preserved');
+    assert.ok(stripIds(after).includes(FIG(URI_BIG, 'new')), 'new image landed with real bytes');
+    assert.ok(stripIds(after).includes(FIG(URI_A)), 'pre-existing image preserved');
     assert.ok(!after.includes('rwa-asset:'), 'no tokens persisted');
   } finally { rmSync(dir, { recursive: true }); }
 });
 
 test('virtualizeEnvelope: raw path WITHOUT the opt still rejects the same envelope (8KB cap)', async () => {
-  const { dir, path } = await imageFixture();
+  const { dir, path, body } = await imageFixture();
   try {
+    const tail = blockIn(body, 'tail paragraph');
     const envelope = { version: 'rwa-edit/1', edits: [{
-      find: '<p>tail paragraph</p>',
-      replace: '<p>tail paragraph</p>\n' + FIG(URI_BIG, 'new'),
+      find: tail,
+      replace: tail + '\n' + FIG(URI_BIG, 'new'),
     }] };
     await assert.rejects(
       () => applyPlan(path, envelope), // no opts → real-byte caps apply
@@ -238,13 +278,14 @@ test('virtualizeEnvelope: raw path WITHOUT the opt still rejects the same envelo
 });
 
 test('virtualizeEnvelope: an expansion over 10MB is rejected (target_size_exceeded, expanded)', async () => {
-  const { dir, path } = await imageFixture();
+  const { dir, path, body } = await imageFixture();
   try {
     // A single data URI larger than the 10MB expanded-doc cap.
     const hugeUri = 'data:image/png;base64,' + 'QUJD'.repeat(3_600_000); // ~14.4 MB
+    const tail = blockIn(body, 'tail paragraph');
     const envelope = { version: 'rwa-edit/1', edits: [{
-      find: '<p>tail paragraph</p>',
-      replace: '<p>tail paragraph</p>\n<figure><img src="' + hugeUri + '" alt="huge"></figure>',
+      find: tail,
+      replace: tail + '\n<figure><img src="' + hugeUri + '" alt="huge"></figure>',
     }] };
     await assert.rejects(
       () => applyPlan(path, envelope, { virtualizeEnvelope: true }),
@@ -259,6 +300,6 @@ test('virtualizeEnvelope: a non-image edit is unaffected (expands to itself)', a
     await applyPlan(path, { version: 'rwa-edit/1', edits: [{ find: 'intro paragraph', replace: 'intro EDITED' }] },
       { virtualizeEnvelope: true });
     const after = extractInlineDoc(readFileSync(path, 'utf8'));
-    assert.ok(after.includes('intro EDITED') && after.includes(FIG(URI_A)));
+    assert.ok(after.includes('intro EDITED') && stripIds(after).includes(FIG(URI_A)));
   } finally { rmSync(dir, { recursive: true }); }
 });

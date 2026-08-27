@@ -87,8 +87,18 @@ test('vendored applyPlan edits a file identically to the CLI applyPlan', async (
     writeFileSync(cliPath, baseBytes, 'utf8');
     writeFileSync(svcPath, baseBytes, 'utf8');
 
-    const cliResult = await cliApply(cliPath, structuredClone(envelope));
-    const svcResult = await vendoredApply(svcPath, structuredClone(envelope));
+    // #32: the apply path now backfills data-rwa-id, and block ids are minted
+    // from a CSPRNG — so two runs over the same input legitimately differ. Hold
+    // randomness still on BOTH sides so this gate keeps measuring what it was
+    // written to measure (does the vendored pipeline behave identically?) rather
+    // than degenerating into a test of the RNG. Feeding both the same sequence
+    // makes the comparison stricter, not weaker: identical logic must now
+    // produce identical bytes, ids included.
+    let n = 0;
+    const rand = () => Buffer.from([0, 0, 0, 0, n++]);
+    const cliResult = await cliApply(cliPath, structuredClone(envelope), { rand });
+    n = 0;
+    const svcResult = await vendoredApply(svcPath, structuredClone(envelope), { rand });
 
     assert.equal(cliResult.exitCode, 0);
     assert.equal(svcResult.exitCode, 0);

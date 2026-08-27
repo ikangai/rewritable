@@ -46,6 +46,11 @@
 //   - Reserved-id violation (reserved_id_used) — including data-rwa-id injection
 //   - HTML parse-validity post-apply (parse_error_post_apply)
 
+// The one runtime import this module takes: block-id minting (#32) needs a CSPRNG
+// and the seed's browser `crypto.getRandomValues` has no guaranteed Node global
+// before 19. Everything else here stays pure string surgery.
+import { randomBytes } from 'node:crypto';
+
 export class RwaEditError extends Error {
   constructor(code, editIndex = null, context = {}) {
     super(code);
@@ -696,4 +701,128 @@ export function applyEdits(doc, edits) {
   if (working.length > MAX_DOC) throw new RwaEditError('target_size_exceeded', null, { length: working.length, cap: MAX_DOC });
 
   return working;
+}
+
+// ─── data-rwa-id backfill (#32) ─────────────────────────────────────────────
+// Hand-mirror of seeds/rewritable.html `ANCHORABLE_TAGS` / `generateBlockId` /
+// `maskRawTextAndComments` / `injectMissingBlockIds`. Same discipline as the
+// rest of this file: the seed is the source, this is the copy, and there is no
+// cmp gate — the parity is pinned by test (cli/tests/block-ids.test.mjs).
+//
+// WHY the CLI needs this at all: before #32 no CLI path assigned block ids, so a
+// document created, filled, edited and published entirely by agents had none —
+// forever — while the seed's SYSTEM_PROMPTS (which the CLI agent loop uses
+// verbatim) told the model "the runtime backfills any block you produce without
+// one." That was false on this surface. Block ids are also how a delegating
+// agent names a block it has not read, so their absence is not cosmetic.
+//
+// Ids are RANDOM, so this mirror cannot be pinned by byte-equality against the
+// seed. It is pinned by property: same tag set, same skips, same outer-wins
+// scan, same format.
+
+// Region scope: doc-product default; see docs/specs/rwa-product-types.md.
+// TABLE and TD are included (spec 0.11) so workflow parallel blocks and cells
+// get stable ids too. Mirror of the seed's ANCHORABLE_TAGS — keep in step.
+export const ANCHORABLE_TAGS = new Set(['P', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6',
+  'BLOCKQUOTE', 'LI', 'FIGURE', 'PRE', 'ASIDE', 'TABLE', 'TD']);
+
+// 8 chars, RFC 4648 base32 lowercase (a-z, 2-7) from 5 random bytes — byte-for-
+// byte the seed's format. 40 bits: collision risk in a single doc is negligible,
+// but see injectMissingBlockIds for why this surface still checks.
+const BLOCK_ID_ALPHA = 'abcdefghijklmnopqrstuvwxyz234567';
+// The seed reaches for crypto.getRandomValues (a browser global). Node's
+// webcrypto global is only guaranteed from 19 and this file is also vendored
+// into the service, so go through node:crypto rather than depend on the runtime
+// happening to expose the browser shape. `rand` is injectable so tests can pin
+// the encoding deterministically without stubbing a global.
+export function generateBlockId(rand) {
+  const buf = rand ? rand(5) : randomBytes(5);
+  let bits = 0, val = 0, out = '';
+  for (const b of buf) {
+    val = (val << 8) | b;
+    bits += 8;
+    while (bits >= 5) { bits -= 5; out += BLOCK_ID_ALPHA[(val >>> bits) & 31]; }
+  }
+  return out;
+}
+
+// Mask <script>/<style> BODY bytes and comments so their literal contents (which
+// may contain anchorable-looking markup, or a stray close tag) are not mistaken
+// for real blocks. Masking preserves byte offsets, so ranges found against the
+// mask stay valid against the ORIGINAL doc (invariant 11). Mirror of the seed.
+function maskRawTextAndComments(doc) {
+  let masked = doc;
+  masked = masked.replace(/<script\b[^>]*>([\s\S]*?)<\/script>/gi, (m, body) => {
+    const opening = m.length - body.length - '</script>'.length;
+    return m.slice(0, opening) + ' '.repeat(body.length) + m.slice(opening + body.length);
+  });
+  masked = masked.replace(/<style\b[^>]*>([\s\S]*?)<\/style>/gi, (m, body) => {
+    const opening = m.length - body.length - '</style>'.length;
+    return m.slice(0, opening) + ' '.repeat(body.length) + m.slice(opening + body.length);
+  });
+  masked = masked.replace(/<!--[\s\S]*?-->/g, m => ' '.repeat(m.length));
+  return masked;
+}
+
+/**
+ * Inject `data-rwa-id="…"` into every anchorable block that lacks one. Pure
+ * string surgery — preserves whitespace, attribute order and quoting bytes
+ * exactly (the format-stability promise, invariant 11).
+ *
+ * Frozen zones are skipped in BOTH forms: markerZoneRangesIn covers the comment
+ * fences AND data-rwa-frozen elements. Injecting an attribute inside one would
+ * mutate an author-declared invariant and break dataRwaFrozenSnapshot on the
+ * next edit.
+ *
+ * Returns { text, assigned }. If assigned === 0, text === doc byte-for-byte.
+ *
+ * @param {string} doc
+ * @param {(n:number)=>Uint8Array|Buffer} [rand] — injectable randomness (tests)
+ * @returns {{text: string, assigned: number}}
+ */
+export function injectMissingBlockIds(doc, rand) {
+  if (typeof doc !== 'string' || doc.length === 0) return { text: doc, assigned: 0 };
+  const masked = maskRawTextAndComments(doc);
+  const frozenRanges = markerZoneRangesIn(doc);
+  const inFrozen = (pos) => {
+    for (const [s, e] of frozenRanges) if (pos >= s && pos < e) return true;
+    return false;
+  };
+  // Existing ids are collected so a freshly minted one can never shadow one that
+  // is already load-bearing (URL fragments link to these). The seed does not do
+  // this; the CLI backfills a WHOLE document in a single pass — an imported PDF
+  // can be hundreds of blocks at once — so the cheap guard is worth its 3 lines.
+  const taken = new Set([...doc.matchAll(/\sdata-rwa-id\s*=\s*(?:"([^"]*)"|'([^']*)')/g)]
+    .map((m) => (m[1] != null ? m[1] : m[2])));
+  const mint = () => {
+    for (let i = 0; i < 8; i++) {
+      const id = generateBlockId(rand);
+      if (!taken.has(id)) { taken.add(id); return id; }
+    }
+    throw new RwaEditError('block_id_exhausted', null, { taken: taken.size });
+  };
+
+  const tagOpen = /<([a-zA-Z][a-zA-Z0-9]*)\b([^>]*)>/g;
+  const inserts = [];
+  let m;
+  while ((m = tagOpen.exec(masked)) !== null) {
+    const tag = m[1].toUpperCase();
+    if (!ANCHORABLE_TAGS.has(tag)) continue;
+    const closeEnd = matchingCloseEnd(masked, m[1], m.index + m[0].length);
+    if (closeEnd < 0) continue;
+    // Outer-wins skip past nested anchorables. TABLE keeps scanning inside so
+    // contained TDs are also injected; the DOM grammar guarantees TD only
+    // appears inside TABLE, so no other anchorable is double-processed.
+    if (tag !== 'TABLE') tagOpen.lastIndex = closeEnd;
+    if (inFrozen(m.index)) continue;
+    const attrs = m[2] || '';
+    if (/\sdata-rwa-id\s*=/.test(attrs)) continue;
+    inserts.push({ pos: m.index + 1 + m[1].length, text: ' data-rwa-id="' + mint() + '"' });
+  }
+  if (inserts.length === 0) return { text: doc, assigned: 0 };
+  let out = doc;
+  for (let i = inserts.length - 1; i >= 0; i--) {
+    out = out.slice(0, inserts[i].pos) + inserts[i].text + out.slice(inserts[i].pos);
+  }
+  return { text: out, assigned: inserts.length };
 }

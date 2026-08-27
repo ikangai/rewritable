@@ -19,6 +19,7 @@ import {
   applyEdits, RwaEditError, dataRwaFrozenSnapshot, FAILURE_HINTS,
   virtualizeImages, expandImages, assertNoNewAssetTokens, mapEnvelopeImages, MAX_DOC_EXPANDED,
   extractFrozenZones3, lockedRangesIn, markerZoneRangesIn, canonLF,
+  injectMissingBlockIds,
 } from './apply-edits.mjs';
 import { compileDslPlan } from './dsl-compiler.mjs';
 import { extractInlineDoc, replaceInlineDoc } from './seed.mjs';
@@ -208,6 +209,13 @@ function validateEnvelope(env) {
  *   tokens make the map re-derivable from the doc bytes — no map threading.
  *   Raw paths (piped envelope / --plan) leave this unset: real bytes, plus the
  *   fail-loud guard against introducing a NEW token with no bytes behind it.
+ * @param {(n:number)=>Uint8Array|Buffer} [opts.rand] — injectable randomness for
+ *   the data-rwa-id backfill (#32). Block ids are minted from a CSPRNG, so two
+ *   runs over the same input legitimately differ. Anything asserting that two
+ *   apply pipelines behave IDENTICALLY (the service's vendored-apply drift gate,
+ *   the hosted/seed conformance parity) has to hold randomness still to compare
+ *   bytes — otherwise the only thing it measures is the RNG. Production never
+ *   passes this.
  * @param {string} [opts.baseHash] — optimistic concurrency (#31): the `bodyHash`
  *   of the document the caller composed this envelope against. If the stored
  *   body no longer hashes to it, somebody else wrote in between and we refuse
@@ -327,6 +335,17 @@ export async function applyPlan(filePath, envelope, opts = {}) {
     throw e;
   }
 
+  // data-rwa-id backfill (#32) — the CLI's half of a promise the seed already
+  // keeps at boot and on every commit, and which SYSTEM_PROMPT_RULES (used
+  // verbatim by the CLI agent loop) tells the model the runtime keeps.
+  //
+  // Runs on the EXPANDED body, after every guard: injection only ever ADDS an
+  // attribute to a non-frozen anchorable open tag, so it cannot disturb a check
+  // that already passed — and running it last means the bytes we hash, size-check
+  // and write are the bytes that land on disk.
+  const backfill = injectMissingBlockIds(newDoc, opts.rand);
+  newDoc = backfill.text;
+
   // Expanded-size guard (image paths only): MAX_DOC measured the VIRTUAL form,
   // so cap the REAL doc here — the DoS bound that the per-edit byte cap no
   // longer provides once image bytes are tokenized. Mirrors the GUI's 10 MB
@@ -350,6 +369,7 @@ export async function applyPlan(filePath, envelope, opts = {}) {
     tool: shape,
     ...(compiledTo && compiledTo !== shape ? { compiledTo } : {}),
     applied,
+    blockIdsAssigned: backfill.assigned,
     baseHash: bodyHash(currentDoc),
     newHash: bodyHash(newDoc),
     bytes: newDoc.length,

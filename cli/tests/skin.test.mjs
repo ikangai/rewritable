@@ -56,8 +56,8 @@ test('applying a skin to an unskinned file INSERTS the block at the top (via rep
     // block is the FIRST thing in the body (the contract: leading child of INLINE_DOC)
     assert.match(body.trimStart(), /^<style data-rwa-skin="notion-clean">/);
     // original content is preserved
-    assert.match(body, /<h1>Quarterly review<\/h1>/);
-    assert.match(body, /<p>Body\.<\/p>/);
+    assert.match(body, /<h1[^>]*>Quarterly review<\/h1>/);
+    assert.match(body, /<p[^>]*>Body\.<\/p>/);
   } finally { fx.cleanup(); }
 });
 
@@ -86,8 +86,8 @@ test('reset removes the skin block, leaving the document otherwise intact', asyn
 
     const body = extractInlineDoc(readFileSync(fx.path, 'utf8'));
     assert.equal(skinBlocks(body).length, 0, 'no skin block remains');
-    assert.match(body, /<h1>Plain<\/h1>/);
-    assert.match(body, /<p>Keep me\.<\/p>/);
+    assert.match(body, /<h1[^>]*>Plain<\/h1>/);
+    assert.match(body, /<p[^>]*>Keep me\.<\/p>/);
   } finally { fx.cleanup(); }
 });
 

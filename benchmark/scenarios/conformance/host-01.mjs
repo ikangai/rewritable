@@ -78,6 +78,21 @@ export default {
       rmSync(dir, { recursive: true, force: true });
     }
 
+    // #32: `data-rwa-id` backfill is a COMMIT-stage concern on both surfaces —
+    // the seed injects it in commitDoc, not in window.applyEdits, and the file
+    // pipeline injects it in applyPlan, which is the CLI's commit. So the two
+    // sides of THIS comparison are at different layers with respect to ids, and
+    // the ids themselves come from a CSPRNG and can never compare byte-wise.
+    //
+    // Strip them from both sides rather than weaken what this scenario asserts:
+    // hosted apply and substrate apply must agree on the CONTENT transformation.
+    // That the two surfaces also agree on WHICH blocks get an id — same tag set,
+    // same frozen-zone skips, same outer-wins scan — is pinned separately and
+    // far more precisely by tests/block-id-parity.mjs (37 property checks).
+    const stripIds = (s) => s.replace(/ data-rwa-id="[a-z2-7]{8}"/g, '');
+    hostedBody = stripIds(hostedBody);
+    substrateBody = stripIds(substrateBody);
+
     // The load-bearing assertion: same envelope, same starting doc → same bytes.
     if (hostedBody !== substrateBody) {
       // Surface the first divergence point to make a regression debuggable.
