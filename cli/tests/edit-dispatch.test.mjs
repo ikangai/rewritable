@@ -340,6 +340,36 @@ test('instruction mode does not block on partially-open upstream pipe', async ()
   }
 });
 
+test('no test drives the CLI through /dev/stdin — it is not portable', async () => {
+  // A REAL bug this caught, after it had already shipped: doc-outline.test.mjs
+  // created its fixture with `--plan /dev/stdin` and a piped `input`. That works
+  // on darwin and fails on Linux with file_error/plan_read_error … ENXIO, because
+  // there /dev/stdin is /proc/self/fd/0 and opening a pipe through it is not
+  // permitted. Nine tests went red in CI while the suite stayed green locally,
+  // and the failure pointed at the outline feature rather than at the helper.
+  //
+  // The lesson generalises past this one path: running the same COMMANDS as CI is
+  // not the same as running on the same OS as CI. A grep guard cannot catch every
+  // portability assumption, but it can nail the one that already bit us.
+  //
+  // To pipe an envelope, pass it on stdin with no --plan, or use `--plan -`; to
+  // pass a file, write a real file. Both are portable.
+  const { readFileSync, readdirSync } = await import('node:fs');
+  const dir = join(__dirname);
+  const offenders = [];
+  for (const f of readdirSync(dir)) {
+    if (!f.endsWith('.test.mjs') || f === 'edit-dispatch.test.mjs') continue;
+    const text = readFileSync(join(dir, f), 'utf8');
+    // Match it only as a QUOTED ARGUMENT, not anywhere in the text. The first
+    // version of this guard used a plain substring search and immediately failed
+    // on the fix's own comment, which has to be able to name the path it warns
+    // about. A guard that cannot tell code from prose forces you to stop
+    // explaining things, which is the wrong trade.
+    if (/['"]\/dev\/stdin['"]/.test(text)) offenders.push(f);
+  }
+  assert.deepEqual(offenders, [], 'these tests use /dev/stdin, which fails on Linux');
+});
+
 test('codeName has no synthetic fallback — every CliError code is one codeName maps', async () => {
   // I2 regression guard: codeName() in rwa.mjs throws on unknown exit codes
   // rather than returning a synthetic 'unknown_error' string. To keep that

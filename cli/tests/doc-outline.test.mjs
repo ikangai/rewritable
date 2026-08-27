@@ -57,11 +57,19 @@ function mkFixture(body, { commit = true } = {}) {
   writeFileSync(path, replaceInlineDoc(readFileSync(path, 'utf8'), body), 'utf8');
   // One committed edit backfills the block ids, which is what gives the outline
   // its names. A fixture left uncommitted is the "no ids yet" case, tested too.
+  //
+  // The plan goes to a real temp FILE, never `--plan /dev/stdin`. That is what
+  // this originally did, and it passes on darwin and fails on Linux with
+  // `file_error/plan_read_error … ENXIO`: there `/dev/stdin` is
+  // `/proc/self/fd/0`, and opening a pipe through that path is not permitted.
+  // Every test in this file goes through this helper, so a single portable
+  // assumption took all nine down in CI while the suite stayed green locally —
+  // which is also the lesson: running the same COMMANDS as CI is not the same as
+  // running on the same OS as CI.
   if (commit) {
-    execFileSync('node', [RWA_BIN, 'edit', path, '--plan', '/dev/stdin'], {
-      input: JSON.stringify({ version: 'rwa-edit/1', edits: [{ find: '<article>', replace: '<article>' }] }),
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
+    const seedPlan = join(dir, 'fixture-commit.json');
+    writeFileSync(seedPlan, JSON.stringify({ version: 'rwa-edit/1', edits: [{ find: '<article>', replace: '<article>' }] }));
+    execFileSync('node', [RWA_BIN, 'edit', path, '--plan', seedPlan], { stdio: ['pipe', 'pipe', 'pipe'] });
   }
   return { path, dir, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
 }
