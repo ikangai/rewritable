@@ -203,13 +203,32 @@ cmd_verify() {
   # A single immediate curl races that window and reports a false 404 (Traefik's
   # 19-byte "404 page not found") even though the deploy succeeded. Retry until
   # the site is genuinely serving, and only fail after sustained failure.
+  #
+  # BOTH probes gate. /health was fetched and printed but never tested until
+  # #48, so a deploy where Traefik still served the static seed while the Node
+  # service was wedged printed "/health -> UNREACHABLE" and "OK" on adjacent
+  # lines. Serving a file proves the proxy is up; only /health proves the
+  # service behind it is.
+  #
+  # `== ok` rather than a non-empty check: curl runs with -f, so a 5xx or a
+  # missing route exits non-zero and lands in $health as UNREACHABLE, while a
+  # 200 carrying some other body (a maintenance page, a proxy error served with
+  # the wrong status) can only be caught by comparing what came back. The
+  # endpoint returns 'ok\n'; $(...) strips the trailing newline, so the literal
+  # is exactly 'ok'.
+  #
+  # /health is structurally LATER than Traefik registration — on the deploy that
+  # exposed this, the seed served on attempt 5 while /health was still
+  # UNREACHABLE, then answered by hand seconds later. So it belongs INSIDE the
+  # retry loop, never as a check after it: a gate that reds a deploy which was
+  # merely slow gets weakened back out the first time it fires.
   local tmp="/tmp/rwa-seed.$$" attempts="${VERIFY_ATTEMPTS:-10}" delay="${VERIFY_DELAY:-6}"
   local i health seed_code seed_bytes
   for (( i=1; i<=attempts; i++ )); do
     health="$(curl -fsS --max-time 15 "$SITE_URL/health" 2>/dev/null || echo 'UNREACHABLE')"
     seed_code="$(curl -s -o "$tmp" -w '%{http_code}' --max-time 20 "$SITE_URL/rewritable.html" || echo 000)"
     seed_bytes="$(wc -c < "$tmp" 2>/dev/null | tr -d ' ' || echo 0)"
-    if [[ "$seed_code" == "200" ]] && grep -q 'id="rwa-bootstrap"' "$tmp" 2>/dev/null && (( seed_bytes > 100000 )); then
+    if [[ "$health" == "ok" ]] && [[ "$seed_code" == "200" ]] && grep -q 'id="rwa-bootstrap"' "$tmp" 2>/dev/null && (( seed_bytes > 100000 )); then
       echo "    /health         -> $health"
       echo "    /rewritable.html-> HTTP $seed_code, ${seed_bytes} bytes"
       rm -f "$tmp"
@@ -224,7 +243,24 @@ cmd_verify() {
   echo "    /health         -> $health"
   echo "    /rewritable.html-> HTTP $seed_code, ${seed_bytes} bytes"
   rm -f "$tmp"
-  die "verify FAILED after $attempts attempts (~$(( attempts * delay ))s) — seed not served as expected (numbers above)"
+  # Steer the reader to the right fix before they reach for the wrong one.
+  # Seed-good + health-bad has two very different causes: a genuinely wedged
+  # service (the gate working), or /health simply not up yet within the budget
+  # (the gate too impatient). Only the second is a reason to touch this script,
+  # and the tempting "fix" for it is deleting the health term — which puts back
+  # exactly the defect #48 closed. What the suite pins is that the PREDICATE can
+  # fail; whether 10 x 6s is enough for a real container recreate is not pinned
+  # by anything, so say so here rather than leave it to be rediscovered.
+  if [[ "$health" != "ok" ]] && [[ "$seed_code" == "200" ]]; then
+    warn "the seed served but /health did not answer 'ok'."
+    warn "  → if the service is genuinely wedged, this is the gate doing its job (#48)."
+    warn "  → if it is actually healthy, /health just lagged: it comes up AFTER Traefik"
+    warn "    re-registers. Raise VERIFY_ATTEMPTS (now $attempts x ${delay}s) — do not drop the check."
+  fi
+  # Name both probes rather than asserting which one failed: with /health now
+  # gating, "seed not served as expected" would be actively wrong for the case
+  # where the seed served perfectly and the service was wedged.
+  die "verify FAILED after $attempts attempts (~$(( attempts * delay ))s) — /health=$health, seed=HTTP $seed_code ${seed_bytes}b (numbers above)"
 }
 
 main() {
