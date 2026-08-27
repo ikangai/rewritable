@@ -716,9 +716,18 @@ function detectProductKind(fileText) {
         // JSON depending on mode) so CI / wrapper scripts can observe
         // progress without parsing stdout.
         const { runAgentLoop } = await import('../src/agent-loop.mjs');
-        let envelope;
+        const { applyPlan } = await import('../src/edit.mjs');
+        let applyResult = null;
         try {
           const result = await runAgentLoop({
+            // #44 — apply inside the loop, so a rejected envelope becomes a
+            // correction the model gets to act on instead of an exit code. The
+            // apply is all-or-nothing, so a failed attempt leaves the document
+            // untouched and the next attempt composes against the same bytes.
+            apply: async (env) => {
+              applyResult = await applyPlan(filePath, env, { virtualImages: true, baseHash: baseHashArg });
+              return applyResult;
+            },
             systemPrompt,
             toolSchemas: TOOL_SCHEMAS,
             currentDoc: promptDoc,
@@ -739,32 +748,25 @@ function detectProductKind(fileText) {
               }
             },
           });
-          envelope = result.envelope;
+          void result;
         } catch (e) {
           if (e && (e.subcode === 'no_envelope_after_retries' || e.subcode === 'backend_error')) {
             emitEdit({ code: 'agent_error', subcode: e.subcode, details: e.details }, jsonMode);
             process.exitCode = 4; return;
           }
-          throw e;
-        }
-
-        // Apply the envelope through the same applyPlan used by the plan
-        // path — single splice/write code path, single error surface. The
-        // model saw the virtual doc, so the envelope is token-form.
-        const { applyPlan } = await import('../src/edit.mjs');
-        try {
-          const res = await applyPlan(filePath, envelope, { virtualImages: true, baseHash: baseHashArg });
-          await recordHistory(filePath, res, { principal, operator: 'cli:instruction', model: modelId });
-          emitEditResult(res, jsonMode);
-          return;
-        } catch (e) {
+          // An apply failure that survived the retry budget: report the LAST
+          // real one (with its closest-anchor context and hint), not a generic
+          // agent_error. The document is untouched.
           if (e && typeof e.exitCode === 'number') {
             emitEdit({ code: codeName(e.exitCode), subcode: e.subcode, details: e.details }, jsonMode);
-            process.exitCode = e.exitCode;
-            return;
+            process.exitCode = e.exitCode; return;
           }
           throw e;
         }
+        await recordHistory(filePath, applyResult, { principal, operator: 'cli:instruction', model: modelId });
+        emitEditResult(applyResult, jsonMode);
+        return;
+
       }
 
       // Plan path: envelope comes from --plan file OR the stdin buffer we

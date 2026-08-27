@@ -41,7 +41,18 @@ export class AgentError extends Error {
  * @param {(info: {attempt: number, reason: string, toolName?: string}) => void} [opts.onRetry]
  *   Optional callback fired each time a retry is queued. `attempt` is the
  *   attempt that just failed (1-indexed).
- * @returns {Promise<{envelope: object, toolName: string, messages: Array}>}
+ * @param {(envelope: object, toolName: string) => Promise<any>} [opts.apply] — #44.
+ *   APPLY the envelope inside the loop. Without it the loop returns on the first
+ *   parseable envelope and the caller applies afterwards, so an apply failure —
+ *   find_not_found, frozen_zone_violation, structural_shape_changed — is
+ *   terminal: the model never learns it was wrong. The seed's loop has always
+ *   applied in-loop and fed the structured failure back as a tool_result
+ *   (rwa-edit-spec.md §8), which is what makes findClosestAnchor and the whole
+ *   FAILURE_HINTS table useful at all. Supplying `apply` gives the CLI the same
+ *   self-correction; omitting it preserves the old behaviour exactly.
+ *   It must be all-or-nothing: a throw has to leave the document untouched, or a
+ *   retry would compose against bytes that no longer exist. `applyPlan` is.
+ * @returns {Promise<{envelope: object, toolName: string, messages: Array, applied?: any}>}
  * @throws {AgentError} subcode: 'no_envelope_after_retries' | 'backend_error'
  */
 export async function runAgentLoop({
@@ -53,6 +64,7 @@ export async function runAgentLoop({
   origin = null,
   backend,
   onRetry,
+  apply,
 }) {
   // Seed parity (seeds/rewritable.html buildUserPrompt): the user message
   // names the request, lists frozen-zone names so the model knows what to
@@ -82,6 +94,7 @@ export async function runAgentLoop({
     { role: 'user',   content: userContent },
   ];
 
+  let lastApplyError = null;
   for (let attempt = 1; attempt <= RETRY_BUDGET; attempt++) {
     let response;
     try {
@@ -137,9 +150,36 @@ export async function runAgentLoop({
     }
 
     messages.push(message);
-    return { envelope, toolName: call.function.name, messages };
+    if (!apply) return { envelope, toolName: call.function.name, messages };
+
+    // #44 — apply INSIDE the loop so a rejection becomes a correction rather
+    // than an exit code. The failure is handed back in the same tool_result
+    // shape the seed uses (failureToToolResult): the code, the context the
+    // validator collected — including findClosestAnchor's verbatim `closest`
+    // fragment — and the plain-English hint. That is the whole self-correction
+    // channel, and on this surface nothing consumed it before.
+    try {
+      const applied = await apply(envelope, call.function.name);
+      return { envelope, toolName: call.function.name, messages, applied };
+    } catch (e) {
+      const code = e && (e.subcode || e.code);
+      // Only APPLY failures are retryable. A file error (exit 2) or a usage
+      // error is not something the model can fix by trying again, and looping
+      // on one would burn the budget to reach the same wall.
+      if (!code || (e && e.exitCode != null && e.exitCode !== 3)) throw e;
+      lastApplyError = e;
+      if (onRetry) onRetry({ attempt, reason: code, toolName: call.function.name });
+      const payload = { ok: false, code, ...(e.details || {}) };
+      messages.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify(payload) });
+      continue;
+    }
   }
 
+  // Budget exhausted with an apply failure outstanding: surface the LAST REAL
+  // failure, not a generic one. "your third anchor also missed, here is the
+  // closest text" is actionable; "no envelope after retries" is not, and would
+  // also be untrue — there were envelopes, they just did not apply.
+  if (lastApplyError) throw lastApplyError;
   throw new AgentError('no_envelope_after_retries', { retries: RETRY_BUDGET });
 }
 
