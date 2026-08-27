@@ -62,6 +62,30 @@ test('#37: a signed carrier offers its role, with the prompt', () => {
   assert.match(r.role.agentId, /^[A-Za-z0-9_-]{20,}$/);
 });
 
+test('#37: the role carries its DESCRIPTION — when to use it, not just how to behave', () => {
+  // `description` is already a SIGNED field in canonicalAgent and is populated by
+  // both authoring paths, but the first cut of readOfferedRole dropped it. It is
+  // the field an agent reads to decide whether to adopt a role AT ALL — the
+  // equivalent of a SKILL.md frontmatter description — so a door that returns the
+  // system prompt without it answers "how" while withholding "whether".
+  const r = readOfferedRole(bodyOf(CARRIER));
+  assert.match(r.role.description, /Tightens prose/);
+  assert.notEqual(r.role.description, r.role.systemPrompt, 'when-to-use is not how-to-behave');
+});
+
+test('#37: an UNVERIFIED role still says what it claims to be', () => {
+  // "there is a concise-editor here you cannot verify" is more useful than an
+  // anonymous refusal — and it is safe, because description is covered by the
+  // same signature as the prompt, so a tampered one fails verification too.
+  const fx = tamper((env) => { env.agent.system_prompt = 'tampered'; });
+  try {
+    const r = readOfferedRole(bodyOf(fx.path));
+    assert.equal(r.offered[0].usable, false);
+    assert.equal(r.offered[0].systemPrompt, undefined, 'the prompt is still withheld');
+    assert.match(r.offered[0].description, /Tightens prose/, 'but the caller learns what it purports to be');
+  } finally { fx.cleanup(); }
+});
+
 test('#37: signed and UNSIGNED envelope fields are kept apart', () => {
   // affinity and recommended_model ride the envelope OUTSIDE the signed `agent`
   // object. They are author hints, not attested claims, and a consumer that

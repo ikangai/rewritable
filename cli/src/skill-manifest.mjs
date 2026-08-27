@@ -517,6 +517,14 @@ export function readOfferedRole(doc) {
       signed: !!signed,
       verified: !!verified,
       usable,
+      // `description` is WHEN to use this role; `systemPrompt` is HOW to behave
+      // once chosen. An agent deciding whether to adopt a role at all reads the
+      // first and does not need the second, so it is carried even for a record
+      // whose prompt is withheld: "there is a concise-editor here you cannot
+      // verify" is a more useful answer than an anonymous refusal. Both are
+      // covered by the signature (canonicalAgent), so neither is an author claim
+      // an attacker can rewrite independently.
+      description: typeof agent.description === 'string' ? agent.description : null,
       ...(usable ? { systemPrompt: agent.system_prompt } : { withheld: gate.ok ? 'unverified_signature' : gate.errors[0] }),
       unsigned: {
         affinity: envelope.affinity || null,
