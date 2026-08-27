@@ -111,6 +111,15 @@ Usage:
                               DOC_UUID. Target: --url > \$RWA_PUBLISH_URL >
                               https://rewritable.ikangai.com. --json emits
                               {short,url,expiresAt}.
+  rwa log <path>              print the container's forward audit trail: one
+                              record per successful edit — timestamp, resulting
+                              hash, tool, and the actor PAIR (who decided / who
+                              typed). Kept in a <name>.rwa-log.jsonl sidecar
+                              beside the file, the same record shape the hosted
+                              runtime already writes. Append-only, hashes only,
+                              never envelope bodies. NOTE: a sidecar does not
+                              travel with the file — a published copy carries no
+                              history.
   rwa render <path>           render the document to an image or a PDF by driving
                               a real browser. --png (default) or --pdf, --out to
                               choose the file, --print to render the PRINT
@@ -241,6 +250,9 @@ Flags:
                  bytes. (edit) the envelope's anchors are in that token
                  form, because you read the document with \`doc --virtual\`.
                  The two are one contract — mixing them fails loud.
+  --actor <name>  (edit) who DECIDED this edit — recorded as the log's
+                 \`principal\` beside the surface that wrote it. Also
+                 \$RWA_PRINCIPAL. Left null when unset rather than guessed.
   --base-hash <h>
                  (edit) apply only if the document still hashes to <h> —
                  the 64-hex \`baseHash\` from \`rwa doc --json\` or the
@@ -314,6 +326,26 @@ function formatOutline(r) {
     (unnamed ? ` (${unnamed} without an id — commit once to backfill)` : '') +
     `  ·  ${r.baseHash.slice(0, 12)}`);
   return lines.join('\n');
+}
+
+
+// #39 — append the forward audit record after a write that already succeeded.
+// Deliberately here rather than inside applyPlan: applyPlan is vendored
+// byte-identically into service/lib, and the hosted runtime keeps its OWN
+// history.jsonl, so logging from the shared module would double-log every hosted
+// edit. Best-effort — an unwritable sidecar must never fail a completed edit.
+async function recordHistory(filePath, result, actorSpec) {
+  const { appendHistory, actorPair } = await import('../src/history.mjs');
+  return appendHistory(filePath, {
+    tool: result.tool,
+    ...(result.compiledTo ? { compiledTo: result.compiledTo } : {}),
+    applied: result.applied,
+    blockIdsAssigned: result.blockIdsAssigned,
+    baseHash: result.baseHash,
+    newHash: result.newHash,
+    bytes: result.bytes,
+    actor: actorPair(actorSpec),
+  });
 }
 
 // `rwa edit` failure surface — one line per emit. Plain mode: short
@@ -490,7 +522,13 @@ function detectProductKind(fileText) {
       // unconditionally (the model must never see pixels), so this only applies
       // to the plan path.
       const virtualPlan = rest.includes('--virtual');
-      const FLAG_WITH_VALUE = new Set(['--plan', '--base-hash', '--backend', '--model', '--base-url', '--api-key']);
+      // #39 — who DECIDED this edit. The CLI cannot know: an agent driving it is
+      // the only party that can say who it is acting for, so it is supplied, not
+      // guessed. Absent rather than fabricated when unset.
+      const actorFlag = resolveFlag(getFlag('--actor', rest), '--actor', jsonMode);
+      if (!actorFlag.ok) { process.exitCode = 1; return; }
+      const principal = actorFlag.value || process.env.RWA_PRINCIPAL || null;
+      const FLAG_WITH_VALUE = new Set(['--plan', '--base-hash', '--actor', '--backend', '--model', '--base-url', '--api-key']);
       const positionals = rest.filter((a, i) =>
         !a.startsWith('-') && !FLAG_WITH_VALUE.has(rest[i - 1])
       );
@@ -707,7 +745,9 @@ function detectProductKind(fileText) {
         // model saw the virtual doc, so the envelope is token-form.
         const { applyPlan } = await import('../src/edit.mjs');
         try {
-          emitEditResult(await applyPlan(filePath, envelope, { virtualImages: true, baseHash: baseHashArg }), jsonMode);
+          const res = await applyPlan(filePath, envelope, { virtualImages: true, baseHash: baseHashArg });
+          await recordHistory(filePath, res, { principal, operator: 'cli:instruction', model: modelId });
+          emitEditResult(res, jsonMode);
           return;
         } catch (e) {
           if (e && typeof e.exitCode === 'number') {
@@ -747,7 +787,9 @@ function detectProductKind(fileText) {
 
       const { applyPlan } = await import('../src/edit.mjs');
       try {
-        emitEditResult(await applyPlan(filePath, envelope, { baseHash: baseHashArg, virtualImages: virtualPlan }), jsonMode);
+        const res = await applyPlan(filePath, envelope, { baseHash: baseHashArg, virtualImages: virtualPlan });
+        await recordHistory(filePath, res, { principal, operator: hasPlanFile ? 'cli:plan' : 'cli:stdin' });
+        emitEditResult(res, jsonMode);
         return;
       } catch (e) {
         if (e && typeof e.exitCode === 'number') {
@@ -1303,6 +1345,24 @@ function detectProductKind(fileText) {
         '',
       ].join('\n'));
       return; // server keeps the process alive
+    }
+
+    // `rwa log <file> [--json]` — the durable audit trail (#39). rwa_hist is
+    // IndexedDB-only and its actor never reaches disk, so across sessions (or on
+    // a file someone sent you) there was no answer to "what happened to this
+    // document?". Sidecar, same record shape as the hosted history.jsonl.
+    if (verb === 'log') {
+      const jsonMode = rest.includes('--json');
+      const filePath = rest.find(a => !a.startsWith('-'));
+      if (!filePath) {
+        process.stderr.write('rwa log: usage_error/missing_file_arg\n');
+        process.exitCode = 1; return;
+      }
+      const { readHistory, formatHistory } = await import('../src/history.mjs');
+      const h = readHistory(filePath);
+      if (jsonMode) process.stdout.write(JSON.stringify(h) + '\n');
+      else process.stdout.write(formatHistory(h) + '\n');
+      return;
     }
 
     // `rwa render <file> [--pdf|--png] [--out p] [--print] [--json]` — the
