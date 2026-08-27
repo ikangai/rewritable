@@ -53,7 +53,10 @@ Usage:
                               print the self-description/1 superset instead —
                               the edit contract plus "what is this, what can be
                               done with it": {rwa, kind, title, affordances,
-                              baseline, frozenZones, …, doc}.
+                              baseline, frozenZones, baseHash, …, doc}.
+                              baseHash is the staleness token: feed it back as
+                              \`rwa edit --base-hash\` so a concurrent write is
+                              refused instead of silently clobbered.
                               Exit 2 on a non-rewritable file — a clean
                               "is this a rewritable?" probe.
   rwa doctor <path>           offline, read-only health check: frozen-zone
@@ -181,11 +184,20 @@ Flags:
                  bytes}\` — one JSON object, so a caller can confirm what
                  was applied without re-reading the document. \`baseHash\`
                  and \`newHash\` are sha-256 over the LF-canonical editable
-                 body before/after — the same value the hosted
-                 \`/r/:id/doc\` reports, so the two surfaces agree on what
-                 a document is.
+                 body before/after — the same value \`rwa doc --json\` and
+                 the hosted \`/r/:id/doc\` report, so all three surfaces
+                 agree on what a document is. Carry \`newHash\` into the
+                 next edit's \`--base-hash\`.
                  On FAILURE, one JSON object per line on stderr — each a
                  \`{code, subcode, details}\` object.
+  --base-hash <h>
+                 (edit) apply only if the document still hashes to <h> —
+                 the 64-hex \`baseHash\` from \`rwa doc --json\` or the
+                 \`newHash\` of your previous edit. If anyone wrote in
+                 between, the edit is REFUSED (exit 3,
+                 \`base_hash_mismatch\`) instead of overwriting their work;
+                 re-read, recompose and retry. Without it, edits are
+                 last-writer-wins.
                  (doc) emit the editing-contract object on stdout instead of
                  the raw body; on failure, the \`{code, subcode, details}\`
                  object goes to stderr.
@@ -370,9 +382,27 @@ function detectProductKind(fileText) {
         process.exitCode = 1;
         return;
       }
+      // `--base-hash <hex>` — optimistic concurrency (#31). The caller asserts
+      // which version of the document it composed against; a mismatch means
+      // somebody else wrote in between, so we refuse rather than clobber.
+      // Absent = today's last-writer-wins behaviour, so nothing breaks.
+      const baseHashIdx = rest.indexOf('--base-hash');
+      const baseHashArg = baseHashIdx >= 0 ? rest[baseHashIdx + 1] : undefined;
+      if (baseHashIdx >= 0 && (baseHashArg === undefined || baseHashArg.startsWith('-'))) {
+        emitEdit({ code: 'usage_error', subcode: 'missing_base_hash_value' }, jsonMode);
+        process.exitCode = 1;
+        return;
+      }
+      if (baseHashArg !== undefined && !/^[0-9a-f]{64}$/.test(baseHashArg)) {
+        // Fail loud on a malformed hash rather than treating it as a mismatch:
+        // "you typed it wrong" and "someone else edited" need different fixes.
+        emitEdit({ code: 'usage_error', subcode: 'malformed_base_hash', details: { got: baseHashArg } }, jsonMode);
+        process.exitCode = 1;
+        return;
+      }
       // Backend flags carry a value — keep them out of `positionals` so
       // their argument doesn't get parsed as a stray instruction word.
-      const FLAG_WITH_VALUE = new Set(['--plan', '--backend', '--model', '--base-url', '--api-key']);
+      const FLAG_WITH_VALUE = new Set(['--plan', '--base-hash', '--backend', '--model', '--base-url', '--api-key']);
       const positionals = rest.filter((a, i) =>
         !a.startsWith('-') && !FLAG_WITH_VALUE.has(rest[i - 1])
       );
@@ -500,6 +530,25 @@ function detectProductKind(fileText) {
           process.exitCode = 2; return;
         }
 
+        // Staleness check BEFORE the agent loop (#31). applyPlan re-checks at
+        // commit time and is the actual guarantee; this early copy exists so a
+        // stale document costs nothing. On the instruction path the model call
+        // is the expensive step and it is the DELEGATING agent's tokens being
+        // spent — burning them to produce an envelope we already know we will
+        // refuse is exactly the waste the two-agent split is meant to avoid.
+        if (baseHashArg !== undefined) {
+          const { bodyHash } = await import('../src/edit.mjs');
+          const actual = bodyHash(currentDoc);
+          if (actual !== baseHashArg) {
+            const { FAILURE_HINTS } = await import('../src/apply-edits.mjs');
+            emitEdit({
+              code: 'envelope_error', subcode: 'base_hash_mismatch',
+              details: { expected: baseHashArg, actual, hint: FAILURE_HINTS.base_hash_mismatch },
+            }, jsonMode);
+            process.exitCode = 3; return;
+          }
+        }
+
         // Detect product kind from the bootstrap so we pick the right
         // SYSTEM_PROMPTS entry. Pre-PRODUCT_KIND containers and unknown
         // kinds both fall through to the 'document' entry below.
@@ -570,7 +619,7 @@ function detectProductKind(fileText) {
         // model saw the virtual doc, so the envelope is token-form.
         const { applyPlan } = await import('../src/edit.mjs');
         try {
-          emitEditResult(await applyPlan(filePath, envelope, { virtualImages: true }), jsonMode);
+          emitEditResult(await applyPlan(filePath, envelope, { virtualImages: true, baseHash: baseHashArg }), jsonMode);
           return;
         } catch (e) {
           if (e && typeof e.exitCode === 'number') {
@@ -610,7 +659,7 @@ function detectProductKind(fileText) {
 
       const { applyPlan } = await import('../src/edit.mjs');
       try {
-        emitEditResult(await applyPlan(filePath, envelope), jsonMode);
+        emitEditResult(await applyPlan(filePath, envelope, { baseHash: baseHashArg }), jsonMode);
         return;
       } catch (e) {
         if (e && typeof e.exitCode === 'number') {
@@ -729,6 +778,7 @@ function detectProductKind(fileText) {
         process.stdout.write(JSON.stringify({
           ...info.self,
           rewritable: true,
+          baseHash: info.baseHash,
           length: info.doc.length,
           doc: info.doc,
         }) + '\n');

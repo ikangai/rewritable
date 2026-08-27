@@ -92,7 +92,14 @@ const isWellFormed = (s) => typeof s !== 'string' || typeof s.isWellFormed !== '
 // FAILURE_HINTS (failureToToolResult). No angle brackets / reserved markers in
 // the strings, so they stay safe to embed in the seed bootstrap and survive the
 // CLI tree's reserved-marker scan.
+//
+// Two entries are deliberately CLI-ONLY and must NOT be mirrored into the seed:
+// `reserved_substring` and `base_hash_mismatch`. The seed cannot emit either —
+// it has no compare-and-swap (its concurrency story is the modify mutex plus the
+// cross-tab commit signal), and a hint for a code that surface never produces is
+// dead weight in every emitted container.
 export const FAILURE_HINTS = {
+  base_hash_mismatch: 'The document changed since you read it — another writer committed in between. Re-read it, recompose your edit against the new text, and retry with the new base hash. Do not retry this envelope unchanged.',
   find_not_found: 'find must match the document byte-for-byte (whitespace and case included). If a closest match is shown, copy it exactly; otherwise pick a shorter, distinctive anchor.',
   find_not_unique: 'find appears more than once. Extend it with neighbouring text until it is unique; the hints list shows where.',
   frozen_zone_violation: 'This region is an author-protected frozen zone. Anchor on a different region — frozen zones change only by editing the file outside the runtime.',

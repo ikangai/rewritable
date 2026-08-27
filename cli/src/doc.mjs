@@ -12,7 +12,7 @@ import { readFile } from 'node:fs/promises';
 import { extractInlineDoc } from './seed.mjs';
 import { findFrozenZones } from './apply-edits.mjs';
 import { resolveSelfDescription } from './identity.mjs';
-import { CliError } from './edit.mjs';
+import { CliError, bodyHash } from './edit.mjs';
 
 // The bootstrap bakes both consts at emit time (cli/src/seed.mjs applySeedSubs).
 // Reading them back is how we recover identity (uuid) and editing framing
@@ -64,6 +64,13 @@ export async function inspectDoc(filePath) {
   // trustworthy embedded #rwa-affordances declaration (edit-unreachable) wins over
   // the kind-template guess; otherwise the static kind-derived projection.
   const self = resolveSelfDescription({ fileText, doc, uuid, kind, frozenZones });
+  // The staleness token (#31): the version of the document this read saw. A
+  // caller feeds it straight back as `rwa edit --base-hash` and the edit is
+  // refused if anyone wrote in between. Without a hash ON THE READ, a
+  // compare-and-swap on the write is unusable — there is nothing to compare to.
+  // Same value the hosted GET /r/:id/doc reports, so a read here is a valid
+  // token there and vice versa.
+  const baseHash = bodyHash(doc);
 
-  return { doc, uuid, kind, frozenZones, self };
+  return { doc, uuid, kind, frozenZones, self, baseHash };
 }

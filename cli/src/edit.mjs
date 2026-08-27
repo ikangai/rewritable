@@ -208,7 +208,13 @@ function validateEnvelope(env) {
  *   tokens make the map re-derivable from the doc bytes — no map threading.
  *   Raw paths (piped envelope / --plan) leave this unset: real bytes, plus the
  *   fail-loud guard against introducing a NEW token with no bytes behind it.
- * @returns {Promise<{exitCode: 0}>}
+ * @param {string} [opts.baseHash] — optimistic concurrency (#31): the `bodyHash`
+ *   of the document the caller composed this envelope against. If the stored
+ *   body no longer hashes to it, somebody else wrote in between and we refuse
+ *   with `base_hash_mismatch` rather than silently clobbering their work.
+ *   Omitted = last-writer-wins, the historical behaviour.
+ * @returns {Promise<{exitCode: 0, ok: true, tool: string, compiledTo?: string,
+ *   applied: number, baseHash: string, newHash: string, bytes: number}>}
  * @throws {CliError} on any validation, compile, or apply failure
  */
 export async function applyPlan(filePath, envelope, opts = {}) {
@@ -233,6 +239,19 @@ export async function applyPlan(filePath, envelope, opts = {}) {
     currentDoc = extractInlineDoc(fileText);
   } catch (_e) {
     throw new CliError(2, 'not_a_rewritable', { path: filePath });
+  }
+
+  // 2b. Optimistic concurrency (#31). Checked HERE — after we know the target is
+  // a rewritable, before the envelope is even validated — because staleness
+  // subsumes every later failure: if the document moved under the caller it has
+  // to re-read and recompose regardless, so reporting an envelope error first
+  // would send it to fix the wrong thing. `not_a_rewritable` still wins, since
+  // "this isn't a document" is not a concurrency answer.
+  if (opts.baseHash != null) {
+    const actual = bodyHash(currentDoc);
+    if (actual !== opts.baseHash) {
+      throw new CliError(3, 'base_hash_mismatch', { expected: opts.baseHash, actual });
+    }
   }
 
   // 3. Validate envelope shape + version.
