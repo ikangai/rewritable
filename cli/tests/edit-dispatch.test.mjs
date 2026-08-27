@@ -337,25 +337,38 @@ test('instruction mode does not block on partially-open upstream pipe', async ()
   }
 });
 
-test('codeName has no synthetic fallback — all CliError codes are in 0-4 range', async () => {
+test('codeName has no synthetic fallback — every CliError code is one codeName maps', async () => {
   // I2 regression guard: codeName() in rwa.mjs throws on unknown exit codes
   // rather than returning a synthetic 'unknown_error' string. To keep that
   // safe, every `new CliError(N, ...)` call site in cli/src/ must use a code
-  // that codeName can map. If you add a new exit code, extend codeName too.
+  // that codeName can map.
+  //
+  // The allowed set is READ OUT OF codeName rather than hard-coded here. It was
+  // hard-coded to 0-4, which meant adding exit 6 for `rwa render` (#38) failed
+  // this test even though codeName had been extended correctly — the guard was
+  // asserting a stale copy of the answer instead of the answer. Deriving it
+  // keeps the real invariant ("these two agree") and drops the false one
+  // ("there are exactly five codes").
   //
   // rwa.mjs has top-level IIFE side effects on import, so we can't cleanly
   // unit-test codeName directly — we do a static scan instead.
   const { readFileSync, readdirSync } = await import('node:fs');
+  const binText = readFileSync(join(__dirname, '..', 'bin', 'rwa.mjs'), 'utf8');
+  const fn = /function codeName\(n\) \{[\s\S]*?\n\}/.exec(binText);
+  assert.ok(fn, 'codeName must still exist in bin/rwa.mjs');
+  const mapped = new Set([0, ...[...fn[0].matchAll(/case\s+(\d+):/g)].map(m => Number(m[1]))]);
+  assert.ok(mapped.size > 1, 'codeName must map at least one non-zero exit code');
+  assert.ok(/default:\s*throw/.test(fn[0]), 'codeName must still THROW on an unknown code, not invent one');
+
   const srcDir = join(__dirname, '..', 'src');
-  const files = readdirSync(srcDir);
-  for (const f of files) {
+  for (const f of readdirSync(srcDir)) {
     if (!f.endsWith('.mjs')) continue;
     const text = readFileSync(join(srcDir, f), 'utf8');
     const re = /new\s+CliError\(\s*(\d+)/g;
     let m;
     while ((m = re.exec(text)) !== null) {
       const n = Number(m[1]);
-      assert.ok(n >= 0 && n <= 4, `${f} uses CliError(${n}) — codeName only handles 0-4`);
+      assert.ok(mapped.has(n), `${f} uses CliError(${n}) — codeName maps only ${[...mapped].join(', ')}`);
     }
   }
 });

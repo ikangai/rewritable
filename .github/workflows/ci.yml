@@ -154,6 +154,14 @@ jobs:
         env:
           REQUIRE_BROWSER: '1'
 
+      # #38 — the render door itself. jsdom has no layout, no paint and no paged
+      # media, so there is nothing for it to photograph; this is the lane where a
+      # render can be asserted at all.
+      - name: Render lane (rwa render)
+        run: node tests/browser/render.mjs
+        env:
+          REQUIRE_BROWSER: '1'
+
   benchmark:
     name: Conformance + fidelity (stub)
     runs-on: ubuntu-latest

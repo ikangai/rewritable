@@ -111,6 +111,15 @@ Usage:
                               DOC_UUID. Target: --url > \$RWA_PUBLISH_URL >
                               https://rewritable.ikangai.com. --json emits
                               {short,url,expiresAt}.
+  rwa render <path>           render the document to an image or a PDF by driving
+                              a real browser. --png (default) or --pdf, --out to
+                              choose the file, --print to render the PRINT
+                              stylesheet, --width/--height for the viewport.
+                              The one capability an outside agent cannot
+                              replicate: it can read the text and verify the
+                              hash, but only the container can look at itself.
+                              Exit 6 chrome_not_found when no browser is
+                              available (set CHROME_BIN to override).
   rwa publish-site <path>     scp a rewritable to a static site (needs RWA_SITE_* env)
   rwa proxy [--port N]        run a local OpenRouter key broker on 127.0.0.1: the
                               key stays on this machine (env or ~/.rwa/openrouter-key)
@@ -368,6 +377,11 @@ function codeName(n) {
     case 3: return 'envelope_error';
     case 4: return 'agent_error';
     case 5: return 'doctor_findings';
+    // #38 — `rwa render` needs an exit class that is neither the document's
+    // fault nor the caller's: no browser on this machine, or one that failed to
+    // drive. A caller can act on that (install Chrome, set CHROME_BIN, skip the
+    // step) in a way it cannot act on `file_error`.
+    case 6: return 'render_error';
     default: throw new Error(`codeName: unexpected exit code ${n}`);
   }
 }
@@ -1289,6 +1303,62 @@ function detectProductKind(fileText) {
         '',
       ].join('\n'));
       return; // server keeps the process alive
+    }
+
+    // `rwa render <file> [--pdf|--png] [--out p] [--print] [--json]` — the
+    // render door (#38). An outside agent authoring a document is otherwise
+    // permanently blind to it; the container is the only party that can look at
+    // itself. Drives a REAL browser (cli/src/cdp.mjs) rather than approximating
+    // layout, and exits 6 `chrome_not_found` when there is none — an environment
+    // answer a caller can act on, not a defect in the document.
+    if (verb === 'render') {
+      const jsonMode = rest.includes('--json');
+      const emitRender = (payload) => {
+        if (jsonMode) process.stderr.write(JSON.stringify(payload) + '\n');
+        else {
+          let line = 'rwa render: ' + [payload.code, payload.subcode].filter(Boolean).join('/');
+          if (payload.details && Object.keys(payload.details).length) line += ' ' + JSON.stringify(payload.details);
+          process.stderr.write(line + '\n');
+        }
+      };
+      // resolveFlag (not getFlag): getFlag returns {present,value}; only
+      // resolveFlag validates that a present flag actually carries a value and
+      // reports usage_error/missing_flag_value when it does not.
+      const outFlag = resolveFlag(getFlag('--out', rest), '--out', jsonMode);
+      if (!outFlag.ok) { process.exitCode = 1; return; }
+      const RENDER_FLAG_WITH_VALUE = new Set(['--out', '--width', '--height']);
+      const filePath = rest.find((a, i) => !a.startsWith('-') && !RENDER_FLAG_WITH_VALUE.has(rest[i - 1]));
+      if (!filePath) {
+        emitRender({ code: 'usage_error', subcode: 'missing_file_arg' });
+        process.exitCode = 1; return;
+      }
+      const widthFlag = resolveFlag(getFlag('--width', rest), '--width', jsonMode);
+      if (!widthFlag.ok) { process.exitCode = 1; return; }
+      const heightFlag = resolveFlag(getFlag('--height', rest), '--height', jsonMode);
+      if (!heightFlag.ok) { process.exitCode = 1; return; }
+      const { renderDoc } = await import('../src/render.mjs');
+      try {
+        const r = await renderDoc(filePath, {
+          format: rest.includes('--pdf') ? 'pdf' : 'png',
+          out: outFlag.value || undefined,
+          print: rest.includes('--print'),
+          width: widthFlag.value ? parseInt(widthFlag.value, 10) : undefined,
+          height: heightFlag.value ? parseInt(heightFlag.value, 10) : undefined,
+        });
+        if (jsonMode) process.stdout.write(JSON.stringify(r) + '\n');
+        else process.stdout.write(`${r.out}  (${r.format}, ${r.bytes} bytes)\n`);
+        // Page-side errors are reported, never swallowed: a render that LOOKS
+        // fine while the container threw is exactly the silent failure this
+        // door exists to expose.
+        for (const e of r.consoleErrors) process.stderr.write(`note: page error — ${e}\n`);
+        return;
+      } catch (e) {
+        if (e && typeof e.exitCode === 'number') {
+          emitRender({ code: codeName(e.exitCode), subcode: e.subcode, details: e.details });
+          process.exitCode = e.exitCode; return;
+        }
+        throw e;
+      }
     }
 
     // `rwa publish-site <file> [--host h] [--path p] [--url base] [--json]` —
