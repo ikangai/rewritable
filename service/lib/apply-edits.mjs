@@ -105,6 +105,7 @@ const isWellFormed = (s) => typeof s !== 'string' || typeof s.isWellFormed !== '
 // dead weight in every emitted container.
 export const FAILURE_HINTS = {
   base_hash_mismatch: 'The document changed since you read it — another writer committed in between. Re-read it, recompose your edit against the new text, and retry with the new base hash. Do not retry this envelope unchanged.',
+  virtual_form_mismatch: 'The read and the write disagree about image form. If you read the document with --virtual (rwa-asset tokens), pass --virtual to the edit as well; if you read it raw, drop --virtual. Anchors only match the projection they were composed against.',
   find_not_found: 'find must match the document byte-for-byte (whitespace and case included). If a closest match is shown, copy it exactly; otherwise pick a shorter, distinctive anchor.',
   find_not_unique: 'find appears more than once. Extend it with neighbouring text until it is unique; the hints list shows where.',
   frozen_zone_violation: 'This region is an author-protected frozen zone. Anchor on a different region — frozen zones change only by editing the file outside the runtime.',

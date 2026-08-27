@@ -10,7 +10,7 @@
 
 import { readFile } from 'node:fs/promises';
 import { extractInlineDoc } from './seed.mjs';
-import { findFrozenZones } from './apply-edits.mjs';
+import { findFrozenZones, virtualizeImages } from './apply-edits.mjs';
 import { resolveSelfDescription } from './identity.mjs';
 import { CliError, bodyHash } from './edit.mjs';
 
@@ -35,7 +35,7 @@ const PRODUCT_KIND_RE = /const PRODUCT_KIND = '([^']*)';/;
  * @returns {Promise<{doc: string, uuid: string|null, kind: string, frozenZones: string[], self: object}>}
  * @throws {CliError} exitCode 2 on file / non-rewritable errors
  */
-export async function inspectDoc(filePath) {
+export async function inspectDoc(filePath, opts = {}) {
   let fileText;
   try {
     fileText = await readFile(filePath, 'utf8');
@@ -70,7 +70,27 @@ export async function inspectDoc(filePath) {
   // compare-and-swap on the write is unusable — there is nothing to compare to.
   // Same value the hosted GET /r/:id/doc reports, so a read here is a valid
   // token there and vice versa.
+  // NOTE: over the REAL body, always — even when the caller asked for the
+  // virtualized projection below. baseHash names the document, and `rwa edit
+  // --base-hash` compares it against the stored bytes; a hash over the token
+  // form would be self-consistent and agree with nothing else.
   const baseHash = bodyHash(doc);
 
-  return { doc, uuid, kind, frozenZones, self, baseHash };
+  // images-v1 (#33): the virtualized projection replaces each embedded image's
+  // data: URI with an opaque `rwa-asset:<hash8>` token. This is the form the
+  // seed's modify(), the CLI agent loop and `rwa doctor` have always used — a
+  // single 60 KB image otherwise costs a reader ~60,000 characters of base64 it
+  // can do nothing with. `rwa doc` was the last read door still handing over the
+  // bytes. Opt-in for now, and PAIRED with `rwa edit --virtual`: a token-form
+  // read with a raw-form write means anchors silently stop matching around
+  // images, so applyPlan refuses that combination rather than mis-anchoring.
+  let assets = 0;
+  let out = doc;
+  if (opts.virtual) {
+    const v = virtualizeImages(doc);
+    out = v.doc;
+    assets = v.assets ? v.assets.size : 0;
+  }
+
+  return { doc: out, uuid, kind, frozenZones, self, baseHash, virtual: !!opts.virtual, assets };
 }

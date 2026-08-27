@@ -59,6 +59,13 @@ Usage:
                               refused instead of silently clobbered.
                               Exit 2 on a non-rewritable file — a clean
                               "is this a rewritable?" probe.
+                              --virtual emits embedded images as opaque
+                              \`rwa-asset:<id>\` tokens instead of their bytes —
+                              the form the in-page agent has always seen. A
+                              one-image document drops from ~60 KB to ~140
+                              bytes. PAIR it with \`rwa edit --virtual\`; a
+                              token-form read with a raw-form write is refused
+                              (\`virtual_form_mismatch\`), never mis-anchored.
   rwa doctor <path>           offline, read-only health check: frozen-zone
                               integrity, size headroom, orphaned rwa-asset
                               image tokens, <script>/<style> tag balance,
@@ -190,6 +197,10 @@ Flags:
                  next edit's \`--base-hash\`.
                  On FAILURE, one JSON object per line on stderr — each a
                  \`{code, subcode, details}\` object.
+  --virtual      (doc) emit rwa-asset tokens in place of embedded image
+                 bytes. (edit) the envelope's anchors are in that token
+                 form, because you read the document with \`doc --virtual\`.
+                 The two are one contract — mixing them fails loud.
   --base-hash <h>
                  (edit) apply only if the document still hashes to <h> —
                  the 64-hex \`baseHash\` from \`rwa doc --json\` or the
@@ -402,6 +413,11 @@ function detectProductKind(fileText) {
       }
       // Backend flags carry a value — keep them out of `positionals` so
       // their argument doesn't get parsed as a stray instruction word.
+      // #33 — the envelope speaks rwa-asset token form because the caller read
+      // the document with `rwa doc --virtual`. The instruction path virtualizes
+      // unconditionally (the model must never see pixels), so this only applies
+      // to the plan path.
+      const virtualPlan = rest.includes('--virtual');
       const FLAG_WITH_VALUE = new Set(['--plan', '--base-hash', '--backend', '--model', '--base-url', '--api-key']);
       const positionals = rest.filter((a, i) =>
         !a.startsWith('-') && !FLAG_WITH_VALUE.has(rest[i - 1])
@@ -659,7 +675,7 @@ function detectProductKind(fileText) {
 
       const { applyPlan } = await import('../src/edit.mjs');
       try {
-        emitEditResult(await applyPlan(filePath, envelope, { baseHash: baseHashArg }), jsonMode);
+        emitEditResult(await applyPlan(filePath, envelope, { baseHash: baseHashArg, virtualImages: virtualPlan }), jsonMode);
         return;
       } catch (e) {
         if (e && typeof e.exitCode === 'number') {
@@ -736,6 +752,9 @@ function detectProductKind(fileText) {
 
     if (verb === 'doc') {
       const jsonMode = rest.includes('--json');
+      // #33 — emit the rwa-asset token form instead of embedded image bytes.
+      // Pair it with `rwa edit --virtual`; the two are one read/write contract.
+      const virtual = rest.includes('--virtual');
       const filePath = rest.find(a => !a.startsWith('-'));
       const emitDoc = (payload) => {
         if (jsonMode) {
@@ -757,7 +776,7 @@ function detectProductKind(fileText) {
       const { inspectDoc } = await import('../src/doc.mjs');
       let info;
       try {
-        info = await inspectDoc(filePath);
+        info = await inspectDoc(filePath, { virtual });
       } catch (e) {
         if (e && typeof e.exitCode === 'number') {
           emitDoc({ code: codeName(e.exitCode), subcode: e.subcode, details: e.details });
@@ -779,6 +798,11 @@ function detectProductKind(fileText) {
           ...info.self,
           rewritable: true,
           baseHash: info.baseHash,
+          // `virtual`/`assets` describe the PROJECTION in `doc`; `baseHash` and
+          // `blocks` describe the document itself. A consumer must not confuse
+          // "what I was handed" with "what this file is".
+          virtual: info.virtual,
+          ...(info.virtual ? { assets: info.assets } : {}),
           length: info.doc.length,
           doc: info.doc,
         }) + '\n');

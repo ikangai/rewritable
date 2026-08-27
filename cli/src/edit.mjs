@@ -152,6 +152,50 @@ function assertFrozenPreserved(currentDoc, newDoc) {
   }
 }
 
+// #33 — diagnose a read/write projection mismatch before it becomes a confusing
+// anchor miss. Two asymmetric signatures, both narrow enough not to fire on a
+// legitimate document:
+//
+//   • RAW write, tokenised ANCHOR. The caller read with `--virtual` and forgot
+//     it on the write. Only counts if the token is NOT already in the stored doc
+//     — a pre-broken doc can legitimately carry orphan tokens (rwa-edit-spec §19),
+//     and moving one around is a supported edit.
+//     Deliberately `find` only, never `replace`: an unknown token in `replace` is
+//     the caller INVENTING an image, which `assertNoNewAssetTokens` already
+//     rejects as `unknown_asset_reference` with a better-targeted message. Only
+//     an anchor can tell you which projection was read.
+//   • VIRTUAL write, raw-bytes anchor. The caller read without `--virtual` and
+//     added it on the write. Only for `virtualImages`: the hosted relay
+//     (`virtualizeEnvelope`) is BUILT to receive expanded data: URIs.
+const ASSET_TOKEN_RE = /rwa-asset:[0-9a-f]{8}/g;
+function assertVirtualFormMatch(edits, currentDoc, opts) {
+  if (!opts.virtualImages && !opts.virtualizeEnvelope) {
+    if (!/data:image\//.test(currentDoc)) return;   // no embedded images: nothing to confuse
+    for (const e of edits) {
+      for (const tok of String(e && e.find || '').match(ASSET_TOKEN_RE) || []) {
+        if (!currentDoc.includes(tok)) {
+          throw new CliError(3, 'virtual_form_mismatch', {
+            token: tok,
+            expected: 'raw',
+            reason: 'the envelope anchors on rwa-asset tokens but this edit is applying to the raw document',
+          });
+        }
+      }
+    }
+    return;
+  }
+  if (opts.virtualImages) {
+    for (const e of edits) {
+      if (/data:image\//.test(String(e && e.find || ''))) {
+        throw new CliError(3, 'virtual_form_mismatch', {
+          expected: 'virtual',
+          reason: 'the envelope anchors on raw image bytes but this edit is applying to the virtualized document',
+        });
+      }
+    }
+  }
+}
+
 // String.prototype.isWellFormed (Node 22+) — false for an unpaired UTF-16
 // surrogate. Mirror of the seed's isWellFormed lone-surrogate guard.
 const isWellFormedStr = (s) => typeof s !== 'string' || typeof s.isWellFormed !== 'function' || s.isWellFormed();
@@ -277,6 +321,12 @@ export async function applyPlan(filePath, envelope, opts = {}) {
   const vimg = (opts.virtualImages || opts.virtualizeEnvelope) ? virtualizeImages(currentDoc) : null;
   if (opts.virtualizeEnvelope) envelope = mapEnvelopeImages(envelope, vimg.assets);
   const workDoc = vimg ? vimg.doc : currentDoc;
+
+  // #33 — the read and the write must speak the SAME form. Mixing them already
+  // failed, but as a bare `find_not_found`, which sends the caller off shortening
+  // its anchor when the real problem is that it read one projection and wrote
+  // against another. Name it instead. Both directions:
+  if (Array.isArray(envelope.edits)) assertVirtualFormMatch(envelope.edits, currentDoc, opts);
 
   // 4. Compute the new doc per shape.
   // `applied` / `compiledTo` are reported back to the caller (#30): a delegating
