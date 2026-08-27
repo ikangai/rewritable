@@ -765,6 +765,66 @@ function maskRawTextAndComments(doc) {
   return masked;
 }
 
+
+// The anchorable-block scan, shared by the id backfill and the outline reader so
+// the two can never disagree about what a "block" is. Semantics are the seed's
+// (masking, outer-wins nesting, TABLE descending into its cells); the parity
+// test tests/block-id-parity.mjs proves it against the seed directly.
+//
+// `cb` receives the ORIGINAL-doc offsets, not mask offsets — masking preserves
+// byte positions precisely so callers can slice real bytes (invariant 11).
+function forEachAnchorable(doc, cb) {
+  const masked = maskRawTextAndComments(doc);
+  const tagOpen = /<([a-zA-Z][a-zA-Z0-9]*)\b([^>]*)>/g;
+  let m;
+  while ((m = tagOpen.exec(masked)) !== null) {
+    const tag = m[1];
+    if (!ANCHORABLE_TAGS.has(tag.toUpperCase())) continue;
+    const closeEnd = matchingCloseEnd(masked, tag, m.index + m[0].length);
+    if (closeEnd < 0) continue;
+    // Outer-wins skip past nested anchorables. TABLE keeps scanning inside so
+    // contained TDs are also seen; the DOM grammar guarantees TD only appears
+    // inside TABLE, so no other anchorable is double-processed.
+    if (tag.toUpperCase() !== 'TABLE') tagOpen.lastIndex = closeEnd;
+    cb({ tag, openStart: m.index, openEnd: m.index + m[0].length, end: closeEnd, attrs: m[2] || '' });
+  }
+}
+
+/**
+ * The document's anchorable blocks in source order (#34) — the outline an agent
+ * reads INSTEAD of the body when it is directing work it has not read.
+ *
+ * Frozen blocks are included and flagged rather than hidden: a caller needs to
+ * know a region exists and that it cannot be edited, which is more useful than
+ * a gap in the outline it cannot explain.
+ *
+ * @param {string} doc
+ * @returns {Array<{id: string|null, tag: string, start: number, end: number,
+ *   chars: number, text: string, frozen: boolean}>}
+ */
+export function listBlocks(doc) {
+  if (typeof doc !== 'string' || doc.length === 0) return [];
+  const frozenRanges = markerZoneRangesIn(doc);
+  const inFrozen = (pos) => frozenRanges.some(([s, e]) => pos >= s && pos < e);
+  const out = [];
+  forEachAnchorable(doc, ({ tag, openStart, openEnd, end, attrs }) => {
+    const idm = attrs.match(/\sdata-rwa-id\s*=\s*(?:"([^"]*)"|'([^']*)')/);
+    const inner = doc.slice(openEnd, Math.max(openEnd, end - (tag.length + 3)));
+    out.push({
+      id: idm ? (idm[1] != null ? idm[1] : idm[2]) : null,
+      tag: tag.toLowerCase(),
+      start: openStart,
+      end,
+      chars: end - openStart,
+      // Text content, tags stripped and whitespace collapsed — enough to
+      // recognise the block, never enough to be a substitute for reading it.
+      text: inner.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim(),
+      frozen: inFrozen(openStart),
+    });
+  });
+  return out;
+}
+
 /**
  * Inject `data-rwa-id="…"` into every anchorable block that lacks one. Pure
  * string surgery — preserves whitespace, attribute order and quoting bytes
@@ -783,7 +843,6 @@ function maskRawTextAndComments(doc) {
  */
 export function injectMissingBlockIds(doc, rand) {
   if (typeof doc !== 'string' || doc.length === 0) return { text: doc, assigned: 0 };
-  const masked = maskRawTextAndComments(doc);
   const frozenRanges = markerZoneRangesIn(doc);
   const inFrozen = (pos) => {
     for (const [s, e] of frozenRanges) if (pos >= s && pos < e) return true;
@@ -803,23 +862,13 @@ export function injectMissingBlockIds(doc, rand) {
     throw new RwaEditError('block_id_exhausted', null, { taken: taken.size });
   };
 
-  const tagOpen = /<([a-zA-Z][a-zA-Z0-9]*)\b([^>]*)>/g;
   const inserts = [];
-  let m;
-  while ((m = tagOpen.exec(masked)) !== null) {
-    const tag = m[1].toUpperCase();
-    if (!ANCHORABLE_TAGS.has(tag)) continue;
-    const closeEnd = matchingCloseEnd(masked, m[1], m.index + m[0].length);
-    if (closeEnd < 0) continue;
-    // Outer-wins skip past nested anchorables. TABLE keeps scanning inside so
-    // contained TDs are also injected; the DOM grammar guarantees TD only
-    // appears inside TABLE, so no other anchorable is double-processed.
-    if (tag !== 'TABLE') tagOpen.lastIndex = closeEnd;
-    if (inFrozen(m.index)) continue;
-    const attrs = m[2] || '';
-    if (/\sdata-rwa-id\s*=/.test(attrs)) continue;
-    inserts.push({ pos: m.index + 1 + m[1].length, text: ' data-rwa-id="' + mint() + '"' });
-  }
+  forEachAnchorable(doc, ({ tag, openStart, openEnd, attrs }) => {
+    if (inFrozen(openStart)) return;
+    if (/\sdata-rwa-id\s*=/.test(attrs)) return;
+    void openEnd;
+    inserts.push({ pos: openStart + 1 + tag.length, text: ' data-rwa-id="' + mint() + '"' });
+  });
   if (inserts.length === 0) return { text: doc, assigned: 0 };
   let out = doc;
   for (let i = inserts.length - 1; i >= 0; i--) {

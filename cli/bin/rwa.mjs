@@ -59,6 +59,17 @@ Usage:
                               refused instead of silently clobbered.
                               Exit 2 on a non-rewritable file — a clean
                               "is this a rewritable?" probe.
+                              --outline lists the document's blocks instead of
+                              its text — one row each: data-rwa-id, size, tag,
+                              and a capped preview, indented by heading level.
+                              --preview <n> budgets that preview (0 = a pure
+                              id/tag/size skeleton). An outline costs O(block
+                              count), not O(document size), so it pays most on
+                              documents whose blocks are substantial.
+                              --block <id> prints exactly one block's source.
+                              Outline + one block + --base-hash closes a
+                              read-modify-write cycle whose cost is proportional
+                              to the EDIT rather than to the document.
                               --virtual emits embedded images as opaque
                               \`rwa-asset:<id>\` tokens instead of their bytes —
                               the form the in-page agent has always seen. A
@@ -248,6 +259,33 @@ Supported import formats: .md, .markdown, .html, .htm, .csv, .txt, .docx, .pdf
 
 const args = process.argv.slice(2);
 const verb = args[0];
+
+
+// Render an outline as an indented tree (#34). Indentation follows the HEADING
+// hierarchy rather than DOM nesting, because that is the structure a reader
+// actually navigates by: a heading sets the level, everything after it sits one
+// level in. Ids are the column that matters — they are what `--block <id>` and
+// an edit instruction refer to — so they lead each row.
+function formatOutline(r) {
+  if (!r.count) return '(no anchorable blocks)';
+  const lines = [];
+  let level = 0;
+  for (const b of r.outline) {
+    const h = /^h([1-6])$/.exec(b.tag);
+    if (h) level = Number(h[1]) - 1;
+    const indent = '  '.repeat(h ? level : level + 1);
+    const id = b.id ? b.id : '········';
+    const flag = b.frozen ? ' [frozen]' : '';
+    const size = String(b.chars).padStart(6);
+    lines.push(`${id}  ${size}  ${indent}${b.tag}${flag}${b.preview ? '  ' + b.preview : ''}`);
+  }
+  lines.push('');
+  const unnamed = r.outline.filter(b => !b.id).length;
+  lines.push(`${r.count} block${r.count === 1 ? '' : 's'}` +
+    (unnamed ? ` (${unnamed} without an id — commit once to backfill)` : '') +
+    `  ·  ${r.baseHash.slice(0, 12)}`);
+  return lines.join('\n');
+}
 
 // `rwa edit` failure surface — one line per emit. Plain mode: short
 // human-readable string. JSON mode: a single JSON object per line so
@@ -755,7 +793,37 @@ function detectProductKind(fileText) {
       // #33 — emit the rwa-asset token form instead of embedded image bytes.
       // Pair it with `rwa edit --virtual`; the two are one read/write contract.
       const virtual = rest.includes('--virtual');
-      const filePath = rest.find(a => !a.startsWith('-'));
+      // #34 — the two cheap read modes. `--outline` lists the document's blocks
+      // (id, tag, size, preview) instead of its text; `--block <id>` returns
+      // exactly one block's source. Together with #31's baseHash they let a
+      // caller close a read-modify-write cycle whose cost is proportional to the
+      // EDIT rather than to the document.
+      const outlineMode = rest.includes('--outline');
+      // `--preview <n>` budgets the outline. An outline costs O(block count),
+      // not O(document size), so on a document of many SHORT blocks it saves
+      // little at the default; `--preview 0` drops to a pure skeleton (id, tag,
+      // size) which is a small fraction of any document. Callers that know their
+      // budget should set it rather than discover this.
+      const previewIdx = rest.indexOf('--preview');
+      const previewArg = previewIdx >= 0 ? rest[previewIdx + 1] : undefined;
+      if (previewIdx >= 0 && !/^\d+$/.test(String(previewArg))) {
+        emitDocUsage({ code: 'usage_error', subcode: 'malformed_preview', details: { got: previewArg } }, jsonMode);
+        process.exitCode = 1;
+        return;
+      }
+      const blockIdx = rest.indexOf('--block');
+      const blockArg = blockIdx >= 0 ? rest[blockIdx + 1] : undefined;
+      if (blockIdx >= 0 && (blockArg === undefined || blockArg.startsWith('-'))) {
+        emitDocUsage({ code: 'usage_error', subcode: 'missing_block_value' }, jsonMode);
+        process.exitCode = 1;
+        return;
+      }
+      const DOC_FLAG_WITH_VALUE = new Set(['--block', '--preview']);
+      const filePath = rest.find((a, i) => !a.startsWith('-') && !DOC_FLAG_WITH_VALUE.has(rest[i - 1]));
+      const emitDocUsage = (payload) => {
+        if (jsonMode) process.stderr.write(JSON.stringify(payload) + '\n');
+        else process.stderr.write('rwa doc: ' + [payload.code, payload.subcode].filter(Boolean).join('/') + '\n');
+      };
       const emitDoc = (payload) => {
         if (jsonMode) {
           process.stderr.write(JSON.stringify(payload) + '\n');
@@ -773,7 +841,30 @@ function detectProductKind(fileText) {
         process.exitCode = 1;
         return;
       }
-      const { inspectDoc } = await import('../src/doc.mjs');
+      const { inspectDoc, outlineDoc, readBlock } = await import('../src/doc.mjs');
+
+      if (outlineMode || blockArg !== undefined) {
+        try {
+          if (blockArg !== undefined) {
+            const r = await readBlock(filePath, blockArg, { virtual });
+            if (jsonMode) process.stdout.write(JSON.stringify(r) + '\n');
+            else process.stdout.write(r.block.source.endsWith('\n') ? r.block.source : r.block.source + '\n');
+          } else {
+            const r = await outlineDoc(filePath, { virtual, ...(previewArg !== undefined ? { preview: Number(previewArg) } : {}) });
+            if (jsonMode) process.stdout.write(JSON.stringify(r) + '\n');
+            else process.stdout.write(formatOutline(r) + '\n');
+          }
+          return;
+        } catch (e) {
+          if (e && typeof e.exitCode === 'number') {
+            emitDoc({ code: codeName(e.exitCode), subcode: e.subcode, details: e.details });
+            process.exitCode = e.exitCode;
+            return;
+          }
+          throw e;
+        }
+      }
+
       let info;
       try {
         info = await inspectDoc(filePath, { virtual });

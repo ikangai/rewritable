@@ -10,7 +10,7 @@
 
 import { readFile } from 'node:fs/promises';
 import { extractInlineDoc } from './seed.mjs';
-import { findFrozenZones, virtualizeImages } from './apply-edits.mjs';
+import { findFrozenZones, virtualizeImages, listBlocks } from './apply-edits.mjs';
 import { resolveSelfDescription } from './identity.mjs';
 import { CliError, bodyHash } from './edit.mjs';
 
@@ -93,4 +93,74 @@ export async function inspectDoc(filePath, opts = {}) {
   }
 
   return { doc: out, uuid, kind, frozenZones, self, baseHash, virtual: !!opts.virtual, assets };
+}
+
+/**
+ * The document's OUTLINE (#34) — what a delegating agent reads instead of the
+ * body.
+ *
+ * `rwa doc` was whole-document-or-nothing: the only way to learn what was in a
+ * file was to pay for all of it, on every turn, for every edit. Under the
+ * two-agent split the external agent is not supposed to hold the body at all, so
+ * it needs a summary cheap enough to direct work from — a block list with stable
+ * names (`data-rwa-id`), sizes to budget against, and enough text to recognise a
+ * block without reproducing it.
+ *
+ * `preview` is capped hard on purpose. An outline that grew with the document
+ * would just be the document again with extra steps.
+ *
+ * @param {string} filePath
+ * @param {object} [opts] — `virtual` (token form), `preview` (chars, default 80)
+ * @returns {Promise<{uuid: string|null, kind: string, baseHash: string,
+ *   count: number, outline: Array<object>}>}
+ */
+export async function outlineDoc(filePath, opts = {}) {
+  const info = await inspectDoc(filePath, opts);
+  const cap = Number.isFinite(opts.preview) ? Math.max(0, opts.preview) : 80;
+  const outline = listBlocks(info.doc).map((b) => ({
+    id: b.id,
+    tag: b.tag,
+    chars: b.chars,
+    ...(b.frozen ? { frozen: true } : {}),
+    // cap 0 means "no preview at all" — the structural skeleton. Guard the
+    // slice: `slice(0, cap - 1)` at cap 0 is `slice(0, -1)`, which drops one
+    // character instead of all of them and makes the skeleton the LARGEST
+    // outline rather than the smallest.
+    preview: cap === 0 ? '' : (b.text.length > cap ? b.text.slice(0, cap - 1) + '…' : b.text),
+  }));
+  return { uuid: info.uuid, kind: info.kind, baseHash: info.baseHash, count: outline.length, outline };
+}
+
+/**
+ * One block's source, by `data-rwa-id` (#34). With `outlineDoc` above and the
+ * `baseHash` from #31 this closes a read-modify-write cycle whose cost is
+ * proportional to the EDIT rather than to the document.
+ *
+ * @throws {CliError} exitCode 1 / `unknown_block` — including the case where the
+ *   document has no ids at all, which is its own distinct answer: the file has
+ *   never been committed through a surface that assigns them.
+ */
+export async function readBlock(filePath, id, opts = {}) {
+  const info = await inspectDoc(filePath, opts);
+  const blocks = listBlocks(info.doc);
+  const hit = blocks.find((b) => b.id === id);
+  if (!hit) {
+    const identified = blocks.filter((b) => b.id).length;
+    throw new CliError(1, 'unknown_block', {
+      id,
+      blocks: blocks.length,
+      identified,
+      hint: identified === 0
+        ? 'This document has no block ids yet — nothing has committed through a surface that assigns them. Run any edit (or open it once in a browser) and they will be backfilled.'
+        : 'Run `rwa doc <file> --outline` to list the ids this document actually has.',
+    });
+  }
+  return {
+    uuid: info.uuid,
+    baseHash: info.baseHash,
+    block: {
+      id: hit.id, tag: hit.tag, chars: hit.chars, frozen: hit.frozen,
+      source: info.doc.slice(hit.start, hit.end),
+    },
+  };
 }
