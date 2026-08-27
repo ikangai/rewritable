@@ -58,7 +58,15 @@ export const KIND_PROVIDERS = {
 // there is no redo (re-write-able-spec Invariant 7). Static and live emit this
 // block identically (it is constant), so they agree trivially.
 export const SUBSTRATE_BASELINE = Object.freeze({
-  edit: ['lens'],
+  // #41 — the user-facing edit surfaces every container has. Was `['lens']`
+  // until 2026-08-27; the docked lens card has been display:none since
+  // 2026-07-07, so `describe()` — the surface the operations API calls "the
+  // negotiation surface" — was telling every consumer to reach for something
+  // that is not there. Ordered by scope, widest first: ⌘K takes the whole
+  // document, `/` infers its scope from the selection, inline edits one block's
+  // text, selection commands act on a span. SD-07 (no overclaim) is why this
+  // names what exists rather than a comfortable abstraction over it.
+  edit: ['command', 'slash', 'inline', 'selection'],
   tools: ['apply_dsl_plan', 'apply_edits', 'replace_document'],
   export: ['html', 'print'],
   history: ['undo'],

@@ -154,6 +154,14 @@ jobs:
         env:
           REQUIRE_BROWSER: '1'
 
+      # #38 — the render door itself. jsdom has no layout, no paint and no paged
+      # media, so there is nothing for it to photograph; this is the lane where a
+      # render can be asserted at all.
+      - name: Render lane (rwa render)
+        run: node tests/browser/render.mjs
+        env:
+          REQUIRE_BROWSER: '1'
+
   benchmark:
     name: Conformance + fidelity (stub)
     runs-on: ubuntu-latest
@@ -208,6 +216,19 @@ jobs:
       - name: Trajectory coherence (ratchet)
         working-directory: benchmark
         run: npm run trajectory:check
+      # The AGENT-SURFACE lane (issue #42). Every other benchmark here measures
+      # the MODEL; this one measures the DOOR — whether an agent holding only the
+      # CLI can find a block, read just that block, write safely against a
+      # staleness token, confirm the outcome without re-reading, keep image bytes
+      # out of its context, and learn where the content came from. Each of those
+      # was IMPOSSIBLE before the two-agent epic, and nothing in this repo ever
+      # ran the one command that would have shown it. Model-free and offline: the
+      # "agent" is a script, so this asserts the surface CAN be used efficiently,
+      # never that a real model does. It also ratchets CONTEXT COST per task,
+      # which no other suite can see. See the runner's header.
+      - name: Agent surface (ratchet)
+        working-directory: benchmark
+        run: npm run agent-surface:check
 
   refs-fresh:
     name: References regenerate cleanly

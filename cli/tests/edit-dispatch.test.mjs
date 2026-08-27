@@ -145,10 +145,13 @@ test('plan path — find_not_found --json is self-correcting (closest + hint)', 
     await runRwa(['new', path]);
     const { extractInlineDoc } = await import('../src/seed.mjs');
     const body = extractInlineDoc(readFileSync(path, 'utf8'));
-    const real = 'Start writing, or ask the lens';
+    // Anchored on the starter doc's placeholder copy. #41 changed that copy
+    // (the docked lens is retired), so the phrase moved with it — this test is
+    // about self-correcting failures, not about the prose.
+    const real = 'Start writing, or press';
     assert.ok(body.includes(real), 'fixture must contain the anchor phrase');
 
-    const nearMiss = 'Start writing,  or ask the lens'; // double space — whitespace-only miss
+    const nearMiss = 'Start writing,  or press'; // double space — whitespace-only miss
     const envelope = JSON.stringify({ version: 'rwa-edit/1', edits: [{ find: nearMiss, replace: 'X' }] });
     const { code, stderr } = await runRwa(['edit', path, '--json'], { stdin: envelope });
     assert.equal(code, 3);
@@ -337,25 +340,38 @@ test('instruction mode does not block on partially-open upstream pipe', async ()
   }
 });
 
-test('codeName has no synthetic fallback — all CliError codes are in 0-4 range', async () => {
+test('codeName has no synthetic fallback — every CliError code is one codeName maps', async () => {
   // I2 regression guard: codeName() in rwa.mjs throws on unknown exit codes
   // rather than returning a synthetic 'unknown_error' string. To keep that
   // safe, every `new CliError(N, ...)` call site in cli/src/ must use a code
-  // that codeName can map. If you add a new exit code, extend codeName too.
+  // that codeName can map.
+  //
+  // The allowed set is READ OUT OF codeName rather than hard-coded here. It was
+  // hard-coded to 0-4, which meant adding exit 6 for `rwa render` (#38) failed
+  // this test even though codeName had been extended correctly — the guard was
+  // asserting a stale copy of the answer instead of the answer. Deriving it
+  // keeps the real invariant ("these two agree") and drops the false one
+  // ("there are exactly five codes").
   //
   // rwa.mjs has top-level IIFE side effects on import, so we can't cleanly
   // unit-test codeName directly — we do a static scan instead.
   const { readFileSync, readdirSync } = await import('node:fs');
+  const binText = readFileSync(join(__dirname, '..', 'bin', 'rwa.mjs'), 'utf8');
+  const fn = /function codeName\(n\) \{[\s\S]*?\n\}/.exec(binText);
+  assert.ok(fn, 'codeName must still exist in bin/rwa.mjs');
+  const mapped = new Set([0, ...[...fn[0].matchAll(/case\s+(\d+):/g)].map(m => Number(m[1]))]);
+  assert.ok(mapped.size > 1, 'codeName must map at least one non-zero exit code');
+  assert.ok(/default:\s*throw/.test(fn[0]), 'codeName must still THROW on an unknown code, not invent one');
+
   const srcDir = join(__dirname, '..', 'src');
-  const files = readdirSync(srcDir);
-  for (const f of files) {
+  for (const f of readdirSync(srcDir)) {
     if (!f.endsWith('.mjs')) continue;
     const text = readFileSync(join(srcDir, f), 'utf8');
     const re = /new\s+CliError\(\s*(\d+)/g;
     let m;
     while ((m = re.exec(text)) !== null) {
       const n = Number(m[1]);
-      assert.ok(n >= 0 && n <= 4, `${f} uses CliError(${n}) — codeName only handles 0-4`);
+      assert.ok(mapped.has(n), `${f} uses CliError(${n}) — codeName maps only ${[...mapped].join(', ')}`);
     }
   }
 });

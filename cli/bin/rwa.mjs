@@ -53,9 +53,37 @@ Usage:
                               print the self-description/1 superset instead —
                               the edit contract plus "what is this, what can be
                               done with it": {rwa, kind, title, affordances,
-                              baseline, frozenZones, …, doc}.
+                              baseline, frozenZones, baseHash, origin, role,
+                              …, doc}. \`role\` is the specialist this container
+                              asks an agent to BE — its signed rwa-agent/1
+                              record — or null with \`roleStatus\` saying why
+                              (none / unverified / multiple). An unverified role
+                              definition is prompt injection promoted to
+                              configuration, so its prompt is withheld, never
+                              handed over with a warning.
+                              baseHash is the staleness token: feed it back as
+                              \`rwa edit --base-hash\` so a concurrent write is
+                              refused instead of silently clobbered.
                               Exit 2 on a non-rewritable file — a clean
                               "is this a rewritable?" probe.
+                              --outline lists the document's blocks instead of
+                              its text — one row each: data-rwa-id, size, tag,
+                              and a capped preview, indented by heading level.
+                              --preview <n> budgets that preview (0 = a pure
+                              id/tag/size skeleton). An outline costs O(block
+                              count), not O(document size), so it pays most on
+                              documents whose blocks are substantial.
+                              --block <id> prints exactly one block's source.
+                              Outline + one block + --base-hash closes a
+                              read-modify-write cycle whose cost is proportional
+                              to the EDIT rather than to the document.
+                              --virtual emits embedded images as opaque
+                              \`rwa-asset:<id>\` tokens instead of their bytes —
+                              the form the in-page agent has always seen. A
+                              one-image document drops from ~60 KB to ~140
+                              bytes. PAIR it with \`rwa edit --virtual\`; a
+                              token-form read with a raw-form write is refused
+                              (\`virtual_form_mismatch\`), never mis-anchored.
   rwa doctor <path>           offline, read-only health check: frozen-zone
                               integrity, size headroom, orphaned rwa-asset
                               image tokens, <script>/<style> tag balance,
@@ -83,6 +111,32 @@ Usage:
                               DOC_UUID. Target: --url > \$RWA_PUBLISH_URL >
                               https://rewritable.ikangai.com. --json emits
                               {short,url,expiresAt}.
+  rwa schema                  print the wire contracts an agent needs to drive
+                              this tool directly: the three edit tools with
+                              their JSON Schemas, which to reach for, the
+                              read modes in cost order, the exit-code table and
+                              every failure subcode with its recovery hint.
+                              Sourced from the seed's own TOOL_SCHEMAS, so it
+                              cannot drift from what the tools accept. --json
+                              for the machine-readable form.
+  rwa log <path>              print the container's forward audit trail: one
+                              record per successful edit — timestamp, resulting
+                              hash, tool, and the actor PAIR (who decided / who
+                              typed). Kept in a <name>.rwa-log.jsonl sidecar
+                              beside the file, the same record shape the hosted
+                              runtime already writes. Append-only, hashes only,
+                              never envelope bodies. NOTE: a sidecar does not
+                              travel with the file — a published copy carries no
+                              history.
+  rwa render <path>           render the document to an image or a PDF by driving
+                              a real browser. --png (default) or --pdf, --out to
+                              choose the file, --print to render the PRINT
+                              stylesheet, --width/--height for the viewport.
+                              The one capability an outside agent cannot
+                              replicate: it can read the text and verify the
+                              hash, but only the container can look at itself.
+                              Exit 6 chrome_not_found when no browser is
+                              available (set CHROME_BIN to override).
   rwa publish-site <path>     scp a rewritable to a static site (needs RWA_SITE_* env)
   rwa proxy [--port N]        run a local OpenRouter key broker on 127.0.0.1: the
                               key stays on this machine (env or ~/.rwa/openrouter-key)
@@ -91,6 +145,19 @@ Usage:
                               per-tab key pasting, and no key in any browser. Web
                               origins are refused unless --allow-origin is given
                               (file:// containers and local tools always pass).
+  rwa proxy --agent           run the same loopback service backed by your LOCAL
+                              agent instead of a key: it asks \`claude -p\` and
+                              synthesizes real tool_calls, so the container gets a
+                              MULTI-TURN tool-use backend and no API key exists in
+                              any browser at all. This is what \`bridge\` /
+                              \`bridge-session\` could not be: single-shot, so
+                              skin --l1, prose extraction and the compose paths
+                              refuse them and degrade. Over this proxy they work.
+                              --model pins the agent model; --max-calls caps how
+                              much one session may spend (default 200).
+                              The answering agent runs with NO tools — document
+                              content is untrusted, and it must be able to answer
+                              without being able to act.
   rwa proxy set-key           prompt for the key (hidden input) and store it at
                               ~/.rwa/openrouter-key with mode 600.
   rwa host <path>             ingest a rewritable into a hosted runtime (POST /r)
@@ -176,9 +243,32 @@ Flags:
   --plan <file>  (edit only) read the tool-envelope from <file> instead of
                  stdin. Use \`--plan -\` to force stdin even when stdin is
                  not a pipe.
-  --json         (edit) emit one JSON object per line on stderr for
-                 structured failure reporting — each line a single
+  --json         (edit) on SUCCESS, emit the result object on stdout:
+                 \`{ok, tool, compiledTo?, applied, baseHash, newHash,
+                 bytes}\` — one JSON object, so a caller can confirm what
+                 was applied without re-reading the document. \`baseHash\`
+                 and \`newHash\` are sha-256 over the LF-canonical editable
+                 body before/after — the same value \`rwa doc --json\` and
+                 the hosted \`/r/:id/doc\` report, so all three surfaces
+                 agree on what a document is. Carry \`newHash\` into the
+                 next edit's \`--base-hash\`.
+                 On FAILURE, one JSON object per line on stderr — each a
                  \`{code, subcode, details}\` object.
+  --virtual      (doc) emit rwa-asset tokens in place of embedded image
+                 bytes. (edit) the envelope's anchors are in that token
+                 form, because you read the document with \`doc --virtual\`.
+                 The two are one contract — mixing them fails loud.
+  --actor <name>  (edit) who DECIDED this edit — recorded as the log's
+                 \`principal\` beside the surface that wrote it. Also
+                 \$RWA_PRINCIPAL. Left null when unset rather than guessed.
+  --base-hash <h>
+                 (edit) apply only if the document still hashes to <h> —
+                 the 64-hex \`baseHash\` from \`rwa doc --json\` or the
+                 \`newHash\` of your previous edit. If anyone wrote in
+                 between, the edit is REFUSED (exit 3,
+                 \`base_hash_mismatch\`) instead of overwriting their work;
+                 re-read, recompose and retry. Without it, edits are
+                 last-writer-wins.
                  (doc) emit the editing-contract object on stdout instead of
                  the raw body; on failure, the \`{code, subcode, details}\`
                  object goes to stderr.
@@ -219,6 +309,53 @@ Supported import formats: .md, .markdown, .html, .htm, .csv, .txt, .docx, .pdf
 const args = process.argv.slice(2);
 const verb = args[0];
 
+
+// Render an outline as an indented tree (#34). Indentation follows the HEADING
+// hierarchy rather than DOM nesting, because that is the structure a reader
+// actually navigates by: a heading sets the level, everything after it sits one
+// level in. Ids are the column that matters — they are what `--block <id>` and
+// an edit instruction refer to — so they lead each row.
+function formatOutline(r) {
+  if (!r.count) return '(no anchorable blocks)';
+  const lines = [];
+  let level = 0;
+  for (const b of r.outline) {
+    const h = /^h([1-6])$/.exec(b.tag);
+    if (h) level = Number(h[1]) - 1;
+    const indent = '  '.repeat(h ? level : level + 1);
+    const id = b.id ? b.id : '········';
+    const flag = b.frozen ? ' [frozen]' : '';
+    const size = String(b.chars).padStart(6);
+    lines.push(`${id}  ${size}  ${indent}${b.tag}${flag}${b.preview ? '  ' + b.preview : ''}`);
+  }
+  lines.push('');
+  const unnamed = r.outline.filter(b => !b.id).length;
+  lines.push(`${r.count} block${r.count === 1 ? '' : 's'}` +
+    (unnamed ? ` (${unnamed} without an id — commit once to backfill)` : '') +
+    `  ·  ${r.baseHash.slice(0, 12)}`);
+  return lines.join('\n');
+}
+
+
+// #39 — append the forward audit record after a write that already succeeded.
+// Deliberately here rather than inside applyPlan: applyPlan is vendored
+// byte-identically into service/lib, and the hosted runtime keeps its OWN
+// history.jsonl, so logging from the shared module would double-log every hosted
+// edit. Best-effort — an unwritable sidecar must never fail a completed edit.
+async function recordHistory(filePath, result, actorSpec) {
+  const { appendHistory, actorPair } = await import('../src/history.mjs');
+  return appendHistory(filePath, {
+    tool: result.tool,
+    ...(result.compiledTo ? { compiledTo: result.compiledTo } : {}),
+    applied: result.applied,
+    blockIdsAssigned: result.blockIdsAssigned,
+    baseHash: result.baseHash,
+    newHash: result.newHash,
+    bytes: result.bytes,
+    actor: actorPair(actorSpec),
+  });
+}
+
 // `rwa edit` failure surface — one line per emit. Plain mode: short
 // human-readable string. JSON mode: a single JSON object per line so
 // callers (CI, agent loops) can parse without regex.
@@ -232,6 +369,27 @@ function emitEdit(payload, jsonMode) {
       line += ' ' + JSON.stringify(payload.details);
     }
     process.stderr.write(line + '\n');
+  }
+}
+
+// `rwa edit` SUCCESS surface (#30). The failure path above has always been
+// well-formed; success was silent, which left a delegating agent with exit 0
+// and nothing to audit — re-reading the whole document is exactly the cost
+// delegation exists to avoid. Success goes to STDOUT (the repo convention every
+// other verb follows: `upgrade`, `doc`, `doctor`, `ls`, `publish` all put the
+// result on stdout and errors on stderr), so `rwa edit --json` is pipeable.
+function emitEditResult(result, jsonMode) {
+  if (jsonMode) {
+    // Drop the legacy `exitCode` field from the wire shape — it is an internal
+    // caller convention, not part of the reported result.
+    const { exitCode: _exitCode, ...payload } = result;
+    process.stdout.write(JSON.stringify(payload) + '\n');
+  } else {
+    const what = result.compiledTo ? `${result.tool}→${result.compiledTo}` : result.tool;
+    process.stdout.write(
+      `✓ ${what}: ${result.applied} edit${result.applied === 1 ? '' : 's'} applied · ` +
+      `${result.bytes} bytes · ${result.newHash.slice(0, 12)}\n`,
+    );
   }
 }
 
@@ -259,6 +417,11 @@ function codeName(n) {
     case 3: return 'envelope_error';
     case 4: return 'agent_error';
     case 5: return 'doctor_findings';
+    // #38 — `rwa render` needs an exit class that is neither the document's
+    // fault nor the caller's: no browser on this machine, or one that failed to
+    // drive. A caller can act on that (install Chrome, set CHROME_BIN, skip the
+    // step) in a way it cannot act on `file_error`.
+    case 6: return 'render_error';
     default: throw new Error(`codeName: unexpected exit code ${n}`);
   }
 }
@@ -342,9 +505,38 @@ function detectProductKind(fileText) {
         process.exitCode = 1;
         return;
       }
+      // `--base-hash <hex>` — optimistic concurrency (#31). The caller asserts
+      // which version of the document it composed against; a mismatch means
+      // somebody else wrote in between, so we refuse rather than clobber.
+      // Absent = today's last-writer-wins behaviour, so nothing breaks.
+      const baseHashIdx = rest.indexOf('--base-hash');
+      const baseHashArg = baseHashIdx >= 0 ? rest[baseHashIdx + 1] : undefined;
+      if (baseHashIdx >= 0 && (baseHashArg === undefined || baseHashArg.startsWith('-'))) {
+        emitEdit({ code: 'usage_error', subcode: 'missing_base_hash_value' }, jsonMode);
+        process.exitCode = 1;
+        return;
+      }
+      if (baseHashArg !== undefined && !/^[0-9a-f]{64}$/.test(baseHashArg)) {
+        // Fail loud on a malformed hash rather than treating it as a mismatch:
+        // "you typed it wrong" and "someone else edited" need different fixes.
+        emitEdit({ code: 'usage_error', subcode: 'malformed_base_hash', details: { got: baseHashArg } }, jsonMode);
+        process.exitCode = 1;
+        return;
+      }
       // Backend flags carry a value — keep them out of `positionals` so
       // their argument doesn't get parsed as a stray instruction word.
-      const FLAG_WITH_VALUE = new Set(['--plan', '--backend', '--model', '--base-url', '--api-key']);
+      // #33 — the envelope speaks rwa-asset token form because the caller read
+      // the document with `rwa doc --virtual`. The instruction path virtualizes
+      // unconditionally (the model must never see pixels), so this only applies
+      // to the plan path.
+      const virtualPlan = rest.includes('--virtual');
+      // #39 — who DECIDED this edit. The CLI cannot know: an agent driving it is
+      // the only party that can say who it is acting for, so it is supplied, not
+      // guessed. Absent rather than fabricated when unset.
+      const actorFlag = resolveFlag(getFlag('--actor', rest), '--actor', jsonMode);
+      if (!actorFlag.ok) { process.exitCode = 1; return; }
+      const principal = actorFlag.value || process.env.RWA_PRINCIPAL || null;
+      const FLAG_WITH_VALUE = new Set(['--plan', '--base-hash', '--actor', '--backend', '--model', '--base-url', '--api-key']);
       const positionals = rest.filter((a, i) =>
         !a.startsWith('-') && !FLAG_WITH_VALUE.has(rest[i - 1])
       );
@@ -472,6 +664,25 @@ function detectProductKind(fileText) {
           process.exitCode = 2; return;
         }
 
+        // Staleness check BEFORE the agent loop (#31). applyPlan re-checks at
+        // commit time and is the actual guarantee; this early copy exists so a
+        // stale document costs nothing. On the instruction path the model call
+        // is the expensive step and it is the DELEGATING agent's tokens being
+        // spent — burning them to produce an envelope we already know we will
+        // refuse is exactly the waste the two-agent split is meant to avoid.
+        if (baseHashArg !== undefined) {
+          const { bodyHash } = await import('../src/edit.mjs');
+          const actual = bodyHash(currentDoc);
+          if (actual !== baseHashArg) {
+            const { FAILURE_HINTS } = await import('../src/apply-edits.mjs');
+            emitEdit({
+              code: 'envelope_error', subcode: 'base_hash_mismatch',
+              details: { expected: baseHashArg, actual, hint: FAILURE_HINTS.base_hash_mismatch },
+            }, jsonMode);
+            process.exitCode = 3; return;
+          }
+        }
+
         // Detect product kind from the bootstrap so we pick the right
         // SYSTEM_PROMPTS entry. Pre-PRODUCT_KIND containers and unknown
         // kinds both fall through to the 'document' entry below.
@@ -505,9 +716,18 @@ function detectProductKind(fileText) {
         // JSON depending on mode) so CI / wrapper scripts can observe
         // progress without parsing stdout.
         const { runAgentLoop } = await import('../src/agent-loop.mjs');
-        let envelope;
+        const { applyPlan } = await import('../src/edit.mjs');
+        let applyResult = null;
         try {
           const result = await runAgentLoop({
+            // #44 — apply inside the loop, so a rejected envelope becomes a
+            // correction the model gets to act on instead of an exit code. The
+            // apply is all-or-nothing, so a failed attempt leaves the document
+            // untouched and the next attempt composes against the same bytes.
+            apply: async (env) => {
+              applyResult = await applyPlan(filePath, env, { virtualImages: true, baseHash: baseHashArg });
+              return applyResult;
+            },
             systemPrompt,
             toolSchemas: TOOL_SCHEMAS,
             currentDoc: promptDoc,
@@ -528,30 +748,25 @@ function detectProductKind(fileText) {
               }
             },
           });
-          envelope = result.envelope;
+          void result;
         } catch (e) {
           if (e && (e.subcode === 'no_envelope_after_retries' || e.subcode === 'backend_error')) {
             emitEdit({ code: 'agent_error', subcode: e.subcode, details: e.details }, jsonMode);
             process.exitCode = 4; return;
           }
-          throw e;
-        }
-
-        // Apply the envelope through the same applyPlan used by the plan
-        // path — single splice/write code path, single error surface. The
-        // model saw the virtual doc, so the envelope is token-form.
-        const { applyPlan } = await import('../src/edit.mjs');
-        try {
-          await applyPlan(filePath, envelope, { virtualImages: true });
-          return;
-        } catch (e) {
+          // An apply failure that survived the retry budget: report the LAST
+          // real one (with its closest-anchor context and hint), not a generic
+          // agent_error. The document is untouched.
           if (e && typeof e.exitCode === 'number') {
             emitEdit({ code: codeName(e.exitCode), subcode: e.subcode, details: e.details }, jsonMode);
-            process.exitCode = e.exitCode;
-            return;
+            process.exitCode = e.exitCode; return;
           }
           throw e;
         }
+        await recordHistory(filePath, applyResult, { principal, operator: 'cli:instruction', model: modelId });
+        emitEditResult(applyResult, jsonMode);
+        return;
+
       }
 
       // Plan path: envelope comes from --plan file OR the stdin buffer we
@@ -582,7 +797,9 @@ function detectProductKind(fileText) {
 
       const { applyPlan } = await import('../src/edit.mjs');
       try {
-        await applyPlan(filePath, envelope);
+        const res = await applyPlan(filePath, envelope, { baseHash: baseHashArg, virtualImages: virtualPlan });
+        await recordHistory(filePath, res, { principal, operator: hasPlanFile ? 'cli:plan' : 'cli:stdin' });
+        emitEditResult(res, jsonMode);
         return;
       } catch (e) {
         if (e && typeof e.exitCode === 'number') {
@@ -659,7 +876,40 @@ function detectProductKind(fileText) {
 
     if (verb === 'doc') {
       const jsonMode = rest.includes('--json');
-      const filePath = rest.find(a => !a.startsWith('-'));
+      // #33 — emit the rwa-asset token form instead of embedded image bytes.
+      // Pair it with `rwa edit --virtual`; the two are one read/write contract.
+      const virtual = rest.includes('--virtual');
+      // #34 — the two cheap read modes. `--outline` lists the document's blocks
+      // (id, tag, size, preview) instead of its text; `--block <id>` returns
+      // exactly one block's source. Together with #31's baseHash they let a
+      // caller close a read-modify-write cycle whose cost is proportional to the
+      // EDIT rather than to the document.
+      const outlineMode = rest.includes('--outline');
+      // `--preview <n>` budgets the outline. An outline costs O(block count),
+      // not O(document size), so on a document of many SHORT blocks it saves
+      // little at the default; `--preview 0` drops to a pure skeleton (id, tag,
+      // size) which is a small fraction of any document. Callers that know their
+      // budget should set it rather than discover this.
+      const previewIdx = rest.indexOf('--preview');
+      const previewArg = previewIdx >= 0 ? rest[previewIdx + 1] : undefined;
+      if (previewIdx >= 0 && !/^\d+$/.test(String(previewArg))) {
+        emitDocUsage({ code: 'usage_error', subcode: 'malformed_preview', details: { got: previewArg } }, jsonMode);
+        process.exitCode = 1;
+        return;
+      }
+      const blockIdx = rest.indexOf('--block');
+      const blockArg = blockIdx >= 0 ? rest[blockIdx + 1] : undefined;
+      if (blockIdx >= 0 && (blockArg === undefined || blockArg.startsWith('-'))) {
+        emitDocUsage({ code: 'usage_error', subcode: 'missing_block_value' }, jsonMode);
+        process.exitCode = 1;
+        return;
+      }
+      const DOC_FLAG_WITH_VALUE = new Set(['--block', '--preview']);
+      const filePath = rest.find((a, i) => !a.startsWith('-') && !DOC_FLAG_WITH_VALUE.has(rest[i - 1]));
+      const emitDocUsage = (payload) => {
+        if (jsonMode) process.stderr.write(JSON.stringify(payload) + '\n');
+        else process.stderr.write('rwa doc: ' + [payload.code, payload.subcode].filter(Boolean).join('/') + '\n');
+      };
       const emitDoc = (payload) => {
         if (jsonMode) {
           process.stderr.write(JSON.stringify(payload) + '\n');
@@ -677,10 +927,33 @@ function detectProductKind(fileText) {
         process.exitCode = 1;
         return;
       }
-      const { inspectDoc } = await import('../src/doc.mjs');
+      const { inspectDoc, outlineDoc, readBlock } = await import('../src/doc.mjs');
+
+      if (outlineMode || blockArg !== undefined) {
+        try {
+          if (blockArg !== undefined) {
+            const r = await readBlock(filePath, blockArg, { virtual });
+            if (jsonMode) process.stdout.write(JSON.stringify(r) + '\n');
+            else process.stdout.write(r.block.source.endsWith('\n') ? r.block.source : r.block.source + '\n');
+          } else {
+            const r = await outlineDoc(filePath, { virtual, ...(previewArg !== undefined ? { preview: Number(previewArg) } : {}) });
+            if (jsonMode) process.stdout.write(JSON.stringify(r) + '\n');
+            else process.stdout.write(formatOutline(r) + '\n');
+          }
+          return;
+        } catch (e) {
+          if (e && typeof e.exitCode === 'number') {
+            emitDoc({ code: codeName(e.exitCode), subcode: e.subcode, details: e.details });
+            process.exitCode = e.exitCode;
+            return;
+          }
+          throw e;
+        }
+      }
+
       let info;
       try {
-        info = await inspectDoc(filePath);
+        info = await inspectDoc(filePath, { virtual });
       } catch (e) {
         if (e && typeof e.exitCode === 'number') {
           emitDoc({ code: codeName(e.exitCode), subcode: e.subcode, details: e.details });
@@ -701,6 +974,26 @@ function detectProductKind(fileText) {
         process.stdout.write(JSON.stringify({
           ...info.self,
           rewritable: true,
+          baseHash: info.baseHash,
+          // #35 — null unless this container came from somewhere else. An
+          // external agent reading through this door composes its own prompt and
+          // never sees the runtime's provenance line, so the marker has to
+          // travel WITH the read or it does not reach the reader at all.
+          origin: info.origin,
+          // #37 — what agent this container wants you to BE. `role` is populated
+          // only when exactly one installed record verifies AND passes the
+          // install gates; otherwise it is null and `roleStatus` says why
+          // ('none' | 'unverified' | 'multiple'). An unverified role definition
+          // is prompt injection promoted to configuration, so its prompt is
+          // withheld rather than offered with a warning.
+          role: info.role,
+          roleStatus: info.roleStatus,
+          ...(info.rolesOffered.length ? { rolesOffered: info.rolesOffered } : {}),
+          // `virtual`/`assets` describe the PROJECTION in `doc`; `baseHash` and
+          // `blocks` describe the document itself. A consumer must not confuse
+          // "what I was handed" with "what this file is".
+          virtual: info.virtual,
+          ...(info.virtual ? { assets: info.assets } : {}),
           length: info.doc.length,
           doc: info.doc,
         }) + '\n');
@@ -982,6 +1275,48 @@ function detectProductKind(fileText) {
       for (let i = 0; i < rest.length; i++) {
         if (rest[i] === '--allow-origin' && rest[i + 1] && !rest[i + 1].startsWith('-')) allowOrigins.push(rest[i + 1]);
       }
+      // #36 — `--agent` swaps the upstream: instead of brokering a KEY to a
+      // remote API, the proxy answers locally by asking a capability-narrowed
+      // `claude -p` and synthesizing tool_calls. No key is needed, and none ever
+      // enters the browser. Everything else about the server is identical, which
+      // is why the container needs no change to use it.
+      if (rest.includes('--agent')) {
+        const { createAgentUpstream, spawnClaudeRunner, DEFAULT_MAX_CALLS } = await import('../src/agent-upstream.mjs');
+        const modelFlag = getFlag('--model', rest);
+        const maxFlag = getFlag('--max-calls', rest);
+        const maxCalls = maxFlag.value ? parseInt(maxFlag.value, 10) : DEFAULT_MAX_CALLS;
+        if (!Number.isFinite(maxCalls) || maxCalls < 1) {
+          process.stderr.write('rwa proxy: usage_error/bad_max_calls — --max-calls must be a positive integer\n');
+          process.exitCode = 1;
+          return;
+        }
+        const agent = createAgentUpstream({
+          maxCalls,
+          model: modelFlag.value || 'claude',
+          runAgent: spawnClaudeRunner({ model: modelFlag.value || null }),
+          // Every back-delegated call spends the HUMAN's tokens in their own
+          // session, so the count is printed, not merely enforced.
+          onCall: (e) => process.stderr.write(`[proxy] agent call ${e.call}/${e.maxCalls} → ${e.tool} (${e.ms}ms)\n`),
+        });
+        const { port: aport } = await startProxy({
+          port: portFlag.value ? parseInt(portFlag.value, 10) : DEFAULT_PORT,
+          agent,
+          allowOrigins,
+          allowNullOrigin: !rest.includes('--no-null-origin'),
+          log: (line) => process.stderr.write(`[proxy] ${line}\n`),
+        });
+        process.stderr.write([
+          `rwa proxy listening on http://127.0.0.1:${aport}/v1  (agent: local claude, NO api key)`,
+          `  container setup (once per tab): ⚙ → Backend "Ollama (localhost)" → Base URL http://127.0.0.1:${aport}/v1 → pick a model (Test lists it)`,
+          `  the container gets a multi-turn tool-use backend, so skin --l1 and the compose paths work — which single-shot bridge/bridge-session cannot do`,
+          `  budget: ${maxCalls} agent calls for the life of this process (--max-calls)`,
+          `  the answering agent runs with NO tools: document content is untrusted, and it must be able to answer without being able to act`,
+          `  NOTE: while this runs, any local process or file:// page on this machine can spend your Claude quota through it. Ctrl-C stops it.`,
+          '',
+        ].join('\n'));
+        return; // server keeps the process alive
+      }
+
       const resolved = resolveProxyKey({});
       if (!resolved) {
         process.stderr.write('rwa proxy: usage_error/no_key — run `rwa proxy set-key` or set RWA_OPENROUTER_KEY\n');
@@ -1020,6 +1355,95 @@ function detectProductKind(fileText) {
         '',
       ].join('\n'));
       return; // server keeps the process alive
+    }
+
+    // `rwa schema [--json]` — the wire contracts, reachable from the tool (#40).
+    // The envelope grammar is the one thing a capable agent needs in order to
+    // emit a plan itself instead of paying for a second model call, and it lived
+    // only in a 711-line spec the agent has no reason to know exists. Sourced
+    // from the seed's TOOL_SCHEMAS — the exact schemas handed to the model — so
+    // it cannot drift from what the tools actually accept.
+    if (verb === 'schema') {
+      const jsonMode = rest.includes('--json');
+      const { SEED_CANDIDATES } = await import('../src/commands.mjs');
+      const { buildSchema, formatSchema } = await import('../src/schema.mjs');
+      const doc = await buildSchema(SEED_CANDIDATES);
+      process.stdout.write((jsonMode ? JSON.stringify(doc, null, 2) : formatSchema(doc)) + '\n');
+      return;
+    }
+
+    // `rwa log <file> [--json]` — the durable audit trail (#39). rwa_hist is
+    // IndexedDB-only and its actor never reaches disk, so across sessions (or on
+    // a file someone sent you) there was no answer to "what happened to this
+    // document?". Sidecar, same record shape as the hosted history.jsonl.
+    if (verb === 'log') {
+      const jsonMode = rest.includes('--json');
+      const filePath = rest.find(a => !a.startsWith('-'));
+      if (!filePath) {
+        process.stderr.write('rwa log: usage_error/missing_file_arg\n');
+        process.exitCode = 1; return;
+      }
+      const { readHistory, formatHistory } = await import('../src/history.mjs');
+      const h = readHistory(filePath);
+      if (jsonMode) process.stdout.write(JSON.stringify(h) + '\n');
+      else process.stdout.write(formatHistory(h) + '\n');
+      return;
+    }
+
+    // `rwa render <file> [--pdf|--png] [--out p] [--print] [--json]` — the
+    // render door (#38). An outside agent authoring a document is otherwise
+    // permanently blind to it; the container is the only party that can look at
+    // itself. Drives a REAL browser (cli/src/cdp.mjs) rather than approximating
+    // layout, and exits 6 `chrome_not_found` when there is none — an environment
+    // answer a caller can act on, not a defect in the document.
+    if (verb === 'render') {
+      const jsonMode = rest.includes('--json');
+      const emitRender = (payload) => {
+        if (jsonMode) process.stderr.write(JSON.stringify(payload) + '\n');
+        else {
+          let line = 'rwa render: ' + [payload.code, payload.subcode].filter(Boolean).join('/');
+          if (payload.details && Object.keys(payload.details).length) line += ' ' + JSON.stringify(payload.details);
+          process.stderr.write(line + '\n');
+        }
+      };
+      // resolveFlag (not getFlag): getFlag returns {present,value}; only
+      // resolveFlag validates that a present flag actually carries a value and
+      // reports usage_error/missing_flag_value when it does not.
+      const outFlag = resolveFlag(getFlag('--out', rest), '--out', jsonMode);
+      if (!outFlag.ok) { process.exitCode = 1; return; }
+      const RENDER_FLAG_WITH_VALUE = new Set(['--out', '--width', '--height']);
+      const filePath = rest.find((a, i) => !a.startsWith('-') && !RENDER_FLAG_WITH_VALUE.has(rest[i - 1]));
+      if (!filePath) {
+        emitRender({ code: 'usage_error', subcode: 'missing_file_arg' });
+        process.exitCode = 1; return;
+      }
+      const widthFlag = resolveFlag(getFlag('--width', rest), '--width', jsonMode);
+      if (!widthFlag.ok) { process.exitCode = 1; return; }
+      const heightFlag = resolveFlag(getFlag('--height', rest), '--height', jsonMode);
+      if (!heightFlag.ok) { process.exitCode = 1; return; }
+      const { renderDoc } = await import('../src/render.mjs');
+      try {
+        const r = await renderDoc(filePath, {
+          format: rest.includes('--pdf') ? 'pdf' : 'png',
+          out: outFlag.value || undefined,
+          print: rest.includes('--print'),
+          width: widthFlag.value ? parseInt(widthFlag.value, 10) : undefined,
+          height: heightFlag.value ? parseInt(heightFlag.value, 10) : undefined,
+        });
+        if (jsonMode) process.stdout.write(JSON.stringify(r) + '\n');
+        else process.stdout.write(`${r.out}  (${r.format}, ${r.bytes} bytes)\n`);
+        // Page-side errors are reported, never swallowed: a render that LOOKS
+        // fine while the container threw is exactly the silent failure this
+        // door exists to expose.
+        for (const e of r.consoleErrors) process.stderr.write(`note: page error — ${e}\n`);
+        return;
+      } catch (e) {
+        if (e && typeof e.exitCode === 'number') {
+          emitRender({ code: codeName(e.exitCode), subcode: e.subcode, details: e.details });
+          process.exitCode = e.exitCode; return;
+        }
+        throw e;
+      }
     }
 
     // `rwa publish-site <file> [--host h] [--path p] [--url base] [--json]` —

@@ -144,6 +144,11 @@ async function resolveFrame(parsed, cwd) {
  */
 export async function createCmd(parsed, { seedCandidates, cwd = process.cwd(), stdinData } = {}) {
   let { kind, scaffoldBody, briefWords, fromMsg } = await resolveFrame(parsed, cwd);
+  // #35 — where the CONTENT came from, if it came from a file rather than from
+  // the user's own brief. `--data` wins over `--from` when both are given: the
+  // dataset is the text that actually gets embedded, and therefore the text an
+  // injected instruction would be hiding in.
+  let sourceFile = null;
 
   // --from: base the artifact on an existing rewritable's editable body. Reuses
   // the same exit-2 surface (not_found / not_a_rewritable) as the rest of the CLI.
@@ -162,6 +167,7 @@ export async function createCmd(parsed, { seedCandidates, cwd = process.cwd(), s
       throw new CliError(2, 'not_a_rewritable', { path: fromPath });
     }
     fromMsg = ` (from ${rel(fromPath, cwd)})`;
+    sourceFile = path.basename(fromPath);
   }
 
   // --data: read the dataset to bake into the brief. `-` reads stdin (drained by
@@ -169,6 +175,7 @@ export async function createCmd(parsed, { seedCandidates, cwd = process.cwd(), s
   let dataContent = null;
   if (parsed.data === '-') {
     dataContent = stdinData == null ? '' : stdinData;
+    sourceFile = 'stdin';
   } else if (parsed.data) {
     const dataPath = path.resolve(cwd, parsed.data);
     try {
@@ -177,6 +184,7 @@ export async function createCmd(parsed, { seedCandidates, cwd = process.cwd(), s
       if (e && e.code === 'ENOENT') throw new CliError(2, 'not_found', { path: dataPath });
       throw new CliError(2, 'read_error', { path: dataPath, errno: e && e.code, message: e && e.message });
     }
+    sourceFile = path.basename(dataPath);
   }
   if (dataContent != null && dataContent.length > DATA_CAP) {
     throw new CliError(1, 'data_too_large', { bytes: dataContent.length, cap: DATA_CAP });
@@ -207,6 +215,11 @@ export async function createCmd(parsed, { seedCandidates, cwd = process.cwd(), s
     productHeader:     overrides.productHeader,
     productKind:       kind,
     lensClickToAnchor: overrides.lensClickToAnchor,
+    // #35 — provenance, when the brief was seeded from a FILE (`--from` /
+    // `--data`). A task typed by the user is their own writing and gets nothing;
+    // a document they pointed at is foreign text, and every later edit should
+    // know it. See commands.mjs importCmd for the full reasoning.
+    ...(sourceFile ? { origin: 'create:' + sourceFile } : {}),
   });
   const body = scaffoldBody != null ? scaffoldBody : overrides.body;
   if (body != null) scaffold = replaceInlineDoc(scaffold, body);

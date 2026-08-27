@@ -13,11 +13,13 @@
 //                         from the underlying modules.
 
 import { readFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { atomicWrite } from './atomic-write.mjs';
 import {
   applyEdits, RwaEditError, dataRwaFrozenSnapshot, FAILURE_HINTS,
   virtualizeImages, expandImages, assertNoNewAssetTokens, mapEnvelopeImages, MAX_DOC_EXPANDED,
-  extractFrozenZones3, lockedRangesIn, markerZoneRangesIn,
+  extractFrozenZones3, lockedRangesIn, markerZoneRangesIn, canonLF,
+  injectMissingBlockIds,
 } from './apply-edits.mjs';
 import { compileDslPlan } from './dsl-compiler.mjs';
 import { extractInlineDoc, replaceInlineDoc } from './seed.mjs';
@@ -35,6 +37,21 @@ export class CliError extends Error {
     // untouched.
     if (FAILURE_HINTS[subcode] && this.details.hint == null) this.details.hint = FAILURE_HINTS[subcode];
   }
+}
+
+/**
+ * sha-256 hex of a document body, over the LF-canonical bytes the edit contract
+ * operates on. This is the SAME value the hosted runtime reports as `baseHash`
+ * from `GET /r/:id/doc` (`sha256hex(canonLF(extractInlineDoc(bytes)))`,
+ * service/server.js) — the two surfaces must agree about what a document IS, or
+ * an agent that reads from one and writes to the other cannot reason about
+ * staleness at all. Any change here is a cross-surface change.
+ *
+ * @param {string} doc — the editable body (raw, i.e. NOT the virtualized form)
+ * @returns {string} 64 lowercase hex chars
+ */
+export function bodyHash(doc) {
+  return createHash('sha256').update(canonLF(doc)).digest('hex');
 }
 
 // Inspect the envelope's discriminator set and assert version invariants.
@@ -135,6 +152,50 @@ function assertFrozenPreserved(currentDoc, newDoc) {
   }
 }
 
+// #33 — diagnose a read/write projection mismatch before it becomes a confusing
+// anchor miss. Two asymmetric signatures, both narrow enough not to fire on a
+// legitimate document:
+//
+//   • RAW write, tokenised ANCHOR. The caller read with `--virtual` and forgot
+//     it on the write. Only counts if the token is NOT already in the stored doc
+//     — a pre-broken doc can legitimately carry orphan tokens (rwa-edit-spec §19),
+//     and moving one around is a supported edit.
+//     Deliberately `find` only, never `replace`: an unknown token in `replace` is
+//     the caller INVENTING an image, which `assertNoNewAssetTokens` already
+//     rejects as `unknown_asset_reference` with a better-targeted message. Only
+//     an anchor can tell you which projection was read.
+//   • VIRTUAL write, raw-bytes anchor. The caller read without `--virtual` and
+//     added it on the write. Only for `virtualImages`: the hosted relay
+//     (`virtualizeEnvelope`) is BUILT to receive expanded data: URIs.
+const ASSET_TOKEN_RE = /rwa-asset:[0-9a-f]{8}/g;
+function assertVirtualFormMatch(edits, currentDoc, opts) {
+  if (!opts.virtualImages && !opts.virtualizeEnvelope) {
+    if (!/data:image\//.test(currentDoc)) return;   // no embedded images: nothing to confuse
+    for (const e of edits) {
+      for (const tok of String(e && e.find || '').match(ASSET_TOKEN_RE) || []) {
+        if (!currentDoc.includes(tok)) {
+          throw new CliError(3, 'virtual_form_mismatch', {
+            token: tok,
+            expected: 'raw',
+            reason: 'the envelope anchors on rwa-asset tokens but this edit is applying to the raw document',
+          });
+        }
+      }
+    }
+    return;
+  }
+  if (opts.virtualImages) {
+    for (const e of edits) {
+      if (/data:image\//.test(String(e && e.find || ''))) {
+        throw new CliError(3, 'virtual_form_mismatch', {
+          expected: 'virtual',
+          reason: 'the envelope anchors on raw image bytes but this edit is applying to the virtualized document',
+        });
+      }
+    }
+  }
+}
+
 // String.prototype.isWellFormed (Node 22+) — false for an unpaired UTF-16
 // surrogate. Mirror of the seed's isWellFormed lone-surrogate guard.
 const isWellFormedStr = (s) => typeof s !== 'string' || typeof s.isWellFormed !== 'function' || s.isWellFormed();
@@ -192,7 +253,20 @@ function validateEnvelope(env) {
  *   tokens make the map re-derivable from the doc bytes — no map threading.
  *   Raw paths (piped envelope / --plan) leave this unset: real bytes, plus the
  *   fail-loud guard against introducing a NEW token with no bytes behind it.
- * @returns {Promise<{exitCode: 0}>}
+ * @param {(n:number)=>Uint8Array|Buffer} [opts.rand] — injectable randomness for
+ *   the data-rwa-id backfill (#32). Block ids are minted from a CSPRNG, so two
+ *   runs over the same input legitimately differ. Anything asserting that two
+ *   apply pipelines behave IDENTICALLY (the service's vendored-apply drift gate,
+ *   the hosted/seed conformance parity) has to hold randomness still to compare
+ *   bytes — otherwise the only thing it measures is the RNG. Production never
+ *   passes this.
+ * @param {string} [opts.baseHash] — optimistic concurrency (#31): the `bodyHash`
+ *   of the document the caller composed this envelope against. If the stored
+ *   body no longer hashes to it, somebody else wrote in between and we refuse
+ *   with `base_hash_mismatch` rather than silently clobbering their work.
+ *   Omitted = last-writer-wins, the historical behaviour.
+ * @returns {Promise<{exitCode: 0, ok: true, tool: string, compiledTo?: string,
+ *   applied: number, baseHash: string, newHash: string, bytes: number}>}
  * @throws {CliError} on any validation, compile, or apply failure
  */
 export async function applyPlan(filePath, envelope, opts = {}) {
@@ -219,6 +293,19 @@ export async function applyPlan(filePath, envelope, opts = {}) {
     throw new CliError(2, 'not_a_rewritable', { path: filePath });
   }
 
+  // 2b. Optimistic concurrency (#31). Checked HERE — after we know the target is
+  // a rewritable, before the envelope is even validated — because staleness
+  // subsumes every later failure: if the document moved under the caller it has
+  // to re-read and recompose regardless, so reporting an envelope error first
+  // would send it to fix the wrong thing. `not_a_rewritable` still wins, since
+  // "this isn't a document" is not a concurrency answer.
+  if (opts.baseHash != null) {
+    const actual = bodyHash(currentDoc);
+    if (actual !== opts.baseHash) {
+      throw new CliError(3, 'base_hash_mismatch', { expected: opts.baseHash, actual });
+    }
+  }
+
   // 3. Validate envelope shape + version.
   const shape = validateEnvelope(envelope);
 
@@ -235,8 +322,19 @@ export async function applyPlan(filePath, envelope, opts = {}) {
   if (opts.virtualizeEnvelope) envelope = mapEnvelopeImages(envelope, vimg.assets);
   const workDoc = vimg ? vimg.doc : currentDoc;
 
+  // #33 — the read and the write must speak the SAME form. Mixing them already
+  // failed, but as a bare `find_not_found`, which sends the caller off shortening
+  // its anchor when the real problem is that it read one projection and wrote
+  // against another. Name it instead. Both directions:
+  if (Array.isArray(envelope.edits)) assertVirtualFormMatch(envelope.edits, currentDoc, opts);
+
   // 4. Compute the new doc per shape.
+  // `applied` / `compiledTo` are reported back to the caller (#30): a delegating
+  // agent that never reads the body needs the apply's own account of what
+  // happened, since re-reading the document is the thing delegation avoids.
   let newDoc;
+  let applied = 1;                 // replace_document is one wholesale write
+  let compiledTo = null;           // set only when a DSL plan compiles down
   if (shape === 'replace_document') {
     newDoc = envelope.doc;
     assertFrozenPreserved(workDoc, newDoc);
@@ -249,10 +347,12 @@ export async function applyPlan(filePath, envelope, opts = {}) {
       // --json consumers need to point at the failing step (was dropped).
       throw new CliError(3, e.code || 'dsl_compile_error', { message: e.message, op: e.op });
     }
+    compiledTo = compiled.tool;
     if (compiled.tool === 'replace_document') {
       newDoc = compiled.envelope.doc;
       assertFrozenPreserved(workDoc, newDoc); // the DSL escape op must not bypass frozen zones either
     } else {
+      applied = compiled.envelope.edits.length;
       try {
         newDoc = applyEdits(workDoc, compiled.envelope.edits);
       } catch (e) {
@@ -263,6 +363,7 @@ export async function applyPlan(filePath, envelope, opts = {}) {
       }
     }
   } else {
+    applied = Array.isArray(envelope.edits) ? envelope.edits.length : 0;
     try {
       newDoc = applyEdits(workDoc, envelope.edits);
     } catch (e) {
@@ -284,6 +385,17 @@ export async function applyPlan(filePath, envelope, opts = {}) {
     throw e;
   }
 
+  // data-rwa-id backfill (#32) — the CLI's half of a promise the seed already
+  // keeps at boot and on every commit, and which SYSTEM_PROMPT_RULES (used
+  // verbatim by the CLI agent loop) tells the model the runtime keeps.
+  //
+  // Runs on the EXPANDED body, after every guard: injection only ever ADDS an
+  // attribute to a non-frozen anchorable open tag, so it cannot disturb a check
+  // that already passed — and running it last means the bytes we hash, size-check
+  // and write are the bytes that land on disk.
+  const backfill = injectMissingBlockIds(newDoc, opts.rand);
+  newDoc = backfill.text;
+
   // Expanded-size guard (image paths only): MAX_DOC measured the VIRTUAL form,
   // so cap the REAL doc here — the DoS bound that the per-edit byte cap no
   // longer provides once image bytes are tokenized. Mirrors the GUI's 10 MB
@@ -296,5 +408,20 @@ export async function applyPlan(filePath, envelope, opts = {}) {
   // fsync + rename(2)); the temp is removed on any failure. See ./atomic-write.mjs.
   const newFileText = replaceInlineDoc(fileText, newDoc);
   await atomicWrite(filePath, newFileText);
-  return { exitCode: 0 };
+  // The apply's own account of what happened (#30). `exitCode` is kept so every
+  // existing caller (including the vendored service copy, which ignores the
+  // return entirely) is byte-unaffected; everything else is additive.
+  // Hashes are over the REAL body both sides of the edit — never the virtualized
+  // form — so they match `rwa doc` and the hosted /doc baseHash.
+  return {
+    exitCode: 0,
+    ok: true,
+    tool: shape,
+    ...(compiledTo && compiledTo !== shape ? { compiledTo } : {}),
+    applied,
+    blockIdsAssigned: backfill.assigned,
+    baseHash: bodyHash(currentDoc),
+    newHash: bodyHash(newDoc),
+    bytes: newDoc.length,
+  };
 }

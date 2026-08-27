@@ -12,6 +12,8 @@
     "fidelity:dsl": "node runners/run-fidelity-dsl.mjs",
     "fidelity:import": "node runners/run-import.mjs",
     "fidelity:import:check": "node runners/run-import.mjs --check",
+    "agent-surface": "node runners/run-agent-surface.mjs",
+    "agent-surface:check": "node runners/run-agent-surface.mjs --check",
     "trajectory": "node runners/run-trajectory.mjs",
     "trajectory:check": "node runners/run-trajectory.mjs --check",
     "calibrate": "node runners/calibrate.mjs",

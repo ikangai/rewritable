@@ -46,6 +46,11 @@
 //   - Reserved-id violation (reserved_id_used) — including data-rwa-id injection
 //   - HTML parse-validity post-apply (parse_error_post_apply)
 
+// The one runtime import this module takes: block-id minting (#32) needs a CSPRNG
+// and the seed's browser `crypto.getRandomValues` has no guaranteed Node global
+// before 19. Everything else here stays pure string surgery.
+import { randomBytes } from 'node:crypto';
+
 export class RwaEditError extends Error {
   constructor(code, editIndex = null, context = {}) {
     super(code);
@@ -76,7 +81,9 @@ export const MAX_DOC_EXPANDED = 10 * 1024 * 1024;
 // CRLF document or an NFD-containing one (paste artifacts) behaves identically
 // in the CLI and the browser. Without LF, a CRLF doc + LF anchor spuriously
 // misses; without NFC, an NFC anchor misses visually identical NFD text.
-const canonLF = (s) => (s == null ? '' : String(s).replace(/\r\n/g, '\n').replace(/\r/g, '\n').normalize('NFC'));
+// Exported so edit.mjs can hash exactly the bytes the edit contract operates on
+// (bodyHash) — the same canonicalization the hosted /r/:id/doc baseHash uses.
+export const canonLF = (s) => (s == null ? '' : String(s).replace(/\r\n/g, '\n').replace(/\r/g, '\n').normalize('NFC'));
 
 // UTF-16 well-formedness — a lone surrogate in find/replace becomes U+FFFD on
 // UTF-8 encode (the durable file write) and silently corrupts byte-equality.
@@ -90,7 +97,15 @@ const isWellFormed = (s) => typeof s !== 'string' || typeof s.isWellFormed !== '
 // FAILURE_HINTS (failureToToolResult). No angle brackets / reserved markers in
 // the strings, so they stay safe to embed in the seed bootstrap and survive the
 // CLI tree's reserved-marker scan.
+//
+// Two entries are deliberately CLI-ONLY and must NOT be mirrored into the seed:
+// `reserved_substring` and `base_hash_mismatch`. The seed cannot emit either —
+// it has no compare-and-swap (its concurrency story is the modify mutex plus the
+// cross-tab commit signal), and a hint for a code that surface never produces is
+// dead weight in every emitted container.
 export const FAILURE_HINTS = {
+  base_hash_mismatch: 'The document changed since you read it — another writer committed in between. Re-read it, recompose your edit against the new text, and retry with the new base hash. Do not retry this envelope unchanged.',
+  virtual_form_mismatch: 'The read and the write disagree about image form. If you read the document with --virtual (rwa-asset tokens), pass --virtual to the edit as well; if you read it raw, drop --virtual. Anchors only match the projection they were composed against.',
   find_not_found: 'find must match the document byte-for-byte (whitespace and case included). If a closest match is shown, copy it exactly; otherwise pick a shorter, distinctive anchor.',
   find_not_unique: 'find appears more than once. Extend it with neighbouring text until it is unique; the hints list shows where.',
   frozen_zone_violation: 'This region is an author-protected frozen zone. Anchor on a different region — frozen zones change only by editing the file outside the runtime.',
@@ -687,4 +702,177 @@ export function applyEdits(doc, edits) {
   if (working.length > MAX_DOC) throw new RwaEditError('target_size_exceeded', null, { length: working.length, cap: MAX_DOC });
 
   return working;
+}
+
+// ─── data-rwa-id backfill (#32) ─────────────────────────────────────────────
+// Hand-mirror of seeds/rewritable.html `ANCHORABLE_TAGS` / `generateBlockId` /
+// `maskRawTextAndComments` / `injectMissingBlockIds`. Same discipline as the
+// rest of this file: the seed is the source, this is the copy, and there is no
+// cmp gate — the parity is pinned by test (cli/tests/block-ids.test.mjs).
+//
+// WHY the CLI needs this at all: before #32 no CLI path assigned block ids, so a
+// document created, filled, edited and published entirely by agents had none —
+// forever — while the seed's SYSTEM_PROMPTS (which the CLI agent loop uses
+// verbatim) told the model "the runtime backfills any block you produce without
+// one." That was false on this surface. Block ids are also how a delegating
+// agent names a block it has not read, so their absence is not cosmetic.
+//
+// Ids are RANDOM, so this mirror cannot be pinned by byte-equality against the
+// seed. It is pinned by property: same tag set, same skips, same outer-wins
+// scan, same format.
+
+// Region scope: doc-product default; see docs/specs/rwa-product-types.md.
+// TABLE and TD are included (spec 0.11) so workflow parallel blocks and cells
+// get stable ids too. Mirror of the seed's ANCHORABLE_TAGS — keep in step.
+export const ANCHORABLE_TAGS = new Set(['P', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6',
+  'BLOCKQUOTE', 'LI', 'FIGURE', 'PRE', 'ASIDE', 'TABLE', 'TD']);
+
+// 8 chars, RFC 4648 base32 lowercase (a-z, 2-7) from 5 random bytes — byte-for-
+// byte the seed's format. 40 bits: collision risk in a single doc is negligible,
+// but see injectMissingBlockIds for why this surface still checks.
+const BLOCK_ID_ALPHA = 'abcdefghijklmnopqrstuvwxyz234567';
+// The seed reaches for crypto.getRandomValues (a browser global). Node's
+// webcrypto global is only guaranteed from 19 and this file is also vendored
+// into the service, so go through node:crypto rather than depend on the runtime
+// happening to expose the browser shape. `rand` is injectable so tests can pin
+// the encoding deterministically without stubbing a global.
+export function generateBlockId(rand) {
+  const buf = rand ? rand(5) : randomBytes(5);
+  let bits = 0, val = 0, out = '';
+  for (const b of buf) {
+    val = (val << 8) | b;
+    bits += 8;
+    while (bits >= 5) { bits -= 5; out += BLOCK_ID_ALPHA[(val >>> bits) & 31]; }
+  }
+  return out;
+}
+
+// Mask <script>/<style> BODY bytes and comments so their literal contents (which
+// may contain anchorable-looking markup, or a stray close tag) are not mistaken
+// for real blocks. Masking preserves byte offsets, so ranges found against the
+// mask stay valid against the ORIGINAL doc (invariant 11). Mirror of the seed.
+function maskRawTextAndComments(doc) {
+  let masked = doc;
+  masked = masked.replace(/<script\b[^>]*>([\s\S]*?)<\/script>/gi, (m, body) => {
+    const opening = m.length - body.length - '</script>'.length;
+    return m.slice(0, opening) + ' '.repeat(body.length) + m.slice(opening + body.length);
+  });
+  masked = masked.replace(/<style\b[^>]*>([\s\S]*?)<\/style>/gi, (m, body) => {
+    const opening = m.length - body.length - '</style>'.length;
+    return m.slice(0, opening) + ' '.repeat(body.length) + m.slice(opening + body.length);
+  });
+  masked = masked.replace(/<!--[\s\S]*?-->/g, m => ' '.repeat(m.length));
+  return masked;
+}
+
+
+// The anchorable-block scan, shared by the id backfill and the outline reader so
+// the two can never disagree about what a "block" is. Semantics are the seed's
+// (masking, outer-wins nesting, TABLE descending into its cells); the parity
+// test tests/block-id-parity.mjs proves it against the seed directly.
+//
+// `cb` receives the ORIGINAL-doc offsets, not mask offsets — masking preserves
+// byte positions precisely so callers can slice real bytes (invariant 11).
+function forEachAnchorable(doc, cb) {
+  const masked = maskRawTextAndComments(doc);
+  const tagOpen = /<([a-zA-Z][a-zA-Z0-9]*)\b([^>]*)>/g;
+  let m;
+  while ((m = tagOpen.exec(masked)) !== null) {
+    const tag = m[1];
+    if (!ANCHORABLE_TAGS.has(tag.toUpperCase())) continue;
+    const closeEnd = matchingCloseEnd(masked, tag, m.index + m[0].length);
+    if (closeEnd < 0) continue;
+    // Outer-wins skip past nested anchorables. TABLE keeps scanning inside so
+    // contained TDs are also seen; the DOM grammar guarantees TD only appears
+    // inside TABLE, so no other anchorable is double-processed.
+    if (tag.toUpperCase() !== 'TABLE') tagOpen.lastIndex = closeEnd;
+    cb({ tag, openStart: m.index, openEnd: m.index + m[0].length, end: closeEnd, attrs: m[2] || '' });
+  }
+}
+
+/**
+ * The document's anchorable blocks in source order (#34) — the outline an agent
+ * reads INSTEAD of the body when it is directing work it has not read.
+ *
+ * Frozen blocks are included and flagged rather than hidden: a caller needs to
+ * know a region exists and that it cannot be edited, which is more useful than
+ * a gap in the outline it cannot explain.
+ *
+ * @param {string} doc
+ * @returns {Array<{id: string|null, tag: string, start: number, end: number,
+ *   chars: number, text: string, frozen: boolean}>}
+ */
+export function listBlocks(doc) {
+  if (typeof doc !== 'string' || doc.length === 0) return [];
+  const frozenRanges = markerZoneRangesIn(doc);
+  const inFrozen = (pos) => frozenRanges.some(([s, e]) => pos >= s && pos < e);
+  const out = [];
+  forEachAnchorable(doc, ({ tag, openStart, openEnd, end, attrs }) => {
+    const idm = attrs.match(/\sdata-rwa-id\s*=\s*(?:"([^"]*)"|'([^']*)')/);
+    const inner = doc.slice(openEnd, Math.max(openEnd, end - (tag.length + 3)));
+    out.push({
+      id: idm ? (idm[1] != null ? idm[1] : idm[2]) : null,
+      tag: tag.toLowerCase(),
+      start: openStart,
+      end,
+      chars: end - openStart,
+      // Text content, tags stripped and whitespace collapsed — enough to
+      // recognise the block, never enough to be a substitute for reading it.
+      text: inner.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim(),
+      frozen: inFrozen(openStart),
+    });
+  });
+  return out;
+}
+
+/**
+ * Inject `data-rwa-id="…"` into every anchorable block that lacks one. Pure
+ * string surgery — preserves whitespace, attribute order and quoting bytes
+ * exactly (the format-stability promise, invariant 11).
+ *
+ * Frozen zones are skipped in BOTH forms: markerZoneRangesIn covers the comment
+ * fences AND data-rwa-frozen elements. Injecting an attribute inside one would
+ * mutate an author-declared invariant and break dataRwaFrozenSnapshot on the
+ * next edit.
+ *
+ * Returns { text, assigned }. If assigned === 0, text === doc byte-for-byte.
+ *
+ * @param {string} doc
+ * @param {(n:number)=>Uint8Array|Buffer} [rand] — injectable randomness (tests)
+ * @returns {{text: string, assigned: number}}
+ */
+export function injectMissingBlockIds(doc, rand) {
+  if (typeof doc !== 'string' || doc.length === 0) return { text: doc, assigned: 0 };
+  const frozenRanges = markerZoneRangesIn(doc);
+  const inFrozen = (pos) => {
+    for (const [s, e] of frozenRanges) if (pos >= s && pos < e) return true;
+    return false;
+  };
+  // Existing ids are collected so a freshly minted one can never shadow one that
+  // is already load-bearing (URL fragments link to these). The seed does not do
+  // this; the CLI backfills a WHOLE document in a single pass — an imported PDF
+  // can be hundreds of blocks at once — so the cheap guard is worth its 3 lines.
+  const taken = new Set([...doc.matchAll(/\sdata-rwa-id\s*=\s*(?:"([^"]*)"|'([^']*)')/g)]
+    .map((m) => (m[1] != null ? m[1] : m[2])));
+  const mint = () => {
+    for (let i = 0; i < 8; i++) {
+      const id = generateBlockId(rand);
+      if (!taken.has(id)) { taken.add(id); return id; }
+    }
+    throw new RwaEditError('block_id_exhausted', null, { taken: taken.size });
+  };
+
+  const inserts = [];
+  forEachAnchorable(doc, ({ tag, openStart, openEnd, attrs }) => {
+    if (inFrozen(openStart)) return;
+    if (/\sdata-rwa-id\s*=/.test(attrs)) return;
+    void openEnd;
+    inserts.push({ pos: openStart + 1 + tag.length, text: ' data-rwa-id="' + mint() + '"' });
+  });
+  if (inserts.length === 0) return { text: doc, assigned: 0 };
+  let out = doc;
+  for (let i = inserts.length - 1; i >= 0; i--) {
+    out = out.slice(0, inserts[i].pos) + inserts[i].text + out.slice(inserts[i].pos);
+  }
+  return { text: out, assigned: inserts.length };
 }

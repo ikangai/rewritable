@@ -89,7 +89,7 @@ test('--l1 applies the theme block AND the agent sk-* wrapper in ONE write', asy
     // theme block present (exactly one) AND the agent's additive class applied
     assert.equal(skinBlocks(body).length, 1, 'exactly one skin block');
     assert.equal(activeSkin(body), 'notion-clean');
-    assert.match(body, /<p class="sk-eyebrow">Strategy and outlook\.<\/p>/, 'agent sk-* hook applied');
+    assert.match(body, /<p[^>]*class="sk-eyebrow">Strategy and outlook\.<\/p>/, 'agent sk-* hook applied');
     // the theme rode in front of the (de-skinned) content
     assert.match(body.trimStart(), /^<style data-rwa-skin="notion-clean">/);
     // the model saw the DE-SKINNED base (here identical to the doc — no prior skin)
@@ -126,7 +126,7 @@ test('--l1 re-skin deterministically de-skins the prior skin\'s wrappers', async
     const userMsg = mock.requests[0].messages[1];
     assert.doesNotMatch(userMsg.content, /data-rwa-skin/, 'agent base has no prior theme');
     assert.doesNotMatch(userMsg.content, /sk-eyebrow/, 'agent base has no prior sk-* wrapper');
-    assert.match(userMsg.content, /<p>Dek line\.<\/p>/, 'agent base is the unwrapped content');
+    assert.match(userMsg.content, /<p[^>]*>Dek line\.<\/p>/, 'agent base is the unwrapped content');
   } finally { mock.stop(); fx.cleanup(); }
 });
 
@@ -154,7 +154,7 @@ test('--l1 degrades GRACEFULLY to theme-only when the agent declines (still one 
     // check the part after the theme block.
     const content = body.slice(body.indexOf('</style>') + '</style>'.length);
     assert.doesNotMatch(content, /class="[^"]*sk-/, 'no sk-* wrappers added to the content');
-    assert.match(body, /<p>Keep me\.<\/p>/, 'content intact');
+    assert.match(body, /<p[^>]*>Keep me\.<\/p>/, 'content intact');
     assert.equal(mock.requests.length, 3, 'agent was retried to exhaustion (reachable)');
   } finally { mock.stop(); fx.cleanup(); }
 });
@@ -177,7 +177,7 @@ test('--l1 degrades to theme-only when the agent edit is invalid against the bas
     assert.equal(activeSkin(body), 'stripe-docs', 'theme still applied');
     const content = body.slice(body.indexOf('</style>') + '</style>'.length);
     assert.doesNotMatch(content, /class="[^"]*sk-/, 'no bogus wrapper landed in the content');
-    assert.match(body, /<p>Body\.<\/p>/, 'original content intact');
+    assert.match(body, /<p[^>]*>Body\.<\/p>/, 'original content intact');
   } finally { mock.stop(); fx.cleanup(); }
 });
 
@@ -201,7 +201,7 @@ test('--l1 refuses a replace_document envelope (compose requires apply_edits) �
     const body = extractInlineDoc(readFileSync(fx.path, 'utf8'));
     assert.equal(activeSkin(body), 'terminal-mono');
     assert.doesNotMatch(body, /rewritten wholesale/, 'agent could not rewrite the doc');
-    assert.match(body, /<p>Body\.<\/p>/);
+    assert.match(body, /<p[^>]*>Body\.<\/p>/);
   } finally { mock.stop(); fx.cleanup(); }
 });
 
@@ -266,8 +266,8 @@ test('rwa skin reset now clears sk-* wrappers too (deskinDoc), not just the them
     const out = extractInlineDoc(readFileSync(fx.path, 'utf8'));
     assert.doesNotMatch(out, /data-rwa-skin/, 'theme block removed');
     assert.doesNotMatch(out, /sk-callout/, 'sk-* wrapper removed (the new reset behavior)');
-    assert.match(out, /<p>Note: hi\.<\/p>/, 'inner content preserved');
-    assert.match(out, /<h1>Doc<\/h1>/);
+    assert.match(out, /<p[^>]*>Note: hi\.<\/p>/, 'inner content preserved');
+    assert.match(out, /<h1[^>]*>Doc<\/h1>/);
   } finally { fx.cleanup(); }
 });
 
@@ -297,7 +297,7 @@ test('rwa skin <file> NAME --l1 (ollama → mock) applies theme + sk-* wrapper, 
     assert.match(stdout, /content-aware restyle/, 'confirms the L1 restyle landed');
     const body = extractInlineDoc(readFileSync(fx.path, 'utf8'));
     assert.equal(activeSkin(body), 'notion-clean');
-    assert.match(body, /<p class="sk-eyebrow">Strategy and outlook\.<\/p>/);
+    assert.match(body, /<p[^>]*class="sk-eyebrow">Strategy and outlook\.<\/p>/);
     assert.equal(skinBlocks(body).length, 1);
   } finally { mock.stop(); await fx.cleanup(); }
 });

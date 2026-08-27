@@ -53,7 +53,7 @@ emitted two ways, distinguished by `source`; the two agree on every shared field
   ],
   "frozenZones": [],
   "baseline": {
-    "edit": ["lens"],
+    "edit": ["command", "slash", "inline", "selection"],
     "tools": ["apply_dsl_plan", "apply_edits", "replace_document"],
     "export": ["html", "print"],
     "history": ["undo"]
@@ -293,7 +293,7 @@ belongs with the §5.10 view tests.
 ```json
 { "rwa": "self-description/1", "source": "static", "uuid": "…", "kind": "document",
   "title": "Untitled", "blocks": 0, "affordances": [], "frozenZones": [],
-  "baseline": { "edit": ["lens"], "tools": ["apply_dsl_plan","apply_edits","replace_document"],
+  "baseline": { "edit": ["command", "slash", "inline", "selection"], "tools": ["apply_dsl_plan","apply_edits","replace_document"],
                 "export": ["html","print"], "history": ["undo"] } }
 ```
 
@@ -313,7 +313,7 @@ belongs with the §5.10 view tests.
 { "rwa": "self-description/1", "source": "static", "uuid": "…", "kind": "workflow",
   "title": "Untitled workflow", "blocks": 6, "affordances": [],
   "frozenZones": ["wf-style", "runner"],
-  "baseline": { "edit": ["lens"], "history": ["undo"] } }
+  "baseline": { "edit": ["command", "slash", "inline", "selection"], "history": ["undo"] } }
 ```
 
 ## 9. Lane responsibilities (this wave)

@@ -124,7 +124,11 @@ async function boot({ kind = 'document', title = 'Doc', body = null } = {}) {
   check('document has no active view', d.activeView === null);
 
   // ── Substrate-universals live in `baseline`, NOT `affordances` ────────
-  check('baseline.edit is the lens', eq(d.baseline.edit, ['lens']));
+  // #41 — the docked lens card has been display:none since 2026-07-07, so the
+  // negotiation surface no longer advertises it. These are the surfaces that
+  // exist, widest scope first.
+  check('baseline.edit names the surfaces that actually exist',
+    eq(d.baseline.edit, ['command', 'slash', 'inline', 'selection']));
   check('baseline.tools are the three rwa-edit/1 tools', eq(d.baseline.tools, ['apply_dsl_plan', 'apply_edits', 'replace_document']));
   check('baseline.export is html + print', eq(d.baseline.export, ['html', 'print']));
   // THE honesty pin: ⌘Z undo exists, redo does NOT. The oracle also rejects a
