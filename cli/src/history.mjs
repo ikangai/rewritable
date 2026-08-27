@@ -30,6 +30,12 @@
 //    the same shape makes the local and hosted surfaces agree about what an
 //    audit record IS, the same way #30 made them agree about what a document is.
 //
+// **It is OPT-IN** (`rwa edit --log`, or `RWA_LOG=1`). Writing an unrequested
+// file beside someone's document on every edit is a side effect no other verb
+// has, and it surprises the people least equipped to explain it — a stray
+// `report.rwa-log.jsonl` in a shared folder, a git status, a publish directory.
+// An agent that wants a trail asks for one.
+//
 // **The honest cost:** the log does not travel with the file. A published or
 // emailed rewritable carries no history. If history-must-travel ever becomes a
 // requirement, option 1 is the way back — and the `replace_document` burden is

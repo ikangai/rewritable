@@ -258,6 +258,11 @@ Flags:
                  bytes. (edit) the envelope's anchors are in that token
                  form, because you read the document with \`doc --virtual\`.
                  The two are one contract — mixing them fails loud.
+  --log          (edit) append a record of this edit to the container's
+                 <name>.rwa-log.jsonl sidecar. OFF by default: no other
+                 verb writes a second file beside your document, and a
+                 stray log in a shared or published folder is worse than
+                 an absent one. Also \$RWA_LOG=1. Read it with \`rwa log\`.
   --actor <name>  (edit) who DECIDED this edit — recorded as the log's
                  \`principal\` beside the surface that wrote it. Also
                  \$RWA_PRINCIPAL. Left null when unset rather than guessed.
@@ -342,7 +347,8 @@ function formatOutline(r) {
 // byte-identically into service/lib, and the hosted runtime keeps its OWN
 // history.jsonl, so logging from the shared module would double-log every hosted
 // edit. Best-effort — an unwritable sidecar must never fail a completed edit.
-async function recordHistory(filePath, result, actorSpec) {
+async function recordHistory(filePath, result, actorSpec, enabled) {
+  if (!enabled) return false;
   const { appendHistory, actorPair } = await import('../src/history.mjs');
   return appendHistory(filePath, {
     tool: result.tool,
@@ -536,6 +542,14 @@ function detectProductKind(fileText) {
       const actorFlag = resolveFlag(getFlag('--actor', rest), '--actor', jsonMode);
       if (!actorFlag.ok) { process.exitCode = 1; return; }
       const principal = actorFlag.value || process.env.RWA_PRINCIPAL || null;
+      // #39 — the audit log is OPT-IN. Writing an unrequested file beside the
+      // user's document on every edit is a side effect no other verb has, and it
+      // surprises exactly the people least able to explain it: a stray
+      // `report.rwa-log.jsonl` turns up in a shared folder, a git status, a
+      // publish directory. Found in review when a test that carefully cleaned up
+      // its temp .html still left a sidecar it could not have known about.
+      // An agent that wants a trail asks for one; `rwa log` reads whatever exists.
+      const wantLog = rest.includes('--log') || process.env.RWA_LOG === '1';
       const FLAG_WITH_VALUE = new Set(['--plan', '--base-hash', '--actor', '--backend', '--model', '--base-url', '--api-key']);
       const positionals = rest.filter((a, i) =>
         !a.startsWith('-') && !FLAG_WITH_VALUE.has(rest[i - 1])
@@ -763,7 +777,7 @@ function detectProductKind(fileText) {
           }
           throw e;
         }
-        await recordHistory(filePath, applyResult, { principal, operator: 'cli:instruction', model: modelId });
+        await recordHistory(filePath, applyResult, { principal, operator: 'cli:instruction', model: modelId }, wantLog);
         emitEditResult(applyResult, jsonMode);
         return;
 
@@ -798,7 +812,7 @@ function detectProductKind(fileText) {
       const { applyPlan } = await import('../src/edit.mjs');
       try {
         const res = await applyPlan(filePath, envelope, { baseHash: baseHashArg, virtualImages: virtualPlan });
-        await recordHistory(filePath, res, { principal, operator: hasPlanFile ? 'cli:plan' : 'cli:stdin' });
+        await recordHistory(filePath, res, { principal, operator: hasPlanFile ? 'cli:plan' : 'cli:stdin' }, wantLog);
         emitEditResult(res, jsonMode);
         return;
       } catch (e) {

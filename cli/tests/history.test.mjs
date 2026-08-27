@@ -41,6 +41,10 @@ function mkFixture(body = '<article><h1>Old</h1><p>Body.</p></article>') {
 // stdin, and spawnSync without `input` leaves it open — the child then waits
 // forever on a pipe nobody is going to close. Overridable for the stdin path.
 const run = (args, opts) => spawnSync('node', [RWA_BIN, ...args], { encoding: 'utf8', input: '', ...opts });
+// The log is OPT-IN (#39, revised on review): `rwa edit` must not drop an
+// unrequested file beside someone's document. Tests that expect a record ask
+// for one, exactly as a caller would.
+const runLogged = (args, opts) => run([...args, '--log'], opts);
 const plan = (dir, name, env) => { const p = join(dir, name); writeFileSync(p, JSON.stringify(env)); return p; };
 // ASYNC spawn, required whenever a mock backend is running IN THIS PROCESS:
 // spawnSync blocks the event loop, so the in-process HTTP server can never
@@ -56,11 +60,36 @@ const runAsync = (args, stdin = '') => new Promise((resolve) => {
 });
 const bodyOf = (p) => extractInlineDoc(readFileSync(p, 'utf8'));
 
-test('#39: an edit appends a record describing what it did', () => {
+test('#39: the log is OFF by default — no unrequested file beside the document', () => {
+  // The property this was CHANGED to have, found in review: `rwa edit` was
+  // dropping a sidecar next to the user's document on every edit. No other verb
+  // writes a second file, and a stray `report.rwa-log.jsonl` in a shared folder,
+  // a git status or a publish directory is worse than an absent one. It was
+  // caught by a test that carefully cleaned up its temp .html and still left a
+  // sidecar it could not have known about.
   const fx = mkFixture();
   try {
     const p = plan(fx.dir, 'a.json', { version: 'rwa-edit/1', edits: [{ find: 'Old', replace: 'New' }] });
     assert.equal(run(['edit', fx.path, '--plan', p]).status, 0);
+    assert.equal(existsSync(historyPath(fx.path)), false, 'nothing was written that nobody asked for');
+    assert.ok(bodyOf(fx.path).includes('New'), 'and the edit itself still landed');
+  } finally { fx.cleanup(); }
+});
+
+test('#39: RWA_LOG=1 opts in without a flag', () => {
+  const fx = mkFixture();
+  try {
+    const p = plan(fx.dir, 'a.json', { version: 'rwa-edit/1', edits: [{ find: 'Old', replace: 'New' }] });
+    run(['edit', fx.path, '--plan', p], { env: { ...process.env, RWA_LOG: '1' } });
+    assert.equal(readHistory(fx.path).records.length, 1);
+  } finally { fx.cleanup(); }
+});
+
+test('#39: an edit appends a record describing what it did', () => {
+  const fx = mkFixture();
+  try {
+    const p = plan(fx.dir, 'a.json', { version: 'rwa-edit/1', edits: [{ find: 'Old', replace: 'New' }] });
+    assert.equal(runLogged(['edit', fx.path, '--plan', p]).status, 0);
     const h = readHistory(fx.path);
     assert.equal(h.exists, true);
     assert.equal(h.records.length, 1);
@@ -83,7 +112,7 @@ test('#39: the log is verifiable against the document — hashes chain to the cu
     // fixture's fault rather than the feature's.
     for (const [from, to] of [['Old heading', 'First heading'], ['First heading', 'Second heading'], ['Second heading', 'Third heading']]) {
       const p = plan(fx.dir, `${to.replace(/\W/g, '')}.json`, { version: 'rwa-edit/1', edits: [{ find: from, replace: to }] });
-      const r = run(['edit', fx.path, '--plan', p]);
+      const r = runLogged(['edit', fx.path, '--plan', p]);
       assert.equal(r.status, 0, r.stderr);
     }
     const { records } = readHistory(fx.path);
@@ -99,7 +128,7 @@ test('#39: the actor is a PAIR — who decided, and who typed', () => {
   const fx = mkFixture();
   try {
     const p = plan(fx.dir, 'a.json', { version: 'rwa-edit/1', edits: [{ find: 'Old', replace: 'New' }] });
-    run(['edit', fx.path, '--plan', p, '--actor', 'claude-code@host']);
+    runLogged(['edit', fx.path, '--plan', p, '--actor', 'claude-code@host']);
     const r = readHistory(fx.path).records[0];
     assert.equal(r.actor.principal, 'claude-code@host', 'who decided');
     assert.equal(r.actor.operator, 'cli:plan', 'who typed');
@@ -113,7 +142,7 @@ test('#39: an unknown principal is left null, never fabricated', () => {
   const fx = mkFixture();
   try {
     const p = plan(fx.dir, 'a.json', { version: 'rwa-edit/1', edits: [{ find: 'Old', replace: 'New' }] });
-    run(['edit', fx.path, '--plan', p]);
+    runLogged(['edit', fx.path, '--plan', p]);
     const r = readHistory(fx.path).records[0];
     assert.equal(r.actor.principal, null);
     assert.equal(r.actor.operator, 'cli:plan');
@@ -124,7 +153,7 @@ test('#39: RWA_PRINCIPAL supplies the principal when the flag is absent', () => 
   const fx = mkFixture();
   try {
     const p = plan(fx.dir, 'a.json', { version: 'rwa-edit/1', edits: [{ find: 'Old', replace: 'New' }] });
-    run(['edit', fx.path, '--plan', p], { env: { ...process.env, RWA_PRINCIPAL: 'ci-bot' } });
+    runLogged(['edit', fx.path, '--plan', p], { env: { ...process.env, RWA_PRINCIPAL: 'ci-bot' } });
     assert.equal(readHistory(fx.path).records[0].actor.principal, 'ci-bot');
   } finally { fx.cleanup(); }
 });
@@ -141,8 +170,8 @@ test('#39: stdin and instruction paths name themselves distinctly', async () => 
     }],
   }]);
   try {
-    await runAsync(['edit', fx.path], JSON.stringify({ version: 'rwa-edit/1', edits: [{ find: 'Old', replace: 'New' }] }));
-    const r = await runAsync(['edit', fx.path, 'rewrite the body', '--backend', 'ollama', '--base-url', mock.baseUrl, '--model', 'stub-model']);
+    await runAsync(['edit', fx.path, '--log'], JSON.stringify({ version: 'rwa-edit/1', edits: [{ find: 'Old', replace: 'New' }] }));
+    const r = await runAsync(['edit', fx.path, 'rewrite the body', '--log', '--backend', 'ollama', '--base-url', mock.baseUrl, '--model', 'stub-model']);
     assert.equal(r.status, 0, r.stderr);
     const { records } = readHistory(fx.path);
     assert.equal(records.length, 2);
@@ -158,7 +187,7 @@ test('#39: a FAILED edit appends nothing — no phantom records', () => {
   const fx = mkFixture();
   try {
     const bad = plan(fx.dir, 'bad.json', { version: 'rwa-edit/1', edits: [{ find: 'NOT PRESENT', replace: 'x' }] });
-    assert.equal(run(['edit', fx.path, '--plan', bad]).status, 3);
+    assert.equal(runLogged(['edit', fx.path, '--plan', bad]).status, 3);
     assert.equal(existsSync(historyPath(fx.path)), false, 'a log that recorded attempts would not be a record of the document');
   } finally { fx.cleanup(); }
 });
@@ -173,7 +202,7 @@ test('#39: the log holds hashes, never envelope bodies', () => {
       version: 'rwa-edit/1',
       edits: [{ find: 'Account number 4111-1111-1111-1111.', replace: 'Account number redacted.' }],
     });
-    run(['edit', fx.path, '--plan', p]);
+    runLogged(['edit', fx.path, '--plan', p]);
     const raw = readFileSync(historyPath(fx.path), 'utf8');
     assert.ok(!raw.includes('4111'), 'the replaced text is not in the log');
     assert.ok(!raw.includes('redacted'), 'and neither is the replacement');
@@ -200,7 +229,7 @@ test('#39: a truncated final line is skipped and COUNTED, not fatal', () => {
   const fx = mkFixture();
   try {
     const p = plan(fx.dir, 'a.json', { version: 'rwa-edit/1', edits: [{ find: 'Old', replace: 'New' }] });
-    run(['edit', fx.path, '--plan', p]);
+    runLogged(['edit', fx.path, '--plan', p]);
     appendFileSync(historyPath(fx.path), '{"ts":"2026-01-01T00:00:00Z","tool":"apply_ed');
     const h = readHistory(fx.path);
     assert.equal(h.records.length, 1, 'the intact record still reads');

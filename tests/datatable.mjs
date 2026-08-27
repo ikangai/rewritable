@@ -251,7 +251,10 @@ function editCell(r, c, value) {
       toolOk = /"item":\s*"Brand contractor",\s*"qty":\s*2/.test(toolBody);
     }
   } catch (e) { toolBody = 'ERR ' + (e.stderr || e.message); }
-  finally { try { fs.unlinkSync(tmp); } catch {} }
+  // Clean up the sidecar too: `rwa edit --log` writes one beside the container,
+  // and a probe should remove everything its subject may have created, not just
+  // the file it made itself.
+  finally { for (const f of [tmp, tmp.replace(/\.html$/, '.rwa-log.jsonl')]) { try { fs.unlinkSync(f); } catch {} } }
   check('Tool affordance: agent edits #dt-data via `rwa edit` (CLI), change visible via `rwa doc`', toolOk);
 
   // ── Loop-closed (cross-lane): an agent running `rwa doc --json` gets the file's

@@ -37,8 +37,10 @@ npx rwa edit <file> --plan <plan.json>  # apply an edit envelope
 ```
 
 Plus: `rwa doctor <file>` (offline health check), `rwa render <file>` (see it —
-you cannot otherwise), `rwa log <file>` (what has been done to it), and
-`rwa schema` (the full wire grammar, machine-readable with `--json`).
+you cannot otherwise), `rwa log <file>` (what has been done to it — pass `--log` on the edits you want
+recorded; it is off by default so nothing appears beside your document
+uninvited), and `rwa schema` (the full wire grammar, machine-readable with
+`--json`).
 
 ## The efficient loop
 
