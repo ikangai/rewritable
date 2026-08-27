@@ -85,10 +85,14 @@ References are markdown. They are read, never run. The risk is prompt injection
 into an agent's context, which is the risk the whole provenance mechanism
 (`rwa-origin`, the nonce fence) already exists to manage.
 
-**This is where a canon change actually lives.** `canonicalAgent` covers
-`author_pubkey`, `description`, `role`, `system_prompt`, `vault_namespace_set`,
-`version`. Adding `references` to the signed set changes the signing message and
-invalidates every existing signed carrier. See the open decisions.
+**This is where a canon change actually lives** — but a cheap one. `version` is
+already *inside* `canonicalAgent`, and every shipped carrier says
+`"rwa-agent/1"`, so a v1 and a v2 record already sign structurally different
+messages. `canonicalAgent` can branch on `agent.version`: v1 verifies against
+today's six fields, byte-unchanged and forever; v2 verifies against seven. No
+re-signing, no invalidated carriers, no migration. The extension point was
+designed in from the start. (An earlier draft of this document claimed the
+opposite; see the open decisions for where the cost actually went.)
 
 ### Tier 3 — the container carries scripts (high risk; not designed here)
 
@@ -116,15 +120,34 @@ join the skills ecosystem".
 
 ## Open decisions
 
-1. **Do references ride the signature?** Signed means a canon change and
-   re-signing the five gallery carriers (`tools/regenerate-refs.mjs` already has
-   that discipline). Unsigned means an attacker who can edit the file can rewrite
-   what an agent reads — which is most of the value gone. *Recommendation: signed,
-   accept the bump.* Naming it `rwa-agent/2` is then the honest label.
+1. **Do references ride the signature?** *Recommendation: yes, via a version
+   branch in `canonicalAgent`.* Two things sharpen this since the first draft.
+   The migration is **free** (branch on `version`, v1 records untouched) — and
+   the security argument is stronger than "unsigned is weaker": `system_prompt`
+   is signed precisely so a tamperer cannot rewrite what the model is told, and a
+   reference is pulled into context and read as instruction material on the *same
+   trust surface*. Unsigned references would therefore be a **bypass of an
+   existing wall**, letting an attacker blocked from the prompt put the payload in
+   a reference instead.
+
+   Worth recording why the first draft was dangerous as well as wrong: `*.key.json`
+   is gitignored, so the carriers' private keys are not in the repo. Had a re-sign
+   genuinely been required and those files were gone, the carriers would have had
+   to be re-minted with new keypairs — changing `author_pubkey` and `agentId`, so
+   the five gallery carriers would become *different identities*.
+
+   **The cost moved to maintenance.** `canonicalAgent` is byte-mirrored into
+   `service/public/ai/maker.html` and gated by `maker-parity.test.mjs`. A branch is
+   more surface for those copies to drift across, and a canon that silently
+   disagrees between signer and verifier is the worst failure available here.
+   `maker-parity.test.mjs` must gain a fixture at **each** version — one that only
+   exercises v2 would let v1 verification rot silently, which is the exact thing
+   the branch exists to prevent.
 2. **Where do references live in the container?** A second frozen zone
    (`#rwa-agent-refs`) beside `#rwa-agents`, or base64 inside the agent envelope.
    The zone is more inspectable; the envelope keeps one record atomic under one
-   signature.
+   signature. *Signing tilts this: now leaning the envelope*, since a second zone
+   would split one signature across two locations.
 3. **Does `rwa skill import <SKILL.md dir>` convert, or refuse?** A SKILL.md with
    bundled scripts cannot be fully represented at Tier 2. Import the instruction
    half and report what was dropped, or refuse until Tier 3 exists? *A partial
@@ -137,5 +160,6 @@ join the skills ecosystem".
 
 ---
 
-*Not built beyond Tier 1. The decisions above are genuine forks, not formalities —
-particularly (1), which is cheap now with five carriers and expensive later.*
+*Not built beyond Tier 1. The decisions above are genuine forks, not formalities.
+Revised 2026-08-27 after checking the canon rather than recalling it: (1) is not
+the expensive migration this document first claimed — see #45.*
