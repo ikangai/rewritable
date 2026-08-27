@@ -8,6 +8,7 @@ import path from 'node:path';
 import { webcrypto, randomUUID } from 'node:crypto';
 import { SEED_CANDIDATES } from './commands.mjs';
 import { loadSeed, applySeedSubs, kindOverrides, replaceInlineDoc } from './seed.mjs';
+import { validateAgentReferences, MAX_AGENT_REFERENCES, MAX_AGENT_REFERENCE_BYTES } from './skill-manifest.mjs';
 import { agentSigningMessage } from './skill-manifest.mjs';
 
 const ROLE_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
@@ -26,13 +27,39 @@ export async function intelligenceNewCmd(opts = {}) {
   if (opts.model != null && !REC_MODEL_RE.test(String(opts.model))) fail('intelligence: --model is not a valid model id');
   if (opts.backend != null && !REC_BACKENDS.includes(String(opts.backend))) fail('intelligence: --backend must be one of ' + REC_BACKENDS.join('/'));
   const vault = (opts.vault || []).map(v => /^vault:/.test(v) ? v : 'vault:' + v);
+  // #45 — carried references (Agent Skills' progressive disclosure). Read from
+  // disk here so the carrier is genuinely self-contained: the recipient gets the
+  // bytes, not a link that may be gone. Names are the BASENAME only — a reference
+  // is a label, never a path.
+  const references = [];
+  for (const f of (opts.reference || [])) {
+    const abs = path.resolve(String(f));
+    let content;
+    try { content = await fs.readFile(abs, 'utf8'); }
+    catch (e) { fail('intelligence: cannot read --reference ' + rel(abs) + (e && e.code === 'ENOENT' ? ' (not found)' : '')); }
+    references.push({ name: path.basename(abs), content });
+  }
+  const refErrors = validateAgentReferences(references);
+  if (refErrors.length) {
+    // Fail at AUTHORING, where the message can name the real problem — not at
+    // some later commit as a target_size_exceeded nobody can trace back here.
+    fail('intelligence: references rejected (' + refErrors.join(', ') + '). ' +
+      'Limits: ' + MAX_AGENT_REFERENCES + ' files, ' + Math.round(MAX_AGENT_REFERENCE_BYTES / 1024) + ' KB total; ' +
+      'names must be simple filenames. They ride inside the container and count against its document budget.');
+  }
   const affinity = (opts.affinity || []).filter(Boolean);
 
   // Mint + sign the rwa-agent/1 record. The signature is over `agent` (the canon); the
   // recommendation/affinity ride OUTSIDE it (unsigned envelope fields, per I-A/I-D).
   const kp = await webcrypto.subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify']);
   const author_pubkey = b64(new Uint8Array(await webcrypto.subtle.exportKey('raw', kp.publicKey)));
-  const agent = { author_pubkey, description: opts.description || ('The ' + role + ' role.'), role, system_prompt: prompt, vault_namespace_set: vault, version: 'rwa-agent/1' };
+  // The record is v2 ONLY when it actually carries references. A carrier with
+  // none stays rwa-agent/1, so nothing about existing carriers or their
+  // signatures changes gratuitously — the version marks a real difference in what
+  // is signed, not a release date.
+  const agent = references.length
+    ? { author_pubkey, description: opts.description || ('The ' + role + ' role.'), references, role, system_prompt: prompt, vault_namespace_set: vault, version: 'rwa-agent/2' }
+    : { author_pubkey, description: opts.description || ('The ' + role + ' role.'), role, system_prompt: prompt, vault_namespace_set: vault, version: 'rwa-agent/1' };
   const signature = b64(new Uint8Array(await webcrypto.subtle.sign({ name: 'Ed25519' }, kp.privateKey, agentSigningMessage(agent))));
   const envelope = { agent, signature };
   if (opts.model) envelope.recommended_model = String(opts.model);

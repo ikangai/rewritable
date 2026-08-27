@@ -383,9 +383,37 @@
 // ═══════════════════════════════════════════════════════════════════════════
 // rwa:maker-canon:begin
 // Canonical agent manifest: stable-key-ordered over the signed fields; excludes
-// the signature. Byte-identical to skill-manifest.mjs canonicalAgent.
+// the signature.
+//
+// #45 — VERSIONED. `version` is itself a signed field, so a v1 and a v2 record
+// already sign structurally different messages; branching here therefore extends
+// the canon with NO migration: every existing `rwa-agent/1` record keeps
+// verifying byte-unchanged, forever.
+//
+// Each version is written out in full rather than spread from a shared base.
+// The duplication is deliberate: the canon is mirrored byte-for-byte into
+// service/public/ai/maker.html, and a canon that silently disagrees between
+// signer and verifier is the worst failure available here — signatures that
+// verify in one place and not the other, with no error to read. An explicit,
+// independently-readable object per version is what makes that mirror auditable.
+// Keys stay alphabetical in both branches.
+function canonicalReferences(refs) {
+  if (!Array.isArray(refs)) return [];
+  return refs.map((r) => ({ content: (r && r.content) ?? null, name: (r && r.name) ?? null }));
+}
 function canonicalAgent(a) {
   a = a || {};
+  if (a.version === 'rwa-agent/2') {
+    return JSON.stringify({
+      author_pubkey: a.author_pubkey ?? null,
+      description: a.description ?? null,
+      references: canonicalReferences(a.references),
+      role: a.role ?? null,
+      system_prompt: a.system_prompt ?? null,
+      vault_namespace_set: Array.isArray(a.vault_namespace_set) ? a.vault_namespace_set : [],
+      version: a.version ?? null,
+    });
+  }
   return JSON.stringify({
     author_pubkey: a.author_pubkey ?? null,
     description: a.description ?? null,

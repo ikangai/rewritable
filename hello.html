@@ -37,7 +37,7 @@
 <meta http-equiv="Content-Security-Policy" content="script-src 'unsafe-inline' blob:; worker-src blob:; object-src 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="rwa-bootstrap" content="0.9">
-<meta name="rwa-seed" content="d53b602832ba">
+<meta name="rwa-seed" content="d8aa5e91ed4a">
 <!-- Where this container's content came from, when it came from somewhere. Empty
      for a container the user authored. Stamped at emission by `rwa clone` (the
      source URL), `rwa import` (`import:<file>`) and `rwa create --from/--data`
@@ -8074,7 +8074,23 @@ async function _skVerify(env) {
 // signed identity (role + system_prompt + vault_namespace_set; NO code). Same canon as the CLI so a
 // seed-live verify == the CLI-static verify for the same bytes.
 const _AG_ROLE_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
-function _agCanonicalAgent(a) { a = a || {}; return JSON.stringify({ author_pubkey: a.author_pubkey ?? null, description: a.description ?? null, role: a.role ?? null, system_prompt: a.system_prompt ?? null, vault_namespace_set: Array.isArray(a.vault_namespace_set) ? a.vault_namespace_set : [], version: a.version ?? null }); }
+// #45 — VERSIONED canon. `version` is itself signed, so v1 and v2 records already
+// sign different messages; branching costs no migration and every rwa-agent/1
+// record keeps verifying byte-unchanged. THIRD COPY of this function: keep in
+// step with cli/src/skill-manifest.mjs canonicalAgent and the byte-mirror in
+// service/public/ai/maker.html. A canon that disagrees between signer and
+// verifier fails silently — the signature simply stops matching, with nothing to
+// read — so tests/agent-canon-parity.mjs pins all three.
+// rwa:agent-canon:begin
+function _agCanonicalReferences(refs) { return Array.isArray(refs) ? refs.map(function (r) { return { content: (r && r.content) ?? null, name: (r && r.name) ?? null }; }) : []; }
+function _agCanonicalAgent(a) {
+  a = a || {};
+  if (a.version === 'rwa-agent/2') {
+    return JSON.stringify({ author_pubkey: a.author_pubkey ?? null, description: a.description ?? null, references: _agCanonicalReferences(a.references), role: a.role ?? null, system_prompt: a.system_prompt ?? null, vault_namespace_set: Array.isArray(a.vault_namespace_set) ? a.vault_namespace_set : [], version: a.version ?? null });
+  }
+  return JSON.stringify({ author_pubkey: a.author_pubkey ?? null, description: a.description ?? null, role: a.role ?? null, system_prompt: a.system_prompt ?? null, vault_namespace_set: Array.isArray(a.vault_namespace_set) ? a.vault_namespace_set : [], version: a.version ?? null });
+}
+// rwa:agent-canon:end
 async function _agSigningMessage(a) { return _skSha256(_skUtf8(_agCanonicalAgent(a))); }
 async function _agAgentId(role, pubkey) { return _skB64url(await _skSha256(_skConcat(_skUtf8(String(role)), _skNUL, _skUtf8(String(pubkey))))); }
 async function _agVerify(env) {
@@ -8089,6 +8105,22 @@ async function _agVerify(env) {
 function _agPromptInjectionRisk(s) { const p = String(s ?? ''); return p.includes('`') || p.includes('${') || /<\/?DOC>/i.test(p); }
 function _agValidateInstall(agent, signed) {
   agent = agent || {}; const errors = [];
+  // #45 — references are a v2 field. At v1 the canon does not sign them, so
+  // accepting one would mean honouring bytes the signature never covered.
+  if (agent.references != null && agent.version !== 'rwa-agent/2') errors.push('references_require_v2');
+  else if (agent.references != null) {
+    if (!Array.isArray(agent.references)) errors.push('invalid_reference');
+    else {
+      if (agent.references.length > 16) errors.push('too_many_references');
+      let _refBytes = 0;
+      for (const r of agent.references) {
+        if (!r || typeof r !== 'object' || Array.isArray(r) || typeof r.content !== 'string') { errors.push('invalid_reference'); continue; }
+        if (typeof r.name !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(r.name)) errors.push('invalid_reference_name');
+        _refBytes += _skUtf8(r.content).length;
+      }
+      if (_refBytes > 65536) errors.push('references_too_large');
+    }
+  }
   if (/\0/.test(String(agent.role == null ? '' : agent.role))) errors.push('invalid_agent_id');
   if (typeof agent.role !== 'string' || !_AG_ROLE_RE.test(agent.role)) errors.push('invalid_role');
   if (typeof agent.system_prompt !== 'string' || _agPromptInjectionRisk(agent.system_prompt)) errors.push('agent_prompt_injection_risk');

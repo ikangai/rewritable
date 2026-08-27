@@ -234,8 +234,38 @@ export function skeletonDistance(a, b) {
 const ROLE_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/; // ≤64, lowercase a-z0-9-_, leading alphanumeric
 
 /** Canonical agent manifest: stable-key-ordered over the signed fields; excludes the signature. */
-export function canonicalAgent(agent) {
-  const a = agent || {};
+// Canonical agent manifest: stable-key-ordered over the signed fields; excludes
+// the signature.
+//
+// #45 — VERSIONED. `version` is itself a signed field, so a v1 and a v2 record
+// already sign structurally different messages; branching here therefore extends
+// the canon with NO migration: every existing `rwa-agent/1` record keeps
+// verifying byte-unchanged, forever.
+//
+// Each version is written out in full rather than spread from a shared base.
+// The duplication is deliberate: the canon is mirrored byte-for-byte into
+// service/public/ai/maker.html, and a canon that silently disagrees between
+// signer and verifier is the worst failure available here — signatures that
+// verify in one place and not the other, with no error to read. An explicit,
+// independently-readable object per version is what makes that mirror auditable.
+// Keys stay alphabetical in both branches.
+function canonicalReferences(refs) {
+  if (!Array.isArray(refs)) return [];
+  return refs.map((r) => ({ content: (r && r.content) ?? null, name: (r && r.name) ?? null }));
+}
+export function canonicalAgent(a) {
+  a = a || {};
+  if (a.version === 'rwa-agent/2') {
+    return JSON.stringify({
+      author_pubkey: a.author_pubkey ?? null,
+      description: a.description ?? null,
+      references: canonicalReferences(a.references),
+      role: a.role ?? null,
+      system_prompt: a.system_prompt ?? null,
+      vault_namespace_set: Array.isArray(a.vault_namespace_set) ? a.vault_namespace_set : [],
+      version: a.version ?? null,
+    });
+  }
   return JSON.stringify({
     author_pubkey: a.author_pubkey ?? null,
     description: a.description ?? null,
@@ -279,6 +309,64 @@ function agentPromptInjectionRisk(s) {
   return p.includes('`') || p.includes('${') || /<\/?DOC>/i.test(p);
 }
 
+
+// #45 — carried-reference limits. The `#rwa-agents` zone lives INSIDE `INLINE_DOC`,
+// so every carried byte counts against the container's own document budget
+// (MAX_DOC, 1 MB on the virtualized form). A generous carrier can therefore crowd
+// out the document it exists to help edit, and the failure surfaces late and
+// confusingly — `target_size_exceeded` on an ordinary unrelated edit, with nothing
+// pointing at the references as the cause. Enforce at authoring/install instead,
+// where the message can name the real problem.
+export const MAX_AGENT_REFERENCES = 16;
+export const MAX_AGENT_REFERENCE_BYTES = 64 * 1024;   // ~6% of the 1 MB doc budget
+// Reference names are labels, never paths: no separators, no traversal, no
+// leading dot. They are only ever shown and matched, never opened.
+const REFERENCE_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+
+/**
+ * Validate a v2 record's `references`. Returns an array of error codes.
+ *
+ * NOTE — content is NOT character-filtered, deliberately.
+ *
+ * `system_prompt` is screened by agentPromptInjectionRisk because it is
+ * interpolated into a runtime template literal, where a backtick or `${` breaks
+ * out. References are different on both counts: they are base64-encoded inside
+ * the record (so they carry no syntactic hazard to the container at all), and
+ * they are markdown — real Agent Skills references are FULL of backticks and
+ * code fences. Applying the same screen would reject essentially every genuine
+ * reference while buying nothing.
+ *
+ * What remains is SEMANTIC injection — text that tries to instruct the model
+ * reading it. That is not solvable by a character blocklist; it is what the
+ * signature and the consent gate are for, and what the provenance line already
+ * frames. Do not "fix" this by adding a filter.
+ *
+ * The one hard requirement on consumers: a reference must be passed to a model
+ * as DATA, never interpolated into a template literal.
+ */
+export function validateAgentReferences(refs) {
+  const errors = [];
+  if (refs == null) return errors;                    // absent is fine
+  if (!Array.isArray(refs)) return ['invalid_reference'];
+  if (refs.length > MAX_AGENT_REFERENCES) errors.push('too_many_references');
+  let bytes = 0;
+  for (const r of refs) {
+    if (!r || typeof r !== 'object' || Array.isArray(r)) { errors.push('invalid_reference'); continue; }
+    if (typeof r.name !== 'string' || !REFERENCE_NAME_RE.test(r.name)) errors.push('invalid_reference_name');
+    if (typeof r.content !== 'string') { errors.push('invalid_reference'); continue; }
+    bytes += Buffer.byteLength(r.content, 'utf8');
+  }
+  if (bytes > MAX_AGENT_REFERENCE_BYTES) errors.push('references_too_large');
+  return [...new Set(errors)];
+}
+
+/** Total UTF-8 bytes of a record's carried references (0 when it has none). */
+export function agentReferenceBytes(agent) {
+  const refs = agent && agent.references;
+  if (!Array.isArray(refs)) return 0;
+  return refs.reduce((n, r) => n + (typeof r?.content === 'string' ? Buffer.byteLength(r.content, 'utf8') : 0), 0);
+}
+
 /** §12 agent install gates. Pure; takes the verification result so it stays synchronous. */
 export function validateAgentInstall(envelope, { signed, verified } = {}) {
   const agent = (envelope && envelope.agent) || {};
@@ -297,8 +385,13 @@ export function validateAgentInstall(envelope, { signed, verified } = {}) {
       errors.push(/unknown_permission_tier/.test(e.message) ? 'unknown_permission_tier' : 'invalid_permission');
     }
   }
+  // #45 — references are a v2 field. A v1 record carrying them is rejected rather
+  // than silently ignored: canonicalAgent does not sign them at v1, so accepting
+  // one would mean honouring bytes the signature never covered.
+  if (agent.references != null && agent.version !== 'rwa-agent/2') errors.push('references_require_v2');
+  else errors.push(...validateAgentReferences(agent.references));
   if (!signed) errors.push('unsigned_agent'); // unsigned agents are rejected at install (verified gates activation)
-  return { ok: errors.length === 0, errors };
+  return { ok: errors.length === 0, errors: [...new Set(errors)] };
 }
 
 // §12 inter-agent bus message: {type:'request'|'response', id, from_role, to_role, payload} on
@@ -525,7 +618,16 @@ export function readOfferedRole(doc) {
       // covered by the signature (canonicalAgent), so neither is an author claim
       // an attacker can rewrite independently.
       description: typeof agent.description === 'string' ? agent.description : null,
+      // #45 — carried references, on the same rule as the prompt: the BYTES are
+      // released only for a usable record, but their existence is reported either
+      // way. "there are three references here you cannot verify" is a more useful
+      // answer than silence, and it costs nothing to give.
+      referenceCount: Array.isArray(agent.references) ? agent.references.length : 0,
+      referenceBytes: agentReferenceBytes(agent),
       ...(usable ? { systemPrompt: agent.system_prompt } : { withheld: gate.ok ? 'unverified_signature' : gate.errors[0] }),
+      ...(usable && Array.isArray(agent.references) && agent.references.length
+        ? { references: agent.references.map((r) => ({ name: r.name, content: r.content })) }
+        : {}),
       unsigned: {
         affinity: envelope.affinity || null,
         recommendedModel: envelope.recommended_model || null,

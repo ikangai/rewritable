@@ -77,6 +77,35 @@ const FIXTURES = [
     name: 'missing optional fields (author_pubkey/description/version absent, no vault)',
     agent: { role: 'r', system_prompt: 'p' },
   },
+  // #45 — the canon is VERSIONED, so it needs a fixture at EACH version. A suite
+  // that only exercised the current one would let v1 verification rot silently
+  // behind the branch, which is the exact failure the branch exists to prevent:
+  // every already-signed carrier in the wild is v1, and a canon that stops
+  // reproducing their bytes does not raise an error — their signatures simply
+  // stop matching, with nothing to read.
+  {
+    name: 'v2 — carried references (signed)',
+    agent: { author_pubkey: 'QUJD', description: 'Applies the house style.', references: [{ name: 'style.md', content: '# Style\n\nUse `npx rwa doc`.\n\n```js\nconst t = `x ${y}`;\n```' }], role: 'house-editor', system_prompt: 'Edit to house style.', vault_namespace_set: [], version: 'rwa-agent/2' },
+  },
+  {
+    name: 'v2 — empty references array',
+    agent: { author_pubkey: 'QUJD', description: 'd', references: [], role: 'r', system_prompt: 'p', vault_namespace_set: [], version: 'rwa-agent/2' },
+  },
+  {
+    name: 'v2 — references absent (the field is optional even at v2)',
+    agent: { author_pubkey: 'QUJD', description: 'd', role: 'r', system_prompt: 'p', vault_namespace_set: [], version: 'rwa-agent/2' },
+  },
+  {
+    // The property the version branch protects: a v1 record must canonicalize
+    // IDENTICALLY with and without a references field, or an attacker could
+    // smuggle unsigned bytes past a v1 signature via a verifier that reads them.
+    name: 'v1 — a stray references field is NOT signed',
+    agent: { author_pubkey: 'QUJD', description: 'd', references: [{ name: 'x.md', content: 'smuggled' }], role: 'r', system_prompt: 'p', vault_namespace_set: [], version: 'rwa-agent/1' },
+  },
+  {
+    name: 'an unknown future version falls back to the v1 canon',
+    agent: { author_pubkey: 'QUJD', description: 'd', role: 'r', system_prompt: 'p', vault_namespace_set: [], version: 'rwa-agent/9' },
+  },
   {
     name: 'scrambled input key order still canonicalizes identically',
     agent: { version: 'rwa-agent/1', system_prompt: 'later key first', role: 'x', vault_namespace_set: ['vault:a'], description: 'd', author_pubkey: 'QUJD' },

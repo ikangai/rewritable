@@ -27,6 +27,7 @@ import { readFile } from 'node:fs/promises';
 import { extractInlineDoc, loadSeed, seedIdentity } from './seed.mjs';
 import { SEED_CANDIDATES } from './commands.mjs';
 import { CliError } from './edit.mjs';
+import { readOfferedRole } from './skill-manifest.mjs';
 import {
   findFrozenZones, unterminatedFrozenMarker, dataRwaFrozenSnapshot,
   tagHasFrozenAttr, matchingCloseEnd, VOID_ELEMENTS, virtualizeImages, MAX_DOC,
@@ -176,6 +177,31 @@ export async function diagnose(filePath) {
         balance.mismatches.map(m => `${m.tag}: ${m.opens} open / ${m.closes} close`).join('; '),
         { opens: balance.opens, closes: balance.closes })
     : ok('tag_balance', '<script>/<style> tags balanced', null, { opens: balance.opens, closes: balance.closes }));
+
+  // ── agent_references — who is spending the document's budget (#45) ──
+  // A carried reference lives inside the frozen #rwa-agents zone, which is inside
+  // INLINE_DOC, so its bytes count against the SAME cap size_headroom reports
+  // below. Without attribution the failure mode is genuinely baffling: an
+  // ordinary edit to an ordinary paragraph fails with target_size_exceeded, and
+  // nothing in that message mentions a skill reference bundled by whoever
+  // authored the carrier. "your references are 400 KB of your 1 MB budget" is
+  // the only form of it anyone can act on.
+  {
+    const offered = readOfferedRole(doc);
+    const refBytes = offered.offered.reduce((n, o) => n + (o.referenceBytes || 0), 0);
+    const refCount = offered.offered.reduce((n, o) => n + (o.referenceCount || 0), 0);
+    if (refCount > 0) {
+      const share = Math.round((refBytes / MAX_DOC) * 1000) / 10;
+      const detail = `${refCount} reference${refCount === 1 ? '' : 's'}, ${refBytes} bytes — ${share}% of the ${MAX_DOC}-byte document budget.`;
+      // Warn, never error: carrying references is the point of a carrier. The
+      // finding exists to make the cost visible, not to discourage it.
+      findings.push(share >= 25
+        ? warn('agent_references', 'Carried references take a large share of the document budget', detail,
+          { count: refCount, bytes: refBytes, cap: MAX_DOC, pct: share })
+        : ok('agent_references', 'Carried references are within a modest share of the budget', detail,
+          { count: refCount, bytes: refBytes, cap: MAX_DOC, pct: share }));
+    }
+  }
 
   // ── size_headroom ──────────────────────────────────────────────────
   // Measured on the VIRTUALIZED form, which is what applyEdits actually caps:
