@@ -143,11 +143,22 @@ join the skills ecosystem".
    `maker-parity.test.mjs` must gain a fixture at **each** version — one that only
    exercises v2 would let v1 verification rot silently, which is the exact thing
    the branch exists to prevent.
-2. **Where do references live in the container?** A second frozen zone
-   (`#rwa-agent-refs`) beside `#rwa-agents`, or base64 inside the agent envelope.
-   The zone is more inspectable; the envelope keeps one record atomic under one
-   signature. *Signing tilts this: now leaning the envelope*, since a second zone
-   would split one signature across two locations.
+2. ~~**Where do references live in the container?**~~ **DECIDED (operator,
+   2026-08-27): inside the envelope's SIGNED region — `envelope.agent.references`.**
+   Not a second frozen zone, which would split one signature across two locations;
+   and specifically *not* beside `affinity`/`recommended_model` in the envelope's
+   UNSIGNED region, which was the other available reading of "inside the envelope"
+   and is the bypass decision (1) argues against. `canonicalAgent` branches on
+   `agent.version`: v1 signs six fields, v2 signs seven.
+
+   **A second-order cost this surfaces.** The `#rwa-agents` zone lives *inside*
+   `INLINE_DOC`, so carried references count against the container's own document
+   budget (`MAX_DOC` 1 MB virtualized, `MAX_DOC_EXPANDED` 10 MB). Agent Skills
+   references run to tens of kilobytes each, so a generous carrier can crowd out
+   the document it exists to help edit — and it fails late and confusingly, as
+   `target_size_exceeded` on an ordinary edit with nothing pointing at the
+   references. Wants a per-record cap enforced at authoring/install rather than
+   discovered at commit, and `rwa doctor` attributing the bytes.
 3. **Does `rwa skill import <SKILL.md dir>` convert, or refuse?** A SKILL.md with
    bundled scripts cannot be fully represented at Tier 2. Import the instruction
    half and report what was dropped, or refuse until Tier 3 exists? *A partial
