@@ -889,6 +889,11 @@ function detectProductKind(fileText) {
           ...info.self,
           rewritable: true,
           baseHash: info.baseHash,
+          // #35 — null unless this container came from somewhere else. An
+          // external agent reading through this door composes its own prompt and
+          // never sees the runtime's provenance line, so the marker has to
+          // travel WITH the read or it does not reach the reader at all.
+          origin: info.origin,
           // `virtual`/`assets` describe the PROJECTION in `doc`; `baseHash` and
           // `blocks` describe the document itself. A consumer must not confuse
           // "what I was handed" with "what this file is".

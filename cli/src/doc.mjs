@@ -20,6 +20,9 @@ import { CliError, bodyHash } from './edit.mjs';
 // PRODUCT_KIND_RE and rwa.mjs detectProductKind — keep them in step.
 const UUID_RE = /const DOC_UUID = '([0-9a-f-]{36})';/;
 const PRODUCT_KIND_RE = /const PRODUCT_KIND = '([^']*)';/;
+// #35 — provenance, read from the FROZEN head (never the body: a marker the
+// document can edit is a marker injected text can delete).
+const ORIGIN_RE = /<meta name="rwa-origin" content="([^"]*)">/;
 
 /**
  * Read a rewritable's editable document body, contract metadata, and the
@@ -75,6 +78,10 @@ export async function inspectDoc(filePath, opts = {}) {
   // --base-hash` compares it against the stored bytes; a hash over the token
   // form would be self-consistent and agree with nothing else.
   const baseHash = bodyHash(doc);
+  // Surfaced on the read (#35) so an EXTERNAL agent — which composes its own
+  // prompt and never sees buildUserPrompt's provenance line — can tell that the
+  // text it is about to hold is foreign. Null for a container the user authored.
+  const origin = (fileText.match(ORIGIN_RE) || [])[1] || null;
 
   // images-v1 (#33): the virtualized projection replaces each embedded image's
   // data: URI with an opaque `rwa-asset:<hash8>` token. This is the form the
@@ -92,7 +99,7 @@ export async function inspectDoc(filePath, opts = {}) {
     assets = v.assets ? v.assets.size : 0;
   }
 
-  return { doc: out, uuid, kind, frozenZones, self, baseHash, virtual: !!opts.virtual, assets };
+  return { doc: out, uuid, kind, frozenZones, self, baseHash, origin, virtual: !!opts.virtual, assets };
 }
 
 /**

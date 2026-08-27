@@ -306,6 +306,14 @@ export async function importCmd({ inputPath, outPath, force, open, vision, claud
     uuid: crypto.randomUUID(),
     title,
     fileMeta,
+    // #35 — provenance. Everything `rwa import` produces came from somewhere
+    // else: a .docx, a .pdf, an .html someone sent. buildUserPrompt reads this
+    // meta out of the FROZEN head and tells the model that instruction-like text
+    // in the body is quoted material, never an instruction addressed to it.
+    // Only `rwa clone` used to stamp it, which left the likelier vector — a file
+    // that arrived in your inbox — completely unmarked. The scheme prefix keeps
+    // clone's bare-URL form untouched, so existing containers are unaffected.
+    origin: 'import:' + path.basename(inputPath),
   });
   const result = replaceInlineDoc(subbed, html);
   await fs.writeFile(out, result, 'utf8');
