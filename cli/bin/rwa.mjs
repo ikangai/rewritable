@@ -176,8 +176,15 @@ Flags:
   --plan <file>  (edit only) read the tool-envelope from <file> instead of
                  stdin. Use \`--plan -\` to force stdin even when stdin is
                  not a pipe.
-  --json         (edit) emit one JSON object per line on stderr for
-                 structured failure reporting — each line a single
+  --json         (edit) on SUCCESS, emit the result object on stdout:
+                 \`{ok, tool, compiledTo?, applied, baseHash, newHash,
+                 bytes}\` — one JSON object, so a caller can confirm what
+                 was applied without re-reading the document. \`baseHash\`
+                 and \`newHash\` are sha-256 over the LF-canonical editable
+                 body before/after — the same value the hosted
+                 \`/r/:id/doc\` reports, so the two surfaces agree on what
+                 a document is.
+                 On FAILURE, one JSON object per line on stderr — each a
                  \`{code, subcode, details}\` object.
                  (doc) emit the editing-contract object on stdout instead of
                  the raw body; on failure, the \`{code, subcode, details}\`
@@ -232,6 +239,27 @@ function emitEdit(payload, jsonMode) {
       line += ' ' + JSON.stringify(payload.details);
     }
     process.stderr.write(line + '\n');
+  }
+}
+
+// `rwa edit` SUCCESS surface (#30). The failure path above has always been
+// well-formed; success was silent, which left a delegating agent with exit 0
+// and nothing to audit — re-reading the whole document is exactly the cost
+// delegation exists to avoid. Success goes to STDOUT (the repo convention every
+// other verb follows: `upgrade`, `doc`, `doctor`, `ls`, `publish` all put the
+// result on stdout and errors on stderr), so `rwa edit --json` is pipeable.
+function emitEditResult(result, jsonMode) {
+  if (jsonMode) {
+    // Drop the legacy `exitCode` field from the wire shape — it is an internal
+    // caller convention, not part of the reported result.
+    const { exitCode: _exitCode, ...payload } = result;
+    process.stdout.write(JSON.stringify(payload) + '\n');
+  } else {
+    const what = result.compiledTo ? `${result.tool}→${result.compiledTo}` : result.tool;
+    process.stdout.write(
+      `✓ ${what}: ${result.applied} edit${result.applied === 1 ? '' : 's'} applied · ` +
+      `${result.bytes} bytes · ${result.newHash.slice(0, 12)}\n`,
+    );
   }
 }
 
@@ -542,7 +570,7 @@ function detectProductKind(fileText) {
         // model saw the virtual doc, so the envelope is token-form.
         const { applyPlan } = await import('../src/edit.mjs');
         try {
-          await applyPlan(filePath, envelope, { virtualImages: true });
+          emitEditResult(await applyPlan(filePath, envelope, { virtualImages: true }), jsonMode);
           return;
         } catch (e) {
           if (e && typeof e.exitCode === 'number') {
@@ -582,7 +610,7 @@ function detectProductKind(fileText) {
 
       const { applyPlan } = await import('../src/edit.mjs');
       try {
-        await applyPlan(filePath, envelope);
+        emitEditResult(await applyPlan(filePath, envelope), jsonMode);
         return;
       } catch (e) {
         if (e && typeof e.exitCode === 'number') {

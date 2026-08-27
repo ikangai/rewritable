@@ -13,11 +13,12 @@
 //                         from the underlying modules.
 
 import { readFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { atomicWrite } from './atomic-write.mjs';
 import {
   applyEdits, RwaEditError, dataRwaFrozenSnapshot, FAILURE_HINTS,
   virtualizeImages, expandImages, assertNoNewAssetTokens, mapEnvelopeImages, MAX_DOC_EXPANDED,
-  extractFrozenZones3, lockedRangesIn, markerZoneRangesIn,
+  extractFrozenZones3, lockedRangesIn, markerZoneRangesIn, canonLF,
 } from './apply-edits.mjs';
 import { compileDslPlan } from './dsl-compiler.mjs';
 import { extractInlineDoc, replaceInlineDoc } from './seed.mjs';
@@ -35,6 +36,21 @@ export class CliError extends Error {
     // untouched.
     if (FAILURE_HINTS[subcode] && this.details.hint == null) this.details.hint = FAILURE_HINTS[subcode];
   }
+}
+
+/**
+ * sha-256 hex of a document body, over the LF-canonical bytes the edit contract
+ * operates on. This is the SAME value the hosted runtime reports as `baseHash`
+ * from `GET /r/:id/doc` (`sha256hex(canonLF(extractInlineDoc(bytes)))`,
+ * service/server.js) — the two surfaces must agree about what a document IS, or
+ * an agent that reads from one and writes to the other cannot reason about
+ * staleness at all. Any change here is a cross-surface change.
+ *
+ * @param {string} doc — the editable body (raw, i.e. NOT the virtualized form)
+ * @returns {string} 64 lowercase hex chars
+ */
+export function bodyHash(doc) {
+  return createHash('sha256').update(canonLF(doc)).digest('hex');
 }
 
 // Inspect the envelope's discriminator set and assert version invariants.
@@ -236,7 +252,12 @@ export async function applyPlan(filePath, envelope, opts = {}) {
   const workDoc = vimg ? vimg.doc : currentDoc;
 
   // 4. Compute the new doc per shape.
+  // `applied` / `compiledTo` are reported back to the caller (#30): a delegating
+  // agent that never reads the body needs the apply's own account of what
+  // happened, since re-reading the document is the thing delegation avoids.
   let newDoc;
+  let applied = 1;                 // replace_document is one wholesale write
+  let compiledTo = null;           // set only when a DSL plan compiles down
   if (shape === 'replace_document') {
     newDoc = envelope.doc;
     assertFrozenPreserved(workDoc, newDoc);
@@ -249,10 +270,12 @@ export async function applyPlan(filePath, envelope, opts = {}) {
       // --json consumers need to point at the failing step (was dropped).
       throw new CliError(3, e.code || 'dsl_compile_error', { message: e.message, op: e.op });
     }
+    compiledTo = compiled.tool;
     if (compiled.tool === 'replace_document') {
       newDoc = compiled.envelope.doc;
       assertFrozenPreserved(workDoc, newDoc); // the DSL escape op must not bypass frozen zones either
     } else {
+      applied = compiled.envelope.edits.length;
       try {
         newDoc = applyEdits(workDoc, compiled.envelope.edits);
       } catch (e) {
@@ -263,6 +286,7 @@ export async function applyPlan(filePath, envelope, opts = {}) {
       }
     }
   } else {
+    applied = Array.isArray(envelope.edits) ? envelope.edits.length : 0;
     try {
       newDoc = applyEdits(workDoc, envelope.edits);
     } catch (e) {
@@ -296,5 +320,19 @@ export async function applyPlan(filePath, envelope, opts = {}) {
   // fsync + rename(2)); the temp is removed on any failure. See ./atomic-write.mjs.
   const newFileText = replaceInlineDoc(fileText, newDoc);
   await atomicWrite(filePath, newFileText);
-  return { exitCode: 0 };
+  // The apply's own account of what happened (#30). `exitCode` is kept so every
+  // existing caller (including the vendored service copy, which ignores the
+  // return entirely) is byte-unaffected; everything else is additive.
+  // Hashes are over the REAL body both sides of the edit — never the virtualized
+  // form — so they match `rwa doc` and the hosted /doc baseHash.
+  return {
+    exitCode: 0,
+    ok: true,
+    tool: shape,
+    ...(compiledTo && compiledTo !== shape ? { compiledTo } : {}),
+    applied,
+    baseHash: bodyHash(currentDoc),
+    newHash: bodyHash(newDoc),
+    bytes: newDoc.length,
+  };
 }

@@ -76,7 +76,9 @@ export const MAX_DOC_EXPANDED = 10 * 1024 * 1024;
 // CRLF document or an NFD-containing one (paste artifacts) behaves identically
 // in the CLI and the browser. Without LF, a CRLF doc + LF anchor spuriously
 // misses; without NFC, an NFC anchor misses visually identical NFD text.
-const canonLF = (s) => (s == null ? '' : String(s).replace(/\r\n/g, '\n').replace(/\r/g, '\n').normalize('NFC'));
+// Exported so edit.mjs can hash exactly the bytes the edit contract operates on
+// (bodyHash) — the same canonicalization the hosted /r/:id/doc baseHash uses.
+export const canonLF = (s) => (s == null ? '' : String(s).replace(/\r\n/g, '\n').replace(/\r/g, '\n').normalize('NFC'));
 
 // UTF-16 well-formedness — a lone surrogate in find/replace becomes U+FFFD on
 // UTF-8 encode (the durable file write) and silently corrupts byte-equality.
