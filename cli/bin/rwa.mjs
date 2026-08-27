@@ -111,6 +111,14 @@ Usage:
                               DOC_UUID. Target: --url > \$RWA_PUBLISH_URL >
                               https://rewritable.ikangai.com. --json emits
                               {short,url,expiresAt}.
+  rwa schema                  print the wire contracts an agent needs to drive
+                              this tool directly: the three edit tools with
+                              their JSON Schemas, which to reach for, the
+                              read modes in cost order, the exit-code table and
+                              every failure subcode with its recovery hint.
+                              Sourced from the seed's own TOOL_SCHEMAS, so it
+                              cannot drift from what the tools accept. --json
+                              for the machine-readable form.
   rwa log <path>              print the container's forward audit trail: one
                               record per successful edit — timestamp, resulting
                               hash, tool, and the actor PAIR (who decided / who
@@ -1345,6 +1353,21 @@ function detectProductKind(fileText) {
         '',
       ].join('\n'));
       return; // server keeps the process alive
+    }
+
+    // `rwa schema [--json]` — the wire contracts, reachable from the tool (#40).
+    // The envelope grammar is the one thing a capable agent needs in order to
+    // emit a plan itself instead of paying for a second model call, and it lived
+    // only in a 711-line spec the agent has no reason to know exists. Sourced
+    // from the seed's TOOL_SCHEMAS — the exact schemas handed to the model — so
+    // it cannot drift from what the tools actually accept.
+    if (verb === 'schema') {
+      const jsonMode = rest.includes('--json');
+      const { SEED_CANDIDATES } = await import('../src/commands.mjs');
+      const { buildSchema, formatSchema } = await import('../src/schema.mjs');
+      const doc = await buildSchema(SEED_CANDIDATES);
+      process.stdout.write((jsonMode ? JSON.stringify(doc, null, 2) : formatSchema(doc)) + '\n');
+      return;
     }
 
     // `rwa log <file> [--json]` — the durable audit trail (#39). rwa_hist is

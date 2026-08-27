@@ -2,6 +2,26 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<!-- ─────────────────────────────────────────────────────────────────────────
+     FOR AGENTS AND TOOLS — read this before editing anything below.
+
+     This file is a re-writeable (rwa): ONE self-contained .html that renders a
+     document and rewrites its own content. The editable document is NOT this
+     file's markup — it is the INLINE_DOC template literal further down. The
+     other ~11,000 lines are runtime you should not read or touch.
+
+       read     npx rwa doc <file>            (--outline for a cheap block map,
+                                               --block <id> for one block,
+                                               --json for the full contract)
+       write    npx rwa edit <file> --plan <envelope.json>
+       verify   npx rwa doctor <file>   ·   see it: npx rwa render <file>
+       grammar  npx rwa schema
+
+     Do NOT hand-edit the INLINE_DOC literal. It is JavaScript, so a backtick, a
+     dollar-brace or a closing script tag anywhere in your text silently corrupts
+     the file; `rwa edit` escapes them for you and refuses edits that would break
+     an author-declared frozen zone. Anchors must match byte-for-byte.
+     ───────────────────────────────────────────────────────────────────────── -->
 <!-- 7b: worker-scoped CSP via page-policy inheritance. A blob Worker has no CSP of
      its own — it inherits THIS document's policy (CSP3 §2.5.5), so this <meta> also
      governs every skill Worker. `script-src 'unsafe-inline' blob:` runs the inline
@@ -17,7 +37,7 @@
 <meta http-equiv="Content-Security-Policy" content="script-src 'unsafe-inline' blob:; worker-src blob:; object-src 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="rwa-bootstrap" content="0.9">
-<meta name="rwa-seed" content="d472cd799619">
+<meta name="rwa-seed" content="29a888280be0">
 <!-- Where this container's content came from, when it came from somewhere. Empty
      for a container the user authored. Stamped at emission by `rwa clone` (the
      source URL), `rwa import` (`import:<file>`) and `rwa create --from/--data`
