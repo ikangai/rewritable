@@ -112,6 +112,19 @@ Usage:
                               per-tab key pasting, and no key in any browser. Web
                               origins are refused unless --allow-origin is given
                               (file:// containers and local tools always pass).
+  rwa proxy --agent           run the same loopback service backed by your LOCAL
+                              agent instead of a key: it asks \`claude -p\` and
+                              synthesizes real tool_calls, so the container gets a
+                              MULTI-TURN tool-use backend and no API key exists in
+                              any browser at all. This is what \`bridge\` /
+                              \`bridge-session\` could not be: single-shot, so
+                              skin --l1, prose extraction and the compose paths
+                              refuse them and degrade. Over this proxy they work.
+                              --model pins the agent model; --max-calls caps how
+                              much one session may spend (default 200).
+                              The answering agent runs with NO tools — document
+                              content is untrusted, and it must be able to answer
+                              without being able to act.
   rwa proxy set-key           prompt for the key (hidden input) and store it at
                               ~/.rwa/openrouter-key with mode 600.
   rwa host <path>             ingest a rewritable into a hosted runtime (POST /r)
@@ -1180,6 +1193,48 @@ function detectProductKind(fileText) {
       for (let i = 0; i < rest.length; i++) {
         if (rest[i] === '--allow-origin' && rest[i + 1] && !rest[i + 1].startsWith('-')) allowOrigins.push(rest[i + 1]);
       }
+      // #36 — `--agent` swaps the upstream: instead of brokering a KEY to a
+      // remote API, the proxy answers locally by asking a capability-narrowed
+      // `claude -p` and synthesizing tool_calls. No key is needed, and none ever
+      // enters the browser. Everything else about the server is identical, which
+      // is why the container needs no change to use it.
+      if (rest.includes('--agent')) {
+        const { createAgentUpstream, spawnClaudeRunner, DEFAULT_MAX_CALLS } = await import('../src/agent-upstream.mjs');
+        const modelFlag = getFlag('--model', rest);
+        const maxFlag = getFlag('--max-calls', rest);
+        const maxCalls = maxFlag.value ? parseInt(maxFlag.value, 10) : DEFAULT_MAX_CALLS;
+        if (!Number.isFinite(maxCalls) || maxCalls < 1) {
+          process.stderr.write('rwa proxy: usage_error/bad_max_calls — --max-calls must be a positive integer\n');
+          process.exitCode = 1;
+          return;
+        }
+        const agent = createAgentUpstream({
+          maxCalls,
+          model: modelFlag.value || 'claude',
+          runAgent: spawnClaudeRunner({ model: modelFlag.value || null }),
+          // Every back-delegated call spends the HUMAN's tokens in their own
+          // session, so the count is printed, not merely enforced.
+          onCall: (e) => process.stderr.write(`[proxy] agent call ${e.call}/${e.maxCalls} → ${e.tool} (${e.ms}ms)\n`),
+        });
+        const { port: aport } = await startProxy({
+          port: portFlag.value ? parseInt(portFlag.value, 10) : DEFAULT_PORT,
+          agent,
+          allowOrigins,
+          allowNullOrigin: !rest.includes('--no-null-origin'),
+          log: (line) => process.stderr.write(`[proxy] ${line}\n`),
+        });
+        process.stderr.write([
+          `rwa proxy listening on http://127.0.0.1:${aport}/v1  (agent: local claude, NO api key)`,
+          `  container setup (once per tab): ⚙ → Backend "Ollama (localhost)" → Base URL http://127.0.0.1:${aport}/v1 → pick a model (Test lists it)`,
+          `  the container gets a multi-turn tool-use backend, so skin --l1 and the compose paths work — which single-shot bridge/bridge-session cannot do`,
+          `  budget: ${maxCalls} agent calls for the life of this process (--max-calls)`,
+          `  the answering agent runs with NO tools: document content is untrusted, and it must be able to answer without being able to act`,
+          `  NOTE: while this runs, any local process or file:// page on this machine can spend your Claude quota through it. Ctrl-C stops it.`,
+          '',
+        ].join('\n'));
+        return; // server keeps the process alive
+      }
+
       const resolved = resolveProxyKey({});
       if (!resolved) {
         process.stderr.write('rwa proxy: usage_error/no_key — run `rwa proxy set-key` or set RWA_OPENROUTER_KEY\n');

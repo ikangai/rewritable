@@ -107,8 +107,15 @@ function corsHeaders(origin) {
 
 // Start the broker. Injectable upstream keeps the tests offline.
 // Returns { server, port, close }.
-export async function startProxy({ port = DEFAULT_PORT, key, upstream = DEFAULT_UPSTREAM, allowOrigins = [], allowNullOrigin = true, log = () => {} } = {}) {
-  if (!key) throw new Error('startProxy: key is required');
+export async function startProxy({ port = DEFAULT_PORT, key, upstream = DEFAULT_UPSTREAM, allowOrigins = [], allowNullOrigin = true, log = () => {}, agent = null } = {}) {
+  // #36 — two upstreams, one server. The KEY broker forwards to a remote API
+  // with our Authorization injected. The AGENT upstream answers locally by
+  // asking a capability-narrowed `claude -p` and synthesizing tool_calls, so the
+  // container reaches a multi-turn tool-use backend with NO key anywhere in the
+  // browser at all. Same routes, same origin/Host policy, same CORS — the
+  // container cannot tell which one it is talking to, which is precisely why no
+  // seed change is needed.
+  if (!agent && !key) throw new Error('startProxy: key is required');
   const base = upstream.replace(/\/+$/, '');
 
   const server = http.createServer(async (req, res) => {
@@ -140,6 +147,38 @@ export async function startProxy({ port = DEFAULT_PORT, key, upstream = DEFAULT_
 
     const chunks = [];
     for await (const c of req) chunks.push(c);
+
+    if (agent) {
+      try {
+        if (target === '/models') {
+          res.writeHead(200, { ...cors, 'Content-Type': 'application/json' });
+          log(`200 ${req.method} ${url} (agent)`);
+          return res.end(JSON.stringify(agent.models()));
+        }
+        let parsed;
+        try {
+          parsed = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+        } catch (e) {
+          res.writeHead(400, { ...cors, 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ error: { message: 'rwa proxy: malformed request body', code: 400 } }));
+        }
+        const out = await agent.chat(parsed);
+        res.writeHead(200, { ...cors, 'Content-Type': 'application/json' });
+        log(`200 ${req.method} ${url} (agent ${agent.calls}/${agent.maxCalls})`);
+        return res.end(JSON.stringify(out));
+      } catch (err) {
+        // Surface the agent's own failure code so the container's retry loop
+        // sees something actionable instead of a bare 502. A budget refusal is
+        // 429 (the caller must stop), everything else is 502 (upstream trouble).
+        const code = err && err.code === 'call_budget_exhausted' ? 429 : 502;
+        log(`${code} ${req.method} ${url} (agent) ${err && err.code}`);
+        res.writeHead(code, { ...cors, 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify({
+          error: { message: 'rwa proxy agent: ' + (err && err.message), code, type: err && err.code },
+        }));
+      }
+    }
+
     try {
       const r = await fetch(base + target, {
         method: req.method,
