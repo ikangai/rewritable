@@ -7,9 +7,24 @@ import crypto from 'node:crypto';
 import { loadSeed, applySeedSubs, replaceInlineDoc, extractInlineDoc, kindOverrides, KNOWN_KINDS } from './seed.mjs';
 import { skinByName } from './skins.mjs';
 import { resolveBareWord } from './template.mjs';
-import { convert } from './import.mjs';
-import { convertPdfViaVision } from './import-vision.mjs';
-import { convertViaClaudeCli } from './import-claude.mjs';
+// The document-conversion stack is loaded LAZILY, inside importCmd (#38 follow-up).
+//
+// These three modules pull marked, mammoth, papaparse and pdfjs-dist. Statically
+// importing them here meant every `rwa` invocation loaded all four, because
+// bin/rwa.mjs imports this module at the top level — so `rwa doc`, `rwa edit`,
+// `rwa render` and even `--version` could not run at all unless cli/node_modules
+// was populated with dependencies they never touch.
+//
+// That is invisible locally, where node_modules always exists, and only shows up
+// on a fresh checkout: it took the CI browser lane red with
+// ERR_MODULE_NOT_FOUND 'marked' from `rwa render`, a verb whose own module graph
+// (cdp/seed/edit) is dependency-free. Adding an npm ci step to that job would
+// have made the lane green and left the real defect in place — a tool meant to be
+// the door an agent reads a document through should not require a PDF parser to
+// do it.
+//
+// All five call sites live inside importCmd, so the cost is paid only by the verb
+// that needs it.
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const packageRoot = path.dirname(here);
@@ -229,6 +244,11 @@ export async function newCmd({ outPath, force, open, kind, templateName, skin })
 export { KNOWN_KINDS };
 
 export async function importCmd({ inputPath, outPath, force, open, vision, claude, trustInput, model, timeoutSec, escalate, targetFidelity }) {
+  // Lazy — see the note above the import block. Loaded once, at the top of the
+  // only function that uses them, so behaviour inside is unchanged.
+  const [{ convert }, { convertPdfViaVision }, { convertViaClaudeCli }] = await Promise.all([
+    import('./import.mjs'), import('./import-vision.mjs'), import('./import-claude.mjs'),
+  ]);
   if (vision && claude) {
     const e = new Error('--vision and --claude are mutually exclusive');
     e.exitCode = 2;
