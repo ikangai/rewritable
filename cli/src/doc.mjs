@@ -12,6 +12,7 @@ import { readFile } from 'node:fs/promises';
 import { extractInlineDoc } from './seed.mjs';
 import { findFrozenZones, virtualizeImages, listBlocks } from './apply-edits.mjs';
 import { resolveSelfDescription } from './identity.mjs';
+import { readOfferedRole } from './skill-manifest.mjs';
 import { CliError, bodyHash } from './edit.mjs';
 
 // The bootstrap bakes both consts at emit time (cli/src/seed.mjs applySeedSubs).
@@ -82,6 +83,11 @@ export async function inspectDoc(filePath, opts = {}) {
   // prompt and never sees buildUserPrompt's provenance line — can tell that the
   // text it is about to hold is foreign. Null for a container the user authored.
   const origin = (fileText.match(ORIGIN_RE) || [])[1] || null;
+  // #37 — the role this container asks an external agent to act under. Read from
+  // the frozen #rwa-agents zone with the signature re-verified and the install
+  // gates re-run; an unverified record never yields its prompt. See
+  // skill-manifest.mjs readOfferedRole for why the refusal is the feature.
+  const offeredRole = readOfferedRole(doc);
 
   // images-v1 (#33): the virtualized projection replaces each embedded image's
   // data: URI with an opaque `rwa-asset:<hash8>` token. This is the form the
@@ -99,7 +105,11 @@ export async function inspectDoc(filePath, opts = {}) {
     assets = v.assets ? v.assets.size : 0;
   }
 
-  return { doc: out, uuid, kind, frozenZones, self, baseHash, origin, virtual: !!opts.virtual, assets };
+  return {
+    doc: out, uuid, kind, frozenZones, self, baseHash, origin,
+    role: offeredRole.role, roleStatus: offeredRole.status, rolesOffered: offeredRole.offered,
+    virtual: !!opts.virtual, assets,
+  };
 }
 
 /**

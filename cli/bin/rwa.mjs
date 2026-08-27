@@ -53,7 +53,14 @@ Usage:
                               print the self-description/1 superset instead —
                               the edit contract plus "what is this, what can be
                               done with it": {rwa, kind, title, affordances,
-                              baseline, frozenZones, baseHash, …, doc}.
+                              baseline, frozenZones, baseHash, origin, role,
+                              …, doc}. \`role\` is the specialist this container
+                              asks an agent to BE — its signed rwa-agent/1
+                              record — or null with \`roleStatus\` saying why
+                              (none / unverified / multiple). An unverified role
+                              definition is prompt injection promoted to
+                              configuration, so its prompt is withheld, never
+                              handed over with a warning.
                               baseHash is the staleness token: feed it back as
                               \`rwa edit --base-hash\` so a concurrent write is
                               refused instead of silently clobbered.
@@ -907,6 +914,15 @@ function detectProductKind(fileText) {
           // never sees the runtime's provenance line, so the marker has to
           // travel WITH the read or it does not reach the reader at all.
           origin: info.origin,
+          // #37 — what agent this container wants you to BE. `role` is populated
+          // only when exactly one installed record verifies AND passes the
+          // install gates; otherwise it is null and `roleStatus` says why
+          // ('none' | 'unverified' | 'multiple'). An unverified role definition
+          // is prompt injection promoted to configuration, so its prompt is
+          // withheld rather than offered with a warning.
+          role: info.role,
+          roleStatus: info.roleStatus,
+          ...(info.rolesOffered.length ? { rolesOffered: info.rolesOffered } : {}),
           // `virtual`/`assets` describe the PROJECTION in `doc`; `baseHash` and
           // `blocks` describe the document itself. A consumer must not confuse
           // "what I was handed" with "what this file is".

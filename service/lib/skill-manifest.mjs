@@ -460,3 +460,76 @@ export function parseAgentZone(doc) {
   }
   return out;
 }
+
+/**
+ * The role this container asks an EXTERNAL agent to act under (#37).
+ *
+ * `parseAgentZone` above answers "what agents are installed" as affordances.
+ * This answers a different question, and the difference is the whole point of
+ * the issue: an outside agent arrives with a model, a key and a task, and the
+ * container arrives with the document, the render, the invariants — and the
+ * SPECIALISATION. The rwa is not asking for a brain; it is handing over a job
+ * description. `rwa-agent/1` already IS that job description, signed and frozen;
+ * it just had no door facing outward.
+ *
+ * ## The refusal is the feature
+ *
+ * A role definition is a system prompt. Handing an unverified one to an agent
+ * that holds a filesystem, a shell and a network is prompt injection promoted to
+ * CONFIGURATION — strictly worse than injected document text, which at least
+ * arrives fenced as data. So an unsigned or tampered record NEVER yields its
+ * `systemPrompt`. It is reported as present-and-unusable instead of omitted,
+ * because "there is something here you cannot trust" and "there is nothing here"
+ * are different answers and only one of them is honest.
+ *
+ * ## Signed vs unsigned fields
+ *
+ * `affinity` and `recommended_model` ride the ENVELOPE, outside the signed
+ * `agent` object (see docs/specs/rwa-intelligence-spec.md). They are therefore
+ * author hints, not attested claims, and they are returned under `unsigned` so a
+ * consumer cannot mistake one for the other.
+ *
+ * @param {string} doc — the container's editable body (the zone is frozen within it)
+ * @returns {{status: 'none'|'ok'|'unverified'|'multiple', role: object|null, offered: object[]}}
+ */
+export function readOfferedRole(doc) {
+  const zone = extractRwaAgentsZone(doc);
+  if (!zone) return { status: 'none', role: null, offered: [] };
+  const blocks = [...zone.matchAll(/<script\s+type="application\/rwa-agent\+json">([\s\S]*?)<\/script>/g)];
+  const offered = [];
+  for (const m of blocks) {
+    let envelope;
+    try { envelope = JSON.parse(Buffer.from(m[1].trim(), 'base64').toString('utf8')); }
+    catch { continue; } // malformed block → skip, never blocks a sibling
+    const agent = envelope && envelope.agent;
+    if (!agent || typeof agent.role !== 'string') continue;
+    const { signed, verified } = verifyAgentEnvelope(envelope);
+    // Re-run the install gates, not just the signature: a record can be validly
+    // signed by its author and still carry a prompt that breaks out of the
+    // runtime template (agent_prompt_injection_risk). Signature proves WHO, the
+    // gates prove WHAT.
+    const gate = validateAgentInstall(envelope, { signed, verified });
+    const usable = verified && gate.ok;
+    offered.push({
+      role: agent.role,
+      agentId: agentId(agent.role, agent.author_pubkey),
+      authorPubkey: agent.author_pubkey || null,
+      signed: !!signed,
+      verified: !!verified,
+      usable,
+      ...(usable ? { systemPrompt: agent.system_prompt } : { withheld: gate.ok ? 'unverified_signature' : gate.errors[0] }),
+      unsigned: {
+        affinity: envelope.affinity || null,
+        recommendedModel: envelope.recommended_model || null,
+        recommendedBackend: envelope.recommended_backend || null,
+      },
+    });
+  }
+  if (offered.length === 0) return { status: 'none', role: null, offered };
+  const usable = offered.filter(o => o.usable);
+  if (usable.length === 0) return { status: 'unverified', role: null, offered };
+  // More than one usable role is not a role the container "wants you to be" — it
+  // is a menu, and picking for the caller would be guessing. Report all of them.
+  if (usable.length > 1) return { status: 'multiple', role: null, offered };
+  return { status: 'ok', role: usable[0], offered };
+}
