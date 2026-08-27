@@ -13,6 +13,9 @@ const FIXTURE = `<form>
 
 export default {
   id: 'APP-01',
+  // scoreAfterCustom returns a HARDCODED stabilityResult (score: 2) — this scenario
+  // asserts runtime behaviour (form-state preservation), not document bytes.
+  driftProbe: 'none',
   category: 'APP',
   tag: 'content',
   description: 'form input.value persists across unrelated edit (EXPECTED-FAIL: runtime\'s renderDoc destroys input state)',

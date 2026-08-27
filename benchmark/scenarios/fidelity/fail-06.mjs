@@ -9,6 +9,8 @@ let captured = null;
 
 export default {
   id: 'FAIL-06',
+  // Constant stability — mixed-failure reporting, not document bytes.
+  driftProbe: 'none',
   category: 'FAIL',
   tag: 'failure_mode',
   description: 'structural_shape_changed payload contains shape_before/after; model retries with replace_document',

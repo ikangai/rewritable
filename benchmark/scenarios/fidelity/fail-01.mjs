@@ -19,6 +19,10 @@ let captured = null;
 
 export default {
   id: 'FAIL-01',
+  // Stability is a hardcoded constant here: this scenario checks the tool_result
+  // payload SHAPE, not document bytes. Declared so the drift-probe control does
+  // not read a constant oracle as a dead one.
+  driftProbe: 'none',
   category: 'FAIL',
   tag: 'failure_mode',
   description: 'find_not_unique tool_result payload includes count and hints',

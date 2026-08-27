@@ -1,6 +1,68 @@
-# Benchmark state — full v1.3 coverage, all-green
+# Benchmark state
 
-**Conformance: 42 / 42** | **Fidelity: 80 / 80 (all S=2 / T=2 / drift=0 with stub)** | **tests/e2e.mjs: 266 / 266** | **Oracle self-tests: 16 / 16** | **Calibration: PASSED** (FID-01 v1 T=2 vs baseline T=0, drift_ratio 0× vs 0.94)
+**Conformance: 86 / 86** | **Fidelity: 108 scenarios (all S=2 / T=2 / drift=0 with stub)** | **Oracle self-tests: 44 / 44** | **Drift detectors proven alive: 91 / 108** (17 declared no-drift-dimension, 0 unprobed, 0 dead) | **Context cost: ratcheted**
+
+## 2026-08-27 — the graders got gates
+
+Everything below this section describes the suite as of May 2026 and its
+headline numbers were stale by 44 conformance and 28 fidelity scenarios. The
+counts above are current; the historical narrative is kept as written.
+
+What changed, and why it mattered:
+
+- **`npm run test:oracles` never ran in CI.** The 44 assertions covering
+  `computeDrift` / `discretizeStability` — the graders every other number in
+  this file depends on — were only ever run by hand. Now the first step of the
+  benchmark job.
+- **The drift oracle's negative control covered 1 scenario in 108.** Only
+  `fid-01` ever defined a `baselineDoc`, and `selectModel` silently fell back
+  to the *stub* — the perfect model — for the other 107. So `fidelity:baseline`
+  replayed the good model 107 times and reported meanS=2.00 / meanT=1.98 /
+  drift=0.0000, which reads as "models are fine" rather than "this lane
+  measures nothing". Under the stub the correct drift is 0, so a `computeDrift`
+  that unconditionally returned 0 would have passed the entire suite green.
+- **`npm run fidelity:control` is the fix** — a per-scenario negative control
+  that perturbs each scenario's own input outside the declared edit region and
+  requires that scenario's own oracle to notice. 91 of 108 now proven alive.
+  A scenario that stays silent must declare why (`driftProbe`), and an
+  undeclared silent oracle fails the build. Three probe families, because
+  three oracle shapes exist: doc-based (`computeDrift`), envelope-based
+  (`computeDriftFromEdits` — which ignores the doc, and which strips the
+  common prefix/suffix between find and replace, so a probe must REPLACE
+  bytes rather than append them), and `customRun` (scored off the object
+  the scenario returns, probed by running it for real and corrupting that).
+- **`fidelity:baseline` now runs only what it has calibrated** (1 scenario) and
+  says out loud how many it dropped, instead of averaging in 107 copies of the
+  perfect model.
+- **17 scenarios were voting on a dimension they do not measure.** Their
+  stability oracle is a hardcoded `score: 2` (they assert runtime behaviour or
+  `tool_result` payload shape, not document bytes). That free 2.0 was inflating
+  `meanT` in every run this suite has ever recorded. They are now excluded from
+  the stability aggregates and still counted in S, which they do measure.
+- **`median_drift` was structurally blind.** Over a suite where most scenarios
+  are legitimately 0 it can never move — it printed 0.0000 on a run where
+  `meanT` had visibly dropped. Headline is now **zero-drift rate** + **p95
+  drift** + **perfect-run rate**; the median is kept as a footnote.
+- **`retry_rounds` was computed per run and discarded.** A model that only lands
+  it on attempt 3 costs 3× the tokens and 3× the latency of one that lands it
+  first, and scored identically on every other number here. Now reported.
+- **Context cost had no gate.** `tokens_in` was captured since this runner was
+  written and used for nothing. `npm run cost:check` ratchets suite prompt size
+  against `baselines/context-cost.json` (±3% suite, ±10% per scenario). Under
+  the stub, `tokens_in` is measured over the REAL system prompt and tool
+  schemas, so it is model-free and still moves exactly when the prompt does.
+- **`N: 1` under a real model was a trap.** 14 scenarios shipped it — one
+  carrying the comment *"deterministic with stub; for real model bump to 10"*,
+  a note-to-self that never became behaviour. N is now model-aware: 1 under the
+  deterministic stub, ≥3 under a real model, overridable per scenario via
+  `Nreal`.
+
+DEG-02 was briefly left UNPROBED and is now closed: its `scoreAfterCustom`
+reads only `out.endpoint1 === out.endpoint2`, so the probe runs the scenario
+through the real runtime and corrupts an endpoint — the score drops 2→0, and
+the detector is proven. **0 scenarios remain unprobed, 0 dead.**
+
+---
 
 This file replaces the earlier "9 fidelity scenarios scaffolded" report. The benchmark now covers the entire v1.3 spec surface — every scenario in §4 (fidelity, 80) and §5b (conformance, 42), the operational instrumentation in §2.4, the calibration gate in §9, the multi-model orchestration scaffold in §6.4, and a curated subset of the §12 fixture catalog. Every spec-vs-runtime gap surfaced by the suite has been closed in `seeds/rewritable.html`.
 

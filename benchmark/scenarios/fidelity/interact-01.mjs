@@ -24,6 +24,9 @@ const FIXTURE = `<div id="board">
 
 export default {
   id: 'INTERACT-01',
+  // scoreAfterCustom returns a HARDCODED stabilityResult (score: 2) — this scenario
+  // asserts runtime behaviour, not document bytes, so it carries no drift dimension.
+  driftProbe: 'none',
   category: 'INTERACT',
   tag: 'content',
   description: 'kanban state in localStorage persists across edit; card C still in "doing"',

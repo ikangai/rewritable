@@ -15,6 +15,9 @@ document.getElementById('btn').addEventListener('click', () => {
 
 export default {
   id: 'APP-05',
+  // scoreAfterCustom returns a HARDCODED stabilityResult (score: 2) — this scenario
+  // asserts runtime behaviour (form-state preservation), not document bytes.
+  driftProbe: 'none',
   category: 'APP',
   tag: 'content',
   description: 'event listener rebinds via renderDoc script-replacement; post-edit click fires',

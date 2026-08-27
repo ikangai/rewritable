@@ -18,6 +18,9 @@ const FIXTURE = `<div id="counter">--</div>
 
 export default {
   id: 'APP-03',
+  // scoreAfterCustom returns a HARDCODED stabilityResult (score: 2) — this scenario
+  // asserts runtime behaviour (form-state preservation), not document bytes.
+  driftProbe: 'none',
   category: 'APP',
   tag: 'content',
   description: 'counter in localStorage persists across edit (script re-reads on render)',

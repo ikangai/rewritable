@@ -11,6 +11,9 @@ const FIXTURE = `<details id="more-info">
 
 export default {
   id: 'APP-02',
+  // scoreAfterCustom returns a HARDCODED stabilityResult (score: 2) — this scenario
+  // asserts runtime behaviour (form-state preservation), not document bytes.
+  driftProbe: 'none',
   category: 'APP',
   tag: 'content',
   description: '<details open> state persists across edit (EXPECTED-FAIL on current runtime)',

@@ -15,6 +15,9 @@ document.addEventListener('keydown', e => {
 
 export default {
   id: 'INTERACT-02',
+  // scoreAfterCustom returns a HARDCODED stabilityResult (score: 2) — this scenario
+  // asserts runtime behaviour, not document bytes, so it carries no drift dimension.
+  driftProbe: 'none',
   category: 'INTERACT',
   tag: 'content',
   description: 'Ctrl+B keyboard shortcut still fires after edit (script re-attached listener)',

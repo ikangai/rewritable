@@ -69,11 +69,18 @@ function selectModel(modelName, scenario) {
     return scenario.stub();
   }
   if (modelName === 'baseline') {
-    // Use the scenario's declared baselineDoc if present; otherwise fall
-    // back to running the stub (no comparison signal — same envelope).
+    // No stub fallback. Until 2026-08-27 this silently ran the *stub* — the
+    // PERFECT model — for any scenario without a baselineDoc, which was 107 of
+    // 108 of them. The "bad model" run was therefore a copy of the good model
+    // run, reporting meanT=1.98 / drift=0.0000 and reading as "models are fine"
+    // rather than "this lane measures nothing". main() now filters the run down
+    // to scenarios that actually carry a baselineDoc and says how many it
+    // dropped, so this branch is only reached for those; it throws rather than
+    // quietly substituting a different model.
     if (typeof scenario.baselineDoc === 'string') return baselineModel(scenario.baselineDoc);
-    if (typeof scenario.stub === 'function') return scenario.stub();
-    throw new Error(`scenario ${scenario.id} has neither baselineDoc nor stub`);
+    throw new Error(
+      `scenario ${scenario.id} has no baselineDoc — it cannot participate in a baseline run. ` +
+      `(The suite-wide negative control is \`npm run fidelity:control\`.)`);
   }
   if (modelName === 'bridge') {
     // Local `claude -p` via the web_cli_bridge shim. No API key needed —
@@ -215,6 +222,10 @@ async function runOnce(scenario, modelName, mode) {
   }
 }
 
+// Renders a null aggregate (a tag with no stability sample at all) as an
+// explicit dash rather than letting mean([])===0 print as a perfect-zero score.
+function fmt(v, d) { return v === null || v === undefined ? '—' : v.toFixed(d); }
+
 function median(nums) {
   if (nums.length === 0) return 0;
   const sorted = nums.slice().sort((a, b) => a - b);
@@ -257,12 +268,44 @@ async function main() {
       return terms.some(t => id === t || id.startsWith(t) || cat.includes(t) || tag.includes(t));
     });
   }
+  if (modelName === 'baseline') {
+    // The baseline lane is a CALIBRATION check — "does a deliberately bad model
+    // actually score worse here?" — and it can only ask that of scenarios that
+    // carry a baselineDoc describing what bad looks like. One does. Run those
+    // and name the rest out loud, rather than padding the average with 107
+    // copies of the perfect model and reporting the result as a suite score.
+    const withBaseline = scenarios.filter(s => typeof s.baselineDoc === 'string');
+    const dropped = scenarios.length - withBaseline.length;
+    if (dropped > 0) {
+      console.log(`NOTE: ${dropped} of ${scenarios.length} scenarios have no baselineDoc and are EXCLUDED from this run.`);
+      console.log(`      A baseline run covers only what has been calibrated — ${withBaseline.length} scenario(s): ${withBaseline.map(s => s.id).join(', ') || '(none)'}.`);
+      console.log(`      For a negative control across all ${scenarios.length}, run \`npm run fidelity:control\`.\n`);
+    }
+    if (withBaseline.length === 0) {
+      console.error('No scenario declares a baselineDoc — nothing to calibrate against.');
+      process.exit(2);
+    }
+    scenarios = withBaseline;
+  }
+
   console.log(`== rwa-edit fidelity — ${scenarios.length} scenario(s)${only ? ` (filtered by RWA_FID_ONLY=${only})` : ''} (model=${modelName}, mode=${mode}) ==\n`);
 
+  const deterministic = modelName === 'stub' || modelName === 'baseline';
   const allResults = [];
   for (const s of scenarios) {
     // RWA_FID_N overrides per-scenario N (e.g. =1 to keep slow bridge runs short).
-    const N = process.env.RWA_FID_N ? Math.max(1, parseInt(process.env.RWA_FID_N, 10) || 1) : (s.N || 5);
+    //
+    // Otherwise N is model-aware. Under the stub the trace is fixed, so N:1 is
+    // exactly right and repetition buys nothing. Under a REAL model the same
+    // N:1 means a single sample decides the scenario — and anchor-precision
+    // failures are intermittent, so one unlucky draw flips it. 14 scenarios
+    // shipped N:1, one of them carrying the comment "deterministic with stub;
+    // for real model bump to 10", which is a note-to-self that never became
+    // behaviour. A scenario can still opt into a specific real-model count with
+    // `Nreal`.
+    const N = process.env.RWA_FID_N
+      ? Math.max(1, parseInt(process.env.RWA_FID_N, 10) || 1)
+      : deterministic ? (s.N || 1) : (s.Nreal || Math.max(3, s.N || 3));
     process.stdout.write(`  [${s.id}] ${s.description || ''} (N=${N}) `);
     const runs = [];
     for (let i = 0; i < N; i++) {
@@ -281,6 +324,20 @@ async function main() {
     const tokens_total_p95 = p95(runs.map(r => r.tokens_total));
     const wall_ms_med = median(runs.map(r => r.wall_ms));
     const wall_ms_p95 = p95(runs.map(r => r.wall_ms));
+    // retry_rounds was computed per run since this runner was written and then
+    // dropped on the floor — it reached no summary line, no TSV column, nothing.
+    // It is a first-class signal: a model that only gets there on attempt 3
+    // costs 3x the tokens and 3x the latency of one that lands it first try,
+    // and scores identically on every other number here.
+    const retry_rounds_med = median(runs.map(r => r.retry_rounds));
+    const retry_rounds_max = Math.max(...runs.map(r => r.retry_rounds));
+    // Distribution, not central tendency. median_drift over a suite where most
+    // scenarios are legitimately 0 can never move, so it reported 0.0000 even
+    // on runs where meanT had visibly dropped. The rare catastrophic rewrite is
+    // the entire product meaning of this signal — measure the tail and the rate.
+    const drift_p95 = p95(runs.map(r => r.drift_ratio));
+    const zero_drift_rate = runs.filter(r => r.drift_ratio === 0).length / runs.length;
+    const perfect_rate = runs.filter(r => r.S === 2 && r.T === 2).length / runs.length;
     const toolCounts = {};
     for (const r of runs) {
       for (const [n, c] of Object.entries(r.tool_counts || {})) {
@@ -301,13 +358,25 @@ async function main() {
       tokens_total_p95,
       wall_ms_med,
       wall_ms_p95,
+      retry_rounds_med,
+      retry_rounds_max,
+      drift_p95,
+      zero_drift_rate,
+      perfect_rate,
+      // Scenarios whose stability oracle is a hardcoded score:2 (declared
+      // driftProbe:'none' and gated by `npm run fidelity:control`) measure no
+      // drift at all. Averaging their free 2.0 into meanT inflated the headline
+      // stability of every run ever recorded here — 17 of 108 scenarios were
+      // voting on a dimension they do not measure. They stay in the S aggregate,
+      // which they DO measure, and are excluded from the stability aggregates.
+      noDriftDimension: s.driftProbe === 'none',
       toolCounts,
       runs,
       // customRun scenarios drive modify() themselves; the harness collects no
       // token stats on that path, so zero tokens is normal for them.
       customRun: typeof s.customRun === 'function',
     });
-    console.log(`        meanS=${meanS.toFixed(2)}  meanT=${meanT.toFixed(2)}  drift=${medianDrift.toFixed(4)}  tok=${tokens_in_med}/${tokens_out_med} (in/out)  wall=${wall_ms_med}ms`);
+    console.log(`        meanS=${meanS.toFixed(2)}  meanT=${meanT.toFixed(2)}  drift_p95=${drift_p95.toFixed(4)}  zero_drift=${(zero_drift_rate * 100).toFixed(0)}%  retries=${retry_rounds_med}${retry_rounds_max > retry_rounds_med ? `/${retry_rounds_max}max` : ''}  tok=${tokens_in_med}/${tokens_out_med} (in/out)  wall=${wall_ms_med}ms`);
   }
 
   // fidelity.tsv is the canonical FULL-run output (multimodel.mjs reads it
@@ -316,8 +385,8 @@ async function main() {
   const tsvPath = path.join(RESULTS_DIR, only ? 'fidelity.partial.tsv' : 'fidelity.tsv');
   const tsvLines = [
     '# model: ' + modelName + ', mode: ' + mode,
-    ['id', 'category', 'tag', 'N', 'meanS', 'meanT', 'medianDrift', 'tokens_in_med', 'tokens_out_med', 'tokens_total_med', 'tokens_total_p95', 'wall_ms_med', 'wall_ms_p95'].join('\t'),
-    ...allResults.map(r => [r.id, r.category, r.tag, r.N, r.meanS.toFixed(3), r.meanT.toFixed(3), r.medianDrift.toFixed(5), r.tokens_in_med, r.tokens_out_med, r.tokens_total_med, r.tokens_total_p95, r.wall_ms_med, r.wall_ms_p95].join('\t')),
+    ['id', 'category', 'tag', 'N', 'meanS', 'meanT', 'medianDrift', 'driftP95', 'zeroDriftRate', 'perfectRate', 'retryMed', 'retryMax', 'noDriftDim', 'tokens_in_med', 'tokens_out_med', 'tokens_total_med', 'tokens_total_p95', 'wall_ms_med', 'wall_ms_p95'].join('\t'),
+    ...allResults.map(r => [r.id, r.category, r.tag, r.N, r.meanS.toFixed(3), r.meanT.toFixed(3), r.medianDrift.toFixed(5), r.drift_p95.toFixed(5), r.zero_drift_rate.toFixed(3), r.perfect_rate.toFixed(3), r.retry_rounds_med, r.retry_rounds_max, r.noDriftDimension ? 1 : 0, r.tokens_in_med, r.tokens_out_med, r.tokens_total_med, r.tokens_total_p95, r.wall_ms_med, r.wall_ms_p95].join('\t')),
   ];
   fs.writeFileSync(tsvPath, tsvLines.join('\n') + '\n');
   if (!only && modelName !== 'stub' && modelName !== 'baseline') {
@@ -327,11 +396,31 @@ async function main() {
     fs.copyFileSync(tsvPath, path.join(RESULTS_DIR, `fidelity.${slug}.tsv`));
   }
 
-  // Headline numbers
+  // Headline numbers.
+  //
+  // Stability aggregates are computed over the scenarios that actually MEASURE
+  // stability. The 17 scenarios declaring driftProbe:'none' return a hardcoded
+  // score:2 (they assert runtime behaviour or tool_result payload shape, not
+  // document bytes); averaging that in was quietly adding ~17 free perfect
+  // scores to every meanT this suite has ever printed.
+  const stabilityScored = allResults.filter(r => !r.noDriftDimension);
+  const excluded = allResults.length - stabilityScored.length;
+
   const overallMeanS = mean(allResults.map(r => r.meanS));
-  const overallMeanT = mean(allResults.map(r => r.meanT));
-  const overallMedianDrift = median(allResults.map(r => r.medianDrift));
-  console.log(`\nOverall: meanS=${overallMeanS.toFixed(2)}  meanT=${overallMeanT.toFixed(2)}  median_drift=${overallMedianDrift.toFixed(4)} across ${allResults.length} scenario(s)`);
+  const overallMeanT = mean(stabilityScored.map(r => r.meanT));
+  const overallMedianDrift = median(stabilityScored.map(r => r.medianDrift));
+  const overallDriftP95 = p95(stabilityScored.map(r => r.drift_p95));
+  const overallZeroDrift = mean(stabilityScored.map(r => r.zero_drift_rate));
+  const overallPerfect = mean(allResults.map(r => r.perfect_rate));
+  const overallRetries = mean(allResults.map(r => r.retry_rounds_med));
+
+  console.log(`\nOverall (${allResults.length} scenario(s)):`);
+  console.log(`  task success    meanS=${overallMeanS.toFixed(2)}`);
+  console.log(`  perfect runs    ${(overallPerfect * 100).toFixed(1)}%   (S=2 AND T=2 on the same run)`);
+  console.log(`  ZERO-DRIFT RATE ${(overallZeroDrift * 100).toFixed(1)}%   ← the product signal: how often nothing outside the edit moved`);
+  console.log(`  drift tail      p95=${overallDriftP95.toFixed(4)}   median=${overallMedianDrift.toFixed(4)} (median is near-blind here — kept for continuity)`);
+  console.log(`  stability       meanT=${overallMeanT.toFixed(2)}   over ${stabilityScored.length} scenario(s); ${excluded} excluded as driftProbe:'none'`);
+  console.log(`  retry rounds    mean=${overallRetries.toFixed(2)}   (0 = landed it first attempt)`);
 
   // Per-tag breakdown — the architecture-comparison axis (separate from `category`).
   const TAG_ORDER = ['structural_regular', 'structural_irregular', 'content', 'mixed', 'paste', 'failure_mode', 'drift', 'runtime', 'untagged'];
@@ -351,12 +440,20 @@ async function main() {
         tagToolCounts[n] = (tagToolCounts[n] || 0) + c;
       }
     }
+    // A tag whose every scenario declares driftProbe:'none' has NO stability
+    // sample. mean([]) is 0, which would print as meanT=0.00 — a catastrophic
+    // reading for a tag that simply doesn't measure the dimension. Carry the
+    // emptiness through as null and render it as '—'.
+    const stab = rs.filter(t => !t.noDriftDimension);
     const agg = {
       tag,
       N: rs.length,
+      stabN: stab.length,
       meanS: mean(rs.map(r => r.meanS)),
-      meanT: mean(rs.map(r => r.meanT)),
-      drift: median(rs.map(r => r.medianDrift)),
+      meanT: stab.length ? mean(stab.map(r => r.meanT)) : null,
+      drift: stab.length ? p95(stab.map(r => r.drift_p95)) : null,
+      zeroDrift: stab.length ? mean(stab.map(r => r.zero_drift_rate)) : null,
+      retries: mean(rs.map(r => r.retry_rounds_med)),
       tokens_in_med: Math.round(median(rs.map(r => r.tokens_in_med))),
       tokens_out_med: Math.round(median(rs.map(r => r.tokens_out_med))),
       tokens_total_med: Math.round(median(rs.map(r => r.tokens_total_med))),
@@ -366,7 +463,7 @@ async function main() {
     };
     tagAggregates.push(agg);
     const toolStr = Object.entries(tagToolCounts).map(([n, c]) => `${n}=${c}`).join(' ');
-    console.log(`  ${tag.padEnd(22)} meanS=${agg.meanS.toFixed(2)}  meanT=${agg.meanT.toFixed(2)}  drift=${agg.drift.toFixed(4)}  tok_in=${agg.tokens_in_med}  tok_out=${agg.tokens_out_med}  wall_med=${agg.wall_ms_med}ms  (N=${agg.N})  tools={${toolStr}}`);
+    console.log(`  ${tag.padEnd(22)} meanS=${agg.meanS.toFixed(2)}  meanT=${fmt(agg.meanT, 2)}  drift_p95=${fmt(agg.drift, 4)}  zero_drift=${agg.zeroDrift === null ? ' n/a' : (agg.zeroDrift*100).toFixed(0)+'%'}  retries=${agg.retries.toFixed(1)}  tok_in=${agg.tokens_in_med}  tok_out=${agg.tokens_out_med}  wall_med=${agg.wall_ms_med}ms  (N=${agg.N})  tools={${toolStr}}`);
   }
 
   // Write a markdown summary alongside the TSV.
@@ -401,7 +498,7 @@ function writeFidelitySummary(modelName, mode, allResults, tagAggregates, headli
     '| tag | N | meanS | meanT | drift | tok_in_med | tok_out_med | tok_total_med | wall_med (ms) | wall_p95 (ms) |',
     '|---|---|---|---|---|---|---|---|---|---|',
     ...tagAggregates.map(a =>
-      `| ${a.tag} | ${a.N} | ${a.meanS.toFixed(2)} | ${a.meanT.toFixed(2)} | ${a.drift.toFixed(4)} | ${a.tokens_in_med} | ${a.tokens_out_med} | ${a.tokens_total_med} | ${a.wall_ms_med} | ${a.wall_ms_p95} |`,
+      `| ${a.tag} | ${a.N} | ${a.meanS.toFixed(2)} | ${fmt(a.meanT, 2)} | ${fmt(a.drift, 4)} | ${a.tokens_in_med} | ${a.tokens_out_med} | ${a.tokens_total_med} | ${a.wall_ms_med} | ${a.wall_ms_p95} |`,
     ),
     '',
     '## Per-scenario',

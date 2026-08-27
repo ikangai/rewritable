@@ -10,6 +10,8 @@ const FIXTURE = `<article><p>FIXTURE</p></article>`;
 
 export default {
   id: 'FAIL-05',
+  // Constant stability — concurrent_modify lifecycle, scored via customRun; no drift dimension.
+  driftProbe: 'none',
   category: 'FAIL',
   tag: 'failure_mode',
   description: 'second modify() while first is in flight → concurrent_modify before round-trip',

@@ -17,6 +17,9 @@ const FIXTURE = `<div id="wizard">unset</div>
 
 export default {
   id: 'INTERACT-06',
+  // scoreAfterCustom returns a HARDCODED stabilityResult (score: 2) — this scenario
+  // asserts runtime behaviour, not document bytes, so it carries no drift dimension.
+  driftProbe: 'none',
   category: 'INTERACT',
   tag: 'content',
   description: 'module-scope wizard state resets to step 1 across edit (expected per spec)',

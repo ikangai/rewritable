@@ -14,6 +14,9 @@ const FIXTURE = `<div id="wizard"></div>
 
 export default {
   id: 'INTERACT-05',
+  // scoreAfterCustom returns a HARDCODED stabilityResult (score: 2) — this scenario
+  // asserts runtime behaviour, not document bytes, so it carries no drift dimension.
+  driftProbe: 'none',
   category: 'INTERACT',
   tag: 'content',
   description: 'wizard step in localStorage persists across edit',

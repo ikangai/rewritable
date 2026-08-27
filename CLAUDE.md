@@ -54,6 +54,14 @@ If you think a convention is harmful, surface it. Don't fork silently.
 "Tests pass" is wrong if any were skipped.
 Default to surfacing uncertainty, not hiding it.
 
+## Rule 13 — A gate must be observed FAILING before it is trusted
+Ship the negative control with the check, never after.
+A control that cannot fail is worse than none — it reads as coverage.
+Watch the gate go red on deliberately broken input, then wire it in.
+
+Corollary: a number nobody has checked against a hand-computed expectation
+is a candidate artifact, not a measurement.
+
 ---
 
 ## Repository contents

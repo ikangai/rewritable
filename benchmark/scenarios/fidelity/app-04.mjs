@@ -21,6 +21,9 @@ const FIXTURE = `<div id="ctr">--</div>
 
 export default {
   id: 'APP-04',
+  // scoreAfterCustom returns a HARDCODED stabilityResult (score: 2) — this scenario
+  // asserts runtime behaviour (form-state preservation), not document bytes.
+  driftProbe: 'none',
   category: 'APP',
   tag: 'content',
   description: 'module-scope counter resets across edit (expected behavior per spec; score 2 on clean reset)',

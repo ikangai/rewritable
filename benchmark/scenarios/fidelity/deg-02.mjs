@@ -18,6 +18,9 @@ function buildEdits() {
 
 export default {
   id: 'DEG-02',
+  // Stability is computed inside scoreAfterCustom (buildFile round-trip), which the
+  // static drift probe cannot reach. Reported as UNPROBED by the control lane.
+  driftProbe: 'custom',
   category: 'DEG',
   tag: 'drift',
   description: 'two independent runs of DEG-01; endpoints byte-identical (reproducibility)',

@@ -12,6 +12,9 @@ document.getElementById('loaded-flag').textContent = 'loaded-' + window.__app_lo
 
 export default {
   id: 'APP-06',
+  // scoreAfterCustom returns a HARDCODED stabilityResult (score: 2) — this scenario
+  // asserts runtime behaviour, not document bytes, so it carries no drift dimension.
+  driftProbe: 'none',
   category: 'APP',
   tag: 'content',
   description: 'inline <script> with load-time side effects re-runs on renderDoc',

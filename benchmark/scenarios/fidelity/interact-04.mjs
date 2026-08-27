@@ -10,6 +10,9 @@ const FIXTURE = `<div style="height: 5000px;">long content</div>
 
 export default {
   id: 'INTERACT-04',
+  // scoreAfterCustom returns a HARDCODED stabilityResult (score: 2) — this scenario
+  // asserts runtime behaviour, not document bytes, so it carries no drift dimension.
+  driftProbe: 'none',
   category: 'INTERACT',
   tag: 'content',
   description: 'scroll position behavior is consistent across edits (jsdom-best-effort)',

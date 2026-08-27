@@ -9,6 +9,8 @@ let captured = null;
 
 export default {
   id: 'FAIL-02',
+  // Constant stability — this scenario scores retry-exhaustion behaviour, not drift.
+  driftProbe: 'none',
   category: 'FAIL',
   tag: 'failure_mode',
   description: 'replace containing reserved marker → frozen_zone_violation',

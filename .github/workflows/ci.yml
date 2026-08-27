@@ -183,12 +183,43 @@ jobs:
       - name: Install CLI deps (import fidelity runs the real converters)
         working-directory: cli
         run: npm ci --no-audit --no-fund
+      # The oracles judge everything else in this job, and until 2026-08-27
+      # nothing judged THEM: oracles/diff.test.mjs (computeDrift,
+      # discretizeStability) never ran in CI. Under the stub model the correct
+      # drift is 0, so a computeDrift() that unconditionally returned 0 would
+      # have passed `fidelity:stub` completely green. This step is what stands
+      # between that and a silently dead detector — per this file's own header,
+      # the oracles are the strongest verification asset here, so gate them
+      # FIRST and let everything downstream inherit a proven grader.
+      - name: Oracle self-tests (the graders judge everything else — gate them first)
+        working-directory: benchmark
+        run: npm run test:oracles
       - name: Conformance
         working-directory: benchmark
         run: npm run conformance
       - name: Fidelity (stub model — no API key needed)
         working-directory: benchmark
         run: npm run fidelity:stub
+      # The negative control for the fidelity lane's drift oracle. `fidelity:stub`
+      # asserts a perfect model scores perfectly, which a dead detector also
+      # satisfies. This asserts the opposite direction: perturb each scenario's
+      # correct output with a stray byte OUTSIDE the declared edit region and
+      # require the scenario's own stability oracle to NOTICE. A scenario whose
+      # oracle stays silent must declare why (driftProbe: 'envelope' | 'none');
+      # an undeclared silent oracle fails. Model-free, offline, ~seconds.
+      - name: Drift-detector negative control
+        working-directory: benchmark
+        run: npm run fidelity:control
+      # The context-cost ratchet. Every rewritable spends its tokens on the END
+      # USER's own API key, so prompt size is a product property — a rule added
+      # to SYSTEM_PROMPT_RULES lands on every ⌘K for every user, forever. The
+      # fidelity runner has captured tokens_in since it was written and gated it
+      # never. Reads the TSV the stub run above just wrote (and refuses one from
+      # any other model, since token counts aren't comparable across models), so
+      # it costs nothing extra. Re-baseline deliberately with `npm run cost`.
+      - name: Context cost (ratchet)
+        working-directory: benchmark
+        run: npm run cost:check
       # The regression ratchet for document import (issue: "measure fidelity
       # first"). Re-scores the golden corpus on 5 dimensions
       # (benchmark/oracles/import-facts.mjs) and fails if any dimension drops

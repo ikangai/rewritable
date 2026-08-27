@@ -25,6 +25,40 @@ npm run conformance
 
 Final line of stdout is the metric: `<passing> / <total> conformance scenarios passing`.
 
+## The graders have their own gates
+
+Three lanes exist to keep the SCORERS honest, because a benchmark whose grader
+quietly stops grading reports success indistinguishable from the real thing.
+All three are model-free, offline, and run in CI:
+
+```sh
+npm run test:oracles      # 44 assertions on diff/selector/coherence/import-facts
+npm run fidelity:control  # negative control: prove each drift detector fires
+npm run cost:check        # ratchet suite prompt size (tokens_in, stub model)
+```
+
+`fidelity:control` is the one worth understanding. `fidelity:stub` asserts that
+a perfect model scores perfectly — which a **dead** detector also satisfies, since
+the correct drift under the stub is 0. The control asserts the other direction:
+for each scenario it perturbs the input outside the declared edit region and
+requires that scenario's own `stability()` oracle to notice. A scenario whose
+oracle stays silent must say why:
+
+| declaration | meaning |
+|---|---|
+| `driftProbe: 'envelope'` | stability reads the tool envelope, not the bytes |
+| `driftProbe: 'none'` | no drift dimension (hardcoded score — runtime-behaviour or payload-shape test) |
+| `driftProbe: 'custom'` | stability lives in `scoreAfterCustom` — routes to a third probe that runs the scenario for real and corrupts its result object |
+
+No declaration is an exemption: `'custom'` ROUTES to a different probe rather than
+skipping one. **Silence without a declaration is a build failure.** `'none'` scenarios are also
+excluded from the `meanT` / drift aggregates — a hardcoded `score: 2` should not
+vote on a dimension it never measures.
+
+`npm run fidelity:baseline` is a narrower thing than its name suggests: it is a
+*calibration* check that runs only scenarios carrying a `baselineDoc` (currently
+one, FID-01) and prints how many it excluded. It is not a suite-wide control.
+
 ## Layout
 
 ```

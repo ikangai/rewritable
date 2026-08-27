@@ -9,6 +9,9 @@ const FIXTURE = `<dialog id="dlg" open><p>Modal content</p></dialog>
 
 export default {
   id: 'INTERACT-03',
+  // scoreAfterCustom returns a HARDCODED stabilityResult (score: 2) — this scenario
+  // asserts runtime behaviour, not document bytes, so it carries no drift dimension.
+  driftProbe: 'none',
   category: 'INTERACT',
   tag: 'content',
   description: 'open <dialog>: behavior across edit is observable (closes; documented)',

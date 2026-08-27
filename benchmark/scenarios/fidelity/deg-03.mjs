@@ -12,6 +12,9 @@ const FIXTURE = `<article><p>EDIT_1 first.</p><p>EDIT_2 second.</p></article>`;
 
 export default {
   id: 'DEG-03',
+  // scoreAfterCustom returns a HARDCODED stabilityResult (score: 2) — this scenario
+  // asserts runtime behaviour, not document bytes, so it carries no drift dimension.
+  driftProbe: 'none',
   category: 'DEG',
   tag: 'runtime',
   description: 'edit → buildFile → INLINE_DOC LF-only; idempotent rebuild',

@@ -67,3 +67,10 @@ service/data/*
 # carrier .html ships only the public key + signature. Held offline by the
 # author; re-signing an update needs the matching key.
 *.key.json
+
+# Benchmark export bundles built for external evaluation (Optima and the like).
+# Assembled on demand by copying the benchmark tree plus the runtime it boots
+# and the dep-free modules its scenarios import — every byte is already tracked
+# at its real path, so the archive is a derived artifact, not a source.
+/rwa-optima-export.zip
+/rwa-optima-export/
