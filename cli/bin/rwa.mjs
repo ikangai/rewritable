@@ -137,6 +137,13 @@ Usage:
                               hash, but only the container can look at itself.
                               Exit 6 chrome_not_found when no browser is
                               available (set CHROME_BIN to override).
+  rwa run <path>              execute a WORKFLOW container headlessly and print its
+                              result. Drives a real browser and clicks the same Run
+                              control a person clicks, so the runner is never
+                              duplicated and the result matches a browser run.
+                              --timeout ms (default 120000), --json. Exit 6
+                              browser_error when no browser is available; exit 1
+                              when the container defines no steps to run.
   rwa publish-site <path>     scp a rewritable to a static site (needs RWA_SITE_* env)
   rwa proxy [--port N]        run a local OpenRouter key broker on 127.0.0.1: the
                               key stays on this machine (env or ~/.rwa/openrouter-key)
@@ -429,11 +436,13 @@ function codeName(n) {
     case 3: return 'envelope_error';
     case 4: return 'agent_error';
     case 5: return 'doctor_findings';
-    // #38 — `rwa render` needs an exit class that is neither the document's
-    // fault nor the caller's: no browser on this machine, or one that failed to
-    // drive. A caller can act on that (install Chrome, set CHROME_BIN, skip the
-    // step) in a way it cannot act on `file_error`.
-    case 6: return 'render_error';
+    // #38 — the browser-bearing verbs (`rwa render`, `rwa run`) need an exit
+    // class that is neither the document's fault nor the caller's: no browser on
+    // this machine, or one that failed to drive. A caller can act on that
+    // (install Chrome, set CHROME_BIN, skip the step) in a way it cannot act on
+    // `file_error`. Named for the CAUSE rather than for `render`, which was the
+    // only such verb when it was introduced and is no longer.
+    case 6: return 'browser_error';
     default: throw new Error(`codeName: unexpected exit code ${n}`);
   }
 }
@@ -1448,6 +1457,44 @@ function detectProductKind(fileText) {
     // itself. Drives a REAL browser (cli/src/cdp.mjs) rather than approximating
     // layout, and exits 6 `chrome_not_found` when there is none — an environment
     // answer a caller can act on, not a defect in the document.
+    // `rwa run <file> [--timeout ms] [--json]` (#38) — execute a workflow
+    // container headlessly. It drives the same .rwa-run control a person clicks
+    // and reads the page's own state, so the runner is never duplicated. Exit 6
+    // for environment/run failures (chrome_not_found, run_failed, run_timeout),
+    // matching `rwa render`; exit 1 when the container defines no steps.
+    if (verb === 'run') {
+      const jsonMode = rest.includes('--json');
+      const emitRun = (payload) => {
+        if (jsonMode) process.stderr.write(JSON.stringify(payload) + '\n');
+        else {
+          let line = 'rwa run: ' + [payload.code, payload.subcode].filter(Boolean).join('/');
+          if (payload.details && Object.keys(payload.details).length) line += ' ' + JSON.stringify(payload.details);
+          process.stderr.write(line + '\n');
+        }
+      };
+      const timeoutFlag = resolveFlag(getFlag('--timeout', rest), '--timeout', jsonMode);
+      if (!timeoutFlag.ok) { process.exitCode = 1; return; }
+      const filePath = rest.find((a, i) => !a.startsWith('-') && rest[i - 1] !== '--timeout');
+      if (!filePath) { emitRun({ code: 'usage_error', subcode: 'missing_file_arg' }); process.exitCode = 1; return; }
+      const { runFile } = await import('../src/run.mjs');
+      try {
+        const r = await runFile(filePath, {
+          timeoutMs: timeoutFlag.value ? parseInt(timeoutFlag.value, 10) : undefined,
+        });
+        // stdout carries the RESULT and nothing else, so it can be piped.
+        if (jsonMode) process.stdout.write(JSON.stringify(r) + '\n');
+        else process.stdout.write((typeof r.result === 'string' ? r.result : JSON.stringify(r.result, null, 2)) + '\n');
+        for (const e of r.consoleErrors) process.stderr.write(`note: page error — ${e}\n`);
+        return;
+      } catch (e) {
+        if (e && typeof e.exitCode === 'number') {
+          emitRun({ code: codeName(e.exitCode), subcode: e.subcode, details: e.details });
+          process.exitCode = e.exitCode; return;
+        }
+        throw e;
+      }
+    }
+
     if (verb === 'render') {
       const jsonMode = rest.includes('--json');
       const emitRender = (payload) => {

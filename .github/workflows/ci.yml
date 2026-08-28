@@ -162,6 +162,15 @@ jobs:
         env:
           REQUIRE_BROWSER: '1'
 
+      # #38 — the invoke door. `rwa run` drives the SHIPPED workflow runner by
+      # clicking the same control a person clicks, so the only place the claim
+      # can be tested is a real browser: a jsdom re-implementation of the runner
+      # would prove that a copy agrees with itself.
+      - name: Run lane (rwa run)
+        run: node tests/browser/workflow-run.mjs
+        env:
+          REQUIRE_BROWSER: '1'
+
   benchmark:
     name: Conformance + fidelity (stub)
     runs-on: ubuntu-latest

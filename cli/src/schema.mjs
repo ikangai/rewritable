@@ -29,7 +29,7 @@ const EXIT_CODES = {
   3: 'envelope_error — the plan was rejected; see `subcode` and `hint`',
   4: 'agent_error — the backend or the agent loop failed',
   5: 'doctor_findings — `rwa doctor` found an error-severity problem',
-  6: 'render_error — no browser available, or it failed to drive',
+  6: 'browser_error — no browser available, or it failed to drive (rwa render, rwa run)',
 };
 
 const TOOL_ORDER = [

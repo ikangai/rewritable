@@ -1,7 +1,7 @@
 # rwa operations API — the surface-agnostic contract
 
-*v0.1, draft, 2026-06-07. Names the five operations every rewritable
-surface speaks — `bootstrap / import / modify / describe / publish` —
+*v0.2, draft, 2026-08-28. Names the six operations every rewritable
+surface speaks — `bootstrap / import / modify / describe / publish / run` —
 fixes the wire-format versions they share, and routes to the spec that
 owns each. Short by design: this file is a routing index, not a
 re-statement of spec content. Owning specs are normative; this overview
@@ -29,7 +29,7 @@ seed bootstrap, the `rwa-edit/1` envelope, the `self-description/1`
 projection — **never reimplement** create/edit/describe. An adapter is a
 door, not a second implementation.
 
-## The five operations
+## The six operations
 
 | Operation | What it does | Wire contract | Owning spec |
 |---|---|---|---|
@@ -38,6 +38,16 @@ door, not a second implementation.
 | `modify(file, instruction\|envelope)` | surgical edit | **`rwa-edit/1`** (+ `rwa-edit-dsl/1`) | `rwa-edit-spec.md`, `rwa-edit-dsl-spec.md` |
 | `describe(file)` | report what it is / what can be done | **`self-description/1`** | `docs/specs/rwa-self-description-spec.md` |
 | `publish(file) → url` / `export(file)` | get it out (hosted share or file bytes) | per-target (no version string) | `re-write-able-spec.md` §5.9 |
+| `run(file) → result` | execute the steps the container defines | per-kind (no version string) | `docs/specs/rwa-workflow-spec.md` |
+
+`run` was added in v0.2 (#38). It has **no wire string of its own, deliberately**:
+the runner lives inside the seed and nowhere else, so the CLI adapter drives the
+shipped control rather than re-implementing it. That is what keeps it an adapter —
+a second runner outside the container would be a fifth mirror to maintain, and
+could never guarantee the property that matters, which is that a headless run
+matches a browser run. Scope today is the `workflow` kind; the `compute` and
+`edit-surface` affordances `describe()` reports are not yet invocable from any
+surface, which is the remaining half of #38.
 
 The three load-bearing wire strings — `rwa-edit/1`, `rwa-edit-dsl/1`,
 `self-description/1` — are baked verbatim in `seeds/rewritable.html` and
@@ -55,6 +65,7 @@ feature. Reuse, don't fork.
 | modify | `rwa edit` (`src/edit.mjs applyPlan`) | lens ⌘K → `modify()` | n/a (seed lens runs client-side) | `POST /r/:id/modify` (`rwa-edit/1`, vendored `lib/edit.mjs applyPlan`) | `edit` (`--plan`/stdin envelope) |
 | describe | `rwa doc [--json]` (`src/doc.mjs`, `src/identity.mjs`) | `runtime.describe()` | n/a | `GET /r/:id/describe` (`self-description/1`) | `doc` |
 | publish/export | `rwa publish` (ephemeral), `rwa publish-site` (durable scp) | ⌘S file export | `POST /publish` (per-origin share) | `GET /r/:id/export` (canonical file bytes) | — |
+| run | `rwa run` (`src/run.mjs`, drives the seed's runner in a real browser) | the Run control → `runWorkflow()` | n/a | n/a (server is model-free and browser-free) | — |
 
 The **hosted runtime** is the writable-projection surface the remote-edit
 tension below calls for: a single `/r/` HTTP door speaking the same three wire
