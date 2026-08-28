@@ -142,36 +142,22 @@ export async function upgradeCmd(filePath, { mode = 'write' } = {}) {
   const seed = await loadSeed(SEED_CANDIDATES);
   const targetSeedId = seedIdentity(seed);
 
-  // Refuse to "upgrade" onto a stale seed. SEED_CANDIDATES prefers the in-package
-  // copy (correct after `npm publish`, where it is the only one), but a dev
-  // checkout can also carry a LEFTOVER cli/seeds/rewritable.html from a previous
-  // prepublish run — gitignored, so it is never refreshed by pulling. When that
-  // artifact is older than the repo seed, every other verb silently emits an old
-  // runtime, and THIS verb does something worse: it rewrites an existing
-  // container onto the older bootstrap, i.e. exactly the inverse of its purpose.
+  // This verb used to refuse with `seed_ambiguous` when two different seeds were
+  // resolvable, because SEED_CANDIDATES preferred the gitignored in-package copy
+  // and a leftover one would make `rwa upgrade` rewrite a container onto an OLDER
+  // bootstrap — the inverse of its purpose. That was observed, not hypothetical:
+  // this checkout's leftover was stale by an entire week of shipped work.
   //
-  // Observed, not hypothetical: this checkout's leftover was stale by an entire
-  // week of shipped work, and it was found twice — once when a new guard refused
-  // to emit, and again while building this command.
+  // The refusal is gone because its premise is (#49). SEED_CANDIDATES now
+  // resolves exactly one seed — the repo-canonical one in a dev checkout, the
+  // in-package copy in a published package — so a stale `cli/seeds/` cannot be
+  // the seed this upgrades onto. Removed rather than kept as a defensive assert:
+  // a guard that can no longer fire reads as protection while providing none,
+  // and the reorder is the stronger form of the same protection.
   //
-  // Refuse rather than warn. A warning on a command that rewrites someone's file
-  // in place is a warning that gets missed. In a published package the second
-  // candidate does not exist, so this can never fire for a real user.
-  if (SEED_CANDIDATES.length > 1) {
-    let alt = null;
-    try { alt = await readFile(SEED_CANDIDATES[1], 'utf8'); } catch { /* not a dev checkout */ }
-    if (alt != null && seedIdentity(alt) !== targetSeedId) {
-      throw new CliError(2, 'seed_ambiguous', {
-        path: filePath,
-        using: SEED_CANDIDATES[0],
-        usingSeedId: targetSeedId,
-        alsoFound: SEED_CANDIDATES[1],
-        alsoFoundSeedId: seedIdentity(alt),
-        reason: 'two different seeds are resolvable and the in-package copy would win; refresh it '
-          + '(cp seeds/rewritable.html cli/seeds/rewritable.html) or remove it before upgrading',
-      });
-    }
-  }
+  // What replaces it is `cli/tests/seed-resolution.test.mjs`, which pins that a
+  // dev checkout resolves the canonical seed even when a DIFFERENT `cli/seeds/`
+  // copy sits beside it — the exact condition this refusal existed to catch.
   const needsUpgrade = currentSeedId !== targetSeedId;
 
   const base = { path: filePath, uuid, kind, title: titleRaw, file: fileRaw, currentSeedId, targetSeedId, needsUpgrade };

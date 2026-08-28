@@ -5,14 +5,18 @@
 // references, via the refs-fresh CI job) stayed correct, while both ungated copies rotted:
 // `cli/seeds/` three times in one day, the vendored authoring skill by two months.
 //
-// `cli/seeds/` is the dangerous one. It WINS the seed-load order — right after `npm publish`, where
-// it is the only seed, and wrong in a dev checkout — and it is gitignored, so pulling never
-// refreshes it. Untracked and ungated, it silently made `rwa new` emit a week-old runtime.
+// `cli/seeds/` was the dangerous one: gitignored, so pulling never refreshes it, and FIRST in the
+// seed-load order, so it silently made `rwa new` emit a week-old runtime.
 //
-// DETECT, not fix: loading a seed must never rewrite or delete a file as a side effect. `rwa upgrade`
-// refuses outright (upgrading onto an older seed is a downgrade); every other verb works fine on a
-// stale seed, so it warns and proceeds. These pin both halves, plus the two silences that matter —
-// no noise when the copies agree, and structurally none in a published package.
+// DETECT, not fix: loading a seed must never rewrite or delete a file as a side effect.
+//
+// SCOPE NOTE (#49): these test `loadSeed`/`seedStaleness` as the general multi-candidate helper they
+// are. The CLI's own resolution no longer goes through that path — `SEED_CANDIDATES` now yields
+// exactly one seed, the canonical one in a dev checkout, so nothing can shadow anything. That is
+// pinned separately, on emitted bytes, by `seed-resolution.test.mjs`. Kept rather than deleted
+// because the helper is still the documented primitive for "several copies, which wins", which
+// `tools/check-seeds.mjs` reports on — but read these as tests of a function, not as evidence that
+// the shipped CLI still has a shadowing hazard to warn about.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

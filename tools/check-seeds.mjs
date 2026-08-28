@@ -31,8 +31,13 @@ const copies = [
     path: path.join(REPO, 'cli', 'seeds', 'rewritable.html'),
     label: 'in-package seed (gitignored build artifact)',
     optional: true,
-    fix: `cp seeds/rewritable.html cli/seeds/rewritable.html   # or delete it`,
-    note: 'WINS the CLI seed-load order, so a stale copy silently emits an old runtime',
+    fix: `rm cli/seeds/rewritable.html   # prepublishOnly recreates it at publish time`,
+    // It no longer wins the load order (#49): a dev checkout resolves the canonical
+    // seed directly, so a stale copy here is an unused leftover rather than the
+    // runtime someone ships. Still reported, because `npm publish --ignore-scripts`
+    // would skip the prepublishOnly refresh and package whatever is sitting here —
+    // but reported honestly, as hygiene rather than as the emergency it once was.
+    note: 'unused in a dev checkout since #49; only reachable if publish skips prepublishOnly',
   },
   {
     path: path.join(os.homedir(), '.claude', 'skills', 'authoring-rewritables', 'seeds', 'rewritable.html'),

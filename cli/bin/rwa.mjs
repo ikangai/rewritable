@@ -1723,8 +1723,9 @@ function detectProductKind(fileText) {
         }
         const productKind = detectProductKind(fileText) || 'document';
 
-        // Load SYSTEM_PROMPTS / TOOL_SCHEMAS from the seed — same in-package-first
-        // lookup `rwa edit` uses.
+        // Load SYSTEM_PROMPTS / TOOL_SCHEMAS from the seed — the same single
+        // resolution `rwa edit` uses (#49: canonical in a dev checkout,
+        // in-package in a published one).
         const { loadSeed } = await import('../src/seed.mjs');
         const { SEED_CANDIDATES: SC } = await import('../src/commands.mjs');
         const seedText = await loadSeed(SC);

@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawn } from 'node:child_process';
@@ -29,14 +30,43 @@ import { resolveBareWord } from './template.mjs';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const packageRoot = path.dirname(here);
 
-// Look in the in-package copy first (published case), fall back to the
-// repo-canonical seed (dev case where cli/ sits next to seeds/). Exported so
-// the `rwa edit` instruction path can extract SYSTEM_PROMPTS/TOOL_SCHEMAS
-// from the same seed `rwa new`/`rwa import` use — single source of truth.
-export const SEED_CANDIDATES = [
-  path.join(packageRoot, 'seeds', 'rewritable.html'),
-  path.join(packageRoot, '..', 'seeds', 'rewritable.html'),
-];
+// EXACTLY ONE seed is resolvable, and which one depends on where we are running
+// from (#49). Exported so the `rwa edit` instruction path extracts
+// SYSTEM_PROMPTS/TOOL_SCHEMAS from the same seed `rwa new`/`rwa import` use.
+//
+// This used to list both, in-package first, so `cli/seeds/rewritable.html` beat
+// the repo-canonical `seeds/rewritable.html` in a dev checkout. That order is
+// right in a published package (it is the only seed there) and wrong everywhere
+// else, and it had two distinct failure modes:
+//
+//   STALENESS — `cli/seeds/` is gitignored, written only by `prepublishOnly`, so
+//   a leftover copy is never refreshed by pulling. It went stale three times in
+//   one day and silently made `rwa new` emit a week-old runtime. #18 added a
+//   warning; the warning does not stop it winning.
+//
+//   CONCURRENCY — the refresh was a hand-typed `cp`, which is not atomic, in a
+//   checkout several agents share. A suite running during someone else's `cp`
+//   reads a seed being replaced underneath it, and because the file is
+//   gitignored nothing in the repo state records that it happened.
+//
+// Both are properties of a gitignored file WINNING a load order. Resolving the
+// canonical seed directly deletes the class rather than mitigating it: in a dev
+// checkout `cli/seeds/` is not read at all, so it cannot be stale-and-used and
+// cannot be torn-and-used, and no `cp` has to be remembered after a seed change.
+//
+// Single-element on purpose. A fallback would resurrect the shadowing it exists
+// to remove, and a missing canonical seed in a checkout that has the marker is a
+// real breakage that should say so rather than quietly emit different bytes.
+//
+// The marker is a tracked repo-root file, not the seed itself: in a published
+// package `packageRoot/..` is `node_modules/`, and asking whether
+// `node_modules/seeds/rewritable.html` exists would hand the answer to any
+// dependency that happened to be called `seeds`. Drift between the two copies is
+// still detected — by `tools/check-seeds.mjs`, which is where that belongs.
+const IN_PACKAGE_SEED = path.join(packageRoot, 'seeds', 'rewritable.html');
+const REPO_SEED = path.join(packageRoot, '..', 'seeds', 'rewritable.html');
+const REPO_MARKER = path.join(packageRoot, '..', 're-write-able-spec.md');
+export const SEED_CANDIDATES = [existsSync(REPO_MARKER) ? REPO_SEED : IN_PACKAGE_SEED];
 
 async function readPkg() {
   return JSON.parse(await fs.readFile(path.join(packageRoot, 'package.json'), 'utf8'));
