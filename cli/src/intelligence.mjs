@@ -31,7 +31,12 @@ export async function intelligenceNewCmd(opts = {}) {
   // disk here so the carrier is genuinely self-contained: the recipient gets the
   // bytes, not a link that may be gone. Names are the BASENAME only — a reference
   // is a label, never a path.
-  const references = [];
+  // `inlineReferences` are already-in-memory {name, content} pairs, used by
+  // `rwa skill import` (#47) where the biggest reference is the SKILL.md BODY
+  // and never existed as a standalone file. They go first so the imported
+  // instructions read before their supporting material. Validated by exactly the
+  // same rules as file-sourced ones below — the source does not buy any trust.
+  const references = (opts.inlineReferences || []).map(r => ({ name: String(r.name), content: String(r.content) }));
   for (const f of (opts.reference || [])) {
     const abs = path.resolve(String(f));
     let content;
@@ -73,7 +78,7 @@ export async function intelligenceNewCmd(opts = {}) {
   const ov = kindOverrides('skill-host');
   let result = applySeedSubs(seed, { uuid: randomUUID(), title: 'Intelligence — ' + role, fileMeta: path.basename(out), productKind: 'skill-host', lensPlaceholder: ov.lensPlaceholder, palPlaceholder: ov.palPlaceholder, productHeader: ov.productHeader, lensClickToAnchor: ov.lensClickToAnchor });
   const zone = '<div data-rwa-frozen id="rwa-agents"><script type="application/rwa-agent+json">' + b64(Buffer.from(JSON.stringify(envelope))) + '</script></div>';
-  result = replaceInlineDoc(result, buildCard({ role, prompt, model: opts.model, backend: opts.backend, affinity, vault }) + '\n' + zone);
+  result = replaceInlineDoc(result, buildCard({ role, prompt, model: opts.model, backend: opts.backend, affinity, vault, references, imported: opts.imported }) + '\n' + zone);
   await fs.writeFile(out, result, 'utf8');
 
   // The private key — needed to re-sign updates under the same author identity. Sibling file, loud.
@@ -87,20 +92,37 @@ export async function intelligenceNewCmd(opts = {}) {
   }, null, 2) + '\n', { mode: 0o600 });
   try { await fs.chmod(keyOut, 0o600); } catch (_) {} // guarantee owner-only even if the file pre-existed (writeFile mode applies only on create; best-effort on non-POSIX)
 
-  console.log('wrote ' + rel(out) + ' (intelligence "' + role + '")');
+  console.log('wrote ' + rel(out) + ' (' + (opts.imported ? 'skill' : 'intelligence') + ' "' + role + '")');
   console.log('author ' + fingerprint + ' — private key saved to ' + rel(keyOut) + ' (keep secret; needed to update this intelligence)');
   return { out, keyOut, fingerprint, envelope };
 }
 
-function buildCard({ role, prompt, model, backend, affinity, vault }) {
+function buildCard({ role, prompt, model, backend, affinity, vault, references = [], imported = null }) {
   const recLine = model ? '\n<li><strong>Recommended model:</strong> <code>' + esc(model) + '</code>' + (backend ? ' on <code>' + esc(backend) + '</code>' : '') + ' — offered on activation, behind consent (your session only; key untouched).</li>' : '';
   const affLine = affinity.length ? '\n<li><strong>Affinity:</strong> ' + esc(affinity.join(', ')) + ' (advisory — a mismatch only warns).</li>' : '';
   const vaultLine = '\n<li><strong>Vault namespaces:</strong> ' + (vault.length ? esc(vault.join(', ')) : 'none') + '.</li>';
+  const refLine = references.length
+    ? '\n<li><strong>Carried references:</strong> ' + references.map(r => '<code>' + esc(r.name) + '</code>').join(', ') + '</li>'
+    : '';
+  // #47 — an imported skill must never read as the whole skill. The dropped
+  // files are named in the card as well as on stderr, because the carrier is the
+  // artifact that travels: whoever opens it later did not see the import run.
+  const notIncluded = imported && imported.dropped && imported.dropped.length
+    ? '<h2>Not included</h2>\n<p>This carrier holds the <strong>instruction half</strong> of the skill. ' +
+      'The original also shipped ' + imported.dropped.length + ' non-instruction file(s), which are <strong>not</strong> here and were not signed:</p>\n<ul>\n' +
+      imported.dropped.slice(0, 20).map(d => '<li><code>' + esc(d) + '</code></li>').join('\n') +
+      (imported.dropped.length > 20 ? '\n<li>&hellip; and ' + (imported.dropped.length - 20) + ' more</li>' : '') +
+      '\n</ul>\n<p>A signature proves who wrote something, not that it is safe to run, so carried executables need a consent story that does not exist yet.</p>\n'
+    : '';
+  const lede = imported
+    ? '<p class="lede">An <strong>Agent Skill</strong> imported into a signed carrier: the instructions travel as one self-contained file that any agent can read with <code>rwa doc --json</code>, verify, and adopt. Imported from <code>' + esc(imported.source) + '</code>.</p>\n'
+    : '<p class="lede">A droppable <strong>intelligence</strong> (intelligence/0.2): a signed <code>rwa-agent/1</code> role you can drop onto another rewritable to retune its &#8984;K editor. This file is the carrier — open it, read it, drop it.</p>\n';
   return '<article>\n' +
-    '<h1>Intelligence — &ldquo;' + esc(role) + '&rdquo;</h1>\n' +
-    '<p class="lede">A droppable <strong>intelligence</strong> (intelligence/0.2): a signed <code>rwa-agent/1</code> role you can drop onto another rewritable to retune its &#8984;K editor. This file is the carrier — open it, read it, drop it.</p>\n' +
+    '<h1>' + (imported ? 'Skill' : 'Intelligence') + ' — &ldquo;' + esc(role) + '&rdquo;</h1>\n' +
+    lede +
     '<h2>What it does</h2>\n<p>' + esc(prompt) + '</p>\n' +
-    '<h2>What it carries</h2>\n<ul>\n<li><strong>Role:</strong> <code>' + esc(role) + '</code></li>' + recLine + affLine + vaultLine + '\n</ul>\n' +
+    '<h2>What it carries</h2>\n<ul>\n<li><strong>Role:</strong> <code>' + esc(role) + '</code></li>' + recLine + affLine + refLine + vaultLine + '\n</ul>\n' +
+    notIncluded +
     '<h2>How to use it</h2>\n<p>Drop this file onto another rewritable to install the role (behind the consent dialog), then activate it from the &ldquo;AI&rdquo; chip in the status bar. This carrier is itself a skill-host, so the role is already installed here — try it directly.</p>\n' +
     '</article>';
 }

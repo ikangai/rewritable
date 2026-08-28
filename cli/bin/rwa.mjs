@@ -172,6 +172,12 @@ Usage:
                               skill into the frozen #rwa-skills zone. Requires --yes
                               (no dialog to consent in); gate failures are final.
                               --json emits {skillId,name,kind,verified,status}.
+  rwa skill import <dir>      convert an Agent Skill folder (SKILL.md + references/)
+                              into a signed carrier rewritable. name -> role,
+                              description -> description, the body and references/
+                              ride as carried references, readable by any agent via
+                              rwa doc --json. INSTRUCTIONS ONLY: scripts are named on
+                              stderr and in the card, never bundled. --out, --force.
   rwa skill publish <file>    publish a SIGNED .rwa-skill.json to the marketplace
                               index (POST /skills/publish). The envelope is already
                               signed — no key needed. Online; --url overrides the
@@ -1226,8 +1232,34 @@ function detectProductKind(fileText) {
     if (verb === 'skill') {
       const sub = rest[0];
       const subRest = rest.slice(1);
+      // `rwa skill import <dir> [--out file] [--force]` (#47) — convert an Agent
+      // Skill folder (SKILL.md + references/) into a signed carrier. The
+      // instruction half only: scripts are named, never bundled.
+      if (sub === 'import') {
+        const valFlags = ['--out', '--model', '--backend'];
+        const dir = subRest.find((a, i) => !a.startsWith('-') && !valFlags.includes(subRest[i - 1]));
+        if (!dir) {
+          process.stderr.write('rwa skill import: missing <dir> (a folder containing SKILL.md)\n');
+          process.exitCode = 1;
+          return;
+        }
+        try {
+          const { skillImportCmd } = await import('../src/skill-import.mjs');
+          await skillImportCmd({
+            dir,
+            outPath: getFlag('--out', subRest).value,
+            model: getFlag('--model', subRest).value,
+            backend: getFlag('--backend', subRest).value,
+            force: subRest.includes('--force') || subRest.includes('-f'),
+          });
+        } catch (e) {
+          process.stderr.write('rwa skill import: ' + ((e && e.message) || e) + '\n');
+          process.exitCode = (e && e.exitCode) || 1;
+        }
+        return;
+      }
       if (sub !== 'publish') {
-        process.stderr.write("rwa skill: unknown subcommand '" + (sub || '') + "' (try: rwa skill publish <file>)\n");
+        process.stderr.write("rwa skill: unknown subcommand '" + (sub || '') + "' (try: rwa skill publish <file>, rwa skill import <dir>)\n");
         process.exitCode = 1;
         return;
       }

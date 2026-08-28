@@ -340,6 +340,26 @@ rwa intelligence new concise \
 
 Flags: `--prompt` (required — the role's system prompt), `--description`, `--model` / `--backend` (a *recommended* model offered on activation behind consent — never auto-applied, never carries your key), `--affinity` (comma-separated document kinds; advisory — a mismatch only warns), `--vault` (comma-separated namespaces the role may reach), `--out <path>`, `--force`. Offline; the carrier holds only the public key + signature.
 
+### `rwa skill import <dir>`
+
+Turn an **Agent Skill** on disk into a signed carrier rewritable. Point it at a folder containing `SKILL.md` and it mints the same signed record `rwa intelligence new` does, so "install any skill that is out there" becomes a conversion problem rather than an architecture one. The result is one self-contained file any agent can read with `rwa doc --json`, verify, and adopt — no registry, no namespace, no trust root: the file *is* the unit, the signature *is* the provenance.
+
+```
+rwa skill import ./skills/authoring-rewritables --out authoring.skill.html
+```
+
+The mapping: frontmatter `name` → the role, frontmatter `description` → the description (what tells an agent **when** to use it), and the SKILL.md body plus `references/*` ride as **carried references**.
+
+The body is carried as a reference rather than as the `system_prompt` for a concrete reason: the install gate rejects a `system_prompt` containing backticks or `${` (`agent_prompt_injection_risk` — a normative MUST in actions-v0.9 §13), and real skill bodies are markdown full of them. A rejected record releases *nothing* — not its prompt, not its references — so that mapping would produce a carrier with no readable content. Carried references are deliberately exempt from that screen, so the body arrives byte-for-byte and the synthesized prompt just points at it. This also mirrors how Agent Skills work: the description is always loaded, the body on demand.
+
+**Instructions only.** Anything that is not `SKILL.md` or a text file under `references/` — scripts, binaries, `bin/` — is **not** carried, and is named on stderr *and* in the carrier's own card, because the carrier is what travels and whoever opens it later never saw the import run. A signature proves who wrote something, not that it is safe to run; carried executables need a consent story that does not exist yet (issue #46).
+
+Limits are the carried-reference limits (`16` files / `64 KB` total), enforced at import where the message can name the files, since silently truncating a skill's instructions would be worse than refusing. Offline. Flags: `--out <path>`, `--force`, `--model` / `--backend` (a *recommended* model, as with `intelligence new`).
+
+**Export is out of scope.** There is no `rwa skill export` that turns a carrier back into a folder. It would round-trip the instruction half only, and a folder reconstituted without its scripts, presented as the skill, is precisely the "implies the scripts came along" failure the import direction is careful to avoid. A carrier is readable as-is — `rwa doc --json` hands an agent the role, the description and every carried reference — so the folder form buys nothing that the file does not already give.
+
+**One honest limit.** Carried references reach an agent reading the container from outside (`rwa doc --json`, the two-agent door). They are *not* consumed by the in-container runtime: the seed signs and validates references but never surfaces them to its own ⌘K model, so activating an imported skill inside the container gives it the synthesized pointer prompt and not the instructions it points at. Composition is inherited rather than reinvented — an imported carrier is an ordinary signed record, so it installs and blends through the existing advisor machinery (`runtime.agents.addAdvisor`) exactly like any other role.
+
 ### `rwa skin <path> <name>`
 
 Pick a **named look** for a rewritable instead of hand-styling it from the blank lens. A skin is one self-contained `<style data-rwa-skin="NAME">` block — system fonts only, no web fonts or remote assets — that the command splices into the **document body**. So it commits with the document, ships inside the exported `.html`, survives sharing, and one in-browser undo (`⌘Z`) reverts it. Five presets ship today: `notion-clean`, `linear-dark`, `editorial-serif`, `stripe-docs`, `terminal-mono` (clean · dark · editorial · docs · terminal).
