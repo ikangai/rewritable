@@ -1,9 +1,16 @@
 # Carrying scripts for the external agent — the argument
 
-*2026-08-28. The Tier 3 question from `docs/plans/2026-08-27-skill-carrier-design.md`,
-argued rather than built (issue #46). Position: **do not build script carriage.**
-The measured findings below matter more than the recommendation, because one of
-them says the thing already half-exists.*
+*2026-08-28, revised 2026-08-29. The Tier 3 question from
+`docs/plans/2026-08-27-skill-carrier-design.md`, argued rather than built (issue
+#46). Position: **do not build script carriage.** The measured findings below
+matter more than the recommendation, because one of them says the thing already
+half-exists.*
+
+*Revision: the operator raised the Word-macro precedent and proposed asking the
+external **agent** rather than the human. The first is the strongest available
+evidence against consent-on-open and was missing here. The second dissolves this
+document's central objection and produced a better design — see "Ask the agent,
+then", which supersedes the original treatment of consent.*
 
 ---
 
@@ -56,12 +63,93 @@ doc and worth keeping verbatim: **a signature proves who wrote this; it does not
 prove this is safe to run.** Verified-author must never quietly become
 trusted-to-execute.
 
+## The precedent: this experiment has already been run
+
+**Word macros are exactly this design**, and they are the largest natural
+experiment anyone has conducted on it: a document carries executable code, and on
+open the user is asked whether to enable it. Roughly 25 years, on the order of a
+billion desktops, with a consent dialog on every single open.
+
+It failed comprehensively. Macro viruses were among the most successful malware
+families of that entire period, and the eventual fix was **not a better dialog**.
+Microsoft stopped asking: macros in documents that carry the Mark of the Web are
+blocked outright, on **provenance**, with no prompt to click through. The vendor
+with the most data on this question concluded that the choice should be removed
+rather than better presented.
+
+That is worth stating plainly because it is the strongest evidence available and
+it points one way. Any proposal here that reduces to "carry the code, ask on
+open" has a well-documented prior, and the prior is bad.
+
+One asymmetry is worth keeping, though, because it bounds the analogy: Word
+*needed* to embed macros — there was no other channel for extending a document.
+An external agent has a shell and a package manager. The container is not the only
+way to get code to the party that will run it, which means the case for carriage
+has to be made on reproducibility rather than on necessity.
+
+## Ask the agent, then
+
+The obvious objection to the macro precedent is that we are not asking the same
+party. The user's proposal: **ask the external agent, not the human.**
+
+This dissolves the central objection in the section below, and it should be
+credited rather than absorbed. The argument against source-review consent was
+"nobody reads 200 lines of shell before clicking Allow." **An agent does read
+it** — tirelessly, and with context a human on an open-dialog never has: it knows
+the task, the working directory, and what it was about to do anyway. So source
+review is theatre for *deciding*; it is **not** theatre for *summarising*. This
+document originally collapsed those, and that was wrong.
+
+Three reasons the agent still cannot be the **authority**:
+
+1. **The reviewer is the target.** A carried script is prompt-injection-adjacent:
+   this asks the attacker's chosen reader to approve the attacker's payload. Word,
+   for all its problems, kept the human and the macro as separate parties.
+2. **The carrier shapes the reviewer first.** The whole point of a carrier is that
+   the agent adopts its `system_prompt`. So the container supplies the
+   instructions that form the reviewer's judgement and *then* asks that reviewer
+   to approve its script. That is a self-referential trust loop, and it is
+   precisely what the two-agent split otherwise avoids — the external agent is
+   supposed to bring judgement the container does not control.
+3. **It launders responsibility rather than placing it.** The objection to the
+   human dialog was that it transfers liability to someone without the
+   information. Agent-consent transfers it to someone *with* the information and
+   *without standing*: an agent cannot own the consequence. The human never saw
+   it, so nobody decided.
+
+### The split this produces
+
+Take the reviewing and leave the deciding:
+
+- the agent **reads and reports** — "this reaches the network, writes outside the
+  repository, reads `~/.aws/credentials`"
+- the **human authorises the capability envelope**, not the source — a question a
+  person can actually answer
+- the agent **executes within that envelope**, in its own sandbox
+
+This is better than what this document originally proposed. "Consent must be
+capability-shaped" was right and incomplete: without a competent reader, the
+capability summary is just an assertion the carrier makes about itself, and we are
+back to trusting the author because the signature verified. The agent's reading is
+what makes the summary something a human can act on. That step was missing.
+
+It also fails safe. If the agent cannot review the script — too long, obfuscated,
+minified, a binary — that is itself the finding, and the honest report is "I
+cannot tell you what this does," which is a far better dialog than any that shows
+source.
+
 ## What a real control would look like
 
 The answerable question is not "may this code run?" but "**may this reach the
 network, write outside this directory, read these credentials?**" Capability is
 reviewable in a way that source is not: it is short, it is stable, and a human
 can hold the whole of it in their head.
+
+Where that summary comes from is the part the section above supplies. A capability
+list the *carrier* declares about itself is worth nothing — it is the author's
+claim, and we are back to trusting the signature for a property signatures do not
+carry. A capability list the *reviewing agent* derives from reading the script is
+a different object, and it is the only version a human can act on.
 
 That is the shape #36 already established for back-delegation — fresh context, no
 inherited conversation, no ambient filesystem or network — and it is enforced on
@@ -124,9 +212,28 @@ pre-empting the decision:
 
 Neither requires deciding Tier 3. Both are worth doing whatever Tier 3 becomes.
 
+A third, added on revision and worth more than either — **the reviewer half is
+useful on its own, and it is buildable today with nothing carried.** An agent that
+reads a carried reference and reports "this is a shell script that pipes a remote
+URL into `sh`" is exactly the diagnostic step (1) gestures at, done properly: not
+a file-extension guess but an actual reading. That is the whole of the safe part
+of Tier 3, it needs no execution path, no consent dialog and no new envelope
+field, and it improves the situation that exists **now** — where scripts already
+travel under the label "reference" and nothing describes them.
+
+If script carriage is ever revisited, that step is the prerequisite anyway. Build
+the reader; leave the runner unbuilt.
+
 ---
 
-*Position: do not build it. If it is ever built, consent must be capability-shaped
-and enforced agent-side, never source-shaped and never inherited from a signature.
-The findings above are the durable part; the recommendation is arguable and is
-meant to be argued with.*
+*Position: do not build it — and the macro precedent makes that firmer than it was,
+because "carry the code, ask on open" has a well-documented prior and the prior is
+bad.*
+
+*If it is ever built: **agent reviews, human authorises, capability is the unit.**
+Never source-shaped, never inherited from a signature, and never decided by the
+agent alone — the carrier shapes that agent's judgement before asking it.*
+
+*The findings are the durable part. The recommendation is arguable and was in fact
+argued with, to its benefit: the reviewer/authority split came from the pushback,
+not from this document.*
