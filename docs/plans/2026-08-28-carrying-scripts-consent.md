@@ -72,14 +72,27 @@ billion desktops, with a consent dialog on every single open.
 
 It failed comprehensively. Macro viruses were among the most successful malware
 families of that entire period, and the eventual fix was **not a better dialog**.
-Microsoft stopped asking: macros in documents that carry the Mark of the Web are
-blocked outright, on **provenance**, with no prompt to click through. The vendor
-with the most data on this question concluded that the choice should be removed
-rather than better presented.
+Microsoft stopped asking: macros in documents carrying the Mark of the Web are
+blocked outright, with no prompt to click through.
 
-That is worth stating plainly because it is the strongest evidence available and
-it points one way. Any proposal here that reduces to "carry the code, ask on
-open" has a well-documented prior, and the prior is bad.
+**The endpoint is sharper than "they stopped asking", and it is the transferable
+part.** They did not land on blocking macros. They landed on blocking by
+**provenance** — Mark-of-the-Web records *where the file came from*, and that is a
+property **the document cannot report about itself**. Twenty-five years did not
+end at "ask better"; they ended at *decide from something the artifact cannot
+supply*.
+
+That aims directly at this case. An `rwa-agent` record is signed, and the
+signature attests **authorship** — a property the carrier **fully controls**. A
+malicious author signs their own record exactly as easily as an honest one; the
+signature is not adversarially informative about safety, only about identity.
+Mark-of-the-Web is the opposite kind of fact: it is stamped by the party that
+*received* the file, and no amount of authoring changes it. If we ever want a
+decision input here, it has to be of the second kind, and the carrier does not
+have one to offer.
+
+Any proposal that reduces to "carry the code, ask on open" therefore has a
+well-documented prior, and the prior is bad.
 
 One asymmetry is worth keeping, though, because it bounds the analogy: Word
 *needed* to embed macros — there was no other channel for extending a document.
@@ -111,11 +124,45 @@ Three reasons the agent still cannot be the **authority**:
    to approve its script. That is a self-referential trust loop, and it is
    precisely what the two-agent split otherwise avoids — the external agent is
    supposed to bring judgement the container does not control.
+
+   **The signature makes this worse, not better.** The record reports
+   `verified: true`, and a reading agent is invited to take a statement about
+   *who authored this* as a statement about *whether this is safe to run*. That is
+   the same category error as reading "root was green" as "root executed this
+   file" — a true claim standing in for a different, stronger claim it never made.
+   The signature does not merely fail to help here; it supplies the false
+   confidence that makes the loop feel closed.
 3. **It launders responsibility rather than placing it.** The objection to the
    human dialog was that it transfers liability to someone without the
    information. Agent-consent transfers it to someone *with* the information and
    *without standing*: an agent cannot own the consequence. The human never saw
    it, so nobody decided.
+
+### This repo has already decided the underlying question once
+
+Not by analogy — in shipped, load-bearing code. **I-E blended overlays** let a
+container run a primary role plus up to three advisory ones, and the advisors are
+deliberately kept away from capability:
+
+```js
+// seeds/rewritable.html — advisorRoles add advisory PROSE only, never
+// capabilities, so the vault gate (_agVaultAllowed, keyed on the active record)
+// "stays primary-only by construction".
+```
+
+Verified rather than taken from the comment: `_agVaultAllowed` has exactly one
+caller, and it is passed `agentRec.manifest` — the **active** record. Advisor
+records are only ever read inside `_agAdvisorBlock`, which extracts
+`system_prompt` text and nothing else. There is no code path by which an advisor's
+`vault_namespace_set` reaches the gate, so the property holds structurally rather
+than by policy.
+
+The principle is exactly the one at issue here: **dropped-in content does not
+inherit the trust level of the thing carrying it** — and it was enforced by
+construction, not by asking. Whatever #46 concludes should be consistent with
+that, and the inconsistent case is easy to name: *carried references inheriting
+the trust that `verified: true` implies*. The repo already answered this once, in
+the direction of not asking. (Raised by agent-192.)
 
 ### The split this produces
 
@@ -133,10 +180,17 @@ capability summary is just an assertion the carrier makes about itself, and we a
 back to trusting the author because the signature verified. The agent's reading is
 what makes the summary something a human can act on. That step was missing.
 
-It also fails safe. If the agent cannot review the script — too long, obfuscated,
-minified, a binary — that is itself the finding, and the honest report is "I
-cannot tell you what this does," which is a far better dialog than any that shows
-source.
+**The reviewer must be able to return "I cannot assess this," and that is a
+requirement rather than a nicety.** If the script is obfuscated, minified, too
+long, or a binary, the honest report is "I cannot tell you what this does" — which
+is a far better dialog than any that shows source. A reviewer that always produces
+a verdict is a check that cannot fail, in the same family as the dialog it
+replaces, and it would be the worse of the two because its verdict carries more
+apparent authority.
+
+So the summary has three outcomes, not two: *safe within this envelope*,
+*dangerous*, and *unreadable*. The third must be as easy to return as the others,
+or reviewers will round it into one of them.
 
 ## What a real control would look like
 
