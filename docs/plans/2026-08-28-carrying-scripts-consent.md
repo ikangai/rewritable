@@ -190,7 +190,11 @@ apparent authority.
 
 So the summary has three outcomes, not two: *safe within this envelope*,
 *dangerous*, and *unreadable*. The third must be as easy to return as the others,
-or reviewers will round it into one of them.
+or reviewers will round it into one of them — **and the rounding has a direction.
+It rounds toward safe**, because that is the answer that lets the task continue.
+A two-outcome reviewer is therefore not merely lossy; it is biased in exactly the
+direction that hurts, and it will be most biased on the scripts that are hardest
+to read, which are the ones worth worrying about.
 
 ## What a real control would look like
 
